@@ -1,0 +1,10 @@
+type: ssh
+name: ovh-prod-01
+endpoint:
+  host: 10.42.0.10
+  port: 22
+  user: supermgmt
+  host_public_key: "ssh-ed25519 AAAA..."
+credential_ref: ssh-agent://default
+environment: production
+tags: [docker]
