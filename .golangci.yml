@@ -156,6 +156,11 @@ linters:
         linters:
           - gosec
         text: G705
+      # A socket fd from RawConn.Control always fits an int (G115 fires only on some platforms).
+      - path: internal/(api|client)/peer_linux\.go
+        linters:
+          - gosec
+        text: G115
       # The fixture helper drives the docker CLI with arguments it builds itself.
       - path: test/fixtures/
         linters:

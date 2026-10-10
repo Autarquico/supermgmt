@@ -189,7 +189,10 @@ func metricsOf(s discovery.Snapshot) wire.Metrics {
 // bytesOf converts kibibytes, saturating instead of overflowing.
 func bytesOf(kib uint64) int64 {
 	const unit = 1024
-	return int64(min(kib, math.MaxInt64/unit)) * unit
+	if kib > math.MaxInt64/unit {
+		return math.MaxInt64 / unit * unit
+	}
+	return int64(kib) * unit
 }
 
 // recordServices upserts what the adapters found and retires what is gone. An

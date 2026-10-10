@@ -105,11 +105,11 @@ func (q LogQuery) Values() url.Values {
 
 // ParsePageQuery reads cursor and limit; the limit must be 0..MaxLimit.
 func ParsePageQuery(v url.Values) (PageQuery, error) {
-	limit, err := intParam(v, QueryLimit, 0, MaxLimit)
+	limit, err := smallIntParam(v, QueryLimit, 0, MaxLimit)
 	if err != nil {
 		return PageQuery{}, err
 	}
-	return PageQuery{Cursor: v.Get(QueryCursor), Limit: int(limit)}, nil
+	return PageQuery{Cursor: v.Get(QueryCursor), Limit: limit}, nil
 }
 
 func ParseNodeQuery(v url.Values) (NodeQuery, error) {
@@ -166,8 +166,8 @@ func ParseEventQuery(v url.Values) (EventQuery, error) {
 
 // ParseLogQuery reads lines, 0..10000 (spec §16 bound).
 func ParseLogQuery(v url.Values) (LogQuery, error) {
-	lines, err := intParam(v, QueryLines, 0, 10000)
-	return LogQuery{Lines: int(lines)}, err
+	lines, err := smallIntParam(v, QueryLines, 0, 10000)
+	return LogQuery{Lines: lines}, err
 }
 
 func setString(v url.Values, key, value string) {
@@ -183,11 +183,21 @@ func setInt(v url.Values, key string, value int64) {
 }
 
 func intParam(v url.Values, key string, lowest, highest int64) (int64, error) {
+	return boundedParam(v, key, lowest, highest, 64)
+}
+
+// smallIntParam is intParam for values that fit an int32, parsed at that size.
+func smallIntParam(v url.Values, key string, lowest, highest int) (int, error) {
+	n, err := boundedParam(v, key, int64(lowest), int64(highest), 32)
+	return int(n), err
+}
+
+func boundedParam(v url.Values, key string, lowest, highest int64, bits int) (int64, error) {
 	raw := v.Get(key)
 	if raw == "" {
 		return 0, nil
 	}
-	n, err := strconv.ParseInt(raw, 10, 64)
+	n, err := strconv.ParseInt(raw, 10, bits)
 	if err != nil || n < lowest || n > highest {
 		return 0, smerr.New(smerr.CodeInvalidArgument, "",
 			"query parameter "+key+" must be an integer between "+strconv.FormatInt(lowest, 10)+" and "+strconv.FormatInt(highest, 10))
