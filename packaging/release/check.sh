@@ -1,0 +1,37 @@
+#!/bin/sh
+# Assert a finalized release directory is complete and verifiable (make release-check, release.yml).
+# Usage: check.sh DIST TRUST      (TRUST: see verify-asset.sh)
+set -eu
+
+[ $# -eq 2 ] || { echo "usage: check.sh DIST TRUST" >&2; exit 2; }
+dist=$1
+trust=$2
+here=$(cd "$(dirname "$0")" && pwd)
+
+fail() { echo "release-check: $*" >&2; exit 1; }
+
+sha256_of() {
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+[ -f "$dist/checksums.txt" ] || fail "checksums.txt is missing"
+version=$(sed -n 's/^version: //p;1q' "$dist/checksums.txt")
+[ -n "$version" ] || fail "checksums.txt has no version header"
+sed -n 2p "$dist/checksums.txt" | grep -Eq '^channel: (stable|beta)$' || fail "checksums.txt has no channel header"
+
+[ -f "$dist/install.sh" ] || fail "install.sh is missing"
+for f in checksums.txt install.sh join.sh; do
+	[ ! -f "$dist/$f" ] || "$here/verify-asset.sh" "$dist/$f" "$trust" >/dev/null || fail "$f signature does not verify"
+done
+
+for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+	archive="sm_${version#v}_$target.tar.gz"
+	for name in "$archive" "$archive.spdx.json"; do
+		[ -f "$dist/$name" ] || fail "$name is missing"
+		want=$(awk -v n="$name" 'NR > 2 && $2 == n { print $1 }' "$dist/checksums.txt")
+		[ -n "$want" ] && [ "$want" = "$(sha256_of "$dist/$name")" ] || fail "$name is not covered by a matching checksum"
+	done
+	tar -tzf "$dist/$archive" | grep -qx 'sm' || fail "$archive does not contain sm"
+	grep -q '"spdxVersion"' "$dist/$archive.spdx.json" || fail "$archive.spdx.json is not an SPDX document"
+done
+echo "release-check: $dist ok ($version)"
