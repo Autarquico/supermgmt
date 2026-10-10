@@ -45,18 +45,6 @@ func TestDockerTemplatesAvoidGoTemplateSyntax(t *testing.T) {
 	}
 }
 
-func TestDoneFileReadsOnlyMarkerCompletionFiles(t *testing.T) {
-	c, err := Render("docker.done_file", map[string]string{"path": MarkerDir + "/0190a5e2-7c41.done"})
-	if err != nil || c.Line != "cat '"+MarkerDir+"/0190a5e2-7c41.done'" {
-		t.Errorf("line = %q, %v", c.Line, err)
-	}
-	for _, bad := range []string{"/etc/shadow", MarkerDir + "/../../etc/shadow.done", MarkerDir + "/x", MarkerDir + "/X.done", MarkerDir + "/a/b.done", MarkerDir + "/a.done.tmp", MarkerDir + "/.done"} {
-		if _, err := Render("docker.done_file", map[string]string{"path": bad}); err == nil {
-			t.Errorf("path %q accepted", bad)
-		}
-	}
-}
-
 func TestDockerLogsMergeStreamsAndBoundLines(t *testing.T) {
 	c, err := Render("docker.logs", map[string]string{"container": "web", "lines": "100"})
 	if err != nil || c.Line != "docker logs --timestamps --tail '100' -- 'web' 2>&1" {

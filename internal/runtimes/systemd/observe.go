@@ -115,9 +115,11 @@ func classify(v domain.ServiceVerb, before, after unitState) jobs.Classification
 	return jobs.ClassUnknown
 }
 
-// evidence converts the observation to the job engine's form. The engine's
-// Evidence v2 fields (Proof, Fingerprint, Pre) are added by the jobs package;
-// until they land only the completion proof and the outcome travel.
+// evidence converts the observation to the job engine's Evidence v2. The
+// fingerprint is never empty: an empty one would pair in jobs.confirm.
 func (o observation) evidence() jobs.Evidence {
-	return jobs.Evidence{Done: true, ExitStatus: 0, Classification: o.Classification}
+	return jobs.Evidence{
+		Done: true, ExitStatus: 0, Proof: o.Proof, Classification: o.Classification,
+		Fingerprint: o.Fingerprint, Pre: o.Pre,
+	}
 }

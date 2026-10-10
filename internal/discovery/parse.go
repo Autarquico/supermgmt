@@ -7,23 +7,13 @@ import (
 	"time"
 
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
 const probeHeader = "@@probe"
 
-// probeFormatVersion and probeSections mirror templates.ProbeFormatVersion and
-// templates.ProbeSections of the probe template (branch m1/t2), which is the
-// authority on the format. They are copied only because that branch is not
-// merged yet; replace them with the templates exports at merge.
-const probeFormatVersion = 1
-
-var probeSections = []string{
-	"uname", "os", "hostname", "uptime", "cpu", "loadavg", "memory", "disk",
-	"pkgmgr", "systemd", "docker", "tools", "sudo", "setup", "addresses",
-}
-
 // Parse reads the output of the "probe" template. Output is untrusted: section
-// headers are taken only from probeSections, in order, and a section
+// headers are taken only from templates.ProbeSections, in order, and a section
 // that fails to parse stays at its zero value without failing the others (one
 // failed capability never makes the node unavailable, spec §12).
 func Parse(output []byte) (Snapshot, error) {
@@ -52,14 +42,14 @@ func Parse(output []byte) (Snapshot, error) {
 
 func splitSections(output string) (map[string][]string, error) {
 	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != probeHeader+" "+strconv.Itoa(probeFormatVersion) {
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != probeHeader+" "+strconv.Itoa(templates.ProbeFormatVersion) {
 		return nil, smerr.New(smerr.CodeProviderError, "", "probe output has an unknown format")
 	}
 	sections := map[string][]string{}
 	next, current := 0, ""
 	for _, line := range lines[1:] {
-		if next < len(probeSections) && line == "@@"+probeSections[next] {
-			current = probeSections[next]
+		if next < len(templates.ProbeSections) && line == "@@"+templates.ProbeSections[next] {
+			current = templates.ProbeSections[next]
 			sections[current] = nil
 			next++
 			continue

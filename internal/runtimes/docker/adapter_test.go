@@ -187,21 +187,21 @@ func TestObserveMapsEvidence(t *testing.T) {
 		want    jobs.Classification
 		noProof bool
 	}{
-		{"restart started after dispatch", domain.VerbRestart, "0\n", 0, inspectOne("2026-10-10T10:00:03.25Z", true), jobs.ClassComplete, false},
-		{"start started after dispatch", domain.VerbStart, "0\n", 0, inspectOne("2026-10-10T10:00:03Z", true), jobs.ClassComplete, false},
-		{"restart not restarted", domain.VerbRestart, "0\n", 0, inspectOne("2026-10-10T09:00:00Z", true), jobs.ClassUnknown, false},
-		{"restart started but stopped", domain.VerbRestart, "0\n", 0, inspectOne("2026-10-10T10:00:03Z", false), jobs.ClassUnknown, false},
-		{"start at exactly dispatch time", domain.VerbStart, "0\n", 0, inspectOne("2026-10-10T10:00:00Z", true), jobs.ClassUnknown, false},
-		{"stop stopped", domain.VerbStop, "0\n", 0, inspectOne("2026-10-10T09:00:00Z", false), jobs.ClassComplete, false},
-		{"stop still running", domain.VerbStop, "0\n", 0, inspectOne("2026-10-10T09:00:00Z", true), jobs.ClassUnknown, false},
-		{"done file missing", domain.VerbRestart, "", 1, inspectOne("2026-10-10T10:00:03Z", true), "", true},
-		{"done file nonzero", domain.VerbRestart, "1\n", 0, inspectOne("2026-10-10T10:00:03Z", true), "", true},
-		{"done file garbage", domain.VerbRestart, "ok\n", 0, inspectOne("2026-10-10T10:00:03Z", true), "", true},
+		{"restart started after dispatch", domain.VerbRestart, "done 0\n", 0, inspectOne("2026-10-10T10:00:03.25Z", true), jobs.ClassComplete, false},
+		{"start started after dispatch", domain.VerbStart, "done 0\n", 0, inspectOne("2026-10-10T10:00:03Z", true), jobs.ClassComplete, false},
+		{"restart not restarted", domain.VerbRestart, "done 0\n", 0, inspectOne("2026-10-10T09:00:00Z", true), jobs.ClassUnknown, false},
+		{"restart started but stopped", domain.VerbRestart, "done 0\n", 0, inspectOne("2026-10-10T10:00:03Z", false), jobs.ClassUnknown, false},
+		{"start at exactly dispatch time", domain.VerbStart, "done 0\n", 0, inspectOne("2026-10-10T10:00:00Z", true), jobs.ClassUnknown, false},
+		{"stop stopped", domain.VerbStop, "done 0\n", 0, inspectOne("2026-10-10T09:00:00Z", false), jobs.ClassComplete, false},
+		{"stop still running", domain.VerbStop, "done 0\n", 0, inspectOne("2026-10-10T09:00:00Z", true), jobs.ClassUnknown, false},
+		{"done file missing", domain.VerbRestart, "started\n", 0, inspectOne("2026-10-10T10:00:03Z", true), "", true},
+		{"done file nonzero", domain.VerbRestart, "done 1\n", 0, inspectOne("2026-10-10T10:00:03Z", true), "", true},
+		{"done file garbage", domain.VerbRestart, "done ok\n", 0, inspectOne("2026-10-10T10:00:03Z", true), "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			node := newFakeNode(t).reply("docker.inspect", tt.inspect)
-			node.handlers["docker.done_file"] = transport.Result{Stdout: []byte(tt.done), ExitStatus: tt.doneErr}
+			node.handlers["marker.state"] = transport.Result{Stdout: []byte(tt.done), ExitStatus: tt.doneErr}
 			ev, err := New().Observe(context.Background(), node, ref("web"), tt.verb, "0190-m1", json.RawMessage(pre), dispatched)
 			if tt.noProof {
 				if err == nil {
@@ -215,8 +215,8 @@ func TestObserveMapsEvidence(t *testing.T) {
 			if err != nil || !ev.Proven() || ev.Classification != tt.want {
 				t.Errorf("evidence = %+v, %v", ev, err)
 			}
-			if got := node.calls[0].Line; got != "cat '/var/lib/supermgmt/markers/0190-m1.done'" {
-				t.Errorf("done file read = %s", got)
+			if got := node.calls[0]; got.Template != "marker.state" || !strings.HasSuffix(got.Line, "'0190-m1'") {
+				t.Errorf("done file read = %s", got.Line)
 			}
 			o, _ := observe(context.Background(), node, ref("web"), tt.verb, "0190-m1", json.RawMessage(pre), dispatched)
 			if o.Proof != ProofDoneFile || string(o.Pre) != pre || !strings.Contains(string(o.Fingerprint), `"started_at"`) {

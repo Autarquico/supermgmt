@@ -121,7 +121,7 @@ func TestParseLinuxProbe(t *testing.T) {
 func TestParseTreatsEmptySectionsAsUnknownNotFalse(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("@@probe 1\n")
-	for _, name := range probeSections {
+	for _, name := range templates.ProbeSections {
 		b.WriteString("@@" + name + "\n")
 	}
 	s, err := Parse([]byte(b.String()))
@@ -173,7 +173,7 @@ func TestParseMacOSProbe(t *testing.T) {
 		"addresses": "lo0: flags=8049\n\tinet 127.0.0.1 netmask 0xff000000\n\tinet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255",
 	}
 	probe := "@@probe 1\n"
-	for _, name := range probeSections {
+	for _, name := range templates.ProbeSections {
 		probe += "@@" + name + "\n" + body[name] + "\n"
 	}
 	s, err := Parse([]byte(probe))
@@ -282,9 +282,6 @@ func (p *probeExec) Run(_ context.Context, c templates.Command) (transport.Resul
 }
 
 func TestProbeRunsOneSession(t *testing.T) {
-	if _, err := templates.Render("probe", map[string]string{}); err != nil {
-		t.Skipf("probe template not merged yet: %v", err)
-	}
 	ex := &probeExec{out: linuxProbe}
 	s, err := Probe(context.Background(), ex)
 	if err != nil || ex.rans != 1 || s.Hostname != "node-a" {

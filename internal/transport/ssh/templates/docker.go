@@ -5,10 +5,7 @@ import (
 	"regexp"
 )
 
-var (
-	containerRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
-	doneFileRE  = regexp.MustCompile(`^` + regexp.QuoteMeta(MarkerDir) + `/[a-z0-9][a-z0-9-]{0,63}\.done$`)
-)
+var containerRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 // ValidateContainer accepts a container name or ID as Docker itself allows it.
 func ValidateContainer(s string) error {
@@ -18,18 +15,7 @@ func ValidateContainer(s string) error {
 	return nil
 }
 
-// ValidateDoneFile accepts exactly the path of a marker's completion file.
-func ValidateDoneFile(s string) error {
-	if !doneFileRE.MatchString(s) {
-		return fmt.Errorf("not a marker completion file")
-	}
-	return nil
-}
-
-var (
-	paramContainer = Param{Name: "container", Validate: ValidateContainer}
-	paramDoneFile  = Param{Name: "path", Validate: ValidateDoneFile}
-)
+var paramContainer = Param{Name: "container", Validate: ValidateContainer}
 
 func containerAction(verb string) Template {
 	return Template{
@@ -57,7 +43,6 @@ var dockerTemplates = []Template{
 		Name: "docker.logs", Params: []Param{paramContainer, paramLines}, MaxBytes: 4 << 20, MaxLines: MaxLogLines + 10,
 		Body: "docker logs --timestamps --tail {{lines}} -- {{container}} 2>&1",
 	},
-	{Name: "docker.done_file", Params: []Param{paramDoneFile}, Body: "cat {{path}}", MaxBytes: 64, MaxLines: 2},
 	containerAction("start"),
 	containerAction("stop"),
 	containerAction("restart"),

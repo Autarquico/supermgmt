@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -52,14 +50,14 @@ func observe(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, 
 	return observation{Proof: ProofDoneFile, Classification: classify(v, after, dispatchedAt), Fingerprint: fingerprint, Pre: pre}, nil
 }
 
-// requireDoneFile succeeds only when <marker>.done holds exit status 0.
+// requireDoneFile succeeds only when the marker's .done file holds exit 0.
 func requireDoneFile(ctx context.Context, ex transport.Executor, marker string) error {
-	res, err := read(ctx, ex, "docker.done_file", map[string]string{"path": templates.MarkerDir + "/" + marker + ".done"})
+	res, err := read(ctx, ex, "marker.state", map[string]string{"marker": marker})
 	if err != nil {
 		return err
 	}
-	status, convErr := strconv.Atoi(strings.TrimSpace(string(res.Stdout)))
-	if res.ExitStatus != 0 || convErr != nil || status != 0 {
+	state, err := templates.ParseMarkerState(res.Stdout)
+	if err != nil || !state.CompletionProof() {
 		return ErrNoCompletionProof
 	}
 	return nil
@@ -80,9 +78,11 @@ func classify(v domain.ServiceVerb, after containerState, dispatchedAt time.Time
 	return jobs.ClassUnknown
 }
 
-// evidence converts the observation to the job engine's form. The engine's
-// Evidence v2 fields (Proof, Fingerprint, Pre) are added by the jobs package;
-// until they land only the completion proof and the outcome travel.
+// evidence converts the observation to the job engine's Evidence v2. The
+// fingerprint is never empty: an empty one would pair in jobs.confirm.
 func (o observation) evidence() jobs.Evidence {
-	return jobs.Evidence{Done: true, ExitStatus: 0, Classification: o.Classification}
+	return jobs.Evidence{
+		Done: true, ExitStatus: 0, Proof: o.Proof, Classification: o.Classification,
+		Fingerprint: o.Fingerprint, Pre: o.Pre,
+	}
 }
