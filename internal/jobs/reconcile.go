@@ -134,6 +134,11 @@ func (s *Store) Reconcile(ctx context.Context, src EvidenceSource) ([]Resolution
 			resolutions = append(resolutions, *res)
 		}
 	}
+	present := make(map[domain.ID]bool, len(interrupted))
+	for _, job := range interrupted {
+		present[job.ID] = true
+	}
+	s.pruneAbsent(present)
 	return resolutions, errors.Join(errs...)
 }
 
@@ -146,7 +151,7 @@ func (s *Store) reconcileJob(ctx context.Context, job Job, src EvidenceSource) (
 	if !s.quiescent(job, intents, now) {
 		return nil, nil
 	}
-	observed := s.observe(ctx, src, intents, now)
+	observed := s.observe(ctx, src, job, intents, now)
 
 	var (
 		res    *Resolution
@@ -167,8 +172,12 @@ func (s *Store) reconcileJob(ctx context.Context, job Job, src EvidenceSource) (
 		res, reason, err = s.applyVerdict(ctx, tx, fresh, current, observed)
 		return err
 	})
-	if err == nil && res != nil {
-		s.rememberHeld(job.ID, res.Action, reason)
+	switch {
+	case err != nil || res == nil:
+	case res.Action == ReconcileHeld:
+		s.rememberHeld(job.ID, reason)
+	default:
+		s.forgetResolved(job.ID)
 	}
 	return res, err
 }
@@ -207,19 +216,26 @@ type sample struct {
 }
 
 // observe returns the evidence the reconciler may act on, per dispatched
-// intent: proven, classified, and confirmed by two identical samples at least
-// sampleGap apart. Collection stops at deadline_at + evidenceWindow.
-func (s *Store) observe(ctx context.Context, src EvidenceSource, intents []Intent, now time.Time) map[domain.ID]Evidence {
+// intent. An intent whose persisted evidence is already definite is settled
+// and needs nothing more (a multi-step job keeps its earlier steps settled).
+// Every other dispatched intent needs fresh evidence: proven, classified, and
+// confirmed by two identical samples at least sampleGap apart, collected no
+// later than deadline_at + evidenceWindow.
+func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intents []Intent, now time.Time) map[domain.ID]Evidence {
 	confirmed := map[domain.ID]Evidence{}
-	if src == nil {
-		return confirmed
-	}
 	for _, in := range intents {
-		if !in.Dispatched() || now.After(in.DeadlineAt.Add(evidenceWindow)) {
+		if !in.Dispatched() {
+			continue
+		}
+		if stored := storedEvidence(in); stored.definite() {
+			confirmed[in.ID] = stored
+			continue
+		}
+		if src == nil || now.After(in.DeadlineAt.Add(evidenceWindow)) {
 			continue
 		}
 		ev, err := src.Collect(ctx, in)
-		if err != nil || !s.confirm(in.ID, ev, now) {
+		if err != nil || !s.confirm(sampleKey{job.ID, in.ID, job.LeaseGeneration}, ev, now) {
 			continue
 		}
 		confirmed[in.ID] = ev
@@ -227,33 +243,65 @@ func (s *Store) observe(ctx context.Context, src EvidenceSource, intents []Inten
 	return confirmed
 }
 
+// sampleKey scopes a first sample to one interruption of one intent, so a
+// sample taken before a requeue and a second interruption is never reused.
+type sampleKey struct {
+	job        domain.ID
+	intent     domain.ID
+	generation int64
+}
+
 // confirm records ev as a sample and reports whether it completes a pair.
 // Anything that is not definite resets the pair.
-func (s *Store) confirm(id domain.ID, ev Evidence, now time.Time) bool {
+func (s *Store) confirm(key sampleKey, ev Evidence, now time.Time) bool {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	if !ev.definite() {
-		delete(s.samples, id)
+		delete(s.samples, key)
 		return false
 	}
-	first, seen := s.samples[id]
+	first, seen := s.samples[key]
 	if !seen || first.class != ev.Classification {
-		s.samples[id] = sample{class: ev.Classification, at: now}
+		s.samples[key] = sample{class: ev.Classification, at: now}
 		return false
 	}
 	return !now.Before(first.at.Add(s.sampleGap))
 }
 
-// rememberHeld tracks the reason of the last job.reconcile_held event, so a
-// held job is reported when it enters held or its reason changes, not each pass.
-func (s *Store) rememberHeld(job domain.ID, action ReconcileAction, reason string) {
+// forgetResolved drops the in-memory state of a job the reconciler settled.
+func (s *Store) forgetResolved(job domain.ID) {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
-	if action == ReconcileHeld {
-		s.held[job] = reason
-		return
-	}
 	delete(s.held, job)
+	for key := range s.samples {
+		if key.job == job {
+			delete(s.samples, key)
+		}
+	}
+}
+
+// pruneAbsent drops in-memory state of jobs that are no longer interrupted.
+func (s *Store) pruneAbsent(present map[domain.ID]bool) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	for job := range s.held {
+		if !present[job] {
+			delete(s.held, job)
+		}
+	}
+	for key := range s.samples {
+		if !present[key.job] {
+			delete(s.samples, key)
+		}
+	}
+}
+
+// rememberHeld tracks the reason of the last job.reconcile_held event, so a
+// held job is reported when it enters held or its reason changes, not each pass.
+func (s *Store) rememberHeld(job domain.ID, reason string) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	s.held[job] = reason
 }
 
 func (s *Store) alreadyReported(job domain.ID, reason string) bool {
