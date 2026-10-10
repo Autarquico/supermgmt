@@ -295,8 +295,11 @@ func TestDialsInFlightAreBounded(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if peak := r.server.maxHandshake.Load(); peak > 2 {
-		t.Errorf("%d concurrent handshakes, limit is 2", peak)
+	// Measured on the client, inside the dial slot. The server-side count
+	// would also see a finished handshake still unwinding while the next
+	// dial has started, which is not a violation.
+	if peak := r.pool.creds.(*staticCreds).maxInFlight.Load(); peak > 2 {
+		t.Errorf("%d concurrent dials, limit is 2", peak)
 	}
 	if n := r.server.connections.Load(); n != 6 {
 		t.Errorf("%d connections, want 6", n)

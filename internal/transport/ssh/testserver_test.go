@@ -36,6 +36,7 @@ type testServer struct {
 
 	handler          func(cmd string, stdin []byte) reply
 	handshakeDelay   time.Duration
+	handshakeGate    <-chan struct{} // when set, handshakes wait for it to close
 	ignoreKeepalives bool
 
 	connections  atomic.Int32 // completed handshakes
@@ -167,6 +168,9 @@ func (s *testServer) serve(c net.Conn) {
 	cfg.AddHostKey(s.currentHostKey())
 	bump(&s.inHandshake, &s.maxHandshake)
 	time.Sleep(s.handshakeDelay)
+	if s.handshakeGate != nil {
+		<-s.handshakeGate
+	}
 	conn, chans, reqs, err := cryptossh.NewServerConn(c, cfg)
 	s.inHandshake.Add(-1)
 	if err != nil {
@@ -233,11 +237,18 @@ func (s *testServer) serveSession(ch cryptossh.Channel, requests <-chan *cryptos
 type staticCreds struct {
 	signer cryptossh.Signer
 	calls  atomic.Int32
+
+	inFlight    atomic.Int32
+	maxInFlight atomic.Int32
 }
 
+// Resolve runs while the dial slot is held and Release runs before it is
+// given back, so [Resolve, Release) is a client-side window inside the slot:
+// its peak concurrency can never exceed max_dials_in_flight if the bound holds.
 func (c *staticCreds) Resolve(context.Context, string) (Credential, error) {
 	c.calls.Add(1)
-	return Credential{Auth: cryptossh.PublicKeys(c.signer)}, nil
+	bump(&c.inFlight, &c.maxInFlight)
+	return Credential{Auth: cryptossh.PublicKeys(c.signer), release: func() { c.inFlight.Add(-1) }}, nil
 }
 
 type rig struct {

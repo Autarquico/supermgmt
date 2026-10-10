@@ -1,8 +1,11 @@
 package ssh
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 func slowOrFast(release <-chan struct{}) func(*testServer) {
@@ -94,6 +97,44 @@ func TestInvalidateDuringADialDiscardsTheStaleConnection(t *testing.T) {
 	}
 	if n := r.server.connections.Load(); n != 2 {
 		t.Errorf("%d connections, want the pre-Invalidate dial discarded and one more made", n)
+	}
+}
+
+// TestTwoTargetsForOneNodeAndUserDoNotReplaceEachOtherForever: a dial whose
+// slot was taken over by a different Target fails once instead of re-dialing
+// and taking the slot back.
+func TestTwoTargetsForOneNodeAndUserDoNotReplaceEachOtherForever(t *testing.T) {
+	gate := make(chan struct{})
+	r := newRig(t, defaultConfig(), func(s *testServer) { s.handshakeGate = gate })
+	first := r.target()
+	second := r.target()
+	second.CredentialRef = "secret://ssh/default@2" // same node and user, different Target
+
+	errA, errB := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := r.pool.For(first).Run(context.Background(), templatesRead("x"))
+		errA <- err
+	}()
+	eventually(t, "first handshake started", func() bool { return r.server.inHandshake.Load() == 1 })
+	go func() {
+		_, err := r.pool.For(second).Run(context.Background(), templatesRead("x"))
+		errB <- err
+	}()
+	eventually(t, "second target took the slot", func() bool {
+		r.pool.mu.Lock()
+		defer r.pool.mu.Unlock()
+		return r.pool.peers[connKey{r.nodeID, "supermgmt"}].target == second
+	})
+	close(gate)
+
+	select {
+	case err := <-errA:
+		requireCode(t, err, smerr.CodeNodeUnreachable)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the replaced caller is still looping")
+	}
+	if err := <-errB; err != nil {
+		t.Fatalf("the newer target: %v", err)
 	}
 }
 

@@ -6,7 +6,6 @@ package ssh
 
 import (
 	"context"
-	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -101,8 +100,9 @@ type peer struct {
 }
 
 type dialCall struct {
-	done chan struct{}
-	err  error
+	done  chan struct{}
+	err   error
+	retry bool // the dial predates an Invalidate: callers dial again
 }
 
 type liveConn struct {
@@ -229,7 +229,7 @@ func (p *Pool) acquire(ctx context.Context, t Target) (*liveConn, error) {
 		case <-ctx.Done():
 			return nil, ctxError("ssh connect", ctx.Err())
 		}
-		if call.err != nil && !errors.Is(call.err, errSuperseded) {
+		if call.err != nil && !call.retry {
 			return nil, call.err
 		}
 	}
@@ -324,7 +324,14 @@ func (p *Pool) detached(ctx context.Context) (context.Context, func()) {
 	return dialCtx, func() { stop(); cancel() }
 }
 
-var errSuperseded = smerr.New(smerr.CodeNodeUnreachable, "", "ssh connection superseded while connecting")
+// errSuperseded: Invalidate ran during the dial, so the connection predates it.
+// Callers retry. errReplaced: another Target took over the (node, user) slot or
+// the pool closed; callers fail instead of retrying, so two targets cannot
+// replace each other forever.
+var (
+	errSuperseded = smerr.New(smerr.CodeNodeUnreachable, "", "ssh connection superseded while connecting")
+	errReplaced   = smerr.New(smerr.CodeNodeUnreachable, "", "ssh connection replaced while connecting")
+)
 
 func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, startEpoch int, t Target, call *dialCall) {
 	dialCtx, release := p.detached(ctx)
@@ -338,15 +345,18 @@ func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, startEpoch i
 	now := p.clock.Now()
 	switch {
 	case err != nil && pe.epoch != startEpoch:
-		call.err = errSuperseded
+		call.err, call.retry = errSuperseded, true
 	case err != nil:
 		pe.failures++
 		pe.lastErr = err
 		pe.nextDial = now.Add(backoffDelay(pe.failures))
 		call.err = err
-	case p.peers[key] != pe || pe.epoch != startEpoch || p.ctx.Err() != nil:
+	case p.peers[key] == pe && pe.epoch != startEpoch && p.ctx.Err() == nil:
 		conn.close()
-		call.err = errSuperseded
+		call.err, call.retry = errSuperseded, true
+	case p.peers[key] != pe || p.ctx.Err() != nil:
+		conn.close()
+		call.err = errReplaced
 	default:
 		conn.lastUsed = now
 		pe.conn, pe.failures, pe.lastErr, pe.nextDial = conn, 0, nil, time.Time{}
