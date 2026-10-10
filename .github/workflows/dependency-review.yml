@@ -17,3 +17,5 @@ jobs:
         with:
           fail-on-severity: moderate
           allow-licenses: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0
+          # Go's own x/ modules are BSD-3-Clause plus the Go patent grant (LicenseRef-scancode-google-patent-license-golang).
+          allow-dependencies-licenses: pkg:golang/golang.org/x/sys
