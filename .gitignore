@@ -1,0 +1,8 @@
+/dist/
+/bin/
+*.db
+*.db-wal
+*.db-shm
+/dev/
+coverage.out
+.DS_Store
