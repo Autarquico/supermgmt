@@ -29,12 +29,17 @@ type Provider struct {
 	UpdatedAt     time.Time
 }
 
-// NodeEndpoint is the configured management endpoint of a node.
+// NodeEndpoint is the configured management endpoint of a node (spec §6.4).
+// User is the account automated sessions use once the node has capability
+// node.setup; until then they, setup and interactive sessions use AdminUser
+// with AdminCredentialRef (ADR-0009 b).
 type NodeEndpoint struct {
-	Host          string
-	Port          int
-	User          string
-	HostPublicKey string
+	Host               string
+	Port               int
+	User               string
+	AdminUser          string
+	AdminCredentialRef string
+	HostPublicKey      string
 }
 
 // Node is a machine or guest. ManagementState is configured; Reachability is observed (spec §6.4).
