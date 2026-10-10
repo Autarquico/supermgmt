@@ -79,7 +79,7 @@ func publicError(err error) *smerr.Error {
 func writeBytes(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", wire.ContentType)
 	w.WriteHeader(status)
-	_, _ = w.Write(body) //nolint:gosec // JSON envelope served as application/json over the owner-only Unix socket, never rendered as HTML
+	_, _ = w.Write(body)
 }
 
 func (s *Server) writeData(w http.ResponseWriter, r *http.Request, status int, data any) {

@@ -150,6 +150,12 @@ linters:
         linters:
           - forbidigo
         text: fmt\.Print
+      # The API writes JSON envelopes as application/json over the owner-only
+      # Unix socket; G705's HTML-XSS taint analysis does not apply and is flaky here.
+      - path: internal/api/respond\.go
+        linters:
+          - gosec
+        text: G705
       # The fixture helper drives the docker CLI with arguments it builds itself.
       - path: test/fixtures/
         linters:
