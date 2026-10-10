@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "M2 — Server/client/auth and release pipeline"
+title: M2 — Server/client/auth and release pipeline
 type: epic
-status: draft
+status: active
 priority: P0
 size: XL
 issue: null
 prs: []
-related_issues: []
+related_issues: [2]
 depends_on: [m1-local-ssh-tui]
 supersedes: []
 related_specs: []
