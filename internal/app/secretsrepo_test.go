@@ -132,3 +132,27 @@ func assertAbsentFromDatabaseFiles(t *testing.T, f *fixture, needles ...[]byte) 
 		}
 	}
 }
+
+func TestGeneratingTheInstanceIdentityIsAuditedOnceWithTheFingerprintOnly(t *testing.T) {
+	f := newFixture(t)
+	repo := NewSecretsRepo(f.db, f.clock)
+	ctx := context.Background()
+	keys, err := secrets.OpenFileKeys(ctx, filepath.Join(t.TempDir(), "keys"), repo, f.ids)
+	mustf(t, err, "OpenFileKeys")
+	store := secrets.NewStore(keys, repo, f.ids, f.clock)
+
+	first, err := EnsureInstanceIdentity(ctx, f.cfg, store)
+	mustf(t, err, "first start")
+	_, err = EnsureInstanceIdentity(ctx, f.cfg, store)
+	mustf(t, err, "second start")
+
+	events := f.events("ssh_identity.generated")
+	if len(events) != 1 || events[0].ActorType != domain.ActorSystem || events[0].Data["fingerprint"] != first.FingerprintSHA256 {
+		t.Fatalf("events = %+v", events)
+	}
+	for key, value := range events[0].Data {
+		if s, ok := value.(string); ok && (key == "authorized_key" || s == first.AuthorizedKey) {
+			t.Errorf("the event carries the public key under %q; the fingerprint is enough", key)
+		}
+	}
+}

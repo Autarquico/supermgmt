@@ -30,6 +30,31 @@ const (
 // (ADR-0016). It is a function so tests need no key files.
 type SSHIdentity func(ctx context.Context) (secrets.Identity, error)
 
+// EnsureInstanceIdentity returns the instance SSH identity, generating it on
+// the first start and auditing that once (event ssh_identity.generated, by the
+// system actor, with the fingerprint only; ADR-0016). Call it after the
+// instance row exists, so the event can name the instance.
+func EnsureInstanceIdentity(ctx context.Context, cfg Config, store *secrets.Store) (secrets.Identity, error) {
+	c, err := newCore(cfg)
+	if err != nil {
+		return secrets.Identity{}, err
+	}
+	id, err := secrets.EnsureSSHIdentity(ctx, store)
+	if err != nil || !id.Generated {
+		return id, err
+	}
+	err = c.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		instance, err := database.GetInstance(ctx, tx)
+		if err != nil && smerr.CodeOf(err) != smerr.CodeNotFound {
+			return err
+		}
+		return c.emit(ctx, tx, systemActor, "ssh_identity.generated",
+			domain.ResourceRef{Type: domain.ResourceInstance, ID: instance.ID}, domain.ResultSucceeded,
+			map[string]any{"name": id.Ref.Name, "version": id.Ref.Version, "fingerprint": id.FingerprintSHA256})
+	})
+	return id, err
+}
+
 // SSHIdentityOf adapts the secret store.
 func SSHIdentityOf(store *secrets.Store) SSHIdentity {
 	return func(ctx context.Context) (secrets.Identity, error) { return secrets.EnsureSSHIdentity(ctx, store) }

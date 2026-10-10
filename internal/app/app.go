@@ -1,11 +1,17 @@
 // Package app holds the application services of the control plane: plan
 // creation and submission, approvals, and the claim-time Revalidator and
-// LockPlanner the job engine calls (spec §11.3, §11.4, §20.4, §20.5, §23).
+// LockPlanner the job engine calls (spec §11.3, §11.4, §20.4, §20.5, §23); the
+// node inventory with its direct actions; service actions, node.setup and
+// node.probe as job handlers; and the background Refresher and Sweeper.
 //
 // Every service method runs in one writer transaction, so its state change and
-// its audit events commit together (ADR-0013). Callers authenticate the
+// its audit events commit together (ADR-0013). Mutating methods take a Caller
+// that may carry an Idempotency-Key: the mutation, the response bytes and the
+// stored record then commit together (ADR-0014). Callers authenticate the
 // request and hand over a Caller; roles and actor type are always read from
-// the database, never from the caller.
+// the database, never from the caller. Reads answer from the database and the
+// connection pool state and never dial, except for logs and the first-trust
+// scan.
 package app
 
 import (
