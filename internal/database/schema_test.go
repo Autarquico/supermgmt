@@ -117,26 +117,33 @@ func values[T ~string](vs []T) []string {
 // enumColumns maps table.column to the domain values its CHECK must allow.
 func enumColumns() map[string][]string {
 	return map[string][]string{
-		"identities.actor_type":       values(domain.AllActorTypes()),
-		"environments.risk_level":     values(domain.AllEnvironmentRiskLevels()),
-		"providers.origin":            values(domain.AllProviderOrigins()),
-		"nodes.management_state":      values(domain.AllManagementStates()),
-		"nodes.reachability":          values(domain.AllReachabilities()),
-		"observations.resource_type":  values(domain.AllResourceTypes()),
-		"plans.credential_kind":       values(domain.AllCredentialKinds()),
-		"jobs.resource_type":          values(domain.AllResourceTypes()),
-		"jobs.credential_kind":        values(domain.AllCredentialKinds()),
-		"jobs.state":                  values(domain.AllJobStates()),
-		"jobs.risk":                   values(domain.AllRiskClasses()),
-		"jobs.retry_class":            values(domain.AllRetryClasses()),
-		"job_approvals.decision":      values(domain.AllApprovalDecisions()),
-		"operation_intents.state":     values(domain.AllIntentStates()),
-		"resource_locks.mode":         values(domain.AllLockModes()),
-		"events.actor_type":           values(domain.AllActorTypes()),
-		"events.resource_type":        append([]string{""}, values(domain.AllResourceTypes())...),
-		"events.severity":             values(domain.AllSeverities()),
-		"events.result":               values(domain.AllResults()),
-		"node_capabilities.available": {"0", "1"},
+		"identities.actor_type":           values(domain.AllActorTypes()),
+		"environments.risk_level":         values(domain.AllEnvironmentRiskLevels()),
+		"providers.origin":                values(domain.AllProviderOrigins()),
+		"nodes.management_state":          values(domain.AllManagementStates()),
+		"nodes.reachability":              values(domain.AllReachabilities()),
+		"observations.resource_type":      values(domain.AllResourceTypes()),
+		"plans.credential_kind":           values(domain.AllCredentialKinds()),
+		"jobs.resource_type":              values(domain.AllResourceTypes()),
+		"jobs.credential_kind":            values(domain.AllCredentialKinds()),
+		"jobs.state":                      values(domain.AllJobStates()),
+		"jobs.risk":                       values(domain.AllRiskClasses()),
+		"jobs.retry_class":                values(domain.AllRetryClasses()),
+		"job_approvals.decision":          values(domain.AllApprovalDecisions()),
+		"operation_intents.state":         values(domain.AllIntentStates()),
+		"resource_locks.mode":             values(domain.AllLockModes()),
+		"events.actor_type":               values(domain.AllActorTypes()),
+		"events.resource_type":            append([]string{""}, values(domain.AllResourceTypes())...),
+		"events.severity":                 values(domain.AllSeverities()),
+		"events.result":                   values(domain.AllResults()),
+		"node_capabilities.available":     {"0", "1"},
+		"node_addresses.family":           values(AllAddressFamilies()),
+		"node_addresses.scope":            values(AllAddressScopes()),
+		"node_addresses.source":           values(AllAddressSources()),
+		"node_addresses.preferred":        {"0", "1"},
+		"interactive_sessions.tool":       values(AllSessionTools()),
+		"interactive_sessions.state":      values(AllSessionStates()),
+		"interactive_sessions.end_reason": values(AllSessionEndings()),
 	}
 }
 
@@ -147,7 +154,7 @@ func TestEnumChecksMatchDomain(t *testing.T) {
 	db := migratedTest(t)
 	for key, want := range enumColumns() {
 		table, column, _ := strings.Cut(key, ".")
-		if table == "node_capabilities" {
+		if table == "node_capabilities" || column == "preferred" {
 			continue // integer flag, covered by TestEnumChecksRejectUnknownValues
 		}
 		ddl := scalar[string](t, db.Reader(), `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table)
@@ -187,6 +194,13 @@ func baselines() map[string]map[string]any {
 			"management_state": "managed", "reachability": "unknown", "created_at": 1, "updated_at": 1,
 		},
 		"node_capabilities": {"node_id": idA, "capability": "node.ssh", "available": 1, "checked_at": 1},
+		"node_addresses": {
+			"id": idA, "node_id": idA, "address": "10.0.0.1", "family": "ipv4", "scope": "private",
+			"source": "probe", "last_seen_at": 1,
+		},
+		"interactive_sessions": {
+			"id": idA, "identity_id": idA, "node_id": idA, "tool": "shell", "state": "issued", "created_at": 1,
+		},
 		"observations": {
 			"id": idA, "resource_type": "node", "resource_id": idA, "kind": "k",
 			"value_json": "{}", "observed_at": 1,
@@ -276,7 +290,7 @@ func TestEnumChecksRejectUnknownValues(t *testing.T) {
 }
 
 func enumValue(table, column, v string) any {
-	if table == "node_capabilities" && column == "available" {
+	if (table == "node_capabilities" && column == "available") || (table == "node_addresses" && column == "preferred") {
 		if v == "bogus" {
 			return 2
 		}

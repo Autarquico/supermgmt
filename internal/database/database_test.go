@@ -91,8 +91,12 @@ func TestMigrateCleanAndIdempotent(t *testing.T) {
 			t.Fatalf("Migrate: %v", err)
 		}
 	}
-	if n := scalar[int](t, db.Reader(), `SELECT count(*) FROM schema_migrations`); n != 1 {
-		t.Fatalf("schema_migrations rows = %d, want 1", n)
+	latest, err := LatestSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := scalar[int](t, db.Reader(), `SELECT count(*) FROM schema_migrations`); n != latest {
+		t.Fatalf("schema_migrations rows = %d, want one per migration (%d)", n, latest)
 	}
 	if got := scalar[string](t, db.Reader(), `PRAGMA integrity_check`); got != "ok" {
 		t.Fatalf("integrity_check = %q", got)

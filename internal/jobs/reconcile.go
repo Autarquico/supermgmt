@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,16 +65,33 @@ const (
 	ClassUnknown       Classification = "unknown"
 )
 
+// Proof names what established that an operation finished.
+const (
+	// ProofDoneFile is a node-side .done file recording exit status 0.
+	ProofDoneFile = "done_file"
+	// ProofSystemdNoJobs is a systemd manager with no queued job for the unit.
+	ProofSystemdNoJobs = "systemd_no_jobs"
+	// ProofMarkerAbsent is a marker that never appeared once the operation's
+	// deadline plus grace has passed.
+	ProofMarkerAbsent = "marker_absent"
+)
+
 // Evidence is what an adapter observed about one dispatched operation.
 //
 // Done and ExitStatus are the completion proof: only a completion signal with
-// exit status 0 proves the platform finished. Classification is a separate
-// judgement of the resulting state, valid only with proof. Nothing is ever
-// concluded from Done alone.
+// exit status 0 proves the platform finished; Proof names which signal it was.
+// Classification is a separate judgement of the resulting state, valid only
+// with proof. Fingerprint is the operation-specific observed state (for
+// example a systemd InvocationID); two samples form a pair only if it is
+// identical in both. Pre is the intent's pre-state, kept for the audit record.
+// Nothing is ever concluded from Done alone.
 type Evidence struct {
-	Done           bool           `json:"done"`
-	ExitStatus     int            `json:"exit_status"`
-	Classification Classification `json:"classification,omitempty"`
+	Done           bool            `json:"done"`
+	ExitStatus     int             `json:"exit_status"`
+	Proof          string          `json:"proof,omitempty"`
+	Classification Classification  `json:"classification,omitempty"`
+	Fingerprint    json.RawMessage `json:"fingerprint,omitempty"`
+	Pre            json.RawMessage `json:"pre,omitempty"`
 }
 
 // Proven reports whether the operation provably completed with exit status 0.
@@ -211,8 +229,9 @@ func storedEvidence(in Intent) Evidence {
 
 // sample is the first observation of an intent's outcome, awaiting its twin.
 type sample struct {
-	class Classification
-	at    time.Time
+	class       Classification
+	fingerprint string // canonical JSON
+	at          time.Time
 }
 
 // observe returns the evidence the reconciler may act on, per dispatched
@@ -251,21 +270,44 @@ type sampleKey struct {
 	generation int64
 }
 
-// confirm records ev as a sample and reports whether it completes a pair.
-// Anything that is not definite resets the pair.
+// confirm records ev as a sample and reports whether it completes a pair: the
+// same classification and the same canonical fingerprint as the first sample,
+// at least sampleGap later. A different fingerprint (say, a new InvocationID)
+// restarts the pair from this sample. Anything that is not definite, or whose
+// fingerprint is not valid JSON, resets it.
 func (s *Store) confirm(key sampleKey, ev Evidence, now time.Time) bool {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
-	if !ev.definite() {
+	fingerprint, err := canonicalJSON(ev.Fingerprint)
+	if !ev.definite() || err != nil {
 		delete(s.samples, key)
 		return false
 	}
 	first, seen := s.samples[key]
-	if !seen || first.class != ev.Classification {
-		s.samples[key] = sample{class: ev.Classification, at: now}
+	if !seen || first.class != ev.Classification || first.fingerprint != fingerprint {
+		s.samples[key] = sample{class: ev.Classification, fingerprint: fingerprint, at: now}
 		return false
 	}
 	return !now.Before(first.at.Add(s.sampleGap))
+}
+
+// canonicalJSON renders raw with sorted object keys and no insignificant
+// whitespace; absent input is the empty string.
+func canonicalJSON(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var v any
+	if err := decoder.Decode(&v); err != nil {
+		return "", fmt.Errorf("decode fingerprint: %w", err)
+	}
+	canonical, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("encode fingerprint: %w", err)
+	}
+	return string(canonical), nil
 }
 
 // forgetResolved drops the in-memory state of a job the reconciler settled.
@@ -410,6 +452,9 @@ func (s *Store) completeProven(ctx context.Context, q database.Querier, job Job,
 			continue
 		}
 		ev := observed[in.ID]
+		if len(ev.Pre) == 0 {
+			ev.Pre = in.PreState
+		}
 		raw, err := json.Marshal(ev)
 		if err != nil {
 			return fmt.Errorf("encode evidence: %w", err)
