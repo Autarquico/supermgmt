@@ -94,9 +94,6 @@ func TestBareSM(t *testing.T) {
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("code=%d stderr=%q", r.code, r.stderr)
 	}
-	if !strings.HasSuffix(r.stdout, "\n"+tuiNotice+"\n") {
-		t.Errorf("missing TUI notice:\n%s", r.stdout)
-	}
 	assertGolden(t, "bare.golden", r.stdout)
 }
 

@@ -12,8 +12,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/version"
 )
 
-const tuiNotice = "The TUI arrives in milestone M1; see ROADMAP.md."
-
 var logLevels = []string{"debug", "info", "warn", "error"}
 
 // Execute runs sm with args and returns the process exit code.
@@ -44,7 +42,7 @@ func newRootCmd(build version.Build, env []string) *cobra.Command {
 		SilenceErrors:     true,
 		Args:              noArgs,
 		PersistentPreRunE: validateLogLevel,
-		RunE:              runBare,
+		RunE:              runBareTUI(env),
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
@@ -57,15 +55,8 @@ func newRootCmd(build version.Build, env []string) *cobra.Command {
 
 	root.AddCommand(newVersionCmd(build), newCompletionCmd(), newConfigCmd(env), newDoctorCmd(env))
 	root.AddCommand(clientCommands(env)...)
+	root.AddCommand(newTUICmd(env))
 	return root
-}
-
-func runBare(cmd *cobra.Command, _ []string) error {
-	if err := cmd.Help(); err != nil {
-		return err
-	}
-	_, err := io.WriteString(cmd.OutOrStdout(), "\n"+tuiNotice+"\n")
-	return err
 }
 
 func validateLogLevel(cmd *cobra.Command, _ []string) error {
