@@ -47,6 +47,8 @@ Master spec §31 M2. Modo servidor con HTTPS y autenticación, cliente remoto, s
 - **When** se ejecuta el bootstrap contra una release firmada
 - **Then** se instala en modo server; un archivo o firma manipulados fallan con exit 5
 
+> **Nota (decisión Q11, 2026-10-10):** la puerta de CI es un contenedor Debian con systemd (imagen fijada por digest), no una VM. El criterio "VM Debian limpia" queda **enmendado/diferido**: se informa como no cumplido hasta que pase un job opcional `e2e-install-vm` (QEMU/KVM en el runner) o una ejecución manual en VM registrada en el PR.
+
 ### Scenario: backup y restore
 - **Given** un backup de un servidor
 - **When** se restaura en una VM nueva (con crash inyectado en cada paso del journal)

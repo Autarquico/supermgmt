@@ -105,6 +105,7 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_AUTH_OIDC_CLIENT_SECRET_REF` | `auth.oidc.client_secret_ref` | string |
 | `SUPERMGMT_AUTH_OIDC_REDIRECT_URL` | `auth.oidc.redirect_url` | string |
 | `SUPERMGMT_AUTH_OIDC_ALLOWED_DOMAINS` | `auth.oidc.allowed_domains` | list (comma-separated) |
+| `SUPERMGMT_AUTH_OIDC_ALLOWED_ENDPOINT_ORIGINS` | `auth.oidc.allowed_endpoint_origins` | list (comma-separated) |
 | `SUPERMGMT_SSH_CONNECT_TIMEOUT` | `ssh.connect_timeout` | duration |
 | `SUPERMGMT_SSH_COMMAND_TIMEOUT` | `ssh.command_timeout` | duration |
 | `SUPERMGMT_SSH_KEEPALIVE_INTERVAL` | `ssh.keepalive_interval` | duration |

@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.2-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.3-draft (changes in Appendix F)
 
 ---
 
@@ -712,6 +712,7 @@ auth:
     client_secret_ref: ""     # secret:// reference
     redirect_url: ""          # web callback; CLI uses loopback redirect (§23.1)
     allowed_domains: []
+    allowed_endpoint_origins: []   # extra https origins for token/device/JWKS endpoints (§23.1)
 
 ssh:
   connect_timeout: 8s
@@ -970,6 +971,8 @@ A crash before commit leaves the old state intact; a crash after commit leaves t
   4. Otherwise the key stays pending until a restore validates it against the **staged** database (§29.2).
 
   The daemon never loads `.pending` keys.
+
+  `export-key` puts a wrapped master key in the response, so it is served only on the local-mode Unix socket, never over HTTPS or the admin socket. In server mode it runs offline (`sm secrets export-key --offline`, service stopped, database lock held).
 
 Future key providers (OS keychain, age, Vault/KMS) implement a `KeyProvider` interface returning a KEK by id.
 
@@ -2165,6 +2168,8 @@ Remote interactive terminals are not exposed through a generic command endpoint 
   6. The server issues an opaque session token (TTL `security.session_ttl`), which the CLI stores in the OS credential store (Appendix B).
 
   The IdP must allow loopback redirect URIs with variable ports; where it does not, the device authorization grant (`/auth/oidc/device*`) is used instead. `docs/configuration.md` lists tested IdPs.
+
+  **Discovery trust.** The discovery document's `issuer` must equal `auth.oidc.issuer` exactly. Every endpoint it names (authorization, token, device authorization, JWKS) must be `https` and on the issuer's origin or on an origin listed in `auth.oidc.allowed_endpoint_origins`. Calls to the IdP follow no redirects and go through the outbound filter as provider endpoints (§21.1). The userinfo endpoint is not used.
 - Cookie auth is not used in V1, so CSRF is not applicable. If it is added, CSRF protection is mandatory (§30).
 
 ---
@@ -2273,6 +2278,7 @@ MCP client    -> HTTPS/OAuth/Access -> MCP endpoint
 Do not open public inbound ports solely for SuperMgmt when Tunnel is used. `cloudflared` lifecycle may be guided/configured by installer plugin, but vendor credentials must be least privilege.
 
 Cloudflare edge authentication does not replace application authorization. Validate identity assertions according to current Cloudflare documentation and configured trust boundary.
+V1 consumes no edge identity assertion: `Cf-Access-*` headers are ignored and every request is authenticated by SuperMgmt itself (OIDC session or API token), so validation applies only if a later version consumes such assertions.
 
 ---
 
@@ -3445,6 +3451,17 @@ App. C  Plan v3: sorted inputs, secret bindings (refs), sub-actions, credential 
 §12     Step 7 names the dedicated user, home, shell, key and docker_access; teardown manual.
 §20.4   node.setup steps are the only mutating commands exempt from marker-first.
 §31     M1 includes the minimal secret store for the SSH identity.
+```
+
+---
+
+## F.7 Changes from 1.4.2-draft to 1.4.3-draft
+
+```text
+§8.2    auth.oidc.allowed_endpoint_origins (default empty: issuer origin only).
+§10     export-key only on the local-mode socket; offline in server mode.
+§23.1   OIDC discovery trust: exact issuer, https endpoints on allowed origins, no redirects.
+§25     V1 consumes no Cloudflare edge assertion; app authentication is always SuperMgmt's.
 ```
 
 ---

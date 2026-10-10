@@ -121,6 +121,9 @@ type OIDC struct {
 	ClientSecretRef string   `yaml:"client_secret_ref"`
 	RedirectURL     string   `yaml:"redirect_url"`
 	AllowedDomains  []string `yaml:"allowed_domains"`
+	// AllowedEndpointOrigins lists extra https origins the discovery document
+	// may point to (token, device, JWKS endpoints). Empty: issuer origin only.
+	AllowedEndpointOrigins []string `yaml:"allowed_endpoint_origins"`
 }
 
 type SSH struct {

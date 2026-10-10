@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"path"
 	"reflect"
 	"regexp"
@@ -183,9 +184,39 @@ func (v *validator) jobs() {
 }
 
 func (v *validator) oidc() {
-	if ref := v.cfg.Auth.OIDC.ClientSecretRef; ref != "" {
-		v.secretRefOnly("auth.oidc.client_secret_ref", ref)
+	o := v.cfg.Auth.OIDC
+	if o.ClientSecretRef != "" {
+		v.secretRefOnly("auth.oidc.client_secret_ref", o.ClientSecretRef)
 	}
+	for i, origin := range o.AllowedEndpointOrigins {
+		if !httpsOrigin(origin) {
+			v.add(fmt.Sprintf("auth.oidc.allowed_endpoint_origins[%d]", i), "must be an https origin (scheme and host, no path), got %q", origin)
+		}
+	}
+	if !o.Enabled {
+		return
+	}
+	if o.Issuer == "" || !httpsURL(o.Issuer) {
+		v.add("auth.oidc.issuer", "must be an https URL when auth.oidc.enabled is true, got %q", o.Issuer)
+	}
+	if o.ClientID == "" {
+		v.add("auth.oidc.client_id", "required when auth.oidc.enabled is true")
+	}
+	if o.ClientSecretRef == "" {
+		v.add("auth.oidc.client_secret_ref", "required when auth.oidc.enabled is true")
+	}
+}
+
+// httpsURL accepts an absolute https URL with a host and no userinfo.
+func httpsURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil
+}
+
+// httpsOrigin accepts exactly scheme://host[:port], as browsers define an origin.
+func httpsOrigin(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && httpsURL(raw) && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && !strings.HasSuffix(raw, "/")
 }
 
 func (v *validator) mcp() {
