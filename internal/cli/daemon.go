@@ -4,9 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -56,16 +54,7 @@ func loadDaemonConfig(path string, env []string) (*config.Config, error) {
 		result, err := config.Load(path, env)
 		return result.Config, err
 	}
-	dir, err := os.MkdirTemp("", "sm-config")
-	if err != nil {
-		return nil, fmt.Errorf("prepare default configuration: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	file := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(file, []byte(minimalLocalConfig), 0o600); err != nil {
-		return nil, fmt.Errorf("prepare default configuration: %w", err)
-	}
-	result, err := config.Load(file, env)
+	result, err := config.LoadBytes([]byte(minimalLocalConfig), env)
 	return result.Config, err
 }
 

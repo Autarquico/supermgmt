@@ -77,9 +77,11 @@ func Run(ctx context.Context, o Options) error {
 	if err := CheckSocketPath(o.Socket); err != nil {
 		return err
 	}
-	if err := PrepareSocketDir(o.Socket, int(o.UID)); err != nil {
+	dir, err := PrepareSocketDir(o.Socket, int(o.UID))
+	if err != nil {
 		return err
 	}
+	defer func() { _ = dir.Close() }()
 	locks, err := AcquireLocks(o.Config.Storage.SQLite.Path, o.Socket)
 	if err != nil {
 		return err
@@ -92,8 +94,15 @@ func Run(ctx context.Context, o Options) error {
 	}
 	defer func() { _ = sys.close() }()
 
+	if err := dir.Recheck(); err != nil {
+		return err
+	}
 	listener, err := Bind(ctx, o.Socket)
 	if err != nil {
+		return err
+	}
+	if err := dir.Recheck(); err != nil {
+		_ = listener.Close()
 		return err
 	}
 	return serve(ctx, o, sys, listener)
@@ -131,6 +140,7 @@ func serve(ctx context.Context, o Options, sys *system, listener net.Listener) e
 		served <- serveErr // the shutdown below reads it again
 	}
 	shutdownErr := shutdown(ctx, o, sys, stop)
+	_ = listener.Close() // Serve closes it too; this covers a Serve that never ran
 	work.Wait()
 	sys.work.refresher.Wait()
 	if err := <-served; err != nil && serveErr == nil {

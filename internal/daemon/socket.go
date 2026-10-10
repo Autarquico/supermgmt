@@ -53,19 +53,71 @@ func (e *UnsafeSocketDirError) Error() string {
 	return fmt.Sprintf("refusing to use socket directory %s: %s", e.Dir, e.Reason)
 }
 
+// SocketDir is a verified socket directory, pinned by an open descriptor so
+// that it can be shown to be the same directory later (Recheck).
+type SocketDir struct {
+	path string
+	uid  int
+	pin  *os.File
+}
+
 // PrepareSocketDir creates the directory of socket with mode 0700 when it is
 // missing and then verifies with lstat that it is a real directory (not a
-// symlink) owned by uid with mode exactly 0700 (spec §2.1.1). Anything else is
-// refused, never repaired: a directory someone else could write to is not a
-// place for a credential-less socket.
-func PrepareSocketDir(socket string, uid int) error {
+// symlink) owned by uid with mode exactly 0700, and that no ancestor lets
+// another user replace it: every directory on its real path must be owned by
+// root or uid, and must not be writable by group or others unless it has the
+// sticky bit (spec §2.1.1). Anything else is refused, never repaired.
+func PrepareSocketDir(socket string, uid int) (*SocketDir, error) {
 	dir := filepath.Dir(socket)
 	if err := os.MkdirAll(filepath.Dir(dir), socketDirMode); err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Dir(dir), err)
+		return nil, fmt.Errorf("create %s: %w", filepath.Dir(dir), err)
 	}
 	if err := os.Mkdir(dir, socketDirMode); err != nil && !errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("create socket directory: %w", err)
+		return nil, fmt.Errorf("create socket directory: %w", err)
 	}
+	if err := verifyDir(dir, uid); err != nil {
+		return nil, err
+	}
+	if err := verifyAncestors(dir, uid); err != nil {
+		return nil, err
+	}
+	pin, err := os.Open(dir) //nolint:gosec // the verified socket directory
+	if err != nil {
+		return nil, fmt.Errorf("pin socket directory: %w", err)
+	}
+	d := &SocketDir{path: dir, uid: uid, pin: pin}
+	if err := d.Recheck(); err != nil {
+		_ = pin.Close()
+		return nil, err
+	}
+	return d, nil
+}
+
+// Recheck proves the path still names the directory that was verified: the
+// same inode as the pinned descriptor, with the same owner and mode. Call it
+// right before binding and again after.
+func (d *SocketDir) Recheck() error {
+	if err := verifyDir(d.path, d.uid); err != nil {
+		return err
+	}
+	now, err := os.Lstat(d.path)
+	if err != nil {
+		return fmt.Errorf("inspect socket directory: %w", err)
+	}
+	pinned, err := d.pin.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect pinned socket directory: %w", err)
+	}
+	if !os.SameFile(now, pinned) {
+		return &UnsafeSocketDirError{Dir: d.path, Reason: "it was replaced while the daemon was starting"}
+	}
+	return nil
+}
+
+// Close releases the pin.
+func (d *SocketDir) Close() error { return d.pin.Close() }
+
+func verifyDir(dir string, uid int) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return fmt.Errorf("inspect socket directory: %w", err)
@@ -78,6 +130,37 @@ func PrepareSocketDir(socket string, uid int) error {
 		return &UnsafeSocketDirError{Dir: dir, Reason: fmt.Sprintf("it is not owned by uid %d", uid)}
 	case info.Mode().Perm() != socketDirMode:
 		return &UnsafeSocketDirError{Dir: dir, Reason: fmt.Sprintf("its mode is %04o, want 0700", info.Mode().Perm())}
+	}
+	return nil
+}
+
+// verifyAncestors walks the real path of dir up to the root.
+func verifyAncestors(dir string, uid int) error {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolve socket directory: %w", err)
+	}
+	for ancestor := filepath.Dir(real); ; ancestor = filepath.Dir(ancestor) {
+		if err := verifyAncestor(ancestor, uid); err != nil {
+			return err
+		}
+		if ancestor == filepath.Dir(ancestor) {
+			return nil
+		}
+	}
+}
+
+func verifyAncestor(path string, uid int) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", path, err)
+	}
+	owner, ok := ownerOf(info)
+	switch {
+	case !ok || (owner != 0 && owner != uid):
+		return &UnsafeSocketDirError{Dir: path, Reason: fmt.Sprintf("a parent of the socket directory is owned by uid %d, who could replace it", owner)}
+	case info.Mode().Perm()&0o022 != 0 && info.Mode()&fs.ModeSticky == 0:
+		return &UnsafeSocketDirError{Dir: path, Reason: fmt.Sprintf("a parent of the socket directory is writable by other users (mode %04o) without the sticky bit", info.Mode().Perm())}
 	}
 	return nil
 }

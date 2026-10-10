@@ -44,7 +44,7 @@ func newDoctorCmd(env []string) *cobra.Command {
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !offline {
-				return usageErrorf("online doctor arrives with the daemon in milestone M1; use --offline")
+				return usageErrorf("online doctor is not available yet; use --offline")
 			}
 			configFlag, _ := cmd.Flags().GetString("config")
 			asJSON, _ := cmd.Flags().GetBool("json")

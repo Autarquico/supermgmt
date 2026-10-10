@@ -21,7 +21,7 @@ import (
 
 // envNoAutostart set to a non-empty value other than "0" stops every API
 // command from spawning a daemon: scripts and CI that must never start one.
-const envNoAutostart = "SM_NO_AUTOSTART"
+const envNoAutostart = "SUPERMGMT_NO_AUTOSTART"
 
 // clientCommands are the commands that talk to the daemon (spec §4). The root
 // command registers them with root.AddCommand(clientCommands(env)...).

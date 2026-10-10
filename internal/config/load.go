@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,10 +38,19 @@ func Load(path string, env []string) (Result, error) {
 		return Result{}, smerr.Wrap(err, code, "", "cannot open configuration file")
 	}
 	defer func() { _ = f.Close() }()
+	return loadFrom(f, path, env)
+}
 
+// LoadBytes is Load for a document that is not a file, e.g. the built-in
+// minimal local configuration the daemon uses before anyone wrote one.
+func LoadBytes(data []byte, env []string) (Result, error) {
+	return loadFrom(bytes.NewReader(data), "<built-in configuration>", env)
+}
+
+func loadFrom(r io.Reader, name string, env []string) (Result, error) {
 	cfg := Defaults()
-	if err := DecodeStrict(f, &cfg); err != nil {
-		return Result{}, fmt.Errorf("%s: %w", path, err)
+	if err := DecodeStrict(r, &cfg); err != nil {
+		return Result{}, fmt.Errorf("%s: %w", name, err)
 	}
 	unknown, err := applyEnv(&cfg, env)
 	if err != nil {
@@ -47,7 +58,7 @@ func Load(path string, env []string) (Result, error) {
 	}
 	cfg.applyModeDefaults(localPaths(env))
 	if err := cfg.Validate(); err != nil {
-		return Result{}, fmt.Errorf("%s: %w", path, err)
+		return Result{}, fmt.Errorf("%s: %w", name, err)
 	}
 	return Result{Config: &cfg, Warnings: unknownWarnings(unknown)}, nil
 }

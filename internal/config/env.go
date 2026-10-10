@@ -14,14 +14,15 @@ const envPrefix = "SUPERMGMT_"
 
 var durationType = reflect.TypeFor[time.Duration]()
 
-// InstallerEnvVars are the installer's own variables (spec §3.6). They are
-// not configuration overrides and never produce an unknown-variable warning.
+// InstallerEnvVars are the installer's own variables (spec §3.6) and the
+// client switches (SUPERMGMT_NO_AUTOSTART). They are not configuration
+// overrides and never produce an unknown-variable warning.
 var InstallerEnvVars = []string{
 	"SUPERMGMT_VERSION", "SUPERMGMT_CHANNEL", "SUPERMGMT_MODE", "SUPERMGMT_INSTALL_DIR",
 	"SUPERMGMT_DATA_DIR", "SUPERMGMT_CONFIG_DIR", "SUPERMGMT_NONINTERACTIVE", "SUPERMGMT_YES",
 	"SUPERMGMT_VMID", "SUPERMGMT_HOSTNAME", "SUPERMGMT_STORAGE", "SUPERMGMT_TEMPLATE_STORAGE",
 	"SUPERMGMT_BRIDGE", "SUPERMGMT_NETWORK", "SUPERMGMT_IP", "SUPERMGMT_GATEWAY", "SUPERMGMT_DNS",
-	"SUPERMGMT_CORES", "SUPERMGMT_MEMORY", "SUPERMGMT_SWAP", "SUPERMGMT_DISK_GIB", "SUPERMGMT_LOG_LEVEL",
+	"SUPERMGMT_NO_AUTOSTART", "SUPERMGMT_CORES", "SUPERMGMT_MEMORY", "SUPERMGMT_SWAP", "SUPERMGMT_DISK_GIB", "SUPERMGMT_LOG_LEVEL",
 }
 
 // EnvVar describes one configuration override variable.

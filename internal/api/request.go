@@ -163,13 +163,13 @@ func mutation[R any](s *Server, call func(ctx context.Context, by app.Caller, in
 				return first.status, first.body
 			},
 		}
-		result, err := call(r.Context(), by, in)
-		if err != nil {
+		if _, err := call(r.Context(), by, in); err != nil {
 			return err
 		}
-		if first == nil { // a call that stored nothing still owes the caller its answer
-			status, data := render(result)
-			first = &answer{status: status, body: envelope(data, correlation)}
+		if first == nil {
+			// The mutation ran but no idempotency record was stored with it, so a
+			// retry would run it again. Never answer success for that.
+			return fmt.Errorf("%s %s: the call succeeded without storing its idempotent response", r.Method, r.URL.Path)
 		}
 		writeBytes(w, first.status, first.body)
 		return nil

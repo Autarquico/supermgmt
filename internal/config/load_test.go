@@ -194,3 +194,23 @@ func TestLoadErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadBytesAppliesTheSameDefaultsAsLoad(t *testing.T) {
+	res, err := LoadBytes([]byte("version: 1\ninstance:\n  mode: local\n"), []string{"HOME=/home/u"})
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if res.Config.Storage.SQLite.Path == "" || res.Config.Security.AllowSelfApproval == nil {
+		t.Errorf("mode defaults were not applied: %+v", res.Config.Storage)
+	}
+	if _, err := LoadBytes([]byte("version: 1\nbogus: true\n"), nil); err == nil {
+		t.Error("an unknown key was accepted")
+	}
+}
+
+func TestTheNoAutostartSwitchIsNotAnUnknownVariable(t *testing.T) {
+	res, err := LoadBytes([]byte("version: 1\ninstance:\n  mode: local\n"), []string{"HOME=/home/u", "SUPERMGMT_NO_AUTOSTART=1"})
+	if err != nil || len(res.Warnings) != 0 {
+		t.Errorf("warnings %v, err %v", res.Warnings, err)
+	}
+}

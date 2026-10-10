@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/app"
 	"github.com/autarquico/supermgmt/internal/policy"
 )
 
@@ -305,4 +307,39 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition not reached")
+}
+
+func TestServeAfterShutdownReturnsAndClosesTheListener(t *testing.T) {
+	h := newHarness(t)
+	must(t, h.server.Shutdown(context.Background()))
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", h.socket+"2")
+	must(t, err)
+	done := make(chan error, 1)
+	go func() { done <- h.server.Serve(l) }()
+	select {
+	case err := <-done:
+		must(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after Shutdown")
+	}
+	if c, err := (&net.Dialer{}).DialContext(context.Background(), "unix", h.socket+"2"); err == nil {
+		_ = c.Close()
+		t.Error("the listener is still accepting")
+	}
+}
+
+func TestASuccessfulCallThatStoredNoRecordIsNeverAnsweredAsSuccess(t *testing.T) {
+	h := newHarness(t)
+	forgetful := mutation(h.server,
+		func(context.Context, app.Caller, input) (app.Submission, error) { return app.Submission{}, nil },
+		submitted)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, wire.PathPlans, strings.NewReader("{}"))
+	req.Header.Set(wire.HeaderIdempotencyKey, "k")
+	rec := httptest.NewRecorder()
+	if err := forgetful(rec, req); err == nil {
+		t.Fatal("the request was answered although nothing was stored for its key")
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("a body was written: %s", rec.Body.String())
+	}
 }

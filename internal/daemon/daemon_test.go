@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"testing"
@@ -66,10 +67,13 @@ func (i *instance) start(opts ...func(*Options)) *running {
 		cancel()
 		r.done <- err
 		return r
-	case <-time.After(20 * time.Second):
-		i.t.Fatal("the daemon did not start")
+	case <-time.After(waitLimit):
+		failWithGoroutines(i.t, "the daemon did not start")
 	}
-	i.t.Cleanup(func() { cancel(); <-r.done })
+	i.t.Cleanup(func() {
+		cancel()
+		_ = r.wait(i.t)
+	})
 	return r
 }
 
@@ -79,10 +83,21 @@ func (r *running) wait(t *testing.T) error {
 	case err := <-r.done:
 		r.done <- err
 		return err
-	case <-time.After(20 * time.Second):
-		t.Fatal("the daemon did not exit")
+	case <-time.After(waitLimit):
+		failWithGoroutines(t, "the daemon did not exit")
 		return nil
 	}
+}
+
+// waitLimit bounds every wait on a daemon; past it the test fails with the
+// stacks of all goroutines, which is what a hang needs to be diagnosed.
+const waitLimit = 30 * time.Second
+
+func failWithGoroutines(t *testing.T, what string) {
+	t.Helper()
+	var dump strings.Builder
+	_ = pprof.Lookup("goroutine").WriteTo(&dump, 1)
+	t.Fatalf("%s within %s\n%s", what, waitLimit, dump.String())
 }
 
 func (i *instance) client() *client.Client { return client.New(client.Options{Socket: i.socket}) }
@@ -247,7 +262,7 @@ func TestUnsafeSocketDirectoriesAreRefused(t *testing.T) {
 
 func TestADirectoryOwnedBySomeoneElseIsRefused(t *testing.T) {
 	dir := t.TempDir()
-	err := PrepareSocketDir(filepath.Join(dir, "x", "s"), os.Getuid()+1)
+	_, err := PrepareSocketDir(filepath.Join(dir, "x", "s"), os.Getuid()+1)
 	var unsafe *UnsafeSocketDirError
 	if !errors.As(err, &unsafe) {
 		t.Fatalf("err = %v, want an unsafe socket directory", err)
@@ -307,5 +322,88 @@ func TestAPresentClientKeepsTheDaemonAlive(t *testing.T) {
 	<-held
 	if err := r.wait(t); err != nil {
 		t.Errorf("exit after the client left: %v", err)
+	}
+}
+
+func TestStartingAndImmediatelyStoppingNeverHangs(t *testing.T) {
+	i := newInstance(t, "")
+	for n := range 50 {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			done <- Run(ctx, Options{Config: i.cfg, Socket: i.socket, OnListening: func(string) { cancel() }})
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("round %d: %v", n, err)
+			}
+		case <-time.After(waitLimit):
+			failWithGoroutines(t, "a daemon stopped right after it started did not exit")
+		}
+		cancel()
+	}
+}
+
+func shortTemp(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "smd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func TestASocketDirectoryUnderAWorldWritableParentIsRefusedUnlessSticky(t *testing.T) {
+	root := shortTemp(t)
+	if err := os.Chmod(root, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	var unsafe *UnsafeSocketDirError
+	if _, err := PrepareSocketDir(filepath.Join(root, "run", "s"), os.Getuid()); !errors.As(err, &unsafe) {
+		t.Fatalf("err = %v, want an unsafe parent", err)
+	}
+	if err := os.Chmod(root, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := PrepareSocketDir(filepath.Join(root, "run", "s"), os.Getuid())
+	if err != nil {
+		t.Fatalf("a sticky parent (like /tmp) must be accepted: %v", err)
+	}
+	_ = dir.Close()
+}
+
+func TestAGroupWritableParentIsRefused(t *testing.T) {
+	root := shortTemp(t)
+	if err := os.Chmod(root, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	var unsafe *UnsafeSocketDirError
+	if _, err := PrepareSocketDir(filepath.Join(root, "run", "s"), os.Getuid()); !errors.As(err, &unsafe) {
+		t.Fatalf("err = %v, want an unsafe parent", err)
+	}
+}
+
+func TestASocketDirectoryReplacedAfterTheCheckIsDetected(t *testing.T) {
+	root := shortTemp(t)
+	socket := filepath.Join(root, "run", "s")
+	dir, err := PrepareSocketDir(socket, os.Getuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Recheck(); err != nil {
+		t.Fatalf("unchanged directory: %v", err)
+	}
+	if err := os.Rename(filepath.Dir(socket), filepath.Join(root, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var unsafe *UnsafeSocketDirError
+	if err := dir.Recheck(); !errors.As(err, &unsafe) {
+		t.Fatalf("err = %v, want the replacement detected", err)
 	}
 }

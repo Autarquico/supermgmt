@@ -101,7 +101,7 @@ func TestClientRefusesAnotherUsersListenerPeerCred(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(context.Background(), "sudo", "-n", "-u", user, "env", "HOME="+filepath.Dir(socket), "SM_NO_AUTOSTART=1", bin, "--config", cfg, "status")
+	cmd := exec.CommandContext(context.Background(), "sudo", "-n", "-u", user, "env", "HOME="+filepath.Dir(socket), "SUPERMGMT_NO_AUTOSTART=1", bin, "--config", cfg, "status")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("sm talked to a listener owned by another user: %s", out)

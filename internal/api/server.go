@@ -103,7 +103,6 @@ type Server struct {
 
 	closing   chan struct{}
 	closeOnce sync.Once
-	mu        sync.Mutex
 	http      *http.Server
 }
 
@@ -131,6 +130,16 @@ func New(o Options) (*Server, error) {
 	}
 	s.routes = s.buildRoutes()
 	s.handler = s.buildMux()
+	// One http.Server for the Server's whole life: a Shutdown that arrives
+	// before Serve has started still makes that Serve return and close its
+	// listener, instead of leaving it accepting forever.
+	s.http = &http.Server{
+		Handler:           s.handler,
+		ConnContext:       connContext,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleConnTimeout,
+		ErrorLog:          slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
+	}
 	return s, nil
 }
 
@@ -139,19 +148,10 @@ func New(o Options) (*Server, error) {
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve answers requests on l, which must be restricted to the daemon's UID
-// with RestrictToUID, until Shutdown or Close.
+// with RestrictToUID, until Shutdown. It closes l when it returns, also when
+// Shutdown came first.
 func (s *Server) Serve(l net.Listener) error {
-	srv := &http.Server{
-		Handler:           s.handler,
-		ConnContext:       connContext,
-		ReadHeaderTimeout: readHeaderTimeout,
-		IdleTimeout:       idleConnTimeout,
-		ErrorLog:          slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
-	}
-	s.mu.Lock()
-	s.http = srv
-	s.mu.Unlock()
-	if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
+	if err := s.http.Serve(l); !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve api: %w", err)
 	}
 	return nil
@@ -161,13 +161,7 @@ func (s *Server) Serve(l net.Listener) error {
 // requests in flight until ctx ends.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.closeOnce.Do(func() { close(s.closing) })
-	s.mu.Lock()
-	srv := s.http
-	s.mu.Unlock()
-	if srv == nil {
-		return nil
-	}
-	return srv.Shutdown(ctx)
+	return s.http.Shutdown(ctx)
 }
 
 func (s *Server) buildMux() http.Handler {
