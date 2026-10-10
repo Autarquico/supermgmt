@@ -1,0 +1,31 @@
+codename: supermgmt
+display_name: SuperMgmt
+github:
+  repo: Autarquico/supermgmt
+  project:
+    owner: Autarquico
+    owner_type: org
+    number: 4
+  field_ids:
+    status: PVTSSF_lADODyLb1M4BmdhSzhlGepU
+    priority: PVTSSF_lADODyLb1M4BmdhSzhlGeqE
+    size: PVTSSF_lADODyLb1M4BmdhSzhlGeqI
+    ticket_type: PVTSSF_lADODyLb1M4BmdhSzhlGeqY
+paths:
+  specs: docs/specs/
+  specs_archive: docs/specs/archive/
+  tracking:
+    status: docs/STATUS.md
+agent:
+  language: es
+  conventions: AGENT.md
+mcp:
+  server: github
+sync:
+  archive_on_ship: false
+  default_since_days: 7
+policy:
+  review:
+    require_human_approval: false
+  merge:
+    auto_merge: conditional

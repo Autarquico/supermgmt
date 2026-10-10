@@ -1,0 +1,180 @@
+# pm-policy/ready — required status check
+#
+# Lee los labels del PR y publica el check `pm-policy/ready` (success|failure)
+# según la policy efectiva del repo. Branch protection puede exigirlo para
+# evitar que la auto-merge nativa de GitHub se salte el sistema pm.
+#
+# Mantén este workflow alineado con la lógica de
+# `pm_lib/policy.py::evaluate_eligibility` en el repo Autarquico/skills.
+#
+# Para regenerar este archivo desde el template, ejecuta:
+#   /pm policy install-check --force
+name: pm-policy
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  checks: write
+
+jobs:
+  ready:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo config
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .pm/config.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Evaluate pm policy
+        id: eval
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // --- minimal YAML reader for .pm/config.yaml policy block ---
+            function readPolicy() {
+              const p = '.pm/config.yaml';
+              if (!fs.existsSync(p)) return {};
+              const text = fs.readFileSync(p, 'utf8');
+              // naive: extract `policy:` block by line indentation
+              const lines = text.split('\n');
+              let inPolicy = false, baseIndent = -1, policy = {};
+              let currentSub = null, subIndent = -1, subMap = {};
+              const flushSub = () => { if (currentSub) policy[currentSub] = subMap; currentSub = null; subMap = {}; };
+              for (const raw of lines) {
+                if (!raw.trim() || raw.trim().startsWith('#')) continue;
+                const indent = raw.length - raw.trimStart().length;
+                const line = raw.trimStart();
+                if (!inPolicy) {
+                  if (line.startsWith('policy:')) { inPolicy = true; baseIndent = indent; }
+                  continue;
+                }
+                if (indent <= baseIndent) { flushSub(); inPolicy = false; continue; }
+                if (line.endsWith(':') && currentSub && indent <= subIndent) flushSub();
+                if (line.endsWith(':')) {
+                  flushSub();
+                  currentSub = line.slice(0, -1).trim();
+                  subIndent = indent;
+                  subMap = {};
+                  continue;
+                }
+                if (currentSub && line.includes(':')) {
+                  const [k, ...rest] = line.split(':');
+                  let v = rest.join(':').trim();
+                  if (v === 'true') v = true;
+                  else if (v === 'false') v = false;
+                  else if (/^-?\d+$/.test(v)) v = parseInt(v, 10);
+                  else if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+                  else if (v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
+                  subMap[k.trim()] = v;
+                }
+              }
+              flushSub();
+              return policy;
+            }
+
+            // --- defaults: keep in sync with policy_defaults.py ---
+            const DEFAULTS = {
+              review: {
+                require_internal: true,
+                require_external: true,
+                require_human_approval: false,
+                light_path_ok_for_auto_merge: false,
+              },
+              merge: { auto_merge: 'conditional', strategy: 'squash' },
+            };
+            const userPolicy = readPolicy();
+            const review = Object.assign({}, DEFAULTS.review, userPolicy.review || {});
+
+            // --- labels of this PR ---
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const has = (n) => labels.includes(n);
+
+            const L = {
+              managed: 'pm/policy-managed',
+              clean: 'pm/internal-clean',
+              esc:   'pm/internal-escalated',
+              skip:  'pm/internal-skipped',
+              ext_ok:  'pm/external-mergeable',
+              ext_nc:  'pm/external-needs-changes',
+              elig:  'pm/automerge-eligible',
+              inconsistent: 'pm/blocked-inconsistent',
+            };
+
+            // --- evaluate ---
+            const blockers = [];
+            if (!has(L.managed)) {
+              blockers.push('PR sin label pm/policy-managed');
+            }
+            const intern = [L.clean, L.esc, L.skip].filter(has);
+            const extern = [L.ext_ok, L.ext_nc].filter(has);
+            if (intern.length > 1) blockers.push('labels internal contradictorios: ' + intern.join(', '));
+            if (extern.length > 1) blockers.push('labels external contradictorios: ' + extern.join(', '));
+
+            if (review.require_internal) {
+              if (intern.length === 0) blockers.push('falta label internal-* (require_internal)');
+              else if (has(L.esc)) blockers.push('internal review escaló');
+              else if (has(L.skip) && !review.light_path_ok_for_auto_merge)
+                blockers.push('internal=skipped pero light_path_ok_for_auto_merge=false');
+            }
+            if (review.require_external) {
+              if (extern.length === 0) blockers.push('falta label external-* (require_external)');
+              else if (has(L.ext_nc)) blockers.push('external review pidió cambios');
+            }
+            if (review.require_human_approval) {
+              // gh approvals: fetch reviews
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner: context.repo.owner, repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+              });
+              const approved = reviews.some(r => r.state === 'APPROVED');
+              if (!approved) blockers.push('falta aprobación humana (require_human_approval)');
+            }
+
+            const eligible = blockers.length === 0;
+            const inconsistent = intern.length > 1 || extern.length > 1;
+
+            core.setOutput('eligible', String(eligible));
+            core.setOutput('inconsistent', String(inconsistent));
+            core.setOutput('blockers', blockers.join(' | ') || 'none');
+
+            // --- sync labels (eligible, inconsistent) ---
+            const prNum = context.payload.pull_request.number;
+            async function ensureLabel(name, want) {
+              const present = labels.includes(name);
+              if (want && !present) {
+                await github.rest.issues.addLabels({ owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: prNum, labels: [name] });
+              } else if (!want && present) {
+                try { await github.rest.issues.removeLabel({ owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: prNum, name }); } catch (_) {}
+              }
+            }
+            await ensureLabel(L.elig, eligible);
+            await ensureLabel(L.inconsistent, inconsistent);
+
+            return { eligible, inconsistent, blockers };
+
+      - name: Publish status check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eligible = '${{ steps.eval.outputs.eligible }}' === 'true';
+            const blockers = '${{ steps.eval.outputs.blockers }}';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: eligible ? 'success' : 'failure',
+              context: 'pm-policy/ready',
+              description: eligible ? 'all required labels present' : blockers.slice(0, 130),
+            });
