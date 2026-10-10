@@ -254,9 +254,8 @@ func (v *validator) sshProvider(p SSHProvider, at func(string) string) {
 	if p.Endpoint.Host == "" {
 		v.add(at("endpoint.host"), "required")
 	}
-	if p.Endpoint.User == "" {
-		v.add(at("endpoint.user"), "required")
-	}
+	v.sshUser(at("endpoint.user"), p.Endpoint.User)
+	v.sshUser(at("endpoint.admin_user"), p.Endpoint.AdminUser)
 	if p.Endpoint.Port < 1 || p.Endpoint.Port > 65535 {
 		v.add(at("endpoint.port"), "must be between 1 and 65535, got %d", p.Endpoint.Port)
 	}
@@ -264,6 +263,24 @@ func (v *validator) sshProvider(p SSHProvider, at func(string) string) {
 		v.add(at("credential_ref"), "required")
 	} else if err := validateCredentialRef(p.CredentialRef, v.cfg.Instance.Mode); err != "" {
 		v.add(at("credential_ref"), "%s", err)
+	}
+	if p.AdminCredentialRef != "" {
+		if err := validateCredentialRef(p.AdminCredentialRef, v.cfg.Instance.Mode); err != "" {
+			v.add(at("admin_credential_ref"), "%s", err)
+		}
+	}
+}
+
+// sshUserPattern is the login-name allowlist the command templates and the
+// sudoers grammar rely on (ADR-0015).
+var sshUserPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+func (v *validator) sshUser(yamlPath, user string) {
+	switch {
+	case user == "":
+		v.add(yamlPath, "required")
+	case !sshUserPattern.MatchString(user):
+		v.add(yamlPath, "must match %s, got %q", sshUserPattern, user)
 	}
 }
 

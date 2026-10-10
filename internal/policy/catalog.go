@@ -23,17 +23,20 @@ const (
 	ModeSubAction  Mode = "sub-action"
 )
 
-// ParamType is the type of an action parameter. M0 only needs strings.
+// ParamType is the type of an action parameter.
 type ParamType string
 
-const ParamString ParamType = "string"
+const (
+	ParamString     ParamType = "string"
+	ParamStringList ParamType = "string_list"
+)
 
 // ParamSpec is one entry of an action's closed parameter schema.
 type ParamSpec struct {
 	Name     string
 	Type     ParamType
 	Required bool
-	// Values closes the set of accepted values; empty means any string.
+	// Values closes the set of accepted string values; empty means any string.
 	Values []string
 	// RiskByValue raises the action's risk for specific values.
 	RiskByValue map[string]domain.RiskClass
@@ -63,6 +66,18 @@ const (
 	ActionApprovalReject        = "approval.reject"
 	ActionJobCancel             = "job.cancel"
 	ActionJobResolve            = "job.resolve"
+	ActionNodeSetup             = "node.setup"
+	ActionSudoersWrite          = "sudoers.write"
+	ActionLogBrokerInstall      = "log_broker.install"
+)
+
+// node.setup parameters (ADR-0009). docker_access has no default: the caller
+// must ask, because docker group membership is root-equivalent (spec §17).
+// Each grants entry is "<verb> <unit>", the tail of its sudoers line.
+const (
+	ParamDockerAccess = "docker_access"
+	ParamLogsMode     = "logs_mode"
+	ParamGrants       = "grants"
 )
 
 var catalogIndex = sync.OnceValue(func() map[string]ActionSpec {
@@ -132,15 +147,40 @@ func (s ActionSpec) validateParams(params map[string]any) error {
 			}
 			continue
 		}
-		value, isString := raw.(string)
-		if !isString {
-			return s.paramError(p.Name, "parameter must be a string")
-		}
-		if len(p.Values) > 0 && !slices.Contains(p.Values, value) {
-			return s.paramError(p.Name, "invalid parameter value")
+		if problem := p.check(raw); problem != "" {
+			return s.paramError(p.Name, problem)
 		}
 	}
 	return nil
+}
+
+// check returns what is wrong with raw as a value of p, or "".
+func (p ParamSpec) check(raw any) string {
+	if p.Type == ParamStringList {
+		if !isStringList(raw) {
+			return "parameter must be a list of strings"
+		}
+		return ""
+	}
+	value, isString := raw.(string)
+	switch {
+	case !isString:
+		return "parameter must be a string"
+	case len(p.Values) > 0 && !slices.Contains(p.Values, value):
+		return "invalid parameter value"
+	}
+	return ""
+}
+
+// isStringList accepts []string and the []any a JSON decoder produces.
+func isStringList(raw any) bool {
+	switch list := raw.(type) {
+	case []string:
+		return true
+	case []any:
+		return !slices.ContainsFunc(list, func(item any) bool { _, ok := item.(string); return !ok })
+	}
+	return false
 }
 
 func (s ActionSpec) paramError(param, problem string) error {
@@ -184,6 +224,13 @@ func buildCatalog() []ActionSpec {
 		RiskByValue: map[string]domain.RiskClass{"stop": high},
 	}}
 
+	setup := job(ActionNodeSetup, domain.ResourceNode, high, idem, "node.ssh", 3)
+	setup.Params = []ParamSpec{
+		{Name: ParamDockerAccess, Type: ParamString, Required: true, Values: []string{"true", "false"}},
+		{Name: ParamLogsMode, Type: ParamString, Required: true, Values: []string{"journal-group", "broker"}},
+		{Name: ParamGrants, Type: ParamStringList},
+	}
+
 	return []ActionSpec{
 		query("node.read", domain.ResourceNode, ""),
 		query("service.read", domain.ResourceService, "service.read"),
@@ -216,8 +263,9 @@ func buildCatalog() []ActionSpec {
 		{Name: ActionNodeBackupTemplateRun, Resource: domain.ResourceNode, Risk: op, Mode: ModeSubAction, Capability: "node.exec.template"},
 		job("deployment.create", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
 		job("deployment.rollback", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
-		job("sudoers.write", domain.ResourceNode, high, noRun, "node.ssh", 1),
-		job("log_broker.install", domain.ResourceNode, high, noRun, "node.ssh", 1),
+		setup,
+		job(ActionSudoersWrite, domain.ResourceNode, high, noRun, "node.ssh", 1),
+		job(ActionLogBrokerInstall, domain.ResourceNode, high, noRun, "node.ssh", 1),
 		job("backup.create", domain.ResourceInstance, op, idem, "", 3),
 
 		direct("node.add", domain.ResourceNode, op),

@@ -43,6 +43,7 @@ proxmox.backup.create      node        operational  job         non_retryable  p
 node.backup_template.run   node        operational  sub-action  -              node.exec.template       -
 deployment.create          app_target  operational  job         resumable      docker.compose.deploy    3
 deployment.rollback        app_target  operational  job         resumable      docker.compose.deploy    3
+node.setup                 node        high         job         idempotent     node.ssh                 3
 sudoers.write              node        high         job         non_retryable  node.ssh                 1
 log_broker.install         node        high         job         non_retryable  node.ssh                 1
 backup.create              instance    operational  job         idempotent     -                        3
@@ -154,6 +155,14 @@ func TestRiskFor(t *testing.T) {
 		{"no_params_action", "node.reboot", nil, domain.RiskHigh, false},
 		{"no_params_action_rejects_params", "node.reboot", map[string]any{"x": "y"}, "", true},
 		{"destructive", "node.remove", nil, domain.RiskDestructive, false},
+		{"setup", ActionNodeSetup, setupParams("false", "journal-group", []any{"restart nginx.service"}), domain.RiskHigh, false},
+		{"setup_without_grants", ActionNodeSetup, setupParams("true", "broker", nil), domain.RiskHigh, false},
+		{"setup_grants_as_strings", ActionNodeSetup, setupParams("true", "broker", []string{"start a.service"}), domain.RiskHigh, false},
+		{"setup_docker_access_has_no_default", ActionNodeSetup, map[string]any{ParamLogsMode: "broker"}, "", true},
+		{"setup_docker_access_not_boolean_text", ActionNodeSetup, setupParams("yes", "broker", nil), "", true},
+		{"setup_unknown_logs_mode", ActionNodeSetup, setupParams("true", "syslog", nil), "", true},
+		{"setup_grants_not_a_list", ActionNodeSetup, setupParams("true", "broker", "restart a.service"), "", true},
+		{"setup_grants_with_a_number", ActionNodeSetup, setupParams("true", "broker", []any{"restart a.service", 1}), "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,6 +177,23 @@ func TestRiskFor(t *testing.T) {
 				t.Fatalf("code = %s, want INVALID_ARGUMENT", smerr.CodeOf(err))
 			}
 		})
+	}
+}
+
+// setupParams builds node.setup parameters; a nil grants is left out.
+func setupParams(dockerAccess, logsMode string, grants any) map[string]any {
+	params := map[string]any{ParamDockerAccess: dockerAccess, ParamLogsMode: logsMode}
+	if grants != nil {
+		params[ParamGrants] = grants
+	}
+	return params
+}
+
+func TestCatalog_EveryServiceVerbIsAnAction(t *testing.T) {
+	for _, verb := range domain.AllServiceVerbs() {
+		if _, ok := Lookup(verb.Action()); !ok {
+			t.Errorf("%s: no catalog action %q", verb, verb.Action())
+		}
 	}
 }
 

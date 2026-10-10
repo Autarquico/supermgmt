@@ -136,9 +136,11 @@ providers:
     endpoint:
       host: 10.42.0.10
       port: 22
-      user: supermgmt
+      user: supermgmt             # default; the account node.setup creates
+      admin_user: alex            # required; your own account on the node
       host_public_key: "ssh-ed25519 AAAA..."
-    credential_ref: secret://ssh/default
+    credential_ref: secret://ssh/default      # default; the instance SSH identity
+    admin_credential_ref: ssh-agent://default # default in local mode; none in server mode
     environment: production
 ```
 

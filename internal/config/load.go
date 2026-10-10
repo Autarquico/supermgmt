@@ -81,6 +81,13 @@ func (c *Config) applyModeDefaults(local Paths) {
 	if c.Instance.Mode == ModeServer {
 		setDefault(&c.Backup.Schedule, "0 3 * * *")
 	}
+	if c.Instance.Mode != ModeServer {
+		for _, p := range c.Providers {
+			if p.SSH != nil {
+				setDefault(&p.SSH.AdminCredentialRef, DefaultAdminCredentialRef)
+			}
+		}
+	}
 	if c.Security.AllowSelfApproval == nil {
 		allow := c.Instance.Mode != ModeServer
 		c.Security.AllowSelfApproval = &allow

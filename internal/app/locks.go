@@ -13,7 +13,7 @@ import (
 
 // lockModeByJobType is the mode a job takes on its own resource (spec §20.5).
 //
-//   - node reboot, shutdown, power, sudoers and log broker: exclusive on the node.
+//   - node reboot, shutdown, power, setup, sudoers and log broker: exclusive on the node.
 //   - service actions: exclusive on the service's Compose project or unit (ownLock).
 //   - Proxmox snapshots and backups are not listed by the spec; they take the
 //     node exclusively, the conservative reading.
@@ -27,6 +27,7 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"proxmox.snapshot.rollback": domain.LockExclusive,
 	"proxmox.snapshot.delete":   domain.LockExclusive,
 	"proxmox.backup.create":     domain.LockExclusive,
+	"node.setup":                domain.LockExclusive,
 	"sudoers.write":             domain.LockExclusive,
 	"log_broker.install":        domain.LockExclusive,
 	"service.start":             domain.LockExclusive,

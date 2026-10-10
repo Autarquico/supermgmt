@@ -190,21 +190,29 @@ func TestValidateCredentialRefs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := resolved(t, "version: 1\ninstance:\n  mode: "+string(tt.mode)+"\n")
-			c.Providers = []Provider{{SSH: &SSHProvider{
-				Type: "ssh", Name: "n", CredentialRef: tt.ref,
-				Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u"},
-			}}}
-			err := c.Validate()
-			if tt.ok && err != nil {
-				t.Errorf("want valid, got %v", err)
-			}
-			if !tt.ok {
-				if err == nil {
-					t.Fatal("want a problem, got none")
+			for _, field := range []string{"credential_ref", "admin_credential_ref"} {
+				c := resolved(t, "version: 1\ninstance:\n  mode: "+string(tt.mode)+"\n")
+				ssh := &SSHProvider{
+					Type: "ssh", Name: "n", CredentialRef: DefaultSSHCredentialRef,
+					Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u", AdminUser: "admin"},
 				}
-				if paths := problemPaths(t, err); !contains(paths, "providers[0].credential_ref") {
-					t.Errorf("problem paths %v lack providers[0].credential_ref", paths)
+				if field == "credential_ref" {
+					ssh.CredentialRef = tt.ref
+				} else {
+					ssh.AdminCredentialRef = tt.ref
+				}
+				c.Providers = []Provider{{SSH: ssh}}
+				err := c.Validate()
+				if tt.ok && err != nil {
+					t.Errorf("%s: want valid, got %v", field, err)
+				}
+				if !tt.ok {
+					if err == nil {
+						t.Fatalf("%s: want a problem, got none", field)
+					}
+					if paths := problemPaths(t, err); !contains(paths, "providers[0]."+field) {
+						t.Errorf("problem paths %v lack providers[0].%s", paths, field)
+					}
 				}
 			}
 		})
@@ -216,7 +224,7 @@ func TestValidateProviders(t *testing.T) {
 		c := validServer(t)
 		c.Providers = []Provider{
 			{Proxmox: &ProxmoxProvider{Type: "proxmox", Name: "pve", Endpoint: "https://pve:8006", CredentialRef: "secret://providers/pve", VerifyTLS: true, SyncInterval: 30 * time.Second}},
-			{SSH: &SSHProvider{Type: "ssh", Name: "n1", CredentialRef: "secret://ssh/default", Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u"}}},
+			{SSH: &SSHProvider{Type: "ssh", Name: "n1", CredentialRef: "secret://ssh/default", Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u", AdminUser: "admin"}}},
 		}
 		return c
 	}
@@ -232,6 +240,9 @@ func TestValidateProviders(t *testing.T) {
 		{"proxmox zero sync interval", func(c *Config) { c.Providers[0].Proxmox.SyncInterval = 0 }, "providers[0].sync_interval"},
 		{"ssh without host", func(c *Config) { c.Providers[1].SSH.Endpoint.Host = "" }, "providers[1].endpoint.host"},
 		{"ssh without user", func(c *Config) { c.Providers[1].SSH.Endpoint.User = "" }, "providers[1].endpoint.user"},
+		{"ssh without admin user", func(c *Config) { c.Providers[1].SSH.Endpoint.AdminUser = "" }, "providers[1].endpoint.admin_user"},
+		{"ssh user outside the allowlist", func(c *Config) { c.Providers[1].SSH.Endpoint.User = "-oProxyCommand=x" }, "providers[1].endpoint.user"},
+		{"ssh admin user outside the allowlist", func(c *Config) { c.Providers[1].SSH.Endpoint.AdminUser = "Alex Smith" }, "providers[1].endpoint.admin_user"},
 		{"ssh port out of range", func(c *Config) { c.Providers[1].SSH.Endpoint.Port = 70000 }, "providers[1].endpoint.port"},
 		{"nameless provider", func(c *Config) { c.Providers[1].SSH.Name = "" }, "providers[1].name"},
 		{"duplicate provider name", func(c *Config) { c.Providers[1].SSH.Name = "pve" }, "providers[1].name"},
@@ -277,7 +288,7 @@ func TestValidateNeverEchoesCredentialRefValues(t *testing.T) {
 		c.Auth.OIDC.ClientSecretRef = ref
 		c.Providers = []Provider{{SSH: &SSHProvider{
 			Type: "ssh", Name: "n", CredentialRef: ref,
-			Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u"},
+			Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u", AdminUser: "admin"},
 		}}}
 
 		err := c.Validate()

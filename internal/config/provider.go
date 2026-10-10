@@ -13,6 +13,14 @@ const (
 	ProviderSSH     = "ssh"
 )
 
+// SSH node defaults (spec §6.4, §8.4; ADR-0009 b, e). The admin credential
+// default applies in local mode only; server mode has none.
+const (
+	DefaultSSHUser            = "supermgmt"
+	DefaultSSHCredentialRef   = "secret://ssh/default" //nolint:gosec // a reference to a secret, not a secret
+	DefaultAdminCredentialRef = "ssh-agent://default"  //nolint:gosec // names the agent socket, holds no key
+)
+
 // providerBranches maps the `type` discriminator to its branch struct. M0
 // accepts only these two types (spec §8.3).
 var providerBranches = map[string]reflect.Type{
@@ -46,19 +54,24 @@ type ProxmoxProvider struct {
 	SyncInterval  time.Duration `yaml:"sync_interval"`
 }
 
+// SSHProvider is one SSH node. CredentialRef signs automated sessions as
+// Endpoint.User; AdminCredentialRef authenticates Endpoint.AdminUser (setup
+// bootstrap, read-only probes before setup, interactive sessions).
 type SSHProvider struct {
-	Type          string      `yaml:"type"`
-	Name          string      `yaml:"name"`
-	Endpoint      SSHEndpoint `yaml:"endpoint"`
-	CredentialRef string      `yaml:"credential_ref"`
-	Environment   string      `yaml:"environment"`
-	Tags          []string    `yaml:"tags"`
+	Type               string      `yaml:"type"`
+	Name               string      `yaml:"name"`
+	Endpoint           SSHEndpoint `yaml:"endpoint"`
+	CredentialRef      string      `yaml:"credential_ref"`
+	AdminCredentialRef string      `yaml:"admin_credential_ref"`
+	Environment        string      `yaml:"environment"`
+	Tags               []string    `yaml:"tags"`
 }
 
 type SSHEndpoint struct {
 	Host          string `yaml:"host"`
 	Port          int    `yaml:"port"`
 	User          string `yaml:"user"`
+	AdminUser     string `yaml:"admin_user"`
 	HostPublicKey string `yaml:"host_public_key"`
 }
 
@@ -105,7 +118,7 @@ func (p *Provider) UnmarshalYAML(n *yaml.Node) error {
 		}
 		*p = Provider{Proxmox: &b}
 	case ProviderSSH:
-		b := SSHProvider{Endpoint: SSHEndpoint{Port: 22}}
+		b := SSHProvider{Endpoint: SSHEndpoint{Port: 22, User: DefaultSSHUser}, CredentialRef: DefaultSSHCredentialRef}
 		if err := n.Decode(&b); err != nil {
 			return fmt.Errorf("decode ssh provider: %w", err)
 		}
