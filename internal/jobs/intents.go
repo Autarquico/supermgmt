@@ -25,6 +25,9 @@ const (
 const (
 	OutcomeSucceeded = "succeeded"
 	OutcomeFailed    = "failed"
+	// OutcomeNotStarted is written by the reconciler for a dispatched operation
+	// that evidence shows never took effect.
+	OutcomeNotStarted = "not_started"
 )
 
 // Intent is a durable record of a remote operation, committed before dispatch

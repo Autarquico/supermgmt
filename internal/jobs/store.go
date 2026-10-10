@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,7 +22,10 @@ const (
 	defaultBackoffBase = 5 * time.Second
 	defaultBackoffMax  = 5 * time.Minute
 	defaultListLimit   = 100
-	eventSource        = "jobs"
+
+	defaultReconcileGrace = 45 * time.Second
+	defaultSampleGap      = 30 * time.Second
+	eventSource           = "jobs"
 )
 
 var systemActor = domain.Actor{Type: domain.ActorSystem}
@@ -37,6 +41,13 @@ type Config struct {
 	LeaseTTL    time.Duration // default 30s
 	BackoffBase time.Duration // first retry delay, doubled per attempt; default 5s
 	BackoffMax  time.Duration // default 5m
+
+	// ReconcileGrace is added to an intent's deadline_at before its remote
+	// process is presumed gone (security.reconcile_grace, spec §8); default 45s.
+	ReconcileGrace time.Duration
+	// SampleGap is the minimum spacing of the two identical outcome samples
+	// required before an automatic recovery (spec §20.4 step 3); default 30s.
+	SampleGap time.Duration
 }
 
 // Store owns all SQL on jobs, operation_intents and resource_locks.
@@ -52,7 +63,14 @@ type Store struct {
 	backoffBase time.Duration
 	backoffMax  time.Duration
 
+	reconcileGrace time.Duration
+	sampleGap      time.Duration
+
 	restoreHold atomic.Bool
+
+	reconcileMu sync.Mutex
+	samples     map[domain.ID]sample // first outcome sample per intent, in memory
+	held        map[domain.ID]string // reason of the last job.reconcile_held event per job
 }
 
 // NewStore validates cfg and applies defaults.
@@ -79,6 +97,11 @@ func NewStore(cfg Config) (*Store, error) {
 		leaseTTL:    orDefault(cfg.LeaseTTL, defaultLeaseTTL),
 		backoffBase: orDefault(cfg.BackoffBase, defaultBackoffBase),
 		backoffMax:  orDefault(cfg.BackoffMax, defaultBackoffMax),
+
+		reconcileGrace: orDefault(cfg.ReconcileGrace, defaultReconcileGrace),
+		sampleGap:      orDefault(cfg.SampleGap, defaultSampleGap),
+		samples:        map[domain.ID]sample{},
+		held:           map[domain.ID]string{},
 	}
 	return s, nil
 }
@@ -363,7 +386,9 @@ func (s *Store) move(ctx context.Context, q database.Querier, m move) (Job, erro
 		args = append(args, domain.UnixMillis(s.clock.Now()))
 	}
 	if m.failure != nil {
-		encoded, err := json.Marshal(m.failure)
+		scrubbed := *m.failure
+		scrubbed.Message = audit.ScrubString(scrubbed.Message)
+		encoded, err := json.Marshal(scrubbed)
 		if err != nil {
 			return Job{}, fmt.Errorf("encode failure: %w", err)
 		}

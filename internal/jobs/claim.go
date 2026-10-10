@@ -2,10 +2,14 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -61,20 +65,23 @@ func (s *Store) claimOnce(ctx context.Context, owner string) (claimOutcome, erro
 		if err != nil {
 			return err
 		}
+		var blocked []domain.ID
 		for _, job := range candidates {
-			claimed, rej, err := s.tryClaim(ctx, tx, job, owner)
+			claimed, rej, wasBlocked, err := s.tryClaim(ctx, tx, job, owner)
 			switch {
 			case err != nil:
 				return err
 			case rej != nil:
 				out.rejected = rej
 				return errClaimRejected
+			case wasBlocked:
+				blocked = append(blocked, job.ID)
 			case claimed != nil:
 				out.claimed = claimed
-				return nil
+				return s.deferBlocked(ctx, tx, blocked)
 			}
 		}
-		return nil
+		return s.deferBlocked(ctx, tx, blocked)
 	})
 	if errors.Is(err, errClaimRejected) {
 		return out, nil
@@ -91,56 +98,83 @@ func (s *Store) dueJobs(ctx context.Context, q database.Querier) ([]Job, error) 
 		domain.UnixMillis(s.clock.Now()))
 }
 
-// tryClaim returns (nil, nil, nil) when the job is blocked by locks and the
+// deferBlocked pushes lock-blocked jobs back by one backoff step so they are
+// not retried on every poll (spec §20.4 step 2).
+func (s *Store) deferBlocked(ctx context.Context, q database.Querier, ids []domain.ID) error {
+	until := domain.UnixMillis(s.clock.Now().Add(s.backoffAfter(1)))
+	for _, id := range ids {
+		if _, err := q.ExecContext(ctx, `UPDATE jobs SET scheduled_at = ? WHERE id = ? AND state = 'queued'`, until, id); err != nil {
+			return fmt.Errorf("defer blocked job %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// tryClaim reports blocked=true when locks held by other jobs conflict, so the
 // next candidate should be tried.
-func (s *Store) tryClaim(ctx context.Context, tx *database.Tx, job Job, owner string) (*Claimed, *rejection, error) {
+func (s *Store) tryClaim(ctx context.Context, tx *database.Tx, job Job, owner string) (claimed *Claimed, rej *rejection, blocked bool, err error) {
 	if err := s.revalidator.Revalidate(ctx, tx, job); err != nil {
 		rej, err := asRejection(job, err)
-		return nil, rej, err
+		return nil, rej, false, err
 	}
 	specs, err := s.planner.PlanLocks(ctx, tx, job)
 	if err != nil {
 		rej, err := asRejection(job, err)
-		return nil, rej, err
+		return nil, rej, false, err
 	}
-	locks, err := newLockSet(specs)
-	if err != nil {
-		return nil, nil, err
+	locks, lockErr := newLockSet(specs)
+	if lockErr != nil {
+		return nil, &rejection{job: job, err: lockErr}, false, nil
 	}
 	free, err := locks.free(ctx, tx, job.ID)
 	if err != nil || !free {
-		return nil, nil, err
+		return nil, nil, !free, err
 	}
-	if err := locks.acquire(ctx, tx, job.ID, s.clock.Now()); err != nil {
-		return nil, nil, err
+	now := s.clock.Now()
+	if err := locks.replace(ctx, tx, job.ID, now); err != nil {
+		return nil, nil, false, err
 	}
 	running, err := s.move(ctx, tx, move{
 		id: job.ID, from: domain.JobQueued, to: domain.JobRunning, actor: systemActor,
 		assign: []assignment{
 			{"lease_owner = ?", []any{owner}},
 			{"lease_generation = lease_generation + 1", nil},
-			{"lease_until = ?", []any{domain.UnixMillis(s.clock.Now().Add(s.leaseTTL))}},
-			{"heartbeat_at = ?", []any{domain.UnixMillis(s.clock.Now())}},
+			{"lease_until = ?", []any{domain.UnixMillis(now.Add(s.leaseTTL))}},
+			{"heartbeat_at = ?", []any{domain.UnixMillis(now)}},
 			{"attempts = attempts + 1", nil},
 			{"error_json = NULL", nil},
-			{"started_at = ?", []any{domain.UnixMillis(s.clock.Now())}},
+			{"started_at = ?", []any{domain.UnixMillis(now)}},
 		},
 		data: map[string]any{"owner": owner, "locks": locks.len()},
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return &Claimed{Job: running, Lease: s.leaseOf(running)}, nil, nil
+	return &Claimed{Job: running, Lease: s.leaseOf(running)}, nil, false, nil
 }
 
-// asRejection classifies a revalidation or lock-planning error: a typed error
-// fails the job, anything else aborts the claim as an infrastructure failure.
+// asRejection classifies an error from the Revalidator or LockPlanner. A typed
+// error fails the job with its own code; a database, connection or context
+// error (or one marked ErrInfrastructure) aborts the claim and the job stays
+// queued; anything else is a per-job data problem and fails only that job, so
+// a poison job cannot block the queue.
 func asRejection(job Job, err error) (*rejection, error) {
 	var typed *smerr.Error
-	if errors.As(err, &typed) {
+	switch {
+	case errors.As(err, &typed):
 		return &rejection{job: job, err: typed}, nil
+	case isInfrastructure(err):
+		return nil, fmt.Errorf("revalidate job %s: %w", job.ID, err)
 	}
-	return nil, fmt.Errorf("revalidate job %s: %w", job.ID, err)
+	return &rejection{job: job, err: smerr.Wrap(err, smerr.CodeInternal, "", "job cannot be prepared for execution")}, nil
+}
+
+func isInfrastructure(err error) bool {
+	var sqliteErr *sqlite.Error
+	return errors.Is(err, ErrInfrastructure) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, sql.ErrConnDone) || errors.Is(err, sql.ErrTxDone) || errors.Is(err, driver.ErrBadConn) ||
+		errors.As(err, &sqliteErr)
 }
 
 // applyRejection is the second transaction of a failed claim: queued -> failed,
@@ -178,13 +212,13 @@ type lockEntry struct {
 
 // newLockSet splits each key at its first colon and merges duplicates, the
 // exclusive mode winning.
-func newLockSet(specs []domain.LockSpec) (lockSet, error) {
+func newLockSet(specs []domain.LockSpec) (lockSet, *smerr.Error) {
 	var set lockSet
 	index := map[string]int{}
 	for _, spec := range specs {
 		kind, rest, ok := strings.Cut(spec.Key, ":")
 		if !ok || kind == "" || rest == "" || !spec.Mode.Valid() {
-			return lockSet{}, fmt.Errorf("invalid lock spec %q (%s)", spec.Key, spec.Mode)
+			return lockSet{}, smerr.New(smerr.CodeInternal, "", fmt.Sprintf("invalid lock spec %q (%s)", spec.Key, spec.Mode))
 		}
 		if i, seen := index[spec.Key]; seen {
 			if spec.Mode == domain.LockExclusive {
@@ -220,7 +254,12 @@ func (l lockSet) free(ctx context.Context, q database.Querier, job domain.ID) (b
 	return true, nil
 }
 
-func (l lockSet) acquire(ctx context.Context, q database.Querier, job domain.ID, now time.Time) error {
+// replace makes the job's lock rows exactly this set: a job requeued after a
+// retry still holds its previous rows (§20.5), which may differ from the new plan.
+func (l lockSet) replace(ctx context.Context, q database.Querier, job domain.ID, now time.Time) error {
+	if _, err := q.ExecContext(ctx, `DELETE FROM resource_locks WHERE job_id = ?`, job); err != nil {
+		return fmt.Errorf("reset locks of job %s: %w", job, err)
+	}
 	for _, e := range l.entries {
 		_, err := q.ExecContext(ctx, `
 			INSERT INTO resource_locks (resource_type, resource_id, job_id, mode, acquired_at) VALUES (?, ?, ?, ?, ?)`,

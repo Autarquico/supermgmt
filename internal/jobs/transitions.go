@@ -24,8 +24,7 @@ func invalidTransition(from, to domain.JobState) error {
 	return smerr.FromReason(smerr.ReasonInvalidTransition, fmt.Sprintf("job cannot move from %s to %s", from, to))
 }
 
-// releasesLocks reports whether entering to ends the job's hold on resources:
-// locks survive running and interrupted only (ADR-0013).
-func releasesLocks(to domain.JobState) bool {
-	return to != domain.JobRunning && to != domain.JobInterrupted
-}
+// releasesLocks reports whether entering to ends the job's hold on resources.
+// Spec §20.5: locks are held until the job is terminal, across queued retries,
+// running and interrupted alike (this supersedes the first draft of ADR-0013).
+func releasesLocks(to domain.JobState) bool { return to.Terminal() }

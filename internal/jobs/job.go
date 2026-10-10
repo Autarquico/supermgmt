@@ -15,18 +15,23 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
-// reasonLeaseLost refines CONFLICT when a worker's lease no longer holds. It is
-// local until internal/errors declares it.
-const reasonLeaseLost smerr.Reason = "LEASE_LOST"
-
 // ErrLeaseLost is returned by every fenced write once the lease generation,
-// owner or expiry no longer matches. The worker must stop.
-var ErrLeaseLost = smerr.New(smerr.CodeConflict, reasonLeaseLost, "job lease lost")
+// owner or expiry no longer matches. The worker must stop. It is a plain
+// sentinel: it never reaches API clients.
+var ErrLeaseLost = errors.New("job lease lost")
+
+// ErrInfrastructure marks an error from a Revalidator or LockPlanner as a
+// storage or connection problem: the claim is aborted and the job stays queued.
+// Typed *smerr.Error values fail the job instead, and so does any other error
+// that is not a context, database or connection error (a poison job must not
+// block the queue).
+var ErrInfrastructure = errors.New("infrastructure error")
 
 // Job is a row of the jobs table.
 type Job struct {
@@ -68,9 +73,9 @@ type Failure struct {
 func FailureOf(err error) Failure {
 	var typed *smerr.Error
 	if errors.As(err, &typed) {
-		return Failure{Code: typed.Code, Reason: typed.Reason, Message: typed.Message}
+		return Failure{Code: typed.Code, Reason: typed.Reason, Message: audit.ScrubString(typed.Message)}
 	}
-	return Failure{Code: smerr.CodeInternal, Message: err.Error()}
+	return Failure{Code: smerr.CodeInternal, Message: audit.ScrubString(err.Error())}
 }
 
 // Revalidator re-checks, inside the claim transaction, everything that may have

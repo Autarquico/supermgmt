@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -237,14 +239,81 @@ func TestRestoreHoldStopsClaims(t *testing.T) {
 	e.claim("w1")
 }
 
-func TestInvalidLockSpecAbortsTheClaim(t *testing.T) {
+func TestPoisonJobFailsWithoutBlockingTheQueue(t *testing.T) {
+	cases := map[string]func(e *env, poison domain.ID){
+		"invalid lock spec": func(e *env, _ domain.ID) {
+			e.planner.setLocks("poison", domain.LockSpec{Key: "no-colon", Mode: domain.LockExclusive})
+		},
+		"untyped revalidator data error": func(e *env, poison domain.ID) {
+			e.reval.failJob(poison, errors.New("decode payload: invalid character"))
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			poison := e.enqueue(func(nj *NewJob) { nj.Type = "poison" })
+			e.clock.Advance(time.Millisecond)
+			healthy := e.enqueue()
+			setup(e, poison.ID)
+
+			if got := e.claim("w1").Job.ID; got != healthy.ID {
+				t.Fatalf("claimed %s, want the healthy job", got)
+			}
+			failed := e.get(poison.ID)
+			if failed.State != domain.JobFailed || failed.Error == nil || failed.Error.Code != smerr.CodeInternal || e.lockCount(poison.ID) != 0 {
+				t.Fatalf("poison job = %+v", failed)
+			}
+		})
+	}
+}
+
+func TestMarkedInfrastructureErrorKeepsTheJobQueued(t *testing.T) {
 	e := newEnv(t)
-	e.planner.setLocks("test.job", domain.LockSpec{Key: "no-colon", Mode: domain.LockExclusive})
 	job := e.enqueue()
+	e.reval.failJob(job.ID, fmt.Errorf("load grants: %w", ErrInfrastructure))
 	if _, ok, err := e.store.Claim(context.Background(), "w1"); err == nil || ok {
 		t.Fatalf("Claim = ok %v, err %v; want an error", ok, err)
 	}
-	if e.state(job.ID) != domain.JobQueued || e.lockCount(job.ID) != 0 {
-		t.Fatalf("job = %+v", e.get(job.ID))
+	if e.state(job.ID) != domain.JobQueued {
+		t.Fatalf("state = %s, want queued", e.state(job.ID))
+	}
+}
+
+func TestLockBlockedJobIsDeferredByABackoffStep(t *testing.T) {
+	e := newEnv(t)
+	e.planner.setLocks("holder", domain.LockSpec{Key: "node:n1", Mode: domain.LockExclusive})
+	e.planner.setLocks("blocked", domain.LockSpec{Key: "node:n1", Mode: domain.LockExclusive})
+	e.enqueue(func(nj *NewJob) { nj.Type = "holder" })
+	e.clock.Advance(time.Millisecond)
+	blocked := e.enqueue(func(nj *NewJob) { nj.Type = "blocked" })
+	e.claim("w1")
+	e.claimNothing("w2")
+	if got := e.get(blocked.ID).ScheduledAt; !got.Equal(e.clock.Now().Add(backoffBase)) {
+		t.Fatalf("scheduled_at = %v, want now+%v", got, backoffBase)
+	}
+}
+
+func TestFailedAttemptKeepsItsLocksUntilTerminal(t *testing.T) {
+	e := newEnv(t)
+	e.planner.setLocks("retrying", domain.LockSpec{Key: "node:n1", Mode: domain.LockExclusive})
+	e.planner.setLocks("rival", domain.LockSpec{Key: "node:n1", Mode: domain.LockShared})
+	retrying := e.enqueue(func(nj *NewJob) { nj.Type = "retrying"; nj.RetryClass, nj.MaxAttempts = domain.RetryIdempotent, 2 })
+	c := e.claim("w1")
+	if err := e.store.Fail(context.Background(), c.Lease, errBoom); err != nil {
+		t.Fatal(err)
+	}
+	e.enqueue(func(nj *NewJob) { nj.Type = "rival" })
+	e.claimNothing("w2") // the requeued job still holds node:n1
+
+	e.clock.Advance(backoffBase)
+	again := e.claim("w1") // re-claim replaces its own rows without conflict
+	if again.Job.ID != retrying.ID || e.lockCount(retrying.ID) != 1 {
+		t.Fatalf("claimed %s with %d locks", again.Job.ID, e.lockCount(retrying.ID))
+	}
+	if err := e.store.Fail(context.Background(), again.Lease, errBoom); err != nil {
+		t.Fatal(err)
+	}
+	if e.lockCount(retrying.ID) != 0 {
+		t.Fatal("terminal failure kept its locks")
 	}
 }
