@@ -22,6 +22,22 @@ import (
 //   - invalid UTF-8, lone surrogate escapes, duplicate keys, trailing data and
 //     nesting deeper than maxDepth are rejected.
 func canonicalizeJSON(raw []byte) ([]byte, error) {
+	tree, err := parseTree(raw)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := writeTree(&out, tree); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// parseTree validates the source text itself (UTF-8, surrogate escapes,
+// duplicate keys at any depth, nesting, trailing data) and decodes it. It must
+// run on the original bytes: encoding/json silently repairs or merges all of
+// these. Numbers are not judged here.
+func parseTree(raw []byte) (any, error) {
 	if !utf8.Valid(raw) {
 		return nil, invalid("JSON is not valid UTF-8")
 	}
@@ -37,11 +53,7 @@ func canonicalizeJSON(raw []byte) ([]byte, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, invalid("trailing data after JSON value")
 	}
-	var out bytes.Buffer
-	if err := writeTree(&out, tree); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return tree, nil
 }
 
 // decodeTree reads one value as nil, bool, string, json.Number, []any or

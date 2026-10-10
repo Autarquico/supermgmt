@@ -112,6 +112,11 @@ type SubTarget struct {
 // so a float anywhere in the document is rejected later by Hash and Canonical.
 // Unknown fields and trailing data are errors.
 func Parse(data []byte) (*Plan, error) {
+	// encoding/json repairs invalid UTF-8 and lone surrogates and keeps only the
+	// last of duplicate keys, so the original bytes are checked first.
+	if _, err := parseTree(data); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	dec.DisallowUnknownFields()
