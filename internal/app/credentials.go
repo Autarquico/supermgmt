@@ -6,6 +6,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/jobs"
 )
 
 // CredentialState is what a credential store knows about a credential.
@@ -62,13 +63,14 @@ func expiresNaturally(kind domain.CredentialKind) bool {
 	return kind == domain.CredentialSession || kind == domain.CredentialGitHubOIDC
 }
 
-// statusLookupError keeps typed errors (a refused kind fails the job) and wraps
-// anything else as an infrastructure failure.
+// statusLookupError keeps typed errors (a refused kind fails the job) and marks
+// anything else as an infrastructure failure, so the claim aborts and the job
+// stays queued instead of failing on a store outage.
 func statusLookupError(err error) error {
 	if isTyped(err) {
 		return err
 	}
-	return fmt.Errorf("credential status: %w", err)
+	return fmt.Errorf("credential status: %w: %w", jobs.ErrInfrastructure, err)
 }
 
 // stateError fails closed on any state it does not know.

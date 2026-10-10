@@ -7,6 +7,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/jobs"
 )
 
 func TestLocalSocketCredentialsAreAlwaysActive(t *testing.T) {
@@ -52,8 +53,8 @@ func TestACredentialLookupFailureIsNotMistakenForARevocation(t *testing.T) {
 
 	err := f.plans.requireStillValid(context.Background(), domain.CredentialContext{Kind: domain.CredentialAPIToken})
 
-	if !errors.Is(err, broken) || isTyped(err) {
-		t.Fatalf("err = %v, want the untyped lookup failure", err)
+	if !errors.Is(err, broken) || !errors.Is(err, jobs.ErrInfrastructure) || isTyped(err) {
+		t.Fatalf("err = %v, want the lookup failure marked as infrastructure", err)
 	}
 }
 
