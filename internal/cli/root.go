@@ -3,6 +3,7 @@ package cli
 
 import (
 	"io"
+	"os"
 	"slices"
 	"strings"
 
@@ -17,11 +18,12 @@ var logLevels = []string{"debug", "info", "warn", "error"}
 
 // Execute runs sm with args and returns the process exit code.
 func Execute(args []string, stdout, stderr io.Writer) int {
-	return execute(args, stdout, stderr, version.Info())
+	return execute(args, stdout, stderr, version.Info(), os.Environ())
 }
 
-func execute(args []string, stdout, stderr io.Writer, build version.Build) int {
-	root := newRootCmd(build)
+// execute runs sm with env as its process environment ("KEY=value" entries).
+func execute(args []string, stdout, stderr io.Writer, build version.Build, env []string) int {
+	root := newRootCmd(build, env)
 	root.SetArgs(append([]string{}, args...)) // cobra reads os.Args when given nil
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -34,7 +36,7 @@ func execute(args []string, stdout, stderr io.Writer, build version.Build) int {
 	return exitCode(err)
 }
 
-func newRootCmd(build version.Build) *cobra.Command {
+func newRootCmd(build version.Build, env []string) *cobra.Command {
 	root := &cobra.Command{
 		Use:               "sm",
 		Short:             "SuperMgmt: manage your infrastructure",
@@ -53,7 +55,7 @@ func newRootCmd(build version.Build) *cobra.Command {
 	flags.Bool("json", false, "machine-readable JSON output")
 	flags.String("log-level", "info", "log level: "+strings.Join(logLevels, "|"))
 
-	root.AddCommand(newVersionCmd(build), newCompletionCmd())
+	root.AddCommand(newVersionCmd(build), newCompletionCmd(), newConfigCmd(env), newDoctorCmd(env))
 	return root
 }
 

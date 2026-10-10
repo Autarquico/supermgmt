@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/autarquico/supermgmt/internal/database"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/version"
 )
 
@@ -29,8 +32,12 @@ type result struct {
 }
 
 func run(args ...string) result {
+	return runWithEnv(nil, args...)
+}
+
+func runWithEnv(env []string, args ...string) result {
 	var out, errOut bytes.Buffer
-	code := execute(args, &out, &errOut, testBuild)
+	code := execute(args, &out, &errOut, testBuild, env)
 	return result{code, out.String(), errOut.String()}
 }
 
@@ -138,17 +145,74 @@ func TestJSONErrors(t *testing.T) {
 	}
 }
 
-func TestErrorMapping(t *testing.T) {
-	plain := os.ErrNotExist
-	if exitCode(plain) != 1 || errorCode(plain) != "INTERNAL" {
-		t.Errorf("plain error: code=%d %s", exitCode(plain), errorCode(plain))
+func TestExitCodeForEverySmerrCode(t *testing.T) {
+	want := map[smerr.Code]int{
+		smerr.CodeInvalidArgument:       2,
+		smerr.CodeCapabilityUnavailable: 3,
+		smerr.CodeNotFound:              1,
+		smerr.CodeConflict:              1,
+		smerr.CodeUnauthenticated:       1,
+		smerr.CodePolicyDenied:          1,
+		smerr.CodeApprovalRequired:      1,
+		smerr.CodeNodeUnreachable:       1,
+		smerr.CodeSSHHostKeyMismatch:    1,
+		smerr.CodeProviderError:         1,
+		smerr.CodeCINotPassed:           1,
+		smerr.CodeArtifactNotImmutable:  1,
+		smerr.CodeDeploymentFailed:      1,
+		smerr.CodeRollbackFailed:        1,
+		smerr.CodeTimeout:               1,
+		smerr.CodeInternal:              1,
 	}
-	usage := usageErrorf("bad")
-	if exitCode(usage) != 2 || errorCode(usage) != "INVALID_ARGUMENT" {
-		t.Errorf("usage error: code=%d %s", exitCode(usage), errorCode(usage))
+	for code, exit := range want {
+		t.Run(string(code), func(t *testing.T) {
+			wrapped := fmt.Errorf("context: %w", smerr.New(code, "", "boom"))
+			if got := exitCode(wrapped); got != exit {
+				t.Errorf("exitCode = %d, want %d", got, exit)
+			}
+		})
 	}
-	if exitCode(nil) != 0 {
-		t.Error("nil error must map to 0")
+}
+
+func TestExitCodeOutsideSmerr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"nil", nil, 0},
+		{"plain error", os.ErrNotExist, 1},
+		{"usage error", usageErrorf("bad"), 2},
+		{"database lock held", fmt.Errorf("x: %w", &database.LockHeldError{Path: "db.lock", PID: 7}), 4},
+		{"schema too new", fmt.Errorf("x: %w", &database.SchemaTooNewError{DatabaseVersion: 9, BinaryVersion: 1}), 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := exitCode(tt.err); got != tt.want {
+				t.Errorf("exitCode = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJSONErrorCarriesReasonAndDetails(t *testing.T) {
+	err := &smerr.Error{
+		Code: smerr.CodeConflict, Reason: smerr.ReasonPlanStale, Message: "plan changed",
+		Details: map[string]any{"plan": "p1"},
+	}
+	var buf bytes.Buffer
+	reportError(&buf, err, true)
+	want := `{"error":{"code":"CONFLICT","message":"plan changed","reason":"PLAN_STALE","details":{"plan":"p1"}}}` + "\n"
+	if buf.String() != want {
+		t.Errorf("got  %s\nwant %s", buf.String(), want)
+	}
+}
+
+func TestHumanErrorOmitsCodeHead(t *testing.T) {
+	var buf bytes.Buffer
+	reportError(&buf, smerr.New(smerr.CodeNotFound, "", "no such node"), false)
+	if buf.String() != "error: no such node\n" {
+		t.Errorf("got %q", buf.String())
 	}
 }
 

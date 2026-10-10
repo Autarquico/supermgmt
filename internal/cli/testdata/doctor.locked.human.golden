@@ -1,0 +1,7 @@
+STATUS  CHECK          DETAIL
+ok      config         <tmp>/config.yaml
+ok      environment    no unrecognized SUPERMGMT_* variables
+ok      data_dir       <tmp>/data (mode 0700)
+ok      socket         <tmp>/run/sm.sock: directory is created by the daemon
+ok      database_file  <tmp>/data/supermgmt.db (mode 0600)
+fail    database_lock  held by PID <pid> (a daemon is running): <tmp>/data/supermgmt.db.lock

@@ -6,6 +6,8 @@ Usage:
 
 Available Commands:
   completion  Generate a shell completion script
+  config      Inspect and validate configuration
+  doctor      Diagnose configuration, paths and database health
   help        Help about any command
   version     Print version, commit, build date, Go version and platform
 
