@@ -16,7 +16,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
@@ -58,6 +60,9 @@ func Open(ctx context.Context, path string, opts Options) (*DB, error) {
 	}
 	busy := opts.BusyTimeout.Milliseconds()
 
+	if err := createPrivateFile(path); err != nil {
+		return nil, err
+	}
 	writer, err := openPool(ctx, path, writerQuery(busy), 1)
 	if err != nil {
 		return nil, fmt.Errorf("open writer: %w", err)
@@ -68,6 +73,19 @@ func Open(ctx context.Context, path string, opts Options) (*DB, error) {
 		return nil, fmt.Errorf("open reader: %w", err)
 	}
 	return &DB{writer: writer, reader: reader, clock: opts.Clock}, nil
+}
+
+// createPrivateFile creates the database file owner-only (0600) when it does
+// not exist yet; SQLite gives its WAL and shm files the same mode.
+func createPrivateFile(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // path is the configured database location
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create database file: %w", err)
+	}
+	return f.Close()
 }
 
 // Close closes both pools.

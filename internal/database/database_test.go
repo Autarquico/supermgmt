@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -261,5 +262,26 @@ func TestConcurrentWritersSerialize(t *testing.T) {
 	}
 	if n := scalar[int](t, db.Reader(), `SELECT n FROM counter`); n != writers*increments {
 		t.Fatalf("counter = %d, want %d (lost updates)", n, writers*increments)
+	}
+}
+
+func TestOpenCreatesOwnerOnlyFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sm.db")
+	db, err := Open(context.Background(), path, Options{Clock: domaintest.NewFakeClock(testEpoch)})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("%s mode = %o, want no group/other access", filepath.Base(name), perm)
+		}
 	}
 }
