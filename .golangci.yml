@@ -2,6 +2,8 @@ version: "2"
 
 run:
   timeout: 5m
+  build-tags:
+    - fixtures
 
 linters:
   default: none
@@ -63,6 +65,45 @@ linters:
             - $gostd
             - github.com/autarquico/supermgmt/internal/domain
             - github.com/autarquico/supermgmt/internal/errors
+        tui-and-client-are-thin:
+          files:
+            - "**/internal/tui/**"
+            - "**/internal/client/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/app
+              desc: tui and client talk to the daemon through the API only
+            - pkg: github.com/autarquico/supermgmt/internal/jobs
+              desc: tui and client talk to the daemon through the API only
+            - pkg: github.com/autarquico/supermgmt/internal/database
+              desc: tui and client talk to the daemon through the API only
+            - pkg: github.com/autarquico/supermgmt/internal/daemon
+              desc: tui and client talk to the daemon through the API only
+            - pkg: github.com/autarquico/supermgmt/internal/transport
+              desc: tui and client never open SSH sessions themselves
+            - pkg: github.com/autarquico/supermgmt/internal/runtimes
+              desc: tui and client never run runtime adapters
+            - pkg: github.com/autarquico/supermgmt/internal/providers
+              desc: tui and client never talk to providers
+        api-does-not-reach-nodes:
+          files:
+            - "**/internal/api/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/transport
+              desc: api reaches nodes only through app services
+            - pkg: github.com/autarquico/supermgmt/internal/runtimes
+              desc: api reaches nodes only through app services
+            - pkg: github.com/autarquico/supermgmt/internal/providers
+              desc: api reaches nodes only through app services
+        cli-uses-the-client:
+          files:
+            - "**/internal/cli/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/app
+              desc: cli talks to the daemon through internal/client; offline commands use database, config and policy
+            - pkg: github.com/autarquico/supermgmt/internal/jobs
+              desc: cli talks to the daemon through internal/client; offline commands use database, config and policy
+            - pkg: github.com/autarquico/supermgmt/internal/transport
+              desc: cli never opens SSH sessions itself
         cmd-only-imports-cli:
           files:
             - "**/cmd/**"
@@ -109,6 +150,10 @@ linters:
         linters:
           - forbidigo
         text: fmt\.Print
+      # The fixture helper drives the docker CLI with arguments it builds itself.
+      - path: test/fixtures/
+        linters:
+          - gosec
 
 formatters:
   enable:

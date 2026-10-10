@@ -1,0 +1,8 @@
+[Unit]
+Description=SuperMgmt fixture demo service
+
+[Service]
+ExecStart=/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
