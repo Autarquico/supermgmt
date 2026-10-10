@@ -55,6 +55,14 @@ linters:
               desc: only internal/database, internal/jobs and migrations may use database/sql
             - pkg: modernc.org/sqlite
               desc: only internal/database, internal/jobs and migrations may import the SQLite driver
+        wire-is-pure:
+          files:
+            - "**/internal/api/wire/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/autarquico/supermgmt/internal/domain
+            - github.com/autarquico/supermgmt/internal/errors
         cmd-only-imports-cli:
           files:
             - "**/cmd/**"
