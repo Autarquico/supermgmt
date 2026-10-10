@@ -187,13 +187,20 @@ func TestLeaseFencing(t *testing.T) {
 			wantState domain.JobState
 			wantLocks bool
 		}{
-			{"exit status 0 completes the job and frees its locks", jobs.Evidence{Done: true}, jobs.ReconcileSucceeded, domain.JobSucceeded, false},
+			{"exit status 0 completes the job and frees its locks", jobs.Evidence{Done: true, Classification: jobs.ClassComplete}, jobs.ReconcileSucceeded, domain.JobSucceeded, false},
 			{"no completion signal holds the job and its locks", jobs.Evidence{}, jobs.ReconcileHeld, domain.JobInterrupted, true},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				w, a := interruptedReboot(t)
 
+				// Past deadline_at + grace, then a second identical sample 30s later (spec §20.4).
+				w.clock.Advance(2 * time.Minute)
+				_, err := w.store.Reconcile(context.Background(), evidenceFake{tc.evidence})
+				if err != nil {
+					t.Fatalf("first Reconcile: %v", err)
+				}
+				w.clock.Advance(31 * time.Second)
 				got, err := w.store.Reconcile(context.Background(), evidenceFake{tc.evidence})
 
 				if err != nil || len(got) != 1 || got[0].Action != tc.want {

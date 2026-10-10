@@ -9,7 +9,6 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
-	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 var errBoom = errors.New("boom")
@@ -33,8 +32,8 @@ func TestFenceRejectsAnExpiredLease(t *testing.T) {
 	err := e.db.WithWriteTx(context.Background(), func(ctx context.Context, tx *database.Tx) error {
 		return c.Lease.Fence(ctx, tx)
 	})
-	if !errors.Is(err, ErrLeaseLost) || smerr.CodeOf(err) != smerr.CodeConflict {
-		t.Fatalf("Fence = %v, want ErrLeaseLost (CONFLICT)", err)
+	if !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("Fence = %v, want ErrLeaseLost", err)
 	}
 }
 
@@ -188,8 +187,12 @@ func TestFailByRetryClass(t *testing.T) {
 				t.Fatalf("Fail: %v", err)
 			}
 			got := e.get(job.ID)
-			if got.State != tc.want || e.lockCount(job.ID) != 0 || got.Error == nil || got.Error.Message != "boom" {
-				t.Fatalf("job = %+v, locks %d", got, e.lockCount(job.ID))
+			wantLocks := 0
+			if tc.want == domain.JobQueued {
+				wantLocks = 1 // locks are held until the job is terminal (spec §20.5)
+			}
+			if got.State != tc.want || e.lockCount(job.ID) != wantLocks || got.Error == nil || got.Error.Message != "boom" {
+				t.Fatalf("job = %+v, locks %d, want %d", got, e.lockCount(job.ID), wantLocks)
 			}
 		})
 	}

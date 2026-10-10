@@ -12,7 +12,7 @@ import (
 func sampleIntent(e *env) NewIntent {
 	return NewIntent{
 		Step: "compose_up", Operation: "compose.up", TargetType: "node", TargetID: "node-1",
-		PreState: json.RawMessage(`{"containers":2}`), DeadlineAt: e.clock.Now().Add(10 * time.Minute),
+		PreState: json.RawMessage(`{"containers":2}`), DeadlineAt: e.clock.Now().Add(time.Second),
 	}
 }
 
