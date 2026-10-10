@@ -201,7 +201,7 @@ func (h setupHandler) verify(ctx context.Context, node domain.Node, req setupReq
 // own, the journal group in journal-group mode, docker with docker_access, and
 // nothing else. Docker access is root-equivalent, so it is verified, not assumed.
 func verifyGroups(ctx context.Context, ex transport.Executor, user string, req setupRequest) error {
-	c, err := templates.Render("setup.user_groups", map[string]string{"user": user})
+	c, err := templates.Render("setup.verify_groups", map[string]string{})
 	if err != nil {
 		return err
 	}

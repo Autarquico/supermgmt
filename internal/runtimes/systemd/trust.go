@@ -23,7 +23,12 @@ var (
 	execProperties = []string{"ExecStartPre", "ExecStart", "ExecStartPost", "ExecReload", "ExecStop", "ExecStopPost"}
 	execEntry      = regexp.MustCompile(`\{ path=(.*?) ; argv\[\]=(.*?) ; ignore_errors=`)
 	envFileEntry   = regexp.MustCompile(`(\S+) \(ignore_errors=(yes|no)\)`)
-	interpreterRE  = regexp.MustCompile(`^(sh|bash|dash|python[0-9.]*|perl|ruby|node|php)$`)
+	// interpreterRE names every shell and scripting runtime we know of, with
+	// optional version suffixes. Only those with a safeOptions entry may run.
+	interpreterRE = regexp.MustCompile(`^(sh|dash|bash|zsh|ksh|ksh93|mksh|pdksh|ash|csh|tcsh|fish|busybox|python|perl|ruby|lua|luajit|php|node|nodejs|deno|bun|tclsh|wish|expect|awk|gawk|mawk|nawk|sed|pwsh)[0-9.-]*$`)
+	// inlineLikeRE matches option spellings that carry code, for programs we
+	// do not recognise as interpreters.
+	inlineLikeRE = regexp.MustCompile(`^-[A-Za-z]*[ce][A-Za-z]*|^--(command|eval|exec)(=.*)?$`)
 	// safeOptions are the only options each interpreter family may be started
 	// with. An option that is not listed is refused, never skipped: attached
 	// values (-cCODE), assignments (--command=CODE) and combined flags (-lc)
@@ -41,13 +46,14 @@ var (
 
 // interpreterFamily maps an interpreter's file name to its safeOptions key.
 func interpreterFamily(base string) string {
-	switch {
-	case base == "sh" || base == "dash":
+	name := strings.TrimRight(base, "0123456789.-")
+	switch name {
+	case "sh", "dash":
 		return "shell"
-	case strings.HasPrefix(base, "python"):
-		return "python"
+	case "nodejs":
+		return "node"
 	}
-	return base
+	return name
 }
 
 // CheckTrust applies the unit trust profile of spec §16: the unit file, every
@@ -182,7 +188,15 @@ func scriptPaths(ctx context.Context, ex transport.Executor, unit, program strin
 		return nil, notEligible(unit, "executable", program, "env hides the program it runs")
 	}
 	if interpreterRE.MatchString(base) {
+		if safeOptions[interpreterFamily(base)] == nil {
+			return nil, notEligible(unit, "executable", program, "interpreter is not on the allow list")
+		}
 		return interpreterScripts(unit, program, args)
+	}
+	for _, a := range args {
+		if inlineLikeRE.MatchString(a) {
+			return nil, notEligible(unit, "executable", program, "program is started with an option that may carry code")
+		}
 	}
 	script, err := hasShebang(ctx, ex, unit, program)
 	if err != nil || !script {

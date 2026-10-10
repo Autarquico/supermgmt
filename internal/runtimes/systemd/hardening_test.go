@@ -205,7 +205,7 @@ func TestSetupNeverLetsRootTouchServiceUserPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range node.calls {
-		if strings.HasPrefix(c.Template, "setup.") && strings.Contains(c.Line, "/var/lib/supermgmt/") && !strings.Contains(c.Line, "sudo -n -u 'supermgmt' ") {
+		if strings.HasPrefix(c.Template, "setup.") && strings.Contains(c.Line, "/var/lib/supermgmt/") && !strings.Contains(c.Line, "sudo -n runuser -u 'supermgmt' -- ") {
 			t.Errorf("%s touches the service user's tree as root: %s", c.Template, c.Line)
 		}
 	}

@@ -23,7 +23,7 @@ const rootChain = "0 755 /usr/bin/systemctl\n0 755 /usr/bin\n0 755 /usr\n0 755 /
 // onATrustedNode answers the questions setup asks about the systemctl chain and the account's primary group.
 func onATrustedNode(n *fakeNode) *fakeNode {
 	return n.reply("systemd.path_chain", rootChain).reply("setup.user_primary_group", "supermgmt\n").
-		reply("setup.user_groups", "supermgmt systemd-journal\n")
+		reply("setup.user_groups", "supermgmt systemd-journal\n").reply("setup.verify_groups", "supermgmt systemd-journal\n")
 }
 
 const passwdEntry = "supermgmt:x:998:998::/var/lib/supermgmt:/bin/sh\n"
@@ -385,7 +385,7 @@ func TestSetupVerifiesTheEffectiveGroupsOfTheFreshSession(t *testing.T) {
 		"no journal group":              "supermgmt\n",
 	} {
 		s := newSetting(t)
-		s.dialer.as("supermgmt").reply("setup.user_groups", groups)
+		s.dialer.as("supermgmt").reply("setup.verify_groups", groups)
 		s.setupPlan(defaultSetup())
 
 		err := s.run()
@@ -399,7 +399,7 @@ func TestSetupVerifiesTheEffectiveGroupsOfTheFreshSession(t *testing.T) {
 
 func TestSetupWithDockerAccessRequiresTheDockerGroupInTheSession(t *testing.T) {
 	s := newSetting(t)
-	s.dialer.as("admin").reply("setup.user_groups", "supermgmt systemd-journal docker\n")
+	s.dialer.as("admin").reply("setup.user_groups", "supermgmt systemd-journal docker\n").reply("setup.verify_groups", "supermgmt systemd-journal docker\n")
 	s.setupPlan(map[string]any{"docker_access": "true", "logs_mode": "journal-group", "grants": []any{}})
 
 	err := s.run() // the fresh session lacks docker

@@ -150,7 +150,7 @@ func TestOwnStepsRunAsTheDedicatedUser(t *testing.T) {
 		t.Errorf("root variant = %s", root.Line)
 	}
 	viaSudo, err := RenderSetup("setup.own_dir.sudo", dir, nil)
-	if err != nil || !strings.HasPrefix(viaSudo.Line, "sudo -n -u 'supermgmt' sh -c ") {
+	if err != nil || !strings.HasPrefix(viaSudo.Line, "sudo -n runuser -u 'supermgmt' -- sh -c ") {
 		t.Errorf("sudo variant = %q, %v", viaSudo.Line, err)
 	}
 	stage, err := RenderSetup("setup.own_file_stage", map[string]string{"user": "supermgmt", "mode": "0600", "path": StagingPath(AuthorizedKeysPath)}, []byte("key"))

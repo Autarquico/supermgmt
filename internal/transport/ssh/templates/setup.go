@@ -139,6 +139,7 @@ var setupReads = []Template{
 	{Name: "setup.user_groups", Params: []Param{paramUser}, Body: "id -nG {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.user_primary_group", Params: []Param{paramUser}, Body: "id -gn {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.systemctl_path", Body: "command -v systemctl", MaxBytes: 4 << 10, MaxLines: 5},
+	{Name: "setup.verify_groups", Body: "id -nG", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.verify_id", Body: "id -un", MaxBytes: 1 << 10, MaxLines: 2},
 	{
 		Name: "setup.verify_markers", MaxBytes: 1 << 10, MaxLines: 2,
@@ -154,7 +155,7 @@ func buildSetupTemplates() []Template {
 	for _, s := range privilegedSteps {
 		all = append(all,
 			setupTemplate(s.name, s, rootPath, rootPath+"runuser -u {{user}} -- "),
-			setupTemplate(s.name+SudoVariantSuffix, s, "sudo -n ", "sudo -n -u {{user}} "),
+			setupTemplate(s.name+SudoVariantSuffix, s, "sudo -n ", "sudo -n runuser -u {{user}} -- "),
 		)
 	}
 	return all

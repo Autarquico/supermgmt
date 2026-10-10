@@ -194,6 +194,9 @@ func (s stepper) ensureUser(ctx context.Context, user string) error {
 		if err := s.checkOwnAccount(ctx, user, string(res.Stdout)); err != nil {
 			return err
 		}
+		if err := s.checkNoForeignGroups(ctx, user); err != nil {
+			return err
+		}
 	case 2:
 		if err := s.do(ctx, "setup.user_add", map[string]string{"user": user}, nil); err != nil {
 			return err
@@ -319,6 +322,21 @@ func (s stepper) checkMemberships(ctx context.Context, user string, wanted []str
 	for _, group := range strings.Fields(out) {
 		if group != user && !slices.Contains(wanted, group) {
 			return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("account %s belongs to the unrequested group %s", user, textsafe.Line(group)))
+		}
+	}
+	return nil
+}
+
+// checkNoForeignGroups refuses, before anything is changed, an existing
+// account that belongs to a group setup does not manage.
+func (s stepper) checkNoForeignGroups(ctx context.Context, user string) error {
+	out, err := succeeded(ctx, s.ex, "setup.user_groups", map[string]string{"user": user})
+	if err != nil {
+		return err
+	}
+	for _, group := range strings.Fields(out) {
+		if group != user && !slices.Contains(managedGroups, group) {
+			return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("account %s belongs to the unmanaged group %s", user, textsafe.Line(group)))
 		}
 	}
 	return nil
