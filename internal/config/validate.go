@@ -19,6 +19,11 @@ const (
 	// reconcileMargin is the slack jobs.reconcile_grace must leave above one
 	// SSH connect plus one SSH command (spec §8.2).
 	reconcileMargin = 5 * time.Second
+	// killAfter is the grace `timeout --kill-after` gives a mutating remote
+	// command after its deadline (spec §20.4, ADR-0015). A remote process of
+	// ours is gone once deadline + killAfter + connect_timeout has passed, and
+	// quiescence waits for jobs.reconcile_grace after the deadline.
+	killAfter = 10 * time.Second
 )
 
 // Validate reports every problem in c at once, each located by YAML path.
@@ -169,9 +174,11 @@ func (v *validator) ssh() {
 }
 
 func (v *validator) jobs() {
-	floor := v.cfg.SSH.ConnectTimeout + v.cfg.SSH.CommandTimeout + reconcileMargin
+	ssh := v.cfg.SSH
+	floor := max(ssh.ConnectTimeout+ssh.CommandTimeout+reconcileMargin, killAfter+ssh.ConnectTimeout)
 	if got := v.cfg.Jobs.ReconcileGrace; got < floor {
-		v.add("jobs.reconcile_grace", "must be at least ssh.connect_timeout + ssh.command_timeout + 5s (%s), got %s", floor, got)
+		v.add("jobs.reconcile_grace",
+			"must be at least ssh.connect_timeout + ssh.command_timeout + 5s and at least the 10s kill-after + ssh.connect_timeout (%s), got %s", floor, got)
 	}
 }
 

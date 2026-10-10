@@ -92,6 +92,14 @@ func TestValidateRules(t *testing.T) {
 
 		{"reconcile_grace at the floor", func(c *Config) { c.Jobs.ReconcileGrace = 43 * time.Second }, ""},
 		{"reconcile_grace below the floor", func(c *Config) { c.Jobs.ReconcileGrace = 42 * time.Second }, "jobs.reconcile_grace"},
+		{"reconcile_grace covers kill-after plus connect when commands are short", func(c *Config) {
+			c.SSH.CommandTimeout = time.Second
+			c.Jobs.ReconcileGrace = 18 * time.Second
+		}, ""},
+		{"reconcile_grace below kill-after plus connect when commands are short", func(c *Config) {
+			c.SSH.CommandTimeout = time.Second
+			c.Jobs.ReconcileGrace = 17 * time.Second
+		}, "jobs.reconcile_grace"},
 		{"reconcile_grace follows ssh timeouts", func(c *Config) { c.SSH.CommandTimeout = 60 * time.Second }, "jobs.reconcile_grace"},
 
 		{"zero duration", func(c *Config) { c.Refresh.MetricsInterval = 0 }, "refresh.metrics_interval"},
