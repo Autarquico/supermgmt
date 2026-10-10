@@ -1,0 +1,191 @@
+package app
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/autarquico/supermgmt/internal/database"
+	"github.com/autarquico/supermgmt/internal/domain"
+	"github.com/autarquico/supermgmt/internal/domain/plan"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/policy"
+)
+
+// resolved is a target as the database sees it now: the policy view (effective
+// attributes, capabilities), its spec_revision, and the configured resources
+// its attributes derive from (spec §6.4, §11.3).
+type resolved struct {
+	target   policy.Target
+	revision int64
+	inputs   []plan.Input
+}
+
+// resolve supports the resource types M0 can act on: nodes and services.
+func resolve(ctx context.Context, q database.Querier, ref domain.ResourceRef) (resolved, error) {
+	if ref.Type == domain.ResourceNode {
+		return resolveNode(ctx, q, ref.ID)
+	}
+	if ref.Type == domain.ResourceService {
+		return resolveService(ctx, q, ref.ID)
+	}
+	return resolved{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("resource type %q is not supported yet", ref.Type))
+}
+
+func resolveNode(ctx context.Context, q database.Querier, id domain.ID) (resolved, error) {
+	node, err := database.GetNode(ctx, q, id)
+	if err != nil {
+		return resolved{}, err
+	}
+	out := resolved{
+		target:   policy.Target{Ref: domain.ResourceRef{Type: domain.ResourceNode, ID: id}},
+		revision: node.SpecRevision,
+	}
+	out.target.Attrs = policy.Attributes{Tags: node.Tags, Node: node.Name}
+
+	if node.EnvironmentID != nil {
+		env, err := database.GetEnvironment(ctx, q, *node.EnvironmentID)
+		if err != nil {
+			return resolved{}, err
+		}
+		out.target.Attrs.Environment = env.Name
+		out.target.Attrs.EnvironmentRisk = env.RiskLevel
+		out.target.Attrs.ApprovalsRequired = env.ApprovalsRequired
+		out.inputs = append(out.inputs, revisionInput(domain.ResourceEnvironment, env.ID, env.SpecRevision))
+	}
+	provider, err := database.GetProvider(ctx, q, node.ProviderID)
+	if err != nil {
+		return resolved{}, err
+	}
+	out.target.Attrs.Provider = provider.Name
+	out.inputs = append(out.inputs, revisionInput(domain.ResourceProvider, provider.ID, provider.SpecRevision))
+
+	out.target.Capabilities, err = capabilitiesOf(ctx, q, id)
+	return out, err
+}
+
+// resolveService takes its attributes and capabilities from its node (spec
+// §11.3: service-level tags do not exist in V1) and records the node as an input.
+func resolveService(ctx context.Context, q database.Querier, id domain.ID) (resolved, error) {
+	service, err := database.GetService(ctx, q, id)
+	if err != nil {
+		return resolved{}, err
+	}
+	out, err := resolveNode(ctx, q, service.NodeID)
+	if err != nil {
+		return resolved{}, err
+	}
+	nodeInput := revisionInput(domain.ResourceNode, service.NodeID, out.revision)
+	out.inputs = append([]plan.Input{nodeInput}, out.inputs...)
+	out.target.Ref = domain.ResourceRef{Type: domain.ResourceService, ID: id}
+	out.revision = service.SpecRevision
+	return out, nil
+}
+
+func capabilitiesOf(ctx context.Context, q database.Querier, node domain.ID) (policy.CapabilitySet, error) {
+	all, err := database.ListNodeCapabilities(ctx, q, node)
+	if err != nil {
+		return nil, err
+	}
+	set := policy.NewCapabilitySet()
+	for _, c := range all {
+		if c.Available {
+			set[c.Capability] = struct{}{}
+		}
+	}
+	return set, nil
+}
+
+func revisionInput(typ domain.ResourceType, id domain.ID, revision int64) plan.Input {
+	return plan.Input{Type: string(typ), ID: id.String(), SpecRevision: &revision}
+}
+
+// built is a plan together with the policy view of its target it was built from.
+type built struct {
+	plan   plan.Plan
+	target policy.Target
+	spec   policy.ActionSpec
+}
+
+// request is the policy request that decides whether actor may run this plan.
+func (b built) request(actor domain.Actor) policy.Request {
+	return policy.Request{Actor: actor, Action: b.plan.Action, Params: b.plan.Parameters, Targets: []policy.Target{b.target}}
+}
+
+// build assembles the version 3 plan for action on ref from the current
+// database state (Appendix C). Only job-mode actions go through plans, and the
+// target must be of the type the catalog declares.
+func build(ctx context.Context, q database.Querier, action string, actorID domain.ID, ref domain.ResourceRef, params map[string]any) (built, error) {
+	spec, ok := policy.Lookup(action)
+	switch {
+	case !ok:
+		return built{}, smerr.New(smerr.CodeInvalidArgument, smerr.ReasonUnknownAction, "unknown action: "+action)
+	case spec.Mode != policy.ModeJob:
+		return built{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("action %s does not run through a plan", action))
+	case spec.Resource != ref.Type:
+		return built{}, smerr.New(smerr.CodeInvalidArgument, "",
+			fmt.Sprintf("action %s targets a %s, not a %s", action, spec.Resource, ref.Type))
+	}
+	risk, err := policy.RiskFor(action, params)
+	if err != nil {
+		return built{}, err
+	}
+	target, err := resolve(ctx, q, ref)
+	if err != nil {
+		return built{}, err
+	}
+	revision := target.revision
+	return built{
+		spec:   spec,
+		target: target.target,
+		plan: plan.Plan{
+			Version:    plan.Version,
+			Action:     action,
+			Actor:      "identity/" + actorID.String(),
+			Targets:    []plan.Target{{Type: string(ref.Type), ID: ref.ID.String(), SpecRevision: &revision}},
+			Inputs:     target.inputs,
+			Parameters: params,
+			Risk:       risk,
+		},
+	}, nil
+}
+
+// rebuildCurrent recomputes a stored plan's action on its target from the
+// current database state. A target that no longer exists makes the plan stale.
+func rebuildCurrent(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
+	stored, err := plan.Parse(rec.PlanJSON)
+	if err != nil {
+		return built{}, err
+	}
+	if len(stored.Targets) != 1 {
+		return built{}, smerr.New(smerr.CodeInternal, "", "stored plan must have exactly one target")
+	}
+	t := stored.Targets[0]
+	ref := domain.ResourceRef{Type: domain.ResourceType(t.Type), ID: domain.ID(t.ID)}
+	current, err := build(ctx, q, rec.Action, rec.ActorID, ref, stored.Parameters)
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		return built{}, planStale()
+	}
+	return current, err
+}
+
+// rebuild is rebuildCurrent plus the staleness check: the plan hash covers
+// every input, so a recomputed hash that differs from the stored one means a
+// configured input changed. Observations never change it (spec §6.4).
+func rebuild(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
+	current, err := rebuildCurrent(ctx, q, rec)
+	if err != nil {
+		return built{}, err
+	}
+	hash, err := plan.Hash(&current.plan)
+	if err != nil {
+		return built{}, err
+	}
+	if hash != rec.PlanHash {
+		return built{}, planStale()
+	}
+	return current, nil
+}
+
+func planStale() error {
+	return smerr.FromReason(smerr.ReasonPlanStale, "plan inputs changed since the plan was created")
+}
