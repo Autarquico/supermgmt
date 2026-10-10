@@ -83,7 +83,10 @@ func (rs *routeSet) reads() {
 	}))
 	rs.routes = append(rs.routes, route{method: http.MethodGet, pattern: wire.PathPresence, action: ExemptSelf, longLived: true, do: s.presence})
 	rs.read(wire.PathSSHKey, actionConfigRead, reading(s, func(ctx context.Context, by app.Caller, _ input) (wire.SSHKey, error) {
-		return s.svc.SSHKeys.Get(ctx, by)
+		if _, err := s.svc.Queries.RequireRead(ctx, by, actionConfigRead, domain.ResourceRef{Type: domain.ResourceInstance}); err != nil {
+			return wire.SSHKey{}, err
+		}
+		return s.svc.SSHKeys.Get(ctx)
 	}))
 	rs.read(wire.PathEvents, "event.read", reading(s, func(ctx context.Context, by app.Caller, in input) (wire.Page[wire.Event], error) {
 		q, err := wire.ParseEventQuery(in.r.URL.Query())
@@ -96,6 +99,13 @@ func (rs *routeSet) reads() {
 
 func (rs *routeSet) plans() {
 	s := rs.s
+	rs.read(wire.PathPlan, "plan.read", reading(s, func(ctx context.Context, by app.Caller, in input) (wire.CreatedPlan, error) {
+		id, err := in.id("id")
+		if err != nil {
+			return wire.CreatedPlan{}, err
+		}
+		return s.svc.Queries.Plan(ctx, by, id)
+	}))
 	rs.write(http.MethodPost, wire.PathPlans, "plan.create", mutation(s,
 		func(ctx context.Context, by app.Caller, in input) (app.CreatedPlan, error) {
 			req, err := decode[wire.CreatePlanRequest](in)

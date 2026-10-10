@@ -355,8 +355,9 @@ func eventually(t *testing.T, within time.Duration, what string, cond func() boo
 }
 
 // waitDiscovered waits for the background refresher's first full probe of a
-// freshly added node: until then the node advertises no capability, and an
-// explicit node.probe is refused with CAPABILITY_UNAVAILABLE.
+// freshly added node, so the tests start from a node that has been seen. An
+// explicit node.probe no longer needs it: a freshly added node can be probed
+// at once.
 func waitDiscovered(t *testing.T, api *client.Client, id domain.ID) wire.Node {
 	t.Helper()
 	var last wire.Node

@@ -16,6 +16,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
 	"github.com/autarquico/supermgmt/internal/providers/local"
+	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/secrets"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
 )
@@ -146,7 +147,7 @@ func services(ctx context.Context, o Options, appCfg app.Config, db *database.DB
 	focus := app.NewFocus(o.Clock, focusLeaseFactor*cfg.Refresh.FocusedInterval)
 	inventory, err := app.NewInventory(appCfg, app.InventoryOptions{
 		Store: jobStore, Connector: conn, Mode: cfg.Instance.Mode, Focus: focus,
-		StaleAfter: staleAfterFactor * cfg.Refresh.MetricsInterval,
+		StaleAfter: staleAfterFactor * cfg.Refresh.MetricsInterval, KeepLogsRaw: !cfg.Security.RedactCommandOutput,
 	})
 	if err != nil {
 		return nil, err
@@ -237,7 +238,7 @@ func apiServer(o Options, appCfg app.Config, db *database.DB, jobStore *jobs.Sto
 	if err != nil {
 		return nil, err
 	}
-	sshKeys, err := api.NewSSHKeys(appCfg, app.SSHIdentityOf(store))
+	sshKeys, err := api.NewSSHKeys(app.SSHIdentityOf(store))
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +263,7 @@ func appConfig(db *database.DB, o Options) (app.Config, error) {
 	allowSelf := o.Config.Security.AllowSelfApproval != nil && *o.Config.Security.AllowSelfApproval
 	return app.Config{
 		DB: db, Clock: o.Clock, IDs: o.IDs, Policy: pol, Credentials: app.LocalSocketCredentials{},
-		ApprovalTTL: o.Config.Security.ApprovalTTL, AllowSelfApproval: allowSelf,
+		ApprovalTTL: o.Config.Security.ApprovalTTL, DefaultLogsMode: runtimes.LogsMode(o.Config.SSH.LogsMode), AllowSelfApproval: allowSelf,
 	}, nil
 }
 

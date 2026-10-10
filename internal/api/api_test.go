@@ -15,6 +15,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
+	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/policy"
 )
 
@@ -53,7 +54,7 @@ func TestTheServedRoutesAreTheM1Contract(t *testing.T) {
 	h := newHarness(t)
 	want := []string{
 		"GET " + wire.PathHealthLive, "GET " + wire.PathHealthReady, "GET " + wire.PathMe, "GET " + wire.PathPresence,
-		"GET " + wire.PathSSHKey, "POST " + wire.PathPlans, "POST " + wire.PathPlanSubmit, "GET " + wire.PathApprovals,
+		"GET " + wire.PathSSHKey, "POST " + wire.PathPlans, "GET " + wire.PathPlan, "POST " + wire.PathPlanSubmit, "GET " + wire.PathApprovals,
 		"GET " + wire.PathJobs, "GET " + wire.PathJob, "POST " + wire.PathJobApprove, "POST " + wire.PathJobReject,
 		"POST " + wire.PathJobCancel, "POST " + wire.PathJobResolve, "GET " + wire.PathProviders, "POST " + wire.PathProviders,
 		"GET " + wire.PathNodes, "GET " + wire.PathNode, "POST " + wire.PathNodesSSHHostKey, "POST " + wire.PathNodesSSH,
@@ -343,3 +344,17 @@ func TestASuccessfulCallThatStoredNoRecordIsNeverAnsweredAsSuccess(t *testing.T)
 		t.Errorf("a body was written: %s", rec.Body.String())
 	}
 }
+
+func TestReadingAPlanIsAuthorizedAsPlanRead(t *testing.T) {
+	missing := "/api/v1/plans/" + domainID()
+	admin := newHarness(t)
+	if r := admin.do(http.MethodGet, missing, "", nil); r.Status != http.StatusNotFound {
+		t.Errorf("admin, unknown plan: status %d body %s", r.Status, r.Body)
+	}
+	nobody := newHarness(t, func(o *harnessOptions) { o.roles = nil })
+	if r := nobody.do(http.MethodGet, missing, "", nil); r.Status != http.StatusForbidden {
+		t.Errorf("no roles: status %d body %s", r.Status, r.Body)
+	}
+}
+
+func domainID() string { return domain.UUIDv7Generator{}.NewID().String() }

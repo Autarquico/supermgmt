@@ -133,7 +133,7 @@ func (h *harness) build(cfg app.Config, o harnessOptions) *Server {
 	must(h.t, err)
 	sessions, err := app.NewSessions(cfg)
 	must(h.t, err)
-	keys, err := NewSSHKeys(cfg, func(context.Context) (secrets.Identity, error) {
+	keys, err := NewSSHKeys(func(context.Context) (secrets.Identity, error) {
 		return secrets.Identity{Ref: secrets.Ref{Name: "ssh/default", Version: 1}, AuthorizedKey: "ssh-ed25519 AAAA", FingerprintSHA256: "SHA256:x"}, nil
 	})
 	must(h.t, err)
