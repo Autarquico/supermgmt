@@ -1,0 +1,24 @@
+┌ SuperMgmt · Help ─────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ Keys                                                                         │
+│ 1 2 3 4 5     Dashboard, Resources, Jobs, Approvals, Events                  │
+│ j k / arrows  move; g top, G bottom                                          │
+│ enter         open the selected item                                         │
+│ esc           back                                                           │
+│ v             services of the node                                           │
+│ l             logs of the service                                            │
+│ s             SSH shell on the node (your own credentials)                   │
+│ d             lazydocker on the node, when Docker is available               │
+│ p             probe the node (Node screen)                                   │
+│ R S X         restart, start, stop the service (opens a plan to confirm)     │
+│ A R           approve or reject the plan on screen (Approvals)               │
+│ c             cancel a job (asks first)                                      │
+│ r             refresh the screen                                             │
+│ /             command palette                                                │
+│ q             quit                                                           │
+│                                                                              │
+│ Palette                                                                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ esc back  q quit                                                             │
+└──────────────────────────────────────────────────────────────────────────────┘

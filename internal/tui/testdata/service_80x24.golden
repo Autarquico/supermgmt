@@ -1,0 +1,24 @@
+┌ SuperMgmt · Service ──────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ ● sm-demo.service                                                            │
+│ node          web-1                                                          │
+│ runtime       systemd · systemd_unit                                         │
+│ native id     sm-demo.service                                                │
+│ status        active                                                         │
+│ health        healthy                                                        │
+│ actions       restart start stop                                             │
+│ last seen     10-10 11:59:00                                                 │
+│                                                                              │
+│ Metadata                                                                     │
+│ sub_state     running                                                        │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ l logs  R restart  S start  X stop  esc back  / command  ? help  q quit      │
+└──────────────────────────────────────────────────────────────────────────────┘

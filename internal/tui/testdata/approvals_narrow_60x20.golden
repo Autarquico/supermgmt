@@ -1,0 +1,20 @@
+┌ SuperMgmt · Approvals ── 4 nodes · 3 online · 1 warning …┐
+│                                                          │
+│ PLAN #a1b2c3d4e5f6                                       │
+│                                                          │
+│ Action: service.restart                                  │
+│ 1. Stop sm-demo.service                                  │
+│ 2. Start sm-demo.service                                 │
+│ 3. Confirm the unit is active                            │
+│                                                          │
+│ Impact: 1 target(s)                                      │
+│ Risk: high                                               │
+│                                                          │
+│ Environments: production                                 │
+│ Approvals: 0/1 · expires 10-11 12:00:00                  │
+│                                                          │
+│ [A] Approve  [R] Reject                                  │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│ j/k move  A approve  R reject  esc back  / command  ? h… │
+└──────────────────────────────────────────────────────────┘

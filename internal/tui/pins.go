@@ -7,10 +7,6 @@
 package tui
 
 import (
-	_ "charm.land/bubbles/v2/table"
-	_ "charm.land/bubbles/v2/textinput"
-	_ "charm.land/bubbles/v2/viewport"
-	_ "charm.land/lipgloss/v2"
 	_ "github.com/creack/pty"
 	_ "golang.org/x/sys/unix"
 )

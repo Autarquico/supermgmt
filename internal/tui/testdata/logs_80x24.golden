@@ -1,0 +1,24 @@
+┌ SuperMgmt · Logs ─────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ logs · sm-demo.service on web-1 · 10-10 12:00:00 · 100%                      │
+│ line W of the api log                                                        │
+│ line X of the api log                                                        │
+│ line Y of the api log                                                        │
+│ line Z of the api log                                                        │
+│ line A of the api log                                                        │
+│ line B of the api log                                                        │
+│ line C of the api log                                                        │
+│ line D of the api log                                                        │
+│ line E of the api log                                                        │
+│ line F of the api log                                                        │
+│ line G of the api log                                                        │
+│ line H of the api log                                                        │
+│ line I of the api log                                                        │
+│ line J of the api log                                                        │
+│ line K of the api log                                                        │
+│ line L of the api log                                                        │
+│ line M of the api log                                                        │
+│ line N of the api log                                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ j/k scroll  G end  r refresh  esc back  / command  ? help  q quit            │
+└──────────────────────────────────────────────────────────────────────────────┘

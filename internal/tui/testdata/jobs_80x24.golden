@@ -1,0 +1,24 @@
+┌ SuperMgmt · Jobs ─────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│   JOB      TYPE                STATE             RISK    CREATED             │
+│ ▸ 0000c001 service.restart     awaiting_approval high    10-10 11:59:00      │
+│   0000c002 node.probe          succeeded         read    10-10 11:00:00      │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ j/k move  enter detail  c cancel  esc back  / command  ? help  q quit        │
+└──────────────────────────────────────────────────────────────────────────────┘

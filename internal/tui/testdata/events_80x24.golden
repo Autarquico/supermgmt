@@ -1,0 +1,24 @@
+┌ SuperMgmt · Events ───────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ TIME           SEV      ACTION                  RESULT    CORRELATION        │
+│ 10-10 11:59:00 warning  service.restart         pending   c-222              │
+│ 10-10 11:58:00 info     node.probe              succeeded c-111              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ r refresh  esc back  / command  ? help  q quit                               │
+└──────────────────────────────────────────────────────────────────────────────┘
