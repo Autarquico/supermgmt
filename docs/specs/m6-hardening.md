@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "M6 — Hardening and release"
+title: M6 — Hardening and release
 type: epic
-status: draft
+status: active
 priority: P1
 size: L
 issue: null
 prs: []
-related_issues: []
+related_issues: [6]
 depends_on: [m5-mcp]
 supersedes: []
 related_specs: []
