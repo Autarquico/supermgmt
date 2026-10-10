@@ -5,6 +5,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/autarquico/supermgmt/internal/textsafe"
+
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/runtimes"
@@ -57,7 +59,7 @@ func readVersion(ctx context.Context, ex transport.Executor) (string, error) {
 	if len(fields) < 2 || fields[0] != "systemd" {
 		return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "systemctl did not report a systemd version")
 	}
-	return sanitize(fields[1]), nil
+	return textsafe.Line(fields[1]), nil
 }
 
 type unitLine struct{ name, load, active, sub, description string }
@@ -79,8 +81,8 @@ func parseUnits(out string) []unitLine {
 			continue
 		}
 		units = append(units, unitLine{
-			name: sanitize(fields[0]), load: fields[1], active: fields[2], sub: fields[3],
-			description: sanitize(strings.Join(fields[4:], " ")),
+			name: textsafe.Line(fields[0]), load: fields[1], active: fields[2], sub: fields[3],
+			description: textsafe.Line(strings.Join(fields[4:], " ")),
 		})
 	}
 	return units

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/textsafe"
+
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/transport"
 )
@@ -59,7 +61,7 @@ type inspected struct {
 }
 
 func (c inspected) state() containerState {
-	return containerState{StartedAt: sanitize(c.State.StartedAt), Running: c.State.Running, Status: sanitize(c.State.Status)}
+	return containerState{StartedAt: textsafe.Line(c.State.StartedAt), Running: c.State.Running, Status: textsafe.Line(c.State.Status)}
 }
 
 func decodeInspect(out []byte) ([]inspected, error) {

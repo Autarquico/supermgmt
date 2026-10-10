@@ -1,4 +1,4 @@
-package ssh
+package textsafe
 
 import (
 	"testing"
@@ -61,4 +61,10 @@ func FuzzSanitize(f *testing.F) {
 			t.Fatalf("not idempotent: %q then %q", out, again)
 		}
 	})
+}
+
+func TestLineDropsNewlinesAndEscapes(t *testing.T) {
+	if got := Line("a\x1b[31mb\nc\r\x00d"); got != "abcd" {
+		t.Errorf("Line = %q, want %q", got, "abcd")
+	}
 }

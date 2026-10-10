@@ -1,4 +1,4 @@
-package ssh
+package textsafe
 
 import (
 	"strings"
@@ -100,4 +100,9 @@ func skipString(text []rune, j int) int {
 		j++
 	}
 	return j
+}
+
+// Line sanitizes a single-line field: like Sanitize, and newlines are dropped too.
+func Line(s string) string {
+	return strings.ReplaceAll(Sanitize([]byte(s)), "\n", "")
 }

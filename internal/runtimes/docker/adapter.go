@@ -8,12 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
+
+	"github.com/autarquico/supermgmt/internal/textsafe"
 
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
@@ -125,21 +124,6 @@ func read(ctx context.Context, ex transport.Executor, name string, args map[stri
 	return res, nil
 }
 
-var ansiSequence = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)
-
-// sanitize drops ANSI sequences and control characters (but tab) and repairs
-// invalid UTF-8: remote text is untrusted (spec §30).
-func sanitize(s string) string {
-	s = ansiSequence.ReplaceAllString(s, "")
-	s = strings.ToValidUTF8(s, string(utf8.RuneError))
-	return strings.Map(func(r rune) rune {
-		if r == '\t' || !unicode.IsControl(r) {
-			return r
-		}
-		return -1
-	}, s)
-}
-
 func splitLines(out []byte) []string {
 	text := strings.TrimRight(string(out), "\n")
 	if text == "" {
@@ -147,7 +131,7 @@ func splitLines(out []byte) []string {
 	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = sanitize(strings.TrimSuffix(line, "\r"))
+		lines[i] = textsafe.Line(strings.TrimSuffix(line, "\r"))
 	}
 	return lines
 }

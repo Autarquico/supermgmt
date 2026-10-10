@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/textsafe"
+
 	cryptossh "golang.org/x/crypto/ssh"
 
 	"github.com/autarquico/supermgmt/internal/transport"
@@ -122,8 +124,8 @@ func execute(s *cryptossh.Session, c templates.Command) sessionOutcome {
 	err := s.Run(c.Line)
 
 	res := transport.Result{
-		Stdout:    []byte(Sanitize(stdout.Bytes())),
-		Stderr:    []byte(Sanitize(stderr.Bytes())),
+		Stdout:    []byte(textsafe.Sanitize(stdout.Bytes())),
+		Stderr:    []byte(textsafe.Sanitize(stderr.Bytes())),
 		Truncated: stdout.truncated || stderr.truncated,
 	}
 	var exit *cryptossh.ExitError

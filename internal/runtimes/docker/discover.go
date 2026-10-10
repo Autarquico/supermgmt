@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autarquico/supermgmt/internal/textsafe"
+
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/runtimes"
@@ -61,7 +63,7 @@ func engineVersion(ctx context.Context, ex transport.Executor) (string, error) {
 		case strings.HasPrefix(line, "Server"):
 			inServer = true
 		case inServer && strings.HasPrefix(trimmed, "Version:"):
-			return sanitize(strings.TrimSpace(strings.TrimPrefix(trimmed, "Version:"))), nil
+			return textsafe.Line(strings.TrimSpace(strings.TrimPrefix(trimmed, "Version:"))), nil
 		}
 	}
 	return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "the docker engine is not reachable")
@@ -73,7 +75,7 @@ func composeVersion(ctx context.Context, ex transport.Executor) string {
 	if err != nil || res.ExitStatus != 0 {
 		return ""
 	}
-	return sanitize(strings.TrimSpace(string(res.Stdout)))
+	return textsafe.Line(strings.TrimSpace(string(res.Stdout)))
 }
 
 func listContainers(ctx context.Context, ex transport.Executor) ([]inspected, error) {
@@ -90,7 +92,7 @@ func listContainers(ctx context.Context, ex transport.Executor) ([]inspected, er
 	return decodeInspect(res.Stdout)
 }
 
-func containerName(c inspected) string { return sanitize(strings.TrimPrefix(c.Name, "/")) }
+func containerName(c inspected) string { return textsafe.Line(strings.TrimPrefix(c.Name, "/")) }
 
 func admits(f runtimes.Filter, name string) bool {
 	matches := func(patterns []string) bool {
@@ -102,22 +104,22 @@ func admits(f runtimes.Filter, name string) bool {
 func service(c inspected, name string) runtimes.DiscoveredService {
 	health := ""
 	if c.State.Health != nil {
-		health = sanitize(c.State.Health.Status)
+		health = textsafe.Line(c.State.Health.Status)
 	}
 	labels := make(map[string]any, len(c.Config.Labels))
 	for k, v := range c.Config.Labels {
-		labels[sanitize(k)] = sanitize(v)
+		labels[textsafe.Line(k)] = textsafe.Line(v)
 	}
 	return runtimes.DiscoveredService{
-		Kind: domain.ServiceDockerContainer, NativeID: sanitize(c.ID), Name: name,
-		Status: sanitize(c.State.Status), Health: health,
+		Kind: domain.ServiceDockerContainer, NativeID: textsafe.Line(c.ID), Name: name,
+		Status: textsafe.Line(c.State.Status), Health: health,
 		Metadata: map[string]any{
-			"image":           sanitize(c.Config.Image),
-			"image_id":        sanitize(c.Image),
+			"image":           textsafe.Line(c.Config.Image),
+			"image_id":        textsafe.Line(c.Image),
 			"labels":          labels,
 			"ports":           ports(c),
-			"compose_project": sanitize(c.Config.Labels[composeProjectLabel]),
-			"started_at":      sanitize(c.State.StartedAt),
+			"compose_project": textsafe.Line(c.Config.Labels[composeProjectLabel]),
+			"started_at":      textsafe.Line(c.State.StartedAt),
 		},
 	}
 }
@@ -127,7 +129,7 @@ func ports(c inspected) []string {
 	var out []string
 	for container, bindings := range c.NetworkSettings.Ports {
 		for _, b := range bindings {
-			out = append(out, sanitize(b.HostIP+":"+b.HostPort+"->"+container))
+			out = append(out, textsafe.Line(b.HostIP+":"+b.HostPort+"->"+container))
 		}
 	}
 	slices.Sort(out)

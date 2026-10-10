@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autarquico/supermgmt/internal/textsafe"
+
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
@@ -262,9 +264,9 @@ func plainPath(unit, what, p string) error {
 }
 
 func notEligible(unit, what, file, why string) error {
-	msg := fmt.Sprintf("unit %s is not eligible: %s: %s", sanitize(unit), what, why)
+	msg := fmt.Sprintf("unit %s is not eligible: %s: %s", textsafe.Line(unit), what, why)
 	if file != "" {
-		msg += fmt.Sprintf(" (%q)", sanitize(file))
+		msg += fmt.Sprintf(" (%q)", textsafe.Line(file))
 	}
 	return smerr.New(smerr.CodeCapabilityUnavailable, smerr.ReasonUnitNotEligible, msg)
 }

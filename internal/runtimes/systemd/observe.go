@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autarquico/supermgmt/internal/textsafe"
+
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/runtimes"
@@ -46,9 +48,9 @@ func readUnitState(ctx context.Context, ex transport.Executor, unit string) (uni
 	}
 	props := parseProps(out)
 	return unitState{
-		InvocationID: sanitize(props.first("InvocationID")),
-		ActiveState:  sanitize(props.first("ActiveState")),
-		SubState:     sanitize(props.first("SubState")),
+		InvocationID: textsafe.Line(props.first("InvocationID")),
+		ActiveState:  textsafe.Line(props.first("ActiveState")),
+		SubState:     textsafe.Line(props.first("SubState")),
 	}, nil
 }
 
