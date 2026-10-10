@@ -12,7 +12,5 @@ import (
 	_ "charm.land/bubbles/v2/viewport"
 	_ "charm.land/lipgloss/v2"
 	_ "github.com/creack/pty"
-	_ "golang.org/x/crypto/ssh"
-	_ "golang.org/x/crypto/ssh/agent"
 	_ "golang.org/x/sys/unix"
 )
