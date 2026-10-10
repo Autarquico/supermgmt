@@ -39,7 +39,7 @@ vuln: ## Run govulncheck
 
 generate: ## Regenerate files and fail on drift
 	go generate ./...
-	git diff --exit-code
+	@test -z "$$(git status --porcelain)" || { git status --porcelain; echo 'generated files drifted'; exit 1; }
 
 integration: ## Run integration tests
 	go test -tags=integration ./test/integration/...
