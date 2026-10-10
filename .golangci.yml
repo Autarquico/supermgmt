@@ -1,0 +1,105 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - contextcheck
+    - depguard
+    - errcheck
+    - errorlint
+    - exhaustive
+    - forbidigo
+    - gocritic
+    - gosec
+    - govet
+    - importas
+    - ineffassign
+    - misspell
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        domain-is-pure:
+          files:
+            - "**/internal/domain/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/google/uuid
+        policy-is-storage-free:
+          files:
+            - "**/internal/policy/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/database
+              desc: policy must not depend on persistence
+            - pkg: github.com/autarquico/supermgmt/internal/jobs
+              desc: policy must not depend on the job engine
+        sql-stays-in-storage:
+          files:
+            - "**/*.go"
+            - "!**/internal/database/**"
+            - "!**/internal/jobs/**"
+            - "!**/migrations/**"
+          deny:
+            - pkg: database/sql
+              desc: only internal/database, internal/jobs and migrations may use database/sql
+            - pkg: modernc.org/sqlite
+              desc: only internal/database, internal/jobs and migrations may import the SQLite driver
+        cmd-only-imports-cli:
+          files:
+            - "**/cmd/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/autarquico/supermgmt/internal/cli
+    forbidigo:
+      forbid:
+        - pattern: ^time\.Now$
+          msg: inject a domain.Clock instead of calling time.Now
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: write through an injected io.Writer; fmt.Print is allowed only in internal/cli
+      analyze-types: true
+    importas:
+      alias:
+        - pkg: github.com/autarquico/supermgmt/internal/errors
+          alias: smerr
+      no-unaliased: true
+    exhaustive:
+      default-signifies-exhaustive: false
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+      - path: _test\.go
+        linters:
+          - forbidigo
+        text: fmt\.Print
+      - path: internal/domain/clock\.go
+        linters:
+          - forbidigo
+        text: time\.Now
+      - path: internal/cli/
+        linters:
+          - forbidigo
+        text: fmt\.Print
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/autarquico/supermgmt
