@@ -221,6 +221,18 @@ func TestUpdateNodeWithAStaleRevisionIsAConflict(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeRefusesHostKeyChangeUntilRepinExists(t *testing.T) {
+	n := newNodeFixture(t)
+	node := n.addApplied("web-3", n.withStaging())
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+
+	_, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision, NodePatch{HostPublicKey: &key})
+
+	if smerr.CodeOf(err) != smerr.CodeInvalidArgument {
+		t.Errorf("error = %v, want INVALID_ARGUMENT: a re-pin must not be silently ignored", err)
+	}
+}
+
 func TestUpdateAndRemoveRefuseNodesDefinedInTheConfigurationFile(t *testing.T) {
 	n := newNodeFixture(t)
 	n.inTx(func(ctx context.Context, tx *database.Tx) error {

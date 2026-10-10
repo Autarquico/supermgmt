@@ -10,8 +10,8 @@ const Prefix = "/api/v1"
 
 // Route paths in net/http ServeMux pattern syntax. The server registers them
 // with a method ("GET " + PathNodes); the client fills placeholders with Path.
-// Each M1 route maps to exactly one catalog action or exemption (ADR-0014);
-// that table lives in internal/api/routes.go.
+// Each route maps to exactly one catalog action or exemption (ADR-0012,
+// ADR-0014); that table lives in internal/api/routes.go.
 const (
 	PathHealthLive  = "/health/live"
 	PathHealthReady = "/health/ready"
@@ -50,7 +50,40 @@ const (
 	PathServiceStop    = Prefix + "/services/{id}/actions/stop"
 	PathServiceRestart = Prefix + "/services/{id}/actions/restart"
 
-	PathEvents = Prefix + "/events"
+	PathEvents      = Prefix + "/events"
+	PathEventStream = Prefix + "/events/stream"
+
+	// Login and credentials (ADR-0017, ADR-0018).
+	PathOIDCStart      = Prefix + "/auth/oidc/start"
+	PathOIDCExchange   = Prefix + "/auth/oidc/exchange"
+	PathOIDCDevice     = Prefix + "/auth/oidc/device"
+	PathOIDCDevicePoll = Prefix + "/auth/oidc/device/poll"
+	PathBootstrap      = Prefix + "/auth/bootstrap"
+	PathLogout         = Prefix + "/auth/logout"
+	PathTokens         = Prefix + "/tokens"
+	PathToken          = Prefix + "/tokens/{id}"
+
+	// Keys and secrets (ADR-0021). Export is served on the local-mode socket only.
+	PathSecrets         = Prefix + "/secrets"
+	PathMasterKeyRotate = Prefix + "/secrets/master-key/rotate"
+	PathMasterKeyRetire = Prefix + "/secrets/master-key/retire"
+	PathMasterKeyExport = Prefix + "/secrets/master-key/export"
+	PathSSHKeyRotate    = Prefix + "/ssh-key/rotate"
+
+	PathBackups = Prefix + "/backups"
+
+	// Enrollment (ADR-0022).
+	PathEnrollments = Prefix + "/enrollments"
+	PathEnroll      = Prefix + "/enroll"
+)
+
+// Admin-socket routes (spec §23.1): exactly these four, outside /api/v1 and
+// outside the OpenAPI document (ADR-0012).
+const (
+	AdminPathBootstrapCode   = "/admin/bootstrap-code"
+	AdminPathGrant           = "/admin/grant"
+	AdminPathRestoreComplete = "/admin/restore-complete"
+	AdminPathDoctor          = "/admin/doctor"
 )
 
 // Path fills the {placeholders} of pattern, in order, with path-escaped

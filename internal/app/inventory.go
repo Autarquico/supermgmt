@@ -344,6 +344,9 @@ func (i *Inventory) requireAPIOrigin(ctx context.Context, q database.Querier, no
 }
 
 func (i *Inventory) validatePatch(p NodePatch) error {
+	if p.HostPublicKey != nil { // re-pin lands with ADR-0021 (M2 T4); refuse rather than ignore
+		return smerr.New(smerr.CodeInvalidArgument, "", "host_public_key cannot be changed yet")
+	}
 	if p.Name != nil {
 		if err := sshnode.ValidateName(*p.Name); err != nil {
 			return err

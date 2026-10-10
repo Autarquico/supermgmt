@@ -79,10 +79,38 @@ func TestPathFillsPlaceholdersInOrder(t *testing.T) {
 }
 
 func TestEveryPathIsUnderThePrefixOrHealth(t *testing.T) {
-	for _, p := range []string{PathMe, PathPresence, PathSSHKey, PathNodes, PathServiceRestart, PathEvents, PathJobResolve} {
+	for _, p := range []string{
+		PathMe, PathPresence, PathSSHKey, PathNodes, PathServiceRestart, PathEvents, PathJobResolve,
+		PathEventStream, PathOIDCStart, PathOIDCExchange, PathOIDCDevice, PathOIDCDevicePoll, PathBootstrap,
+		PathLogout, PathTokens, PathToken, PathSecrets, PathMasterKeyRotate, PathMasterKeyRetire,
+		PathMasterKeyExport, PathSSHKeyRotate, PathBackups, PathEnrollments, PathEnroll,
+	} {
 		if !strings.HasPrefix(p, Prefix+"/") {
 			t.Errorf("%s is outside %s", p, Prefix)
 		}
+	}
+}
+
+func TestAdminSocketServesExactlyFourRoutesOutsideTheAPI(t *testing.T) {
+	admin := []string{AdminPathBootstrapCode, AdminPathGrant, AdminPathRestoreComplete, AdminPathDoctor}
+	seen := map[string]bool{}
+	for _, p := range admin {
+		if strings.HasPrefix(p, Prefix) || !strings.HasPrefix(p, "/admin/") || seen[p] {
+			t.Errorf("admin path %s must be unique, under /admin/ and outside %s", p, Prefix)
+		}
+		seen[p] = true
+	}
+}
+
+func TestIssuedCredentialsSerializeTheirValue(t *testing.T) {
+	// A credential-issuing response must carry the plaintext exactly once, in
+	// "token" (or "code"); a redacting type here would make the token unusable.
+	b, err := json.Marshal(TokenIssued{Value: "smt_x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"token":"smt_x"`) {
+		t.Errorf("TokenIssued = %s", b)
 	}
 }
 
