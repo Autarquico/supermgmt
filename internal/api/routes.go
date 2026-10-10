@@ -281,7 +281,8 @@ func (rs *routeSet) nodes() {
 		}
 		return s.svc.Inventory.GetNode(ctx, by, id, focus)
 	}))
-	rs.routes = append(rs.routes, route{method: http.MethodPost, pattern: wire.PathNodesSSHHostKey, action: "node.add",
+	rs.routes = append(rs.routes, route{
+		method: http.MethodPost, pattern: wire.PathNodesSSHHostKey, action: "node.add",
 		do: reading(s, func(ctx context.Context, by app.Caller, in input) (wire.HostKey, error) {
 			req, err := decode[wire.ScanHostKeyRequest](in)
 			if err != nil {
@@ -289,7 +290,8 @@ func (rs *routeSet) nodes() {
 			}
 			key, err := s.svc.Inventory.ScanHostKey(ctx, by, req.Host, req.Port)
 			return wire.HostKey{AuthorizedKey: key.Authorized, Type: key.Type, FingerprintSHA256: key.FingerprintSHA256}, err
-		})})
+		}),
+	})
 	rs.write(http.MethodPost, wire.PathNodesSSH, "node.add", mutation(s,
 		func(ctx context.Context, by app.Caller, in input) (app.DirectResult[wire.Node], error) {
 			req, err := decode[wire.AddSSHNodeRequest](in)

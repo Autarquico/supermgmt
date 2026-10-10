@@ -14,6 +14,9 @@ type PeerLookup func(*net.UnixConn) (uint32, error)
 // is uid (spec §2.1.1, ADR-0014). A mismatch or a failed lookup closes the
 // connection before a byte is read: the check fails closed.
 func RestrictToUID(l net.Listener, uid uint32, lookup PeerLookup, log *slog.Logger) net.Listener {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	return &peerListener{Listener: l, uid: uid, lookup: lookup, log: log}
 }
 

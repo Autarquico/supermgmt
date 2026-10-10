@@ -77,7 +77,7 @@ func Run(ctx context.Context, o Options) error {
 	if err := CheckSocketPath(o.Socket); err != nil {
 		return err
 	}
-	if err := PrepareSocketDir(o.Socket, int(o.UID)); err != nil { //nolint:gosec // a uid fits int
+	if err := PrepareSocketDir(o.Socket, int(o.UID)); err != nil {
 		return err
 	}
 	locks, err := AcquireLocks(o.Config.Storage.SQLite.Path, o.Socket)

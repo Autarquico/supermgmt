@@ -8,5 +8,4 @@ package tui
 
 import (
 	_ "github.com/creack/pty"
-	_ "golang.org/x/sys/unix"
 )

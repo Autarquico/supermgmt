@@ -2086,16 +2086,24 @@ POST   /api/v1/jobs/{id}/reject      # body: {plan_hash, reason}
 POST   /api/v1/jobs/{id}/resolve     # body: {plan_hash, outcome, note} (§20.4)
 GET    /api/v1/ssh-key
 GET    /api/v1/nodes/{id}/connect-info
+POST   /api/v1/nodes/{id}/sessions   # interactive handoff session (node.connect); body: {tool}
+POST   /api/v1/nodes/{id}/sessions/{sid}/end  # body: {reason, exit_code?}; first end wins (node.connect)
+GET    /api/v1/presence              # held open by long-lived clients for daemon residency (exempt:self, §2.1.1)
 GET    /api/v1/providers
 POST   /api/v1/providers
 GET    /api/v1/nodes
+POST   /api/v1/nodes/ssh/host-key    # read-only keyscan for first-trust confirmation (node.add; no Idempotency-Key)
 POST   /api/v1/nodes/ssh
+PATCH  /api/v1/nodes/{id}            # If-Match: <spec_revision> (node.update)
+DELETE /api/v1/nodes/{id}            # retire; If-Match required (node.remove)
 GET    /api/v1/nodes/{id}
 POST   /api/v1/nodes/{id}/probe
 GET    /api/v1/nodes/{id}/services
 GET    /api/v1/services/{id}
 GET    /api/v1/services/{id}/logs
-POST   /api/v1/services/{id}/actions/restart
+POST   /api/v1/services/{id}/actions/start    # literal routes, one per verb (service.start)
+POST   /api/v1/services/{id}/actions/stop     # (service.stop)
+POST   /api/v1/services/{id}/actions/restart  # (service.restart); any other verb is 404
 GET    /api/v1/apps
 POST   /api/v1/apps
 GET    /api/v1/deployments
