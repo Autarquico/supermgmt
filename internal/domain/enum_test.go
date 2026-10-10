@@ -57,40 +57,83 @@ func upper(s string) string {
 }
 
 func TestEnumsRoundTripAndRejectInvalid(t *testing.T) {
-	enum[domain.ActorType]{"ActorType", domain.AllActorTypes, domain.ParseActorType,
-		domain.ActorType.Valid, []string{"human", "automation", "mcp", "system"}}.check(t)
-	enum[domain.CredentialKind]{"CredentialKind", domain.AllCredentialKinds, domain.ParseCredentialKind,
+	enum[domain.ActorType]{
+		"ActorType", domain.AllActorTypes, domain.ParseActorType,
+		domain.ActorType.Valid,
+		[]string{"human", "automation", "mcp", "system"},
+	}.check(t)
+	enum[domain.CredentialKind]{
+		"CredentialKind", domain.AllCredentialKinds, domain.ParseCredentialKind,
 		domain.CredentialKind.Valid,
-		[]string{"local_socket", "session", "api_token", "mcp_token", "oauth_access_token", "github_oidc"}}.check(t)
-	enum[domain.RiskClass]{"RiskClass", domain.AllRiskClasses, domain.ParseRiskClass,
-		domain.RiskClass.Valid, []string{"read", "operational", "high", "destructive", "governance"}}.check(t)
-	enum[domain.ResourceType]{"ResourceType", domain.AllResourceTypes, domain.ParseResourceType,
+		[]string{"local_socket", "session", "api_token", "mcp_token", "oauth_access_token", "github_oidc"},
+	}.check(t)
+	enum[domain.RiskClass]{
+		"RiskClass", domain.AllRiskClasses, domain.ParseRiskClass,
+		domain.RiskClass.Valid,
+		[]string{"read", "operational", "high", "destructive", "governance"},
+	}.check(t)
+	enum[domain.ResourceType]{
+		"ResourceType", domain.AllResourceTypes, domain.ParseResourceType,
 		domain.ResourceType.Valid,
-		[]string{"node", "service", "app", "app_target", "deployment", "environment", "provider",
-			"job", "plan", "event", "instance", "identity", "secret"}}.check(t)
-	enum[domain.ManagementState]{"ManagementState", domain.AllManagementStates, domain.ParseManagementState,
-		domain.ManagementState.Valid, []string{"discovered", "managed", "retired"}}.check(t)
-	enum[domain.Reachability]{"Reachability", domain.AllReachabilities, domain.ParseReachability,
-		domain.Reachability.Valid, []string{"reachable", "unreachable", "unknown"}}.check(t)
-	enum[domain.EnvironmentRiskLevel]{"EnvironmentRiskLevel", domain.AllEnvironmentRiskLevels,
+		[]string{
+			"node", "service", "app", "app_target", "deployment", "environment", "provider",
+			"job", "plan", "event", "instance", "identity", "secret",
+		},
+	}.check(t)
+	enum[domain.ManagementState]{
+		"ManagementState", domain.AllManagementStates, domain.ParseManagementState,
+		domain.ManagementState.Valid,
+		[]string{"discovered", "managed", "retired"},
+	}.check(t)
+	enum[domain.Reachability]{
+		"Reachability", domain.AllReachabilities, domain.ParseReachability,
+		domain.Reachability.Valid,
+		[]string{"reachable", "unreachable", "unknown"},
+	}.check(t)
+	enum[domain.EnvironmentRiskLevel]{
+		"EnvironmentRiskLevel", domain.AllEnvironmentRiskLevels,
 		domain.ParseEnvironmentRiskLevel, domain.EnvironmentRiskLevel.Valid,
-		[]string{"development", "staging", "production"}}.check(t)
-	enum[domain.ProviderOrigin]{"ProviderOrigin", domain.AllProviderOrigins, domain.ParseProviderOrigin,
-		domain.ProviderOrigin.Valid, []string{"static", "api"}}.check(t)
-	enum[domain.JobState]{"JobState", domain.AllJobStates, domain.ParseJobState, domain.JobState.Valid,
-		[]string{"awaiting_approval", "queued", "running", "interrupted", "succeeded", "failed", "cancelled"}}.check(t)
-	enum[domain.RetryClass]{"RetryClass", domain.AllRetryClasses, domain.ParseRetryClass,
-		domain.RetryClass.Valid, []string{"idempotent", "resumable", "non_retryable"}}.check(t)
-	enum[domain.LockMode]{"LockMode", domain.AllLockModes, domain.ParseLockMode,
-		domain.LockMode.Valid, []string{"exclusive", "shared"}}.check(t)
-	enum[domain.IntentState]{"IntentState", domain.AllIntentStates, domain.ParseIntentState,
-		domain.IntentState.Valid, []string{"recorded", "completed"}}.check(t)
-	enum[domain.ApprovalDecision]{"ApprovalDecision", domain.AllApprovalDecisions, domain.ParseApprovalDecision,
-		domain.ApprovalDecision.Valid, []string{"approve", "reject"}}.check(t)
-	enum[domain.Severity]{"Severity", domain.AllSeverities, domain.ParseSeverity,
-		domain.Severity.Valid, []string{"info", "warning", "error"}}.check(t)
-	enum[domain.Result]{"Result", domain.AllResults, domain.ParseResult,
-		domain.Result.Valid, []string{"succeeded", "failed", "denied", "pending"}}.check(t)
+		[]string{"development", "staging", "production"},
+	}.check(t)
+	enum[domain.ProviderOrigin]{
+		"ProviderOrigin", domain.AllProviderOrigins, domain.ParseProviderOrigin,
+		domain.ProviderOrigin.Valid,
+		[]string{"static", "api"},
+	}.check(t)
+	enum[domain.JobState]{
+		"JobState", domain.AllJobStates, domain.ParseJobState, domain.JobState.Valid,
+		[]string{"awaiting_approval", "queued", "running", "interrupted", "succeeded", "failed", "cancelled"},
+	}.check(t)
+	enum[domain.RetryClass]{
+		"RetryClass", domain.AllRetryClasses, domain.ParseRetryClass,
+		domain.RetryClass.Valid,
+		[]string{"idempotent", "resumable", "non_retryable"},
+	}.check(t)
+	enum[domain.LockMode]{
+		"LockMode", domain.AllLockModes, domain.ParseLockMode,
+		domain.LockMode.Valid,
+		[]string{"exclusive", "shared"},
+	}.check(t)
+	enum[domain.IntentState]{
+		"IntentState", domain.AllIntentStates, domain.ParseIntentState,
+		domain.IntentState.Valid,
+		[]string{"recorded", "completed"},
+	}.check(t)
+	enum[domain.ApprovalDecision]{
+		"ApprovalDecision", domain.AllApprovalDecisions, domain.ParseApprovalDecision,
+		domain.ApprovalDecision.Valid,
+		[]string{"approve", "reject"},
+	}.check(t)
+	enum[domain.Severity]{
+		"Severity", domain.AllSeverities, domain.ParseSeverity,
+		domain.Severity.Valid,
+		[]string{"info", "warning", "error"},
+	}.check(t)
+	enum[domain.Result]{
+		"Result", domain.AllResults, domain.ParseResult,
+		domain.Result.Valid,
+		[]string{"succeeded", "failed", "denied", "pending"},
+	}.check(t)
 }
 
 func TestRiskClassRank(t *testing.T) {

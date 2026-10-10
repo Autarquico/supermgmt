@@ -34,6 +34,8 @@ linters:
           allow:
             - $gostd
             - github.com/google/uuid
+            - github.com/autarquico/supermgmt/internal/domain
+            - github.com/autarquico/supermgmt/internal/errors
         policy-is-storage-free:
           files:
             - "**/internal/policy/**"
@@ -86,10 +88,15 @@ linters:
         linters:
           - forbidigo
         text: fmt\.Print
-      - path: internal/domain/clock\.go
+      - path: internal/domain/(clock|clock_test|id_test)\.go
         linters:
           - forbidigo
         text: time\.Now
+      # Reason/enum identifiers such as CREDENTIAL_REVOKED are not credentials.
+      - path: internal/(errors/reason|domain/enum)\.go
+        linters:
+          - gosec
+        text: G101
       - path: internal/cli/
         linters:
           - forbidigo

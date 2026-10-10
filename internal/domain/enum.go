@@ -29,6 +29,7 @@ const (
 func AllActorTypes() []ActorType {
 	return []ActorType{ActorHuman, ActorAutomation, ActorMCP, ActorSystem}
 }
+
 func ParseActorType(s string) (ActorType, error) { return parseEnum("actor type", AllActorTypes(), s) }
 func (v ActorType) Valid() bool                  { return slices.Contains(AllActorTypes(), v) }
 
@@ -50,6 +51,7 @@ func AllCredentialKinds() []CredentialKind {
 		CredentialMCPToken, CredentialOAuthAccessToken, CredentialGitHubOIDC,
 	}
 }
+
 func ParseCredentialKind(s string) (CredentialKind, error) {
 	return parseEnum("credential kind", AllCredentialKinds(), s)
 }
@@ -81,6 +83,7 @@ func AllResourceTypes() []ResourceType {
 		ResourceInstance, ResourceIdentity, ResourceSecret,
 	}
 }
+
 func ParseResourceType(s string) (ResourceType, error) {
 	return parseEnum("resource type", AllResourceTypes(), s)
 }
@@ -98,6 +101,7 @@ const (
 func AllManagementStates() []ManagementState {
 	return []ManagementState{ManagementDiscovered, ManagementManaged, ManagementRetired}
 }
+
 func ParseManagementState(s string) (ManagementState, error) {
 	return parseEnum("management state", AllManagementStates(), s)
 }
@@ -115,6 +119,7 @@ const (
 func AllReachabilities() []Reachability {
 	return []Reachability{ReachabilityReachable, ReachabilityUnreachable, ReachabilityUnknown}
 }
+
 func ParseReachability(s string) (Reachability, error) {
 	return parseEnum("reachability", AllReachabilities(), s)
 }
@@ -132,6 +137,7 @@ const (
 func AllEnvironmentRiskLevels() []EnvironmentRiskLevel {
 	return []EnvironmentRiskLevel{EnvironmentDevelopment, EnvironmentStaging, EnvironmentProduction}
 }
+
 func ParseEnvironmentRiskLevel(s string) (EnvironmentRiskLevel, error) {
 	return parseEnum("environment risk level", AllEnvironmentRiskLevels(), s)
 }
@@ -163,6 +169,7 @@ const (
 func AllRetryClasses() []RetryClass {
 	return []RetryClass{RetryIdempotent, RetryResumable, RetryNonRetryable}
 }
+
 func ParseRetryClass(s string) (RetryClass, error) {
 	return parseEnum("retry class", AllRetryClasses(), s)
 }
@@ -205,6 +212,7 @@ const (
 func AllApprovalDecisions() []ApprovalDecision {
 	return []ApprovalDecision{DecisionApprove, DecisionReject}
 }
+
 func ParseApprovalDecision(s string) (ApprovalDecision, error) {
 	return parseEnum("approval decision", AllApprovalDecisions(), s)
 }

@@ -16,6 +16,7 @@ const (
 func AllRiskClasses() []RiskClass {
 	return []RiskClass{RiskRead, RiskOperational, RiskHigh, RiskDestructive, RiskGovernance}
 }
+
 func ParseRiskClass(s string) (RiskClass, error) { return parseEnum("risk class", AllRiskClasses(), s) }
 func (v RiskClass) Valid() bool                  { return slices.Contains(AllRiskClasses(), v) }
 
@@ -31,6 +32,8 @@ func (v RiskClass) Rank() int {
 		return 2
 	case RiskDestructive:
 		return 3
+	case RiskGovernance:
+		return -1
 	}
 	return -1
 }
