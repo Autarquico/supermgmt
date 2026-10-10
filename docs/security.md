@@ -2,7 +2,7 @@
 
 Authoritative sources: SPEC §30 (threat model), §11 (policy and approvals), §2.1.1 (local trust boundary). Vulnerability reporting: [`../SECURITY.md`](../SECURITY.md).
 
-SuperMgmt is **pre-alpha**. In M0 the controls below exist as tested libraries. No daemon, network service, installer or MCP endpoint ships yet, so most of the attack surface in the threat model does not exist yet either. **[M0]** = implemented in the repository now; **[M0 wip]** = part of M0, not merged yet; **[planned Mx]** = not implemented.
+SuperMgmt is **pre-alpha**. In M0 the controls below exist as tested libraries. No daemon, network service, installer or MCP endpoint ships yet, so most of the attack surface in the threat model does not exist yet either. **[M0]** = implemented in the repository now; **[planned Mx]** = not implemented.
 
 ## Threat model summary (SPEC §30)
 
@@ -40,17 +40,17 @@ Docker access is root-equivalent on the host it controls. Treat any grant of Doc
 - Property and table tests assert that adding allow rules never overrides a deny and that adding targets never relaxes a decision.
 - The built-in default policy is embedded; a user policy file replaces it entirely, and the engine can diff the two.
 
-### Approvals bound to the plan hash **[M0]** (enforcement at claim: **[M0 wip]**)
+### Approvals bound to the plan hash **[M0]**
 
-A plan lists every input that can change what executes, including the `spec_revision` of each configured resource, and is serialized with RFC 8785 canonical JSON and hashed with SHA-256. Observation data, timestamps, random values and secrets never enter the plan. Approval records are tied to that hash, so any change to an input yields a new hash and earlier approvals do not transfer. Quorum counts distinct approvers, approvals expire, and self-approval is controlled by `security.allow_self_approval`. The job engine's claim-time revalidation (a changed `spec_revision` fails the job with `PLAN_STALE`) is part of the job engine and is not merged yet.
+A plan lists every input that can change what executes, including the `spec_revision` of each configured resource, and is serialized with RFC 8785 canonical JSON and hashed with SHA-256. Observation data, timestamps, random values and secrets never enter the plan. Approval records are tied to that hash, so any change to an input yields a new hash and earlier approvals do not transfer. Quorum counts distinct approvers, approvals expire, and self-approval is controlled by `security.allow_self_approval`. Claim-time revalidation in `internal/app` recomputes the plan from current state: a changed plan hash or input fails the job with `PLAN_STALE`, an expired plan fails with `PLAN_EXPIRED`, and credentials, policy and quorum are re-checked.
 
 ### Append-only audit **[M0]**
 
-The `events` table is protected by database triggers that reject `UPDATE` and `DELETE` (migration `000001_initial.up.sql`). The emitter assigns the event ID and timestamp itself, so callers cannot backdate the trail, and every event carries actor, resource and correlation ID. The requirement that denied actions and unavailable capabilities are audited as well as accepted ones (SPEC §30) is enforced where policy decisions are submitted, which is the application layer (**[M0 wip]**).
+The `events` table is protected by database triggers that reject `UPDATE` and `DELETE` (migration `000001_initial.up.sql`). The emitter assigns the event ID and timestamp itself, so callers cannot backdate the trail, and every event carries actor, resource and correlation ID. The requirement that denied actions and unavailable capabilities are audited as well as accepted ones (SPEC §30) is implemented in `internal/app`, which writes a `policy.<decision>` event with result `denied` for every DENY and CAPABILITY_UNAVAILABLE outcome on plan creation, submission, revalidation and approval decisions.
 
 ### Redaction **[M0]**
 
-`internal/audit` defines a `Secret` type that renders as `[REDACTED]` through every formatting, JSON, text and logging path, and redacts values by sensitive key name (password, token, authorization, cookie, session, private key and similar, matched case-insensitively) and bearer-token patterns. Over-redaction is the intended failure mode. Plaintext secrets must never reach SQLite, logs, config examples or error messages (SPEC §45 rule 9).
+`internal/audit` defines a `Secret` type that renders as `[REDACTED]` through every formatting, JSON, text and logging path, and redacts values by sensitive key name (password, token, authorization, cookie, session, private key and similar, matched case-insensitively) and bearer-token patterns. Over-redaction is the intended failure mode. Values under sensitive keys are always masked. The single exception is a credential reference (`secret://<path>`, `ssh-agent://default`, `file:///<abs-path>`): it stays visible only in a field whose name ends in `_ref` (such as `credential_ref`) and whose whole value matches the reference grammar, because a reference points at a secret and is not one. Plaintext secrets must never reach SQLite, logs, config examples or error messages (SPEC §45 rule 9).
 
 ### Strict configuration **[M0]**
 
