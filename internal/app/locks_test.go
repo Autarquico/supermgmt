@@ -45,7 +45,7 @@ func TestPlanLocksFollowSpecSection20_5(t *testing.T) {
 			{Key: "environment:" + f.env.ID.String(), Mode: domain.LockShared},
 		}},
 		{"service.restart", service, nil, []domain.LockSpec{
-			{Key: "service:" + f.service.ID.String(), Mode: domain.LockExclusive},
+			{Key: "unit:" + f.node.ID.String() + ":nginx.service", Mode: domain.LockExclusive},
 			{Key: "node:" + f.node.ID.String(), Mode: domain.LockShared},
 			{Key: "environment:" + f.env.ID.String(), Mode: domain.LockShared},
 		}},

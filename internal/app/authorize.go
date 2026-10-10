@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -10,12 +11,19 @@ import (
 	"github.com/autarquico/supermgmt/internal/policy"
 )
 
-// authorize evaluates req. The system actor is not subject to policy and holds
-// no roles (spec §11.1): what it may do is fixed in code, so it is allowed here
-// and never needs approval. Authenticating a system caller is the daemon's job.
+// systemJobActions are the job-mode actions the system actor may run (spec
+// §11.1: scheduled backup.create). It holds no roles and policy is never
+// evaluated for it, so anything not listed here is denied.
+var systemJobActions = []string{"backup.create"}
+
+// authorize evaluates req. The system actor gets the fixed allowlist above and
+// never needs approval; every other actor goes through policy.
 func (c core) authorize(req policy.Request) policy.Result {
 	if req.Actor.Type == domain.ActorSystem {
-		return policy.Result{Decision: policy.DecisionAllow}
+		if slices.Contains(systemJobActions, req.Action) {
+			return policy.Result{Decision: policy.DecisionAllow}
+		}
+		return policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonDefaultDeny}
 	}
 	return c.cfg.Policy.Evaluate(req)
 }

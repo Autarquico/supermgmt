@@ -58,10 +58,7 @@ func (a *Approvals) decide(ctx context.Context, by Caller, req DecisionRequest, 
 		if err != nil {
 			return err
 		}
-		if !a.cfg.Clock.Now().Before(rec.ExpiresAt) {
-			return a.expire(ctx, tx, job)
-		}
-		approver, err := loadActor(ctx, tx, by.ID, by.Credential)
+		approver, err := loadCaller(ctx, tx, by)
 		if err != nil {
 			return err
 		}
@@ -74,6 +71,9 @@ func (a *Approvals) decide(ctx context.Context, by Caller, req DecisionRequest, 
 		}
 		if err := a.authorizeDecision(ctx, tx, approver, job, decision, current.target); err != nil {
 			return err
+		}
+		if !a.cfg.Clock.Now().Before(rec.ExpiresAt) {
+			return a.expire(ctx, tx, job) // only an authorized approver may expire the plan
 		}
 		stored, err := database.RecordDecision(ctx, tx, database.Approval{
 			ID:         a.cfg.IDs.NewID(),
@@ -172,12 +172,15 @@ func (a *Approvals) advance(ctx context.Context, q database.Querier, approver do
 // counts the approvals on the job's plan hash.
 func (a *Approvals) quorumMet(ctx context.Context, q database.Querier, job jobs.Job, current built) (bool, error) {
 	requester, err := loadActor(ctx, q, job.ActorID, credentialOf(job))
+	if isTyped(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
 	res := a.authorize(current.request(requester))
-	if err := decisionError(res); err != nil {
-		return false, err
+	if decisionError(res) != nil {
+		return false, nil // the decision stays recorded; claim revalidation fails the job
 	}
 	counted, err := a.countApprovals(ctx, q, job, requester, res.Quorum, []policy.Target{current.target})
 	return counted.Satisfied, err
