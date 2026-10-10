@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "M1 — Local daemon, SSH, TUI alpha"
+title: M1 — Local daemon, SSH, TUI alpha
 type: epic
-status: draft
+status: active
 priority: P0
 size: XL
 issue: null
 prs: []
-related_issues: []
+related_issues: [7]
 depends_on: [m0-core]
 supersedes: []
 related_specs: []
