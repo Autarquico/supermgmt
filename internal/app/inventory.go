@@ -311,7 +311,7 @@ func (i *Inventory) beginMutation(ctx context.Context, tx *database.Tx, by Calle
 	if node.SpecRevision != ifMatch {
 		return domain.Actor{}, domain.Node{}, staleRevision("node", ifMatch, node.SpecRevision)
 	}
-	if locked, err := resourceLocked(ctx, tx, domain.ResourceRef{Type: domain.ResourceNode, ID: id}); err != nil {
+	if locked, err := database.ResourceLocked(ctx, tx, domain.ResourceRef{Type: domain.ResourceNode, ID: id}); err != nil {
 		return domain.Actor{}, domain.Node{}, err
 	} else if locked {
 		return domain.Actor{}, domain.Node{}, smerr.FromReason(smerr.ReasonResourceLocked, "a job holds a lock on this node")

@@ -90,7 +90,7 @@ func (s *StaticReconciler) environments(ctx context.Context, q database.Querier,
 			continue
 		}
 		desired.ID = current.ID
-		if err := updateEnvironment(ctx, q, desired, current.SpecRevision); err != nil {
+		if _, err := database.UpdateEnvironmentSpec(ctx, q, desired, current.SpecRevision); err != nil {
 			return err
 		}
 		if err := s.emit(ctx, q, systemActor, "environment.write", domain.ResourceRef{Type: domain.ResourceEnvironment, ID: current.ID},

@@ -132,7 +132,7 @@ func (s *Sweeper) abandonSessions(ctx context.Context) error {
 
 func (s *Sweeper) pruneObservations(ctx context.Context) error {
 	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		_, err := pruneObservations(ctx, tx, s.cfg.Clock.Now().Add(-s.retention))
+		_, err := database.PruneObservations(ctx, tx, s.cfg.Clock.Now().Add(-s.retention))
 		return err
 	})
 }
