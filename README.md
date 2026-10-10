@@ -63,11 +63,11 @@ go build -o dist/sm ./cmd/sm      # or: make build
 Offline checks (they never contact a daemon; neither exists yet):
 
 ```bash
-./dist/sm config validate --config examples/config.yaml
+./dist/sm config validate --config examples/config.yaml --policy examples/policies.yaml
 ./dist/sm doctor --offline --config examples/config.yaml
 ```
 
-`sm config validate` also accepts `--policy <file>` and `--json`. `sm doctor` without `--offline` is rejected until the daemon exists (M1).
+The example config points `security.policy_file` at `/etc/supermgmt/policies.yaml`, so `--policy` supplies the example policy instead. Both commands accept `--json`. `sm doctor` without `--offline` is rejected until the daemon exists (M1).
 
 Planned, not available yet:
 
