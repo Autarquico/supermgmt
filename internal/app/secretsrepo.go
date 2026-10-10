@@ -98,9 +98,15 @@ func (r *SecretsRepo) Setting(ctx context.Context, key string) (string, bool, er
 	return string(s.Value), true, nil
 }
 
-// PutSetting inserts or replaces a setting.
-func (r *SecretsRepo) PutSetting(ctx context.Context, key, valueJSON string) error {
+// PutSettings stores all values in one write transaction.
+func (r *SecretsRepo) PutSettings(ctx context.Context, values map[string]string) error {
 	return r.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
-		return database.PutSetting(ctx, tx, database.Setting{Key: key, Value: json.RawMessage(valueJSON), UpdatedAt: r.clock.Now()})
+		now := r.clock.Now()
+		for key, valueJSON := range values {
+			if err := database.PutSetting(ctx, tx, database.Setting{Key: key, Value: json.RawMessage(valueJSON), UpdatedAt: now}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

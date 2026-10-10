@@ -6,6 +6,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -85,6 +86,7 @@ type Pool struct {
 	janitorOnce   sync.Once
 	mu            sync.Mutex
 	peers         map[connKey]*peer
+	retiring      map[*liveConn]struct{} // replaced or invalidated connections that still hold leases
 	janitorPeriod time.Duration
 }
 
@@ -95,6 +97,7 @@ type peer struct {
 	failures int
 	nextDial time.Time
 	lastErr  error
+	epoch    int // bumped by Invalidate; a dial begun in an older epoch is discarded
 }
 
 type dialCall struct {
@@ -107,6 +110,7 @@ type liveConn struct {
 	sessions  chan struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
+	retired   bool      // no new leases; closes when the last one is released
 	active    int       // leases held; guarded by Pool.mu
 	lastUsed  time.Time // guarded by Pool.mu
 }
@@ -135,7 +139,7 @@ func NewPool(cfg PoolConfig, creds CredentialResolver, clock domain.Clock) *Pool
 	ctx, stop := context.WithCancel(context.Background())
 	return &Pool{
 		cfg: cfg, creds: creds, clock: clock, ctx: ctx, stop: stop,
-		dials: make(chan struct{}, cfg.MaxDialsInFlight), peers: map[connKey]*peer{},
+		dials: make(chan struct{}, cfg.MaxDialsInFlight), peers: map[connKey]*peer{}, retiring: map[*liveConn]struct{}{},
 		janitorPeriod: max(cfg.IdleConnectionTTL/2, time.Second),
 	}
 }
@@ -176,6 +180,10 @@ func (p *Pool) Close() {
 			pe.conn = nil
 		}
 	}
+	for c := range p.retiring {
+		c.close()
+	}
+	clear(p.retiring)
 }
 
 func backoffDelay(failures int) time.Duration {
@@ -212,7 +220,7 @@ func (p *Pool) acquire(ctx context.Context, t Target) (*liveConn, error) {
 			}
 			call = &dialCall{done: make(chan struct{})}
 			pe.dial = call
-			go p.dialPeer(ctx, connKey{t.NodeID, t.User}, pe, t, call)
+			go p.dialPeer(ctx, connKey{t.NodeID, t.User}, pe, pe.epoch, t, call)
 		}
 		p.mu.Unlock()
 
@@ -221,7 +229,7 @@ func (p *Pool) acquire(ctx context.Context, t Target) (*liveConn, error) {
 		case <-ctx.Done():
 			return nil, ctxError("ssh connect", ctx.Err())
 		}
-		if call.err != nil {
+		if call.err != nil && !errors.Is(call.err, errSuperseded) {
 			return nil, call.err
 		}
 	}
@@ -236,7 +244,7 @@ func (p *Pool) peerFor(t Target) *peer {
 		return pe
 	}
 	if ok && pe.conn != nil {
-		pe.conn.close()
+		p.retireLocked(pe.conn)
 	}
 	pe = &peer{target: t}
 	p.peers[key] = pe
@@ -267,8 +275,38 @@ func (p *Pool) makeRoomLocked() error {
 	return nil
 }
 
+// retireLocked stops handing out c and closes it once its leases drain, so
+// commands already running on it are never cut short.
+func (p *Pool) retireLocked(c *liveConn) {
+	if c.active == 0 {
+		c.close()
+		return
+	}
+	c.retired = true
+	p.retiring[c] = struct{}{}
+}
+
+// Invalidate drops the pooled connection of (node, user) so the next command
+// authenticates afresh, for use after setup changes the account, its groups or
+// its authorization. Commands in flight finish on the old connection; a dial
+// already under way is discarded and repeated.
+func (p *Pool) Invalidate(node domain.ID, user string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pe, ok := p.peers[connKey{node, user}]
+	if !ok {
+		return
+	}
+	if pe.conn != nil {
+		p.retireLocked(pe.conn)
+		pe.conn = nil
+	}
+	pe.epoch++
+	pe.failures, pe.lastErr, pe.nextDial = 0, nil, time.Time{}
+}
+
 func (p *Pool) countLocked() int {
-	n := 0
+	n := len(p.retiring)
 	for _, pe := range p.peers {
 		if (pe.conn != nil && !pe.conn.isClosed()) || pe.dial != nil {
 			n++
@@ -286,7 +324,9 @@ func (p *Pool) detached(ctx context.Context) (context.Context, func()) {
 	return dialCtx, func() { stop(); cancel() }
 }
 
-func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, t Target, call *dialCall) {
+var errSuperseded = smerr.New(smerr.CodeNodeUnreachable, "", "ssh connection superseded while connecting")
+
+func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, startEpoch int, t Target, call *dialCall) {
 	dialCtx, release := p.detached(ctx)
 	defer release()
 	conn, err := p.connect(dialCtx, t)
@@ -297,14 +337,16 @@ func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, t Target, ca
 	pe.dial = nil
 	now := p.clock.Now()
 	switch {
+	case err != nil && pe.epoch != startEpoch:
+		call.err = errSuperseded
 	case err != nil:
 		pe.failures++
 		pe.lastErr = err
 		pe.nextDial = now.Add(backoffDelay(pe.failures))
 		call.err = err
-	case p.peers[key] != pe || p.ctx.Err() != nil:
+	case p.peers[key] != pe || pe.epoch != startEpoch || p.ctx.Err() != nil:
 		conn.close()
-		call.err = smerr.New(smerr.CodeNodeUnreachable, "", "ssh connection superseded while connecting")
+		call.err = errSuperseded
 	default:
 		conn.lastUsed = now
 		pe.conn, pe.failures, pe.lastErr, pe.nextDial = conn, 0, nil, time.Time{}
@@ -397,6 +439,7 @@ func (p *Pool) watch(pe *peer, c *liveConn) {
 		c.close()
 		p.mu.Lock()
 		defer p.mu.Unlock()
+		delete(p.retiring, c)
 		if pe.conn == c {
 			pe.conn = nil
 		}
@@ -477,4 +520,8 @@ func (p *Pool) release(c *liveConn) {
 	defer p.mu.Unlock()
 	c.active--
 	c.lastUsed = p.clock.Now()
+	if c.retired && c.active == 0 {
+		c.close()
+		delete(p.retiring, c)
+	}
 }

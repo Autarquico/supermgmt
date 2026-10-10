@@ -114,26 +114,32 @@ func createFirstKEK(ctx context.Context, dir string, repo Repo, ids domain.IDGen
 	if err != nil {
 		return "", err
 	}
-	// The active pointer goes last: a crash before it leaves an unreferenced
-	// key file, and the next start simply creates another KEK.
-	if err := putJSONSetting(ctx, repo, settingCheckPref+id.String(), check); err != nil {
+	// Check record and active pointer commit together: a crash can never leave
+	// a referenced KEK without an active one.
+	settings, err := jsonSettings(map[string]string{
+		settingCheckPref + id.String(): check,
+		settingActiveKEK:               id.String(),
+	})
+	if err != nil {
 		return "", err
 	}
-	if err := putJSONSetting(ctx, repo, settingActiveKEK, id.String()); err != nil {
-		return "", err
+	if err := repo.PutSettings(ctx, settings); err != nil {
+		_ = os.Remove(keyPath(dir, id)) // nothing references it yet
+		return "", fmt.Errorf("store kek settings: %w", err)
 	}
 	return id, nil
 }
 
-func putJSONSetting(ctx context.Context, repo Repo, key, value string) error {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
+func jsonSettings(values map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = string(raw)
 	}
-	if err := repo.PutSetting(ctx, key, string(raw)); err != nil {
-		return fmt.Errorf("store setting %s: %w", key, err)
-	}
-	return nil
+	return out, nil
 }
 
 func newCheckRecord(kek []byte, id domain.ID, random io.Reader) (string, error) {

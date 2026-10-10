@@ -71,8 +71,8 @@ func TestSecretsRepoSettingsAndReferencedKEKs(t *testing.T) {
 	if _, found, err := repo.Setting(ctx, "active_kek_id"); found || err != nil {
 		t.Fatalf("absent setting: found %v, %v", found, err)
 	}
-	mustf(t, repo.PutSetting(ctx, "active_kek_id", `"kek-b"`), "PutSetting")
-	mustf(t, repo.PutSetting(ctx, "active_kek_id", `"kek-b"`), "PutSetting again")
+	mustf(t, repo.PutSettings(ctx, map[string]string{"active_kek_id": `"kek-b"`}), "PutSetting")
+	mustf(t, repo.PutSettings(ctx, map[string]string{"active_kek_id": `"kek-b"`}), "PutSetting again")
 	mustf(t, repo.Put(ctx, record("ssh/default", 1, "kek-a")), "Put")
 
 	value, found, err := repo.Setting(ctx, "active_kek_id")
@@ -83,6 +83,26 @@ func TestSecretsRepoSettingsAndReferencedKEKs(t *testing.T) {
 	}
 	if idsErr != nil || len(ids) != 2 || ids[0] != "kek-a" || ids[1] != "kek-b" {
 		t.Errorf("referenced KEKs = %v, %v; both the secret row and the setting count", ids, idsErr)
+	}
+}
+
+func TestSecretsRepoPutSettingsIsAllOrNothing(t *testing.T) {
+	f := newFixture(t)
+	repo := NewSecretsRepo(f.db, f.clock)
+	ctx := context.Background()
+
+	err := repo.PutSettings(ctx, map[string]string{"kek_check.a": `"ok"`, "active_kek_id": `not json`})
+	if err == nil {
+		t.Fatal("an invalid value was accepted")
+	}
+	if _, found, _ := repo.Setting(ctx, "kek_check.a"); found {
+		t.Error("the valid half of a failed batch was committed")
+	}
+	mustf(t, repo.PutSettings(ctx, map[string]string{"kek_check.a": `"ok"`, "active_kek_id": `"a"`}), "valid batch")
+	for _, key := range []string{"kek_check.a", "active_kek_id"} {
+		if _, found, _ := repo.Setting(ctx, key); !found {
+			t.Errorf("%s missing after a successful batch", key)
+		}
 	}
 }
 

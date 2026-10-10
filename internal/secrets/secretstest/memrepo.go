@@ -4,6 +4,7 @@ package secretstest
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 
@@ -17,6 +18,8 @@ type MemRepo struct {
 	mu       sync.Mutex
 	records  []secrets.Record
 	settings map[string]string
+
+	failSettingsOnce bool
 }
 
 // NewMemRepo returns an empty repository.
@@ -74,11 +77,24 @@ func (m *MemRepo) Setting(_ context.Context, key string) (string, bool, error) {
 	return v, ok, nil
 }
 
-func (m *MemRepo) PutSetting(_ context.Context, key, valueJSON string) error {
+func (m *MemRepo) PutSettings(_ context.Context, values map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.settings[key] = valueJSON
+	if m.failSettingsOnce {
+		m.failSettingsOnce = false
+		return errors.New("injected settings failure")
+	}
+	for k, v := range values {
+		m.settings[k] = v
+	}
 	return nil
+}
+
+// FailNextPutSettings makes the next PutSettings fail without storing anything.
+func (m *MemRepo) FailNextPutSettings() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failSettingsOnce = true
 }
 
 // Update rewrites a stored record in place, for tamper and rewrap tests.

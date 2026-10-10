@@ -32,6 +32,7 @@ type Repo interface {
 	ReferencedKEKs(ctx context.Context) ([]domain.ID, error)
 	// Setting reads settings.value_json (spec §9); found is false when absent.
 	Setting(ctx context.Context, key string) (valueJSON string, found bool, err error)
-	// PutSetting inserts or replaces a setting.
-	PutSetting(ctx context.Context, key, valueJSON string) error
+	// PutSettings inserts or replaces several settings in ONE transaction: all
+	// are stored or none (first-KEK creation depends on it).
+	PutSettings(ctx context.Context, values map[string]string) error
 }
