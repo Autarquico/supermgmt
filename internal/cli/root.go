@@ -56,6 +56,7 @@ func newRootCmd(build version.Build, env []string) *cobra.Command {
 	flags.String("log-level", "info", "log level: "+strings.Join(logLevels, "|"))
 
 	root.AddCommand(newVersionCmd(build), newCompletionCmd(), newConfigCmd(env), newDoctorCmd(env))
+	root.AddCommand(clientCommands(env)...)
 	return root
 }
 
