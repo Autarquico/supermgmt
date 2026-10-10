@@ -43,7 +43,7 @@ type Config struct {
 	BackoffMax  time.Duration // default 5m
 
 	// ReconcileGrace is added to an intent's deadline_at before its remote
-	// process is presumed gone (security.reconcile_grace, spec §8); default 45s.
+	// process is presumed gone (config key jobs.reconcile_grace, spec §8); default 45s.
 	ReconcileGrace time.Duration
 	// SampleGap is the minimum spacing of the two identical outcome samples
 	// required before an automatic recovery (spec §20.4 step 3); default 30s.
@@ -69,7 +69,7 @@ type Store struct {
 	restoreHold atomic.Bool
 
 	reconcileMu sync.Mutex
-	samples     map[domain.ID]sample // first outcome sample per intent, in memory
+	samples     map[sampleKey]sample // first outcome sample per intent and interruption, in memory
 	held        map[domain.ID]string // reason of the last job.reconcile_held event per job
 }
 
@@ -100,7 +100,7 @@ func NewStore(cfg Config) (*Store, error) {
 
 		reconcileGrace: orDefault(cfg.ReconcileGrace, defaultReconcileGrace),
 		sampleGap:      orDefault(cfg.SampleGap, defaultSampleGap),
-		samples:        map[domain.ID]sample{},
+		samples:        map[sampleKey]sample{},
 		held:           map[domain.ID]string{},
 	}
 	return s, nil
