@@ -1,3 +1,6 @@
+-- index api_tokens_by_identity
+CREATE INDEX api_tokens_by_identity ON api_tokens (identity_id);
+
 -- index events_by_correlation
 CREATE INDEX events_by_correlation ON events (correlation_id) WHERE correlation_id <> '';
 
@@ -19,6 +22,9 @@ CREATE INDEX jobs_by_state_finished ON jobs (state, finished_at);
 -- index jobs_queue
 CREATE INDEX jobs_queue ON jobs (state, scheduled_at);
 
+-- index join_tokens_by_expiry
+CREATE INDEX join_tokens_by_expiry ON join_tokens (expires_at);
+
 -- index node_addresses_by_node
 CREATE INDEX node_addresses_by_node ON node_addresses (node_id);
 
@@ -35,6 +41,9 @@ CREATE INDEX nodes_by_name ON nodes (name);
 CREATE INDEX observations_by_resource
     ON observations (resource_type, resource_id, kind, observed_at DESC);
 
+-- index oidc_replay_by_expiry
+CREATE INDEX oidc_replay_by_expiry ON oidc_replay (expires_at);
+
 -- index operation_intents_by_job
 CREATE INDEX operation_intents_by_job ON operation_intents (job_id, state);
 
@@ -46,6 +55,37 @@ CREATE INDEX resource_locks_by_job ON resource_locks (job_id);
 
 -- index services_by_node_name
 CREATE INDEX services_by_node_name ON services (node_id, name);
+
+-- index sessions_by_expiry
+CREATE INDEX sessions_by_expiry ON sessions (expires_at);
+
+-- index sessions_by_identity
+CREATE INDEX sessions_by_identity ON sessions (identity_id);
+
+-- table api_tokens
+CREATE TABLE api_tokens (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL REFERENCES identities (id),
+    name         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,
+    scopes_json  TEXT NOT NULL DEFAULT '[]',
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL CHECK (expires_at <= created_at + 31536000000),
+    revoked_at   INTEGER,
+    last_used_at INTEGER,
+    UNIQUE (identity_id, name)
+) STRICT;
+
+-- table bootstrap_codes
+CREATE TABLE bootstrap_codes (
+    id             TEXT PRIMARY KEY,
+    code_hash      TEXT NOT NULL UNIQUE,
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL,
+    consumed_at    INTEGER,
+    consumed_by    TEXT REFERENCES identities (id),
+    invalidated_at INTEGER
+) STRICT;
 
 -- table environments
 CREATE TABLE environments (
@@ -176,6 +216,19 @@ CREATE TABLE jobs (
     error_json       TEXT
 ) STRICT;
 
+-- table join_tokens
+CREATE TABLE join_tokens (
+    id               TEXT PRIMARY KEY,
+    token_hash       TEXT NOT NULL UNIQUE,
+    created_by       TEXT NOT NULL REFERENCES identities (id),
+    constraints_json TEXT NOT NULL DEFAULT '{}',
+    uses             INTEGER NOT NULL DEFAULT 0,
+    created_at       INTEGER NOT NULL,
+    expires_at       INTEGER NOT NULL,
+    consumed_at      INTEGER,
+    invalidated_at   INTEGER
+) STRICT;
+
 -- table node_addresses
 CREATE TABLE node_addresses (
     id           TEXT PRIMARY KEY,
@@ -240,6 +293,14 @@ CREATE TABLE observations (
     value_json    TEXT NOT NULL,
     observed_at   INTEGER NOT NULL,
     expires_at    INTEGER
+) STRICT;
+
+-- table oidc_replay
+CREATE TABLE oidc_replay (
+    issuer     TEXT NOT NULL,
+    jti        TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (issuer, jti)
 ) STRICT;
 
 -- table operation_intents
@@ -370,6 +431,19 @@ CREATE TABLE services (
     spec_revision INTEGER NOT NULL DEFAULT 1,
     last_seen_at  INTEGER,
     UNIQUE (runtime_id, native_id)
+) STRICT;
+
+-- table sessions
+CREATE TABLE sessions (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL REFERENCES identities (id),
+    token_hash   TEXT NOT NULL UNIQUE,
+    client       TEXT NOT NULL DEFAULT '',
+    origin       TEXT NOT NULL CHECK (origin IN ('oidc', 'bootstrap')),
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    revoked_at   INTEGER,
+    last_used_at INTEGER
 ) STRICT;
 
 -- table settings
