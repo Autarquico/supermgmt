@@ -187,7 +187,7 @@ func TestLeaseFencing(t *testing.T) {
 			wantState domain.JobState
 			wantLocks bool
 		}{
-			{"exit status 0 completes the job and frees its locks", jobs.Evidence{Done: true, Classification: jobs.ClassComplete}, jobs.ReconcileSucceeded, domain.JobSucceeded, false},
+			{"exit status 0 completes the job and frees its locks", jobs.Evidence{Done: true, Classification: jobs.ClassComplete, Fingerprint: []byte(`{"state":"stable"}`)}, jobs.ReconcileSucceeded, domain.JobSucceeded, false},
 			{"no completion signal holds the job and its locks", jobs.Evidence{}, jobs.ReconcileHeld, domain.JobInterrupted, true},
 		}
 		for _, tc := range cases {

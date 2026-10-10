@@ -274,12 +274,13 @@ type sampleKey struct {
 // same classification and the same canonical fingerprint as the first sample,
 // at least sampleGap later. A different fingerprint (say, a new InvocationID)
 // restarts the pair from this sample. Anything that is not definite, or whose
-// fingerprint is not valid JSON, resets it.
+// fingerprint is absent or not valid JSON, resets it: two samples that observed
+// nothing specific must never confirm each other.
 func (s *Store) confirm(key sampleKey, ev Evidence, now time.Time) bool {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	fingerprint, err := canonicalJSON(ev.Fingerprint)
-	if !ev.definite() || err != nil {
+	if !ev.definite() || err != nil || fingerprint == "" {
 		delete(s.samples, key)
 		return false
 	}

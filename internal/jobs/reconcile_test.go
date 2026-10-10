@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -64,7 +65,10 @@ func reconcile(e *env, src EvidenceSource) []Resolution {
 	return pass()
 }
 
-func proof(c Classification) Evidence { return Evidence{Done: true, Classification: c} }
+// proof is definite evidence with the fingerprint every real adapter supplies.
+func proof(c Classification) Evidence {
+	return Evidence{Done: true, Classification: c, Fingerprint: json.RawMessage(`{"state":"stable"}`)}
+}
 
 func TestReconcilerWithoutDispatchedIntents(t *testing.T) {
 	cases := []struct {

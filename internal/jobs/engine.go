@@ -133,6 +133,8 @@ func (e *Engine) execute(ctx context.Context, c Claimed) {
 		return // shutdown interrupted the handler; leave the job to takeover
 	case runErr == nil:
 		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.Succeed(ctx, c.Lease) })
+	case errors.Is(runErr, ErrOutcomeUnknown):
+		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.Interrupt(ctx, c.Lease, runErr) })
 	case errors.Is(runErr, errHandlerPanic):
 		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.FailTerminal(ctx, c.Lease, runErr) })
 	default:
