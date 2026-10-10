@@ -3,13 +3,14 @@
 // github.com/coreos/go-oidc/v3; PKCE and the device grant use
 // golang.org/x/oauth2. Every IdP call goes through a netguard client with
 // redirects disabled.
-//
-// W0 contract: signatures are frozen; bodies land in M2 task T3.
 package oidc
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -28,6 +29,9 @@ type Config struct {
 	AllowedEndpointOrigins []string
 	HTTPClient             *http.Client // netguard provider client, no redirects
 	Clock                  domain.Clock
+	// Replay records ID-token jti values (oidc_replay). Nil keeps them in
+	// process memory, which does not survive a restart.
+	Replay ReplayStore
 }
 
 // Claims is what a verified ID token says about the person.
@@ -87,9 +91,29 @@ var Scopes = []string{gooidc.ScopeOpenID, "email", "profile"}
 // endpoint takes the client credentials as form fields (ADR-0018).
 const ClientAuthStyle = oauth2.AuthStyleInHeader
 
-// Client implements Login. Its fields (the go-oidc verifier, the oauth2
-// configuration and the login-state store) land with T3.
-type Client struct{}
+// signingAlgs are the only JWS algorithms an ID token may use (ADR-0018).
+var signingAlgs = []string{gooidc.RS256, gooidc.ES256, gooidc.EdDSA}
+
+const (
+	loginStateTTL  = 10 * time.Minute
+	registryLimit  = 1000
+	clockSkew      = time.Minute
+	defaultPollGap = 5 * time.Second
+)
+
+// Client implements Login.
+type Client struct {
+	clientID     string
+	clientSecret audit.Secret
+	allowedMails []string
+	clock        domain.Clock
+	http         *http.Client
+	oauth        oauth2.Config
+	verifier     *gooidc.IDTokenVerifier
+	replay       ReplayStore
+	states       *registry[loginState]
+	txns         *registry[*deviceTxn]
+}
 
 var _ Login = (*Client)(nil)
 
@@ -97,21 +121,74 @@ var _ Login = (*Client)(nil)
 // the issuer must equal cfg.Issuer and every endpoint must be https on the
 // issuer origin or an allowed origin. The userinfo endpoint is never used.
 func New(ctx context.Context, cfg Config) (*Client, error) {
-	panic("not implemented: M2 T3")
+	allowed, err := trustedOrigins(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.ClientID == "" || cfg.HTTPClient == nil || cfg.Clock == nil {
+		return nil, errors.New("oidc: client id, HTTP client and clock are required")
+	}
+	ctx = gooidc.ClientContext(ctx, cfg.HTTPClient)
+	provider, err := gooidc.NewProvider(ctx, cfg.Issuer)
+	if err != nil {
+		return nil, fmt.Errorf("oidc: discovery: %w", err)
+	}
+	endpoint := provider.Endpoint()
+	var extra struct {
+		JWKSURI string `json:"jwks_uri"`
+	}
+	if err := provider.Claims(&extra); err != nil {
+		return nil, fmt.Errorf("oidc: discovery document: %w", err)
+	}
+	if err := checkEndpoints(allowed, endpoint, extra.JWKSURI); err != nil {
+		return nil, err
+	}
+	endpoint.AuthStyle = ClientAuthStyle
+	replay := cfg.Replay
+	if replay == nil {
+		replay = newMemoryReplay(cfg.Clock)
+	}
+	return &Client{
+		clientID:     cfg.ClientID,
+		clientSecret: cfg.ClientSecret,
+		allowedMails: cfg.AllowedDomains,
+		clock:        cfg.Clock,
+		http:         cfg.HTTPClient,
+		oauth: oauth2.Config{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret.Reveal(),
+			Endpoint:     endpoint,
+			Scopes:       Scopes,
+		},
+		verifier: provider.Verifier(&gooidc.Config{
+			ClientID:             cfg.ClientID,
+			SupportedSigningAlgs: signingAlgs,
+			SkipExpiryCheck:      true, // verifyClaims applies exp, iat and nbf with the 60 s skew
+			Now:                  cfg.Clock.Now,
+		}),
+		replay: replay,
+		states: newRegistry[loginState](registryLimit),
+		txns:   newRegistry[*deviceTxn](registryLimit),
+	}, nil
 }
 
-func (c *Client) Start(ctx context.Context, redirect, challenge string) (string, string, error) {
-	panic("not implemented: M2 T3")
+// withHTTPClient makes oauth2 and go-oidc call the IdP through the netguard
+// client.
+func (c *Client) withHTTPClient(ctx context.Context) context.Context {
+	return gooidc.ClientContext(ctx, c.http)
 }
 
-func (c *Client) Exchange(ctx context.Context, code, state, verifier string) (Claims, error) {
-	panic("not implemented: M2 T3")
-}
-
-func (c *Client) DeviceStart(ctx context.Context) (DeviceTxn, error) {
-	panic("not implemented: M2 T3")
-}
-
-func (c *Client) DevicePoll(ctx context.Context, txnID string) (Claims, error) {
-	panic("not implemented: M2 T3")
+func parseHTTPS(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return nil, err
+	case u.Scheme != "https":
+		return nil, fmt.Errorf("%q is not https", raw)
+	case u.Hostname() == "":
+		return nil, fmt.Errorf("%q has no host", raw)
+	case u.User != nil:
+		return nil, fmt.Errorf("%q carries userinfo", raw)
+	}
+	return u, nil
 }
