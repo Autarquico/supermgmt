@@ -90,7 +90,10 @@ func capabilitiesOf(ctx context.Context, q database.Querier, node domain.ID) (po
 	if err != nil {
 		return nil, err
 	}
-	set := policy.NewCapabilitySet()
+	// node.read is the one capability that is true of every node by
+	// definition (discovery reports it available on every probe), so a node
+	// that was just added can be probed before its first refresh.
+	set := policy.NewCapabilitySet("node.read")
 	for _, c := range all {
 		if c.Available {
 			set[c.Capability] = struct{}{}

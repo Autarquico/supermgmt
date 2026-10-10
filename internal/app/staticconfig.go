@@ -156,9 +156,6 @@ func (s *StaticReconciler) createSSHNode(ctx context.Context, q database.Querier
 	if err != nil {
 		return err
 	}
-	if err := seedReadCapability(ctx, q, node.ID, now); err != nil {
-		return err
-	}
 	return s.emit(ctx, q, systemActor, actionNodeAdd, nodeRef(node.ID), domain.ResultSucceeded,
 		map[string]any{"name": p.Name, "host": e.Host, "port": e.Port, "origin": string(domain.ProviderStatic)})
 }
