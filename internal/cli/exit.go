@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/database"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/secrets"
 )
 
 // Process exit codes (spec §3.7). Codes 5 to 10 belong to the installer.
@@ -24,15 +26,27 @@ func usageErrorf(format string, args ...any) error {
 	return smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf(format, args...))
 }
 
+// childExitError carries the exit status of a program the command ran on the
+// user's behalf (sm ssh). The status is the process exit code, nothing is printed.
+type childExitError struct{ code int }
+
+func (e *childExitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
 // exitCode maps an error to the process exit code. A database that is locked
-// or newer than this binary is a failed prerequisite of an offline command.
+// or newer than this binary, unusable encryption keys, or a daemon that
+// cannot be reached are failed prerequisites.
 func exitCode(err error) int {
 	var lockHeld *database.LockHeldError
 	var tooNew *database.SchemaTooNewError
+	var keys *secrets.KeysUnavailableError
+	var noDaemon *client.DaemonUnavailableError
+	var child *childExitError
 	switch {
 	case err == nil:
 		return exitOK
-	case errors.As(err, &lockHeld), errors.As(err, &tooNew):
+	case errors.As(err, &child):
+		return child.code
+	case errors.As(err, &lockHeld), errors.As(err, &tooNew), errors.As(err, &keys), errors.As(err, &noDaemon):
 		return exitPrerequisite
 	}
 	switch smerr.CodeOf(err) { //nolint:exhaustive // every other code is a generic failure
@@ -83,9 +97,17 @@ func errorMessage(err error) string {
 }
 
 func reportError(w io.Writer, err error, asJSON bool) {
+	var child *childExitError
+	if errors.As(err, &child) {
+		return
+	}
 	if asJSON {
 		_ = json.NewEncoder(w).Encode(newJSONError(err))
 		return
 	}
-	_, _ = fmt.Fprintf(w, "error: %s\n", errorMessage(err))
+	msg := errorMessage(err)
+	if id := client.CorrelationID(err); id != "" {
+		msg += " (correlation id " + id + ")"
+	}
+	_, _ = fmt.Fprintf(w, "error: %s\n", msg)
 }
