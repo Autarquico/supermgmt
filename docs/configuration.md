@@ -1,5 +1,51 @@
 # Configuration
 
+SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
+
+> **Status:** pre-alpha. In M0 only the loader and validator exist, and `sm config validate` is being finished. Nothing yet runs a daemon that consumes most of these settings (daemon: M1, server and auth: M2, Proxmox: M3, GitHub and deployments: M4, MCP: M5). Accepting a key in the file does not mean its feature is implemented.
+
+## File location
+
+Pass `--config <path>`. The default locations (SPEC §8.1) are:
+
+| Mode | Config file | Database |
+|---|---|---|
+| Linux server | `/etc/supermgmt/config.yaml` | `/var/lib/supermgmt/supermgmt.db` |
+| Linux, local user | `$XDG_CONFIG_HOME/supermgmt/config.yaml` (default `~/.config/supermgmt/`) | `$XDG_DATA_HOME/supermgmt/supermgmt.db` (default `~/.local/share/supermgmt/`) |
+| macOS, local user | `~/Library/Application Support/SuperMgmt/config.yaml`, unless `XDG_*` variables are set | `~/Library/Application Support/SuperMgmt/supermgmt.db` |
+
+Paths that you do not set (`instance.data_dir`, `storage.sqlite.path`, `security.keys_dir`, `ssh.known_hosts_file`, `backup.directory`) are derived from the mode: the server locations above for `instance.mode: server`, the local-user locations otherwise.
+
+## How a value is resolved
+
+In order, later steps win:
+
+1. built-in defaults;
+2. the YAML file;
+3. `SUPERMGMT_*` environment overrides (table below);
+4. mode-dependent defaults for anything still unset;
+5. validation.
+
+## Strict validation
+
+Unknown fields fail validation, so a typo is an error rather than a silently ignored setting. Validation reports every problem at once, each located by its YAML path, and `sm config validate` is specified to exit with code 2 on invalid input. Examples of what is checked: `version` must be 1; `instance.mode` is `local` or `server`; in server mode, `server.tls.mode: direct` needs a certificate and key, and `server.tls.mode: proxy` needs non-empty `server.trusted_proxies` and a loopback or Unix-socket listener; durations and the worker and connection counts must be positive; `ssh.host_key_policy` must be `strict`; `jobs.reconcile_grace` must be at least `ssh.connect_timeout` + `ssh.command_timeout` + 5s; `mcp.remote_enabled` needs complete `mcp.oauth` settings; environments and providers must be well formed.
+
+Secrets are never written inline. Credential references are URIs from a closed set; any other scheme fails validation:
+
+| Reference | Meaning |
+|---|---|
+| `secret://<path>` | encrypted secret in the SuperMgmt store (store itself arrives in M2) |
+| `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode |
+| `file://<abs-path>` | key file at an absolute path; discouraged, supported for migration |
+
+## Environment overrides
+
+Every scalar setting and every string list can be overridden with an environment variable named `SUPERMGMT_` plus the upper-cased YAML path with dots replaced by underscores (`server.listen` becomes `SUPERMGMT_SERVER_LISTEN`). Lists are comma-separated. Durations use Go syntax (`30s`, `10m`). Lists of structures, `environments` and `providers`, can only be set in the file.
+
+Variables that start with `SUPERMGMT_` but are neither overrides nor installer variables are reported as warnings and ignored. The installer's own variables (such as `SUPERMGMT_VERSION` and `SUPERMGMT_CHANNEL`, planned M2) are not configuration overrides.
+
+The table below is generated from the schema by `make generate` (`go generate ./...`). Do not edit it by hand; CI fails on drift.
+
 <!-- BEGIN GENERATED ENV TABLE -->
 | Variable | YAML path | Type |
 |---|---|---|
@@ -73,3 +119,37 @@
 | `SUPERMGMT_BACKUP_RETENTION` | `backup.retention` | int |
 | `SUPERMGMT_BACKUP_DIRECTORY` | `backup.directory` | string |
 <!-- END GENERATED ENV TABLE -->
+
+## Environments and providers
+
+These are lists of structures and are set in the file only (see SPEC §8.2.1 and §8.3).
+
+```yaml
+environments:
+  - name: production
+    risk_level: production        # development | staging | production
+    approvals_required: 1         # minimum quorum for operational and higher writes, 1..5
+
+providers:
+  - type: ssh
+    name: ovh-prod-01
+    endpoint:
+      host: 10.42.0.10
+      port: 22
+      user: supermgmt
+      host_public_key: "ssh-ed25519 AAAA..."
+    credential_ref: secret://ssh/default
+    environment: production
+```
+
+An environment with `risk_level: production` makes operational writes require approval by default. Provider tokens always use `secret://` references. Declaring a provider here only validates it in M0; SSH nodes arrive in M1 and Proxmox in M3.
+
+## Policy
+
+Permissions are granted only by policy rules. The binary embeds a built-in default policy; `security.policy_file` replaces it entirely. See [`examples/policies.yaml`](../examples/policies.yaml) and [security.md](security.md). The policy package can diff a user policy against the built-in default.
+
+## Defaults that depend on mode
+
+- `security.allow_self_approval` defaults to `true` in local mode and `false` in server mode (SPEC §11.4); set it explicitly to override.
+- Local mode keeps the daemon alive only while it has active work, then exits after `daemon.idle_exit` unless `daemon.resident: true` (daemon: M1).
+- `backup.schedule` defaults to nightly in server mode and is disabled in local mode unless the daemon is resident (backups: M2).
