@@ -18,7 +18,7 @@ In server mode the daemon is the OIDC client and holds the client secret (§23.1
 
 ### Discovery trust
 
-- Fetched once at start and on verification failure (at most once per minute) through the `netguard` client for provider endpoints: private ranges allowed, loopback and metadata never, redirects disabled, body capped at 64 KiB.
+- Fetched once at start (a restart picks up a changed document; key rotation is covered by the key set refetching `jwks_uri` on an unknown `kid`) through the `netguard` client for provider endpoints: private ranges allowed, loopback and metadata never, redirects disabled, body capped at 64 KiB.
 - The document's `issuer` must equal `auth.oidc.issuer` byte for byte.
 - `authorization_endpoint`, `token_endpoint`, `device_authorization_endpoint` and `jwks_uri` must be `https` and on the issuer's origin or on an origin listed in `auth.oidc.allowed_endpoint_origins`. Anything else refuses the start.
 - `userinfo_endpoint` is never called; claims come only from the verified ID token.
