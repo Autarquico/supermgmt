@@ -32,6 +32,8 @@ Common targets (`make help` lists all):
 | `make generate` | regenerate generated files and fail on drift |
 | `make vuln` | govulncheck |
 | `make integration` | integration tests in `test/integration` |
+| `make integration-fixtures` | Docker node fixtures (`-tags fixtures`); needs a local Docker daemon |
+| `make test-pty` | terminal handoff tests under a pseudo-terminal |
 | `make cross-build` | linux/darwin x amd64/arm64 with `CGO_ENABLED=0` |
 
 `make api-check`, `make e2e`, `make snapshot` and `make release-check` are placeholders until M2.
@@ -46,6 +48,7 @@ The layout is fixed by SPEC §5. The rules that matter most:
   - `internal/policy` does not import `internal/database` or `internal/jobs`.
   - `database/sql` and the SQLite driver are imported only by `internal/database`, `internal/jobs` and `migrations`.
   - `cmd/` imports only `internal/cli`.
+  - `internal/tui` and `internal/client` talk to the daemon through the API only (they never import `app`, `jobs`, `database`, `daemon`, `transport`, `runtimes` or `providers`); `internal/api` reaches nodes only through `app`; `internal/cli` does not import `app`, `jobs` or `transport`; `internal/api/wire` is pure.
 - Time comes from an injected `domain.Clock`; `time.Now` is forbidden by lint outside the clock.
 - Errors are typed (`internal/errors`, imported as `smerr`) and wrapped with context.
 - Dependencies are limited by SPEC §41. Do not edit `go.mod` or `go.sum` in a feature PR; propose the dependency in the issue.
@@ -57,7 +60,8 @@ Prefer boring, auditable code. Let abstractions emerge from two or three real us
 - Tests describe behavior, are table-driven where natural, and use only the standard `testing` package.
 - Every exported behavior has a test, and every error path that matters has a negative test.
 - Tests must pass with `-race` and `-shuffle=on`.
-- Security-relevant code (policy, approvals, plan hashing, redaction) needs negative tests: what must be refused.
+- Security-relevant code (policy, approvals, plan hashing, redaction, host keys, command templates) needs negative tests: what must be refused.
+- Anything that touches the terminal handoff (`internal/tui/handoff.go`, `internal/client/interactive.go`) also needs a run of [`docs/manual-checks/m1-handoff.md`](docs/manual-checks/m1-handoff.md) on a real terminal; the PTY tests do not replace it.
 
 ## Generated files
 
@@ -76,7 +80,7 @@ Generated files carry a header or markers and CI fails on drift. Run `make gener
 
 ## Security-sensitive changes
 
-A change is security-sensitive if it touches authentication, secrets, policy, approvals, plan hashing, audit or redaction, SSH host keys, command execution, the installer, or dependencies. For these:
+A change is security-sensitive if it touches authentication, secrets (including the KEK files and the instance SSH identity), policy, approvals, plan hashing, audit or redaction, SSH host keys, the command catalog or `node.setup`, command execution, the installer, or dependencies. For these:
 
 1. Say so in the issue and the PR, and name the threat considered (SPEC §30).
 2. Add negative tests.

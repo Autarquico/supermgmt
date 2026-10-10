@@ -9,6 +9,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain/plan"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/policy"
+	"github.com/autarquico/supermgmt/internal/runtimes"
 )
 
 // resolved is a target as the database sees it now: the policy view (effective
@@ -89,7 +90,10 @@ func capabilitiesOf(ctx context.Context, q database.Querier, node domain.ID) (po
 	if err != nil {
 		return nil, err
 	}
-	set := policy.NewCapabilitySet()
+	// node.read is the one capability that is true of every node by
+	// definition (discovery reports it available on every probe), so a node
+	// that was just added can be probed before its first refresh.
+	set := policy.NewCapabilitySet("node.read")
 	for _, c := range all {
 		if c.Available {
 			set[c.Capability] = struct{}{}
@@ -107,11 +111,21 @@ type built struct {
 	plan   plan.Plan
 	target policy.Target
 	spec   policy.ActionSpec
+	subs   []policy.SubAction
 }
 
 // request is the policy request that decides whether actor may run this plan.
+// Direct actions carry their request in the plan parameters, but the catalog
+// declares no parameters for them, so policy evaluates them without.
 func (b built) request(actor domain.Actor) policy.Request {
-	return policy.Request{Actor: actor, Action: b.plan.Action, Params: b.plan.Parameters, Targets: []policy.Target{b.target}}
+	params := b.plan.Parameters
+	if b.spec.Mode == policy.ModeDirect {
+		params = nil
+	}
+	return policy.Request{
+		Actor: actor, Action: b.plan.Action, Params: params,
+		Targets: []policy.Target{b.target}, SubActions: b.subs,
+	}
 }
 
 // build assembles the version 3 plan for action on ref from the current
@@ -122,6 +136,8 @@ func build(ctx context.Context, q database.Querier, action string, actorID domai
 	switch {
 	case !ok:
 		return built{}, smerr.New(smerr.CodeInvalidArgument, smerr.ReasonUnknownAction, "unknown action: "+action)
+	case spec.Mode == policy.ModeDirect:
+		return buildDirect(ctx, q, spec, actorID, ref, params)
 	case spec.Mode != policy.ModeJob:
 		return built{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("action %s does not run through a plan", action))
 	case spec.Resource != ref.Type:
@@ -132,24 +148,50 @@ func build(ctx context.Context, q database.Querier, action string, actorID domai
 	if err != nil {
 		return built{}, err
 	}
+	if err := validateParameters(action, params); err != nil {
+		return built{}, err
+	}
 	target, err := resolve(ctx, q, ref)
 	if err != nil {
 		return built{}, err
 	}
 	revision := target.revision
+	subs, planned := compositeOf(action, params, target.target)
 	return built{
 		spec:   spec,
 		target: target.target,
+		subs:   subs,
 		plan: plan.Plan{
 			Version:    plan.Version,
 			Action:     action,
 			Actor:      "identity/" + actorID.String(),
 			Targets:    []plan.Target{{Type: string(ref.Type), ID: ref.ID.String(), SpecRevision: &revision}},
 			Inputs:     target.inputs,
+			SubActions: planned,
 			Parameters: params,
 			Risk:       risk,
 		},
 	}, nil
+}
+
+// compositeOf lists the sub-actions a plan evaluates alongside its action
+// (spec §11.3): node.setup always writes sudoers, and installs the log broker
+// in broker mode (ADR-0009).
+func compositeOf(action string, params map[string]any, target policy.Target) ([]policy.SubAction, []plan.SubAction) {
+	if action != policy.ActionNodeSetup {
+		return nil, nil
+	}
+	names := []string{policy.ActionSudoersWrite}
+	if mode, _ := params[policy.ParamLogsMode].(string); mode == string(runtimes.LogsBroker) {
+		names = append(names, policy.ActionLogBrokerInstall)
+	}
+	subs := make([]policy.SubAction, len(names))
+	planned := make([]plan.SubAction, len(names))
+	for i, name := range names {
+		subs[i] = policy.SubAction{Action: name, Target: target}
+		planned[i] = plan.SubAction{Action: name, Target: plan.SubTarget{Type: string(target.Ref.Type), ID: target.Ref.ID.String()}}
+	}
+	return subs, planned
 }
 
 // rebuildCurrent recomputes a stored plan's action on its target from the

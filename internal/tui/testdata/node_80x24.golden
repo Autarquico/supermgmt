@@ -1,0 +1,24 @@
+┌ SuperMgmt · Node ─────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ ● web-1 reachable                                                            │
+│ environment   production                                                     │
+│ provider      ssh                                                            │
+│ metrics       CPU 17%   RAM 41%   DISK 38%                                   │
+│ capabilities  docker.read node.ssh service.read service.restart tool.lazydo… │
+│ setup         done · 1 unit grant(s) · logs journal-group · docker access    │
+│ management    managed                                                        │
+│ os            debian 13 amd64                                                │
+│ endpoint      supermgmt@10.0.0.5:22 (admin alex)                             │
+│ connection    connected                                                      │
+│ last seen     10-10 11:59:00                                                 │
+│ addresses     10.0.0.5                                                       │
+│ tags          edge                                                           │
+│                                                                              │
+│ Services  v opens the full list                                              │
+│     ● sm-demo.service          systemd  active     healthy                   │
+│     ● sm-demo-web              docker   running    unhealthy                 │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ v services  s ssh  d docker  p probe  esc back  / command  ? help  q quit    │
+└──────────────────────────────────────────────────────────────────────────────┘

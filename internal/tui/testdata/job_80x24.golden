@@ -1,0 +1,24 @@
+┌ SuperMgmt · Job ──────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ service.restart  awaiting_approval                                           │
+│ job           0192a000-0000-7000-8000-00000000c001                           │
+│ resource      service 0192a000-0000-7000-8000-00000000b001                   │
+│ risk          high · non_retryable                                           │
+│ attempts      0/1                                                            │
+│ created       10-10 11:59:00                                                 │
+│ finished      never                                                          │
+│ plan          a1b2c3d4e5f6                                                   │
+│                                                                              │
+│ Intent 1 · service.restart sm-demo.service                                   │
+│ state         completed · outcome complete                                   │
+│ pre-state     {"invocation_id":"aaa","active_state":"active"}                │
+│ evidence      {"proof":"systemd_no_jobs","invocation_id":"bbb"}              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ c cancel  esc back  / command  ? help  q quit                                │
+└──────────────────────────────────────────────────────────────────────────────┘

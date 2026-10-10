@@ -19,6 +19,11 @@ const (
 	// reconcileMargin is the slack jobs.reconcile_grace must leave above one
 	// SSH connect plus one SSH command (spec §8.2).
 	reconcileMargin = 5 * time.Second
+	// killAfter is the grace `timeout --kill-after` gives a mutating remote
+	// command after its deadline (spec §20.4, ADR-0015). A remote process of
+	// ours is gone once deadline + killAfter + connect_timeout has passed, and
+	// quiescence waits for jobs.reconcile_grace after the deadline.
+	killAfter = 10 * time.Second
 )
 
 // Validate reports every problem in c at once, each located by YAML path.
@@ -169,9 +174,11 @@ func (v *validator) ssh() {
 }
 
 func (v *validator) jobs() {
-	floor := v.cfg.SSH.ConnectTimeout + v.cfg.SSH.CommandTimeout + reconcileMargin
+	ssh := v.cfg.SSH
+	floor := max(ssh.ConnectTimeout+ssh.CommandTimeout+reconcileMargin, killAfter+ssh.ConnectTimeout)
 	if got := v.cfg.Jobs.ReconcileGrace; got < floor {
-		v.add("jobs.reconcile_grace", "must be at least ssh.connect_timeout + ssh.command_timeout + 5s (%s), got %s", floor, got)
+		v.add("jobs.reconcile_grace",
+			"must be at least ssh.connect_timeout + ssh.command_timeout + 5s and at least the 10s kill-after + ssh.connect_timeout (%s), got %s", floor, got)
 	}
 }
 
@@ -254,9 +261,8 @@ func (v *validator) sshProvider(p SSHProvider, at func(string) string) {
 	if p.Endpoint.Host == "" {
 		v.add(at("endpoint.host"), "required")
 	}
-	if p.Endpoint.User == "" {
-		v.add(at("endpoint.user"), "required")
-	}
+	v.sshUser(at("endpoint.user"), p.Endpoint.User)
+	v.sshUser(at("endpoint.admin_user"), p.Endpoint.AdminUser)
 	if p.Endpoint.Port < 1 || p.Endpoint.Port > 65535 {
 		v.add(at("endpoint.port"), "must be between 1 and 65535, got %d", p.Endpoint.Port)
 	}
@@ -264,6 +270,24 @@ func (v *validator) sshProvider(p SSHProvider, at func(string) string) {
 		v.add(at("credential_ref"), "required")
 	} else if err := validateCredentialRef(p.CredentialRef, v.cfg.Instance.Mode); err != "" {
 		v.add(at("credential_ref"), "%s", err)
+	}
+	if p.AdminCredentialRef != "" {
+		if err := validateCredentialRef(p.AdminCredentialRef, v.cfg.Instance.Mode); err != "" {
+			v.add(at("admin_credential_ref"), "%s", err)
+		}
+	}
+}
+
+// sshUserPattern is the login-name allowlist the command templates and the
+// sudoers grammar rely on (ADR-0015).
+var sshUserPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+func (v *validator) sshUser(yamlPath, user string) {
+	switch {
+	case user == "":
+		v.add(yamlPath, "required")
+	case !sshUserPattern.MatchString(user):
+		v.add(yamlPath, "must match %s, got %q", sshUserPattern, user)
 	}
 }
 

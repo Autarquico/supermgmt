@@ -26,6 +26,16 @@ import (
 // sentinel: it never reaches API clients.
 var ErrLeaseLost = errors.New("job lease lost")
 
+// ErrOutcomeUnknown is returned (wrapped, with %w) by a Handler that dispatched
+// a remote operation and cannot tell how it ended: the connection was lost, the
+// observation failed or was inconclusive, or the classification is unknown or
+// partial. The Engine then moves the job running -> interrupted instead of
+// failing it: locks are kept, and the dispatched intent stays recorded so the
+// reconciler can settle it from evidence or a human can (job.resolve; spec
+// §20.4 fixed fallback). A handler must return it, never a plain error, unless
+// completion is proven: only proven failure may fail the job.
+var ErrOutcomeUnknown = errors.New("operation outcome unknown")
+
 // ErrInfrastructure marks an error from a Revalidator or LockPlanner as a
 // storage or connection problem: the claim is aborted and the job stays queued.
 // Typed *smerr.Error values fail the job instead, and so does any other error

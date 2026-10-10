@@ -4,12 +4,29 @@ Status as of 2026-10-10. The project is **pre-alpha**; nothing is released. Mile
 
 Statuses: **in progress**, **implemented** (merged, pending release-level review), **planned**.
 
+### M1 accepted scope and honest deferrals
+
+M1 TUI screens: Dashboard, Resources tree, Node detail, Service list and detail, Logs, Jobs, Approvals, Events, Help. The palette supports ssh, logs, services, refresh, setup and probe. Not in M1:
+
+- Applications, Deployments and the Wizard screens: M4. Providers and Settings screens: M2.
+- SSE: M2; the TUI polls in tiers.
+- SSH CA trust, the secrets CLI and `secret.write`, identity rotation, per-node keys, key export: M2. `ssh.known_hosts_file` is unused.
+- `sm daemon install-user-unit` and resident schedules: M2, with backups.
+- The metrics endpoint (SPEC §33): not built.
+- Scale: the 500-node target is shown with fakes and benchmarks, not with real nodes.
+- Peer-credential refusal of another user: Linux CI only; macOS relies on the same-UID test and a manual check.
+- Terminal restore after an interactive handoff: PTY tests plus the manual checklist; real emulators are not automated.
+- lazydocker: offered only as `ssh -t ... lazydocker` on the node (never installed); no local lazydocker over an SSH Docker context.
+- Local provider: read-only; macOS has no systemd.
+- `node.setup`: no `deploy_root` (M4), no automated teardown, no server-mode key authorization (M2), no standalone `sudoers.write` or `log_broker.install` jobs (re-run setup instead).
+- `sm doctor` without `--offline`.
+
 ## Committed for V1
 
 | Milestone | Scope | Status |
 |---|---|---|
 | M0 Repository and core | Go module, strict config, audit and redaction, SQLite and migrations, domain model, action catalog and policy engine, canonical plans and approvals, durable job engine, offline CLI (`version`, `completion`, `config validate`, `doctor --offline`), CI | **Implemented** on `feat/m0-core`: domain, errors, config, audit, database, plans, policy, application services, job engine and the four offline commands, with integration and spec-example tests. Pending final review. |
-| M1 Local daemon, SSH, TUI alpha | `sm daemon` with Unix socket API, typed client, local provider, agentless SSH nodes, systemd and Docker discovery and logs, policy-gated service actions, TUI | Planned |
+| M1 Local daemon, SSH, TUI alpha | `sm daemon` with Unix socket API, typed client, local provider, agentless SSH nodes with `node.setup`, systemd and Docker discovery and logs, policy-gated service actions, TUI | **Implemented** on `feat/m1-local-ssh-tui`: pending the manual terminal checklist ([docs/manual-checks/m1-handoff.md](docs/manual-checks/m1-handoff.md)) and release-level review. Accepted scope and deferrals below. |
 | M2 Server, client, auth, release pipeline | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, GoReleaser with checksums, signatures, SBOM and provenance, `install.sh`, backup and restore | Planned |
 | M3 Proxmox provider and appliance installer | Proxmox discovery, `sm install proxmox-lxc` with rollback journal, restricted credentials, power actions, upgrade and uninstall | Planned |
 | M4 Apps, GitHub, deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | Planned |

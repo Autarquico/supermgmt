@@ -69,6 +69,36 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make test
+      - name: pty handoff restoration
+        run: make test-pty
+
+  integration-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: node fixtures (systemd + sshd + docker in privileged containers)
+        run: make integration-fixtures
+
+  daemon-linux-peer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: create the second OS user
+        run: sudo useradd --create-home smpeer
+      - name: peer credentials across users
+        run: make test-daemon-peer
 
   race:
     runs-on: ubuntu-latest

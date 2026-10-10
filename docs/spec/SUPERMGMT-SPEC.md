@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.1-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.2-draft (changes in Appendix F)
 
 ---
 
@@ -558,7 +558,7 @@ Use UUIDv7 (time-ordered; generated with `github.com/google/uuid`, which support
 
 Every **configured** resource carries one counter, `spec_revision`, plus separate **observation** records:
 
-- `spec_revision` increments only when desired/configured state changes. That covers user edits, tags, environment, `management_state`, management endpoint (host, port, user, pinned host-key fingerprint), credential reference, app/target/environment/repository/health-check configuration, Compose content, image policy and security exceptions. It is monotonic, used for optimistic concurrency (`If-Match`), and every plan records the `spec_revision` of each configured input (Appendix C).
+- `spec_revision` increments only when desired/configured state changes. That covers user edits, tags, environment, `management_state`, management endpoint (host, port, user, admin user, pinned host-key fingerprint), credential references, app/target/environment/repository/health-check configuration, Compose content, image policy and security exceptions. It is monotonic, used for optimistic concurrency (`If-Match`), and every plan records the `spec_revision` of each configured input (Appendix C).
 - Observations (power state, reachability, metrics, health, discovered addresses, versions) live in `observations`, `node_addresses` and `last_seen_at`. They NEVER bump `spec_revision`.
 
 Configured vs observed node fields:
@@ -566,11 +566,13 @@ Configured vs observed node fields:
 ```text
 management_state  configured: discovered | managed | retired
 reachability      observed:   reachable | unreachable | unknown
-endpoint          configured: host, port, user, host_public_key (OpenSSH format;
-                              fingerprint derived from it)
+endpoint          configured: host, port, user, admin_user, host_public_key
+                              (OpenSSH format; fingerprint derived from it)
 addresses         observed:   node_addresses (informational; never used to connect
                               unless endpoint.host = "auto", see below)
 ```
+
+**Connection user (SSH nodes).** `user` (default `supermgmt`) is the dedicated account that `node.setup` creates (§12 step 7); `admin_user` (required) is the operator's own account on the node, e.g. `root` or a personal login. Automated sessions connect as `user` if and only if the node has the capability `node.setup`; otherwise they connect as `admin_user` and run read-only probes only. `node.setup` itself and interactive sessions (§8.4) always connect as `admin_user`.
 
 `endpoint.host: auto` (allowed only for Proxmox-discovered guests) resolves the connect address from observations at **plan time**. The plan pins both the address and the host key. Execution connects to the pinned address and verifies the pinned key. A different address or key fails the job (`PLAN_STALE`) and a new plan is required. The host key, not the address, is the node's identity.
 
@@ -799,14 +801,16 @@ name: ovh-prod-01
 endpoint:
   host: 10.42.0.10
   port: 22
-  user: supermgmt
+  user: supermgmt                         # default; the account node.setup creates
+  admin_user: alex                        # required; your own account on the node
   host_public_key: "ssh-ed25519 AAAA..."
-credential_ref: ssh-agent://default
+credential_ref: secret://ssh/default      # default; the instance SSH identity (§8.4)
+admin_credential_ref: ssh-agent://default # default in local mode
 environment: production
 tags: [docker]
 ```
 
-SSH node, server mode (agent not available to a service):
+SSH node, server mode (agent not available to a service; `admin_credential_ref` has no default):
 
 ```yaml
 type: ssh
@@ -815,6 +819,7 @@ endpoint:
   host: 10.42.0.10
   port: 22
   user: supermgmt
+  admin_user: alex
   host_public_key: "ssh-ed25519 AAAA..."
 credential_ref: secret://ssh/default
 environment: production
@@ -835,7 +840,9 @@ file://<abs-path>        key file. Opened with O_NOFOLLOW; fstat must show a reg
                          supported for migration.
 ```
 
-Server-mode SSH identity: on first start the daemon generates an Ed25519 key pair and stores the private key as `secret://ssh/default`. `sm ssh-key show` (API: `GET /api/v1/ssh-key`) prints the public key so users can authorize it on nodes. Per-node keys are optional. Proxmox, GitHub and Cloudflare tokens always use `secret://`.
+SSH identity (both modes): on first start the daemon generates an Ed25519 key pair and stores the private key as `secret://ssh/default`. It is the default `credential_ref` of SSH nodes: automated sessions as `user` sign with it, and `node.setup` authorizes its public key for `user` (§12 step 7). `sm ssh-key show` (API: `GET /api/v1/ssh-key`) prints the public key so users can authorize it on nodes. Per-node keys are optional. Proxmox, GitHub and Cloudflare tokens always use `secret://`.
+
+`admin_credential_ref` is the credential of `admin_user` (§6.4), used for read-only probes before setup, for the `node.setup` bootstrap and, in local mode, for interactive sessions. It follows the same scheme rules; its local-mode default is `ssh-agent://default` (still local-only), and it has no default in server mode.
 
 Interactive access in server mode never exports the server's private key. `sm ssh <node>` and `sm docker <node>` on a remote client fetch the node's endpoint and pinned host public key from the server (`GET /api/v1/nodes/{id}/connect-info`, audited). They then run the local OpenSSH client with the **user's own** credentials and a temporary `known_hosts` containing only the pinned key. Users without their own access to the node cannot open an interactive session in V1.
 
@@ -1032,7 +1039,7 @@ rules:
             "identity.write", "role_binding.write", "mcp_client.register",
             "mcp_client.issue_token", "mcp_client.delete",
             "token.create", "token.revoke", "enrollment.create", "secret.write",
-            "backup.create", "sudoers.write", "log_broker.install"]
+            "backup.create", "node.setup", "sudoers.write", "log_broker.install"]
   - name: builtin-mcp-read
     subjects: ["type:mcp"]
     allow: ["*.read", "plan.create"]
@@ -1076,6 +1083,7 @@ proxmox.backup.create      node         operational   job         non_retryable 
 node.backup_template.run   node         operational   sub-action  —              node.exec.template       —
 deployment.create          app_target   operational   job         resumable      docker.compose.deploy    3
 deployment.rollback        app_target   operational   job         resumable      docker.compose.deploy    3
+node.setup                 node         high          job         idempotent     node.ssh                 3
 sudoers.write              node         high          job         non_retryable  node.ssh                 1
 log_broker.install         node         high          job         non_retryable  node.ssh                 1
 backup.create              instance     operational   job         idempotent     —                        3
@@ -1142,6 +1150,12 @@ provider    provider name
 **Composite plans.** A `deployment.create`/`deployment.rollback` plan also lists the **sub-actions** its deployment policy enables:
 - `proxmox.snapshot.create` on the node when `snapshot: true`;
 - `node.backup_template.run` on the node when `pre_deploy_backup` is set.
+
+A `node.setup` plan (ADR-0009) lists, on the node:
+- `sudoers.write`, always;
+- `log_broker.install` when `logs_mode: broker`.
+
+They are executed by the setup job with its idempotent semantics; V1 exposes no standalone `sudoers.write` or `log_broker.install` job (changing the granted units or the log mode re-runs `node.setup`).
 
 Each sub-action is evaluated like a target (steps 2–8). The plan is allowed only if the main action and every sub-action are allowed; approval and quorum are the maximum over all of them.
 
@@ -1264,7 +1278,7 @@ Probe commands gather OS, kernel, uptime, CPU, memory, disk, package manager, sy
 4. Authenticate.
 5. Probe capabilities read-only.
 6. Show discovered capabilities.
-7. Optionally create dedicated `supermgmt` user and scoped sudo policy through an explicit plan/approval.
+7. Optionally create dedicated `supermgmt` user and scoped sudo policy through an explicit plan/approval: the `node.setup` job (ADR-0009), run as `admin_user` (root, or `sudo -n` for each privileged command). It creates the system user `supermgmt` (home `/var/lib/supermgmt`, shell `/bin/sh`, no password) and authorizes the instance identity `secret://ssh/default` (§8.4) for it with a `restrict` key. It adds the user to the `docker` group only when the plan parameter `docker_access` is `true`; that parameter has no default, because Docker access is root-equivalent (§17). It then installs the sudoers drop-in and, in broker mode, the log broker (§16). Removing the user and its files is a documented manual procedure in V1; automated teardown is deferred.
 8. Persist node and credential reference.
 
 No persistent agent is required in V1.
@@ -1766,7 +1780,7 @@ non_retryable   one-shot remote mutations; outcome is observed, never repeated
 
 **Intents** (`operation_intents.state`: `recorded → completed`):
 1. The worker commits an intent with a unique `marker`, the operation, the target, `pre_state_json` and `deadline_at`. Then it dispatches.
-2. Every mutating remote template **first** creates the node-side marker file `/var/lib/supermgmt/markers/<marker>` (directory owned by `supermgmt`, created at enrollment) before doing anything else.
+2. Every mutating remote template **first** creates the node-side marker file `/var/lib/supermgmt/markers/<marker>` (directory owned by `supermgmt`, created at enrollment) before doing anything else. The only exception is the `node.setup` steps that create that directory (ADR-0009): they are idempotent "ensure" steps that install files atomically, and an interrupted setup is requeued (retry class `idempotent`); markers are never consulted for it.
 3. Compose operations additionally run under `flock /run/supermgmt/locks/<compose_project>.lock`, so the lock is held for the whole remote operation.
 4. Proxmox calls cannot carry the marker. The intent records `type`, `vmid`, token `user` and `dispatched_at`, and the UPID is persisted as soon as the API returns it.
 
@@ -2072,16 +2086,24 @@ POST   /api/v1/jobs/{id}/reject      # body: {plan_hash, reason}
 POST   /api/v1/jobs/{id}/resolve     # body: {plan_hash, outcome, note} (§20.4)
 GET    /api/v1/ssh-key
 GET    /api/v1/nodes/{id}/connect-info
+POST   /api/v1/nodes/{id}/sessions   # interactive handoff session (node.connect); body: {tool}
+POST   /api/v1/nodes/{id}/sessions/{sid}/end  # body: {reason, exit_code?}; first end wins (node.connect)
+GET    /api/v1/presence              # held open by long-lived clients for daemon residency (exempt:self, §2.1.1)
 GET    /api/v1/providers
 POST   /api/v1/providers
 GET    /api/v1/nodes
+POST   /api/v1/nodes/ssh/host-key    # read-only keyscan for first-trust confirmation (node.add; no Idempotency-Key)
 POST   /api/v1/nodes/ssh
+PATCH  /api/v1/nodes/{id}            # If-Match: <spec_revision> (node.update)
+DELETE /api/v1/nodes/{id}            # retire; If-Match required (node.remove)
 GET    /api/v1/nodes/{id}
 POST   /api/v1/nodes/{id}/probe
 GET    /api/v1/nodes/{id}/services
 GET    /api/v1/services/{id}
 GET    /api/v1/services/{id}/logs
-POST   /api/v1/services/{id}/actions/restart
+POST   /api/v1/services/{id}/actions/start    # literal routes, one per verb (service.start)
+POST   /api/v1/services/{id}/actions/stop     # (service.stop)
+POST   /api/v1/services/{id}/actions/restart  # (service.restart); any other verb is 404
 GET    /api/v1/apps
 POST   /api/v1/apps
 GET    /api/v1/deployments
@@ -2557,6 +2579,7 @@ Deliver:
 - service start/stop/restart as `non_retryable` jobs through policy;
 - TUI dashboard/node/service/log screens and Jobs/Approvals screens;
 - interactive SSH handoff;
+- minimal secret store (§10 envelope + file KEKs) for the SSH identity (§8.4); the rest of §10 stays in M2;
 - audit events.
 
 Acceptance: manage two fixture Linux nodes without agent; one offline node never freezes TUI; a restart on a service whose node is in a production-risk environment waits in Approvals until approved in the TUI; killing the daemon mid-restart leaves the job `interrupted` and the reconciler resolves it.
@@ -3408,6 +3431,20 @@ App. C  Plan v3: sorted inputs, secret bindings (refs), sub-actions, credential 
 §3.1/§3.2  Fail-closed review-first example; channel validity bounded to 30 days.
 §46     New: ADR backlog (snapshots, secret versions, node provisioning, env-file
         encoding, provisional deployment API, route metadata) with fixed constraints.
+```
+
+## F.6 Changes from 1.4.1-draft to 1.4.2-draft
+
+```text
+§6.4    SSH endpoint gains admin_user; user defaults to supermgmt; connection-user rule
+        (user iff capability node.setup, else admin_user for read-only probes).
+§8.3/4  Examples show admin_user and admin_credential_ref; the instance SSH identity
+        secret://ssh/default is generated in both modes and is the default credential_ref.
+§11.2   node.setup (node, high, job, idempotent, node.ssh, 3) granted in builtin-admin.
+§11.3   Composite node.setup plans with sub-actions sudoers.write and log_broker.install.
+§12     Step 7 names the dedicated user, home, shell, key and docker_access; teardown manual.
+§20.4   node.setup steps are the only mutating commands exempt from marker-first.
+§31     M1 includes the minimal secret store for the SSH identity.
 ```
 
 ---

@@ -52,28 +52,27 @@ func (a *Approvals) Reject(ctx context.Context, by Caller, req DecisionRequest) 
 }
 
 func (a *Approvals) decide(ctx context.Context, by Caller, req DecisionRequest, decision domain.ApprovalDecision) (jobs.Job, error) {
-	var out jobs.Job
-	err := a.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+	return commit(ctx, a.core, by, func(ctx context.Context, tx *database.Tx) (jobs.Job, error) {
 		job, rec, err := a.pendingJob(ctx, tx, req, decision)
 		if err != nil {
-			return err
+			return jobs.Job{}, err
 		}
 		approver, err := loadCaller(ctx, tx, by)
 		if err != nil {
-			return err
+			return jobs.Job{}, err
 		}
 		if err := a.requireActive(ctx, by.Credential); err != nil {
-			return err
+			return jobs.Job{}, err
 		}
 		current, err := rebuildCurrent(ctx, tx, rec)
 		if err != nil {
-			return err
+			return jobs.Job{}, err
 		}
-		if err := a.authorizeDecision(ctx, tx, approver, job, decision, current.target); err != nil {
-			return err
+		if err := a.authorizeDecision(ctx, tx, approver, job, decision, current); err != nil {
+			return jobs.Job{}, err
 		}
 		if !a.cfg.Clock.Now().Before(rec.ExpiresAt) {
-			return a.expire(ctx, tx, job) // only an authorized approver may expire the plan
+			return jobs.Job{}, a.expire(ctx, tx, job) // only an authorized approver may expire the plan
 		}
 		stored, err := database.RecordDecision(ctx, tx, database.Approval{
 			ID:         a.cfg.IDs.NewID(),
@@ -85,16 +84,14 @@ func (a *Approvals) decide(ctx context.Context, by Caller, req DecisionRequest, 
 			ExpiresAt:  a.cfg.Clock.Now().Add(a.cfg.ApprovalTTL),
 		}, a.cfg.Clock.Now())
 		if err != nil {
-			return err
+			return jobs.Job{}, err
 		}
 		if err := a.emit(ctx, tx, approver, governanceAction(decision), jobRef(job), domain.ResultSucceeded,
 			map[string]any{"plan_hash": job.PlanHash, "approval_id": stored.ID.String(), "reason": req.Reason}); err != nil {
-			return err
+			return jobs.Job{}, err
 		}
-		out, err = a.advance(ctx, tx, approver, job, decision, current)
-		return err
+		return a.advance(ctx, tx, approver, job, decision, current)
 	})
-	return out, err
 }
 
 // pendingJob loads the job and its plan and checks everything that does not
@@ -136,9 +133,9 @@ func (a *Approvals) expire(ctx context.Context, q database.Querier, job jobs.Job
 // authorizeDecision applies governance policy (steps 1, 3-5, 7) to the plan's
 // target as it is now, then the self-approval rule. A refusal is audited and
 // rejects.
-func (a *Approvals) authorizeDecision(ctx context.Context, q database.Querier, approver domain.Actor, job jobs.Job, decision domain.ApprovalDecision, target policy.Target) error {
+func (a *Approvals) authorizeDecision(ctx context.Context, q database.Querier, approver domain.Actor, job jobs.Job, decision domain.ApprovalDecision, b built) error {
 	action := governanceAction(decision)
-	res := a.authorizeGovernance(approver, action, []policy.Target{target})
+	res := a.authorizeGovernance(approver, action, b)
 	if res.Decision == policy.DecisionAllow && decision == domain.DecisionApprove &&
 		approver.ID == job.ActorID && !a.cfg.AllowSelfApproval {
 		res = policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonSelfApproval}
@@ -182,7 +179,7 @@ func (a *Approvals) quorumMet(ctx context.Context, q database.Querier, job jobs.
 	if decisionError(res) != nil {
 		return false, nil // the decision stays recorded; claim revalidation fails the job
 	}
-	counted, err := a.countApprovals(ctx, q, job, requester, res.Quorum, []policy.Target{current.target})
+	counted, err := a.countApprovals(ctx, q, job, requester, res.Quorum, current)
 	return counted.Satisfied, err
 }
 

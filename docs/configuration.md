@@ -2,7 +2,7 @@
 
 SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. In M0 only the loader and validator exist, exposed through `sm config validate` and `sm doctor --offline`. Nothing yet runs a daemon that consumes most of these settings (daemon: M1, server and auth: M2, Proxmox: M3, GitHub and deployments: M4, MCP: M5). Accepting a key in the file does not mean its feature is implemented.
+> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`, and since M1 the local daemon reads the file at start. Accepting a key does not mean its feature is implemented: [Which keys M1 reads](#which-keys-m1-reads) lists what is wired. Server mode and auth: M2, Proxmox: M3, GitHub and deployments: M4, MCP: M5.
 
 ## File location
 
@@ -14,7 +14,27 @@ Pass `--config <path>`. The default locations (SPEC §8.1) are:
 | Linux, local user | `$XDG_CONFIG_HOME/supermgmt/config.yaml` (default `~/.config/supermgmt/`) | `$XDG_DATA_HOME/supermgmt/supermgmt.db` (default `~/.local/share/supermgmt/`) |
 | macOS, local user | `~/Library/Application Support/SuperMgmt/config.yaml`, unless `XDG_*` variables are set | `~/Library/Application Support/SuperMgmt/supermgmt.db` |
 
-Paths that you do not set (`instance.data_dir`, `storage.sqlite.path`, `security.keys_dir`, `ssh.known_hosts_file`, `backup.directory`) are derived from the mode: the server locations above for `instance.mode: server`, the local-user locations otherwise.
+Paths that you do not set (`instance.data_dir`, `storage.sqlite.path`, `security.keys_dir`, `ssh.known_hosts_file`, `backup.directory`) are derived from the mode: the server locations above for `instance.mode: server`, the local-user locations otherwise. `security.keys_dir` defaults to `<instance.data_dir>/secrets/keys` and holds the KEK files; back them up separately from the database ([security.md](security.md#secrets-and-the-instance-ssh-identity-m1)).
+
+The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that variable is set, otherwise `<state dir>/run/sm.sock` (state dir `$XDG_STATE_HOME/supermgmt`, default `~/.local/state/supermgmt`; on macOS `~/Library/Application Support/SuperMgmt/state`). `daemon.socket` overrides it. The autostarted daemon writes its log to `daemon.log` in the state directory.
+
+## Which keys M1 reads
+
+Read by the local daemon and CLI:
+
+- `instance.*`, `daemon.*` (`socket`, `idle_exit`, `resident`), `storage.sqlite.*`
+- `security.keys_dir`, `security.policy_file`, `security.approval_ttl`, `security.allow_self_approval`
+- `ssh.*` timeouts and pool limits: `connect_timeout`, `command_timeout`, `keepalive_interval`, `max_dials_in_flight`, `max_connections`, `max_sessions_per_connection`, `idle_connection_ttl`
+- `refresh.*`, `jobs.*`, `server.shutdown_timeout`
+- `environments` and SSH `providers`, applied when the daemon starts
+
+Validated but not read in M1 (no reader outside the config package):
+
+- `ssh.known_hosts_file`: the pinned host key in the database is the only trust anchor ([ADR-0015](adr/0015-ssh-transport-and-command-templates.md)).
+- `ssh.host_key_policy` (must be `strict`) and `ssh.logs_mode`: the log mode of a node comes from the `logs_mode` parameter of its `node.setup` plan.
+- `ui.theme`, `security.session_ttl`, `security.redact_command_output`
+- the rest of `server.*`, `auth.*`, `health.*`, `outbound.*`, `github.*`, `mcp.*`, `backup.*`
+- Proxmox providers (M3)
 
 ## How a value is resolved
 
@@ -34,8 +54,8 @@ Secrets are never written inline. Credential references are URIs from a closed s
 
 | Reference | Meaning |
 |---|---|
-| `secret://<path>` | encrypted secret in the SuperMgmt store (store itself arrives in M2) |
-| `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode |
+| `secret://<path>` | encrypted secret in the SuperMgmt store. In M1 only `secret://ssh/default` (the instance SSH identity) resolves; any other name fails with `CAPABILITY_UNAVAILABLE`. The secrets CLI arrives in M2 |
+| `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode. In M1 it serves `admin_user` only |
 | `file://<abs-path>` | key file at an absolute path; discouraged, supported for migration |
 
 ## Environment overrides
@@ -136,13 +156,15 @@ providers:
     endpoint:
       host: 10.42.0.10
       port: 22
-      user: supermgmt
+      user: supermgmt             # default; the account node.setup creates
+      admin_user: alex            # required; your own account on the node
       host_public_key: "ssh-ed25519 AAAA..."
-    credential_ref: secret://ssh/default
+    credential_ref: secret://ssh/default      # default; the instance SSH identity
+    admin_credential_ref: ssh-agent://default # default in local mode; none in server mode
     environment: production
 ```
 
-An environment with `risk_level: production` makes operational writes require approval by default. Provider tokens always use `secret://` references. Declaring a provider here only validates it in M0; SSH nodes arrive in M1 and Proxmox in M3.
+An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. Proxmox providers are validated but ignored until M3.
 
 ## Policy
 
@@ -151,5 +173,5 @@ Permissions are granted only by policy rules. The binary embeds a built-in defau
 ## Defaults that depend on mode
 
 - `security.allow_self_approval` defaults to `true` in local mode and `false` in server mode (SPEC §11.4); set it explicitly to override.
-- Local mode keeps the daemon alive only while it has active work, then exits after `daemon.idle_exit` unless `daemon.resident: true` (daemon: M1).
+- Local mode keeps the daemon alive while a client is connected or a job is not finished (including `awaiting_approval`), then exits after `daemon.idle_exit` unless `daemon.resident: true`. A user unit that starts a resident daemon at login arrives in M2.
 - `backup.schedule` defaults to nightly in server mode and is disabled in local mode unless the daemon is resident (backups: M2).

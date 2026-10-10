@@ -213,7 +213,7 @@ func TestConfigValidateUsesDefaultLocation(t *testing.T) {
 
 func TestDoctorRequiresOffline(t *testing.T) {
 	r := newSandbox(t).run("doctor")
-	if r.code != 2 || !strings.Contains(r.stderr, "M1") {
+	if r.code != 2 || !strings.Contains(r.stderr, "--offline") {
 		t.Fatalf("code=%d stderr=%q", r.code, r.stderr)
 	}
 }

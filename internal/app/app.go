@@ -1,11 +1,17 @@
 // Package app holds the application services of the control plane: plan
 // creation and submission, approvals, and the claim-time Revalidator and
-// LockPlanner the job engine calls (spec §11.3, §11.4, §20.4, §20.5, §23).
+// LockPlanner the job engine calls (spec §11.3, §11.4, §20.4, §20.5, §23); the
+// node inventory with its direct actions; service actions, node.setup and
+// node.probe as job handlers; and the background Refresher and Sweeper.
 //
 // Every service method runs in one writer transaction, so its state change and
-// its audit events commit together (ADR-0013). Callers authenticate the
+// its audit events commit together (ADR-0013). Mutating methods take a Caller
+// that may carry an Idempotency-Key: the mutation, the response bytes and the
+// stored record then commit together (ADR-0014). Callers authenticate the
 // request and hand over a Caller; roles and actor type are always read from
-// the database, never from the caller.
+// the database, never from the caller. Reads answer from the database and the
+// connection pool state and never dial, except for logs and the first-trust
+// scan.
 package app
 
 import (
@@ -17,6 +23,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/policy"
+	"github.com/autarquico/supermgmt/internal/runtimes"
 )
 
 const (
@@ -36,6 +43,10 @@ type Config struct {
 	PlanTTL           time.Duration // default 24h (spec §11.4)
 	ApprovalTTL       time.Duration // security.approval_ttl; default 15m
 	AllowSelfApproval bool          // security.allow_self_approval
+
+	// DefaultLogsMode is ssh.logs_mode: the logs_mode a node.setup plan gets
+	// when it names none. Default journal-group.
+	DefaultLogsMode runtimes.LogsMode
 }
 
 func (c Config) validated() (Config, error) {
@@ -57,14 +68,21 @@ func (c Config) validated() (Config, error) {
 	if c.ApprovalTTL <= 0 {
 		c.ApprovalTTL = defaultApprovalTTL
 	}
+	if c.DefaultLogsMode == "" {
+		c.DefaultLogsMode = runtimes.LogsJournalGroup
+	}
 	return c, nil
 }
 
 // Caller is an authenticated request: the daemon-issued identity and the
-// credential it presented (spec §11.1).
+// credential it presented (spec §11.1). Source names the transport the request
+// arrived on ("api"); it is stamped on the audit events the request causes.
+// Idempotency is set for mutating requests that carry an Idempotency-Key.
 type Caller struct {
-	ID         domain.ID
-	Credential domain.CredentialContext
+	ID          domain.ID
+	Credential  domain.CredentialContext
+	Source      string
+	Idempotency *Idempotency
 }
 
 // core is what every service shares.
@@ -81,35 +99,6 @@ func newCore(cfg Config) (core, error) {
 	return core{cfg: cfg, emitter: audit.Emitter{Clock: cfg.Clock, IDs: cfg.IDs, Source: eventSource}}, nil
 }
 
-// rejection is an outcome the caller must see as an error although what the
-// transaction wrote before it (an audit event, a plan expiry) has to commit.
-type rejection struct{ err error }
-
-func (r rejection) Error() string { return r.err.Error() }
-func (r rejection) Unwrap() error { return r.err }
-
-// reject ends a write with err while keeping what the transaction has written.
-func reject(err error) error { return rejection{err} }
-
-// write runs fn in one writer transaction. A plain error rolls everything back;
-// an error wrapped by reject commits and is then returned.
-func (c core) write(ctx context.Context, fn func(ctx context.Context, tx *database.Tx) error) error {
-	var rejected error
-	err := c.cfg.DB.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
-		err := fn(ctx, tx)
-		var r rejection
-		if errors.As(err, &r) {
-			rejected = r.err
-			return nil
-		}
-		return err
-	})
-	if err != nil {
-		return err
-	}
-	return rejected
-}
-
 func severityOf(result domain.Result) domain.Severity {
 	switch result {
 	case domain.ResultDenied:
@@ -124,6 +113,7 @@ func severityOf(result domain.Result) domain.Severity {
 
 func (c core) emit(ctx context.Context, q database.Querier, actor domain.Actor, action string, ref domain.ResourceRef, result domain.Result, data map[string]any) error {
 	_, err := c.emitter.Emit(ctx, database.EventsIn(q), domain.Event{
+		Source:       sourceOf(ctx),
 		ActorType:    actor.Type,
 		ActorID:      actor.ID,
 		Action:       action,

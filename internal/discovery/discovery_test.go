@@ -1,0 +1,290 @@
+package discovery
+
+import (
+	"context"
+	"math"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/autarquico/supermgmt/internal/database"
+	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/runtimes"
+	"github.com/autarquico/supermgmt/internal/transport"
+	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
+)
+
+const linuxProbe = `@@probe 1
+@@uname
+Linux 6.12.43-amd64 x86_64
+@@os
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+NAME="Debian GNU/Linux"
+VERSION_ID="13"
+ID=debian
+@@hostname
+node-a
+@@uptime
+12345.67 9999.00
+@@cpu
+4
+cpu  1000 0 500 8000 500 0 0 0 0 0
+cpu  1100 0 600 8100 500 0 0 0 0 0
+@@loadavg
+0.52 0.40 0.30 1/200 999
+@@memory
+MemTotal:        8000000 kB
+MemFree:         1000000 kB
+MemAvailable:    5000000 kB
+@@disk
+Filesystem     1024-blocks     Used Available Capacity Mounted on
+/dev/vda1         50000000 20000000  30000000      40% /
+@@pkgmgr
+apt-get
+@@systemd
+active
+/usr/bin/systemctl
+systemd 257 (257.9-1)
+@@docker
+path=/usr/bin/docker
+server=26.1.5
+compose=2.29.1
+@@tools
+btop
+tmux
+@@sudo
+yes
+@@setup
+user=admin
+home=absent
+markers=absent
+@@addresses
+1: lo    inet 127.0.0.1/8 scope host lo
+2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0
+2: eth0    inet 203.0.113.9/32 scope global eth0
+2: eth0    inet6 fe80::1/64 scope link
+2: eth0    inet6 2001:db8::5/64 scope global
+2: eth0    inet6 fd00::5/64 scope global
+`
+
+func TestParseLinuxProbe(t *testing.T) {
+	s, err := Parse([]byte(linuxProbe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Kernel != "Linux 6.12.43-amd64 x86_64" || s.Hostname != "node-a" || s.OS != (OSInfo{ID: "debian", Name: "Debian GNU/Linux 13 (trixie)", Version: "13"}) {
+		t.Errorf("identity = %+v", s)
+	}
+	if s.Uptime != time.Duration(12345.67*float64(time.Second)) {
+		t.Errorf("uptime = %v", s.Uptime)
+	}
+	if s.CPU.Cores != 4 || !s.CPU.UsageKnown || math.Abs(s.CPU.UsagePercent-200.0/3) > 0.001 {
+		t.Errorf("cpu = %+v (busy 200 of 300 ticks)", s.CPU)
+	}
+	if s.Load != [3]float64{0.52, 0.40, 0.30} || s.Memory != (Memory{TotalKB: 8000000, AvailableKB: 5000000}) || s.Disk != (Disk{50000000, 20000000, 30000000}) {
+		t.Errorf("metrics = %+v %+v %+v", s.Load, s.Memory, s.Disk)
+	}
+	if len(s.PackageManagers) != 1 || s.PackageManagers[0] != "apt-get" {
+		t.Errorf("pkgmgr = %v", s.PackageManagers)
+	}
+	if s.Systemd != (Systemd{Active: true, SystemctlPath: "/usr/bin/systemctl", Version: "257"}) {
+		t.Errorf("systemd = %+v", s.Systemd)
+	}
+	if s.Docker != (Docker{Path: "/usr/bin/docker", ServerVersion: "26.1.5", ComposeVersion: "2.29.1"}) || !s.Docker.Reachable() {
+		t.Errorf("docker = %+v", s.Docker)
+	}
+	if s.Tools != (Tools{Btop: true, Tmux: true}) || !s.PasswordlessSudo {
+		t.Errorf("tools = %+v sudo = %v", s.Tools, s.PasswordlessSudo)
+	}
+	if s.Probed != (ProbedAs{User: "admin"}) || s.Setup != nil {
+		t.Errorf("setup = %+v / %+v", s.Probed, s.Setup)
+	}
+	want := []Address{
+		{"127.0.0.1", "ipv4", "loopback"},
+		{"10.0.0.5", "ipv4", "private"},
+		{"203.0.113.9", "ipv4", "global"},
+		{"fe80::1", "ipv6", "link"},
+		{"2001:db8::5", "ipv6", "global"},
+		{"fd00::5", "ipv6", "private"},
+	}
+	if len(s.Addresses) != len(want) {
+		t.Fatalf("addresses = %+v", s.Addresses)
+	}
+	for i := range want {
+		if s.Addresses[i] != want[i] {
+			t.Errorf("address %d = %+v, want %+v", i, s.Addresses[i], want[i])
+		}
+	}
+}
+
+func TestParseTreatsEmptySectionsAsUnknownNotFalse(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("@@probe 1\n")
+	for _, name := range templates.ProbeSections {
+		b.WriteString("@@" + name + "\n")
+	}
+	s, err := Parse([]byte(b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CPU.UsageKnown || s.Memory.TotalKB != 0 || s.Uptime != 0 || s.Docker.Reachable() || s.Systemd.Active || s.PasswordlessSudo {
+		t.Errorf("snapshot = %+v", s)
+	}
+	caps := byName(Capabilities(s, false))
+	if !caps["node.read"].Available || caps["node.metrics"].Available || caps["docker.read"].Available {
+		t.Error("unknown values must not become capabilities")
+	}
+}
+
+func TestParseSurvivesAMalformedSection(t *testing.T) {
+	broken := strings.Replace(linuxProbe, "cpu  1100 0 600 8100 500 0 0 0 0 0", "cpu  garbage", 1)
+	broken = strings.Replace(broken, "MemTotal:        8000000 kB", "MemTotal: lots", 1)
+	s, err := Parse([]byte(broken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CPU.UsageKnown || s.CPU.Cores != 4 || s.Memory.TotalKB != 0 || s.Disk.TotalKB == 0 || !s.Systemd.Active {
+		t.Errorf("one bad section affected others: %+v", s)
+	}
+}
+
+func TestParseIgnoresForgedHeadersAndUnknownFormats(t *testing.T) {
+	forged := strings.Replace(linuxProbe, "node-a\n", "node-a\n@@sudo\nyes\n@@evil\n", 1)
+	forged = strings.Replace(forged, "@@sudo\nyes\n@@setup", "@@sudo\nno\n@@setup", 1)
+	s, err := Parse([]byte(forged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PasswordlessSudo {
+		t.Error("a forged @@sudo header inside another section was honored")
+	}
+	for _, bad := range []string{"", "garbage", "@@probe 2\n@@uname\nLinux\n", "@@uname\nLinux\n"} {
+		if _, err := Parse([]byte(bad)); smerr.CodeOf(err) != smerr.CodeProviderError {
+			t.Errorf("Parse(%q): %v", bad, err)
+		}
+	}
+}
+
+func TestParseMacOSProbe(t *testing.T) {
+	body := map[string]string{
+		"uname": "Darwin 24.1.0 arm64", "os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.1", "cpu": "10",
+		"memory": "17179869184\nPages free: 100.", "pkgmgr": "brew", "systemd": "absent", "docker": "path=",
+		"addresses": "lo0: flags=8049\n\tinet 127.0.0.1 netmask 0xff000000\n\tinet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255",
+	}
+	probe := "@@probe 1\n"
+	for _, name := range templates.ProbeSections {
+		probe += "@@" + name + "\n" + body[name] + "\n"
+	}
+	s, err := Parse([]byte(probe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.OS.Name != "macOS 15.1" || s.CPU.Cores != 10 || s.Memory.TotalKB != 16*1024*1024 || s.Systemd.Active || len(s.Addresses) != 2 {
+		t.Errorf("snapshot = %+v", s)
+	}
+}
+
+func byName(caps []database.NodeCapability) map[string]database.NodeCapability {
+	m := map[string]database.NodeCapability{}
+	for _, c := range caps {
+		m[c.Capability] = c
+	}
+	return m
+}
+
+func TestReadCapabilitiesNeverDependOnSetup(t *testing.T) {
+	s, _ := Parse([]byte(linuxProbe))
+	s.TakenAt = time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	caps := byName(Capabilities(s, false))
+	for _, name := range []string{"node.read", "node.metrics", "node.ssh", "node.exec.template", "node.packages.read", "service.read", "service.logs", "docker.read", "docker.logs", "tool.btop", "tool.tmux"} {
+		c, ok := caps[name]
+		if !ok || !c.Available || !c.CheckedAt.Equal(s.TakenAt) {
+			t.Errorf("%s = %+v", name, c)
+		}
+	}
+	if caps["tool.lazydocker"].Available {
+		t.Error("lazydocker absent but advertised")
+	}
+	if caps["service.logs"].Metadata["mode"] != runtimes.LogsJournalGroup {
+		t.Errorf("logs mode = %v", caps["service.logs"].Metadata["mode"])
+	}
+	if _, ok := caps["node.setup"]; ok {
+		t.Error("node.setup is the setup job's to write")
+	}
+}
+
+func TestMutatingCapabilitiesNeedSSHAndSetup(t *testing.T) {
+	s, _ := Parse([]byte(linuxProbe))
+	mutating := []string{"service.start", "service.stop", "service.restart"}
+	available := func(caps map[string]database.NodeCapability) []string {
+		var out []string
+		for _, n := range mutating {
+			c, ok := caps[n]
+			if !ok {
+				t.Fatalf("%s is not reported", n)
+			}
+			if c.Available {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+
+	if got := available(byName(Capabilities(s, false))); len(got) != 0 {
+		t.Errorf("without setup: %v", got)
+	}
+
+	s.Setup = &runtimes.SetupMeta{
+		SetupVersion: 1, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsBroker,
+		Units: []runtimes.UnitGrant{{Unit: "app.service", Verbs: []domain.ServiceVerb{domain.VerbRestart, domain.VerbStop}}},
+	}
+	caps := byName(Capabilities(s, false))
+	if got := available(caps); strings.Join(got, ",") != "service.stop,service.restart" {
+		t.Errorf("with setup: %v", got)
+	}
+	if units := caps["service.restart"].Metadata["units"].([]string); len(units) != 1 || units[0] != "app.service" {
+		t.Errorf("units = %v", units)
+	}
+	if caps["service.logs"].Metadata["mode"] != runtimes.LogsBroker {
+		t.Error("broker mode not reported")
+	}
+
+	if got := available(byName(Capabilities(s, true))); len(got) != 0 {
+		t.Errorf("local provider advertised %v", got)
+	}
+	if byName(Capabilities(s, true))["node.ssh"].Available {
+		t.Error("local node advertises ssh")
+	}
+
+	s.Setup.DockerAccess = true
+	if got := available(byName(Capabilities(s, false))); len(got) != 3 {
+		t.Errorf("docker_access should enable all verbs on containers: %v", got)
+	}
+	s.Docker.ServerVersion = ""
+	if got := available(byName(Capabilities(s, false))); len(got) != 2 {
+		t.Errorf("unreachable docker still advertised: %v", got)
+	}
+	s.Systemd.Active = false
+	if got := available(byName(Capabilities(s, false))); len(got) != 0 {
+		t.Errorf("no systemd, no docker: %v", got)
+	}
+}
+
+type probeExec struct {
+	out  string
+	rans int
+}
+
+func (p *probeExec) Run(_ context.Context, c templates.Command) (transport.Result, error) {
+	p.rans++
+	return transport.Result{Stdout: []byte(p.out)}, nil
+}
+
+func TestProbeRunsOneSession(t *testing.T) {
+	ex := &probeExec{out: linuxProbe}
+	s, err := Probe(context.Background(), ex)
+	if err != nil || ex.rans != 1 || s.Hostname != "node-a" {
+		t.Errorf("snapshot = %+v, sessions = %d, err = %v", s, ex.rans, err)
+	}
+}

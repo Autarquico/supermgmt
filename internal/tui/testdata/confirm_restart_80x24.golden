@@ -1,0 +1,24 @@
+┌ SuperMgmt · Service ──────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ restart sm-demo.service on web-1                                             │
+│                                                                              │
+│ Action: service.restart                                                      │
+│ 1. Stop sm-demo.service                                                      │
+│ 2. Start sm-demo.service                                                     │
+│ 3. Confirm the unit is active                                                │
+│                                                                              │
+│ Impact: 1 target(s)                                                          │
+│ Risk: high                                                                   │
+│ plan 5f1d2c3b4a69                                                            │
+│ Needs 1 approval(s) before it runs.                                          │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ y confirm  n/esc cancel                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘

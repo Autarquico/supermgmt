@@ -100,3 +100,27 @@ func TestSpecProviderExamples(t *testing.T) {
 		})
 	}
 }
+
+func TestSSHNodeDefaults(t *testing.T) {
+	minimal := "providers:\n  - type: ssh\n    name: n\n    endpoint: {host: h, admin_user: alex}\n"
+	tests := []struct {
+		mode      string
+		wantAdmin string
+	}{
+		{localDoc, DefaultAdminCredentialRef},
+		{serverDoc, ""},
+	}
+	for _, tt := range tests {
+		ssh := mustLoad(t, tt.mode+minimal).Config.Providers[0].SSH
+		if ssh.Endpoint.User != "supermgmt" || ssh.Endpoint.Port != 22 || ssh.CredentialRef != "secret://ssh/default" {
+			t.Errorf("defaults = %+v, want user supermgmt, port 22, credential secret://ssh/default", ssh)
+		}
+		if ssh.AdminCredentialRef != tt.wantAdmin {
+			t.Errorf("admin_credential_ref = %q, want %q", ssh.AdminCredentialRef, tt.wantAdmin)
+		}
+	}
+	if _, err := load(t, localDoc+"providers:\n  - type: ssh\n    name: n\n    endpoint: {host: h}\n"); err == nil ||
+		!strings.Contains(err.Error(), "providers[0].endpoint.admin_user") {
+		t.Errorf("an SSH node without admin_user must be rejected, got %v", err)
+	}
+}

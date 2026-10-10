@@ -1,0 +1,24 @@
+┌ SuperMgmt · Dashboard ────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ NODES         4 total · 3 reachable · 1 need attention                       │
+│ APPROVALS     1 awaiting                                                     │
+│ JOBS          1 active                                                       │
+│                                                                              │
+│ Needs attention                                                              │
+│   ○ lab-1  unreachable · stale · dial tcp 10.0.0.9:22: i/o timeout           │
+│                                                                              │
+│ Awaiting approval                                                            │
+│   service.restart  production  0/1                                           │
+│                                                                              │
+│ Active jobs                                                                  │
+│   0000c001  service.restart  awaiting_approval                               │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ 1-5 screens  r refresh  / command  ? help  q quit                            │
+└──────────────────────────────────────────────────────────────────────────────┘

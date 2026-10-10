@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
@@ -64,6 +65,26 @@ func (s *Store) FailTerminal(ctx context.Context, lease Lease, runErr error) err
 	return s.fenced(ctx, lease, func(ctx context.Context, tx *database.Tx) error {
 		failure := FailureOf(runErr)
 		_, err := s.move(ctx, tx, move{id: lease.JobID, from: domain.JobRunning, to: domain.JobFailed, actor: systemActor, failure: &failure})
+		return err
+	})
+}
+
+// Interrupt moves the job running -> interrupted on the worker's own initiative,
+// because its handler cannot tell how a dispatched operation ended
+// (ErrOutcomeUnknown). Like Takeover, it bumps the lease generation and expires
+// the lease, so no later write by this worker passes the fence and the
+// reconciler may treat the job as quiescent once each dispatched intent has
+// proof or is past deadline_at + reconcile_grace. Locks are kept.
+func (s *Store) Interrupt(ctx context.Context, lease Lease, cause error) error {
+	return s.fenced(ctx, lease, func(ctx context.Context, tx *database.Tx) error {
+		_, err := s.move(ctx, tx, move{
+			id: lease.JobID, from: domain.JobRunning, to: domain.JobInterrupted, actor: systemActor,
+			assign: []assignment{
+				{"lease_generation = lease_generation + 1", nil},
+				{"lease_until = ?", []any{domain.UnixMillis(s.clock.Now())}},
+			},
+			data: map[string]any{"reason": "outcome unknown", "cause": audit.ScrubString(cause.Error())},
+		})
 		return err
 	})
 }

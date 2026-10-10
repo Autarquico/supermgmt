@@ -8,16 +8,21 @@ LDFLAGS := -s -w \
 	-X $(MODULE)/internal/version.Date=$(DATE)
 
 GOVULNCHECK_VERSION := v1.8.0
+ACTIONLINT_VERSION := v1.7.7
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 NOT_YET := @echo "not available until M2 (spec §31)"
+
+PEER_USER ?= smpeer
+PEER_BIN_DIR ?= /tmp/sm-peer
+PEER_PKGS := $(addprefix ./,$(addsuffix /...,$(wildcard internal/daemon internal/client internal/api)))
 
 # Go refuses to test or lint a tree without packages; skip until the first one lands.
 HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -print -quit)
 IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-race lint vuln generate integration cross-build \
-	api-check e2e snapshot release-check
+.PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
+	integration-fixtures cross-build api-check e2e snapshot release-check
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -31,8 +36,24 @@ test: ## Run unit tests
 test-race: ## Run unit tests with the race detector
 	$(IF_GO) go test -race -count=1 -shuffle=on ./...
 
+test-pty: ## Run the PTY handoff-restoration tests (ubuntu and macOS CI)
+	@if [ -d test/integration/pty ]; then go test -race -count=1 -shuffle=on -v ./test/integration/pty/...; \
+	else echo "no pty tests yet; skipping"; fi
+
+test-daemon-peer: ## Run the peer-credential tests as a second OS user (Linux only; needs PEER_USER and passwordless sudo)
+	@[ "$$(uname -s)" = Linux ] || { echo "test-daemon-peer needs Linux"; exit 1; }
+	@id "$(PEER_USER)" >/dev/null || { echo "create the user first: sudo useradd --create-home $(PEER_USER)"; exit 1; }
+	install -d -m 0755 "$(PEER_BIN_DIR)"
+	CGO_ENABLED=0 go build -trimpath -o "$(PEER_BIN_DIR)/sm" ./cmd/sm
+	chmod 0755 "$(PEER_BIN_DIR)/sm"
+	SM_PEER_OTHER_USER="$(PEER_USER)" SM_PEER_SM_BIN="$(PEER_BIN_DIR)/sm" \
+		go test -race -count=1 -shuffle=on -run PeerCred -v $(PEER_PKGS)
+
 lint: ## Run golangci-lint and the formatter check
 	$(IF_GO) { golangci-lint run ./... && golangci-lint fmt --diff; }
+
+lint-workflows: ## Lint the workflow files with actionlint
+	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION) .github/workflows/*.yml
 
 vuln: ## Run govulncheck
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
@@ -43,6 +64,9 @@ generate: ## Regenerate files and fail on drift
 
 integration: ## Run integration tests
 	go test -tags=integration ./test/integration/...
+
+integration-fixtures: ## Run the Docker node-fixture tests (-tags fixtures; needs a local Docker daemon)
+	go test -tags=fixtures -p 1 -count=1 -timeout 25m ./test/fixtures/... ./test/integration/...
 
 cross-build: ## Compile for linux/darwin x amd64/arm64 with CGO disabled
 	@set -e; for target in $(CROSS_TARGETS); do \

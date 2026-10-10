@@ -1,0 +1,9 @@
+[Unit]
+Description=SuperMgmt fixture slow-stopping service (S4)
+
+[Service]
+ExecStart=/bin/sleep infinity
+ExecStop=/bin/sleep 8
+
+[Install]
+WantedBy=multi-user.target

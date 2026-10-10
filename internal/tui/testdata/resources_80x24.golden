@@ -1,0 +1,24 @@
+┌ SuperMgmt · Resources ────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ RESOURCES                │ DETAIL                                            │
+│                          │                                                   │
+│ ▼ local                  │ ● laptop reachable                                │
+│  ▸ ● laptop              │ environment   dev                                 │
+│ ▼ ssh                    │ provider      local                               │
+│    ● db-1                │ metrics       no metrics yet                      │
+│    ○ lab-1 [stale]       │ capabilities  node.read                           │
+│    ● web-1               │ setup         not done (/ setup laptop)           │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+│                          │                                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ j/k move  enter detail  v services  s ssh  d docker  / command  ? help  q q… │
+└──────────────────────────────────────────────────────────────────────────────┘

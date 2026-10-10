@@ -8,8 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -17,7 +15,6 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
-	"github.com/autarquico/supermgmt/migrations"
 )
 
 const (
@@ -47,7 +44,7 @@ func newDoctorCmd(env []string) *cobra.Command {
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !offline {
-				return usageErrorf("online doctor arrives with the daemon in milestone M1; use --offline")
+				return usageErrorf("online doctor is not available yet; use --offline")
 			}
 			configFlag, _ := cmd.Flags().GetString("config")
 			asJSON, _ := cmd.Flags().GetBool("json")
@@ -202,34 +199,24 @@ func heldDetail(held *database.LockHeldError) string {
 	return fmt.Sprintf("held by PID %d (a daemon is running): %s", held.PID, held.Path)
 }
 
-// inspectDatabase reads through the query-only pool; it never migrates.
+// inspectDatabase reads the file read-only; it never migrates or writes.
 func inspectDatabase(ctx context.Context, path string) []check {
-	db, err := database.Open(ctx, path, database.Options{})
+	found, err := database.Inspect(ctx, path)
 	if err != nil {
 		return []check{{"schema", statusFail, err.Error()}}
 	}
-	defer func() { _ = db.Close() }()
-	return []check{schemaCheck(ctx, db.Reader()), integrityCheck(ctx, db.Reader())}
+	latest, err := database.LatestSchemaVersion()
+	if err != nil {
+		return []check{{"schema", statusFail, err.Error()}}
+	}
+	return []check{schemaCheck(found, latest), integrityCheck(found.IntegrityFindings)}
 }
 
-func schemaCheck(ctx context.Context, db database.Querier) check {
-	var tables int
-	if err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&tables); err != nil {
-		return check{"schema", statusFail, err.Error()}
-	}
-	if tables == 0 {
-		return check{"schema", statusWarn, "database has no schema yet"}
-	}
-	var current int
-	if err := db.QueryRowContext(ctx, `SELECT coalesce(max(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
-		return check{"schema", statusFail, err.Error()}
-	}
-	latest, err := latestMigration()
-	if err != nil {
-		return check{"schema", statusFail, err.Error()}
-	}
+func schemaCheck(found database.Inspection, latest int) check {
+	current := found.SchemaVersion
 	switch {
+	case !found.HasSchema:
+		return check{"schema", statusWarn, "database has no schema yet"}
 	case current > latest:
 		return check{"schema", statusFail, (&database.SchemaTooNewError{DatabaseVersion: current, BinaryVersion: latest}).Error()}
 	case current < latest:
@@ -238,46 +225,13 @@ func schemaCheck(ctx context.Context, db database.Querier) check {
 	return check{"schema", statusOK, fmt.Sprintf("version %d matches this binary", current)}
 }
 
-var migrationVersion = regexp.MustCompile(`^(\d{6})_[a-z0-9_]+\.up\.sql$`)
-
-// latestMigration is the highest schema version embedded in this binary.
-func latestMigration() (int, error) {
-	entries, err := fs.ReadDir(migrations.FS, ".")
-	if err != nil {
-		return 0, fmt.Errorf("read embedded migrations: %w", err)
-	}
-	latest := 0
-	for _, e := range entries {
-		if m := migrationVersion.FindStringSubmatch(e.Name()); m != nil {
-			version, _ := strconv.Atoi(m[1])
-			latest = max(latest, version)
-		}
-	}
-	return latest, nil
-}
-
-func integrityCheck(ctx context.Context, db database.Querier) check {
-	rows, err := db.QueryContext(ctx, `PRAGMA integrity_check`)
-	if err != nil {
-		return check{"integrity", statusFail, err.Error()}
-	}
-	defer func() { _ = rows.Close() }()
-	var findings []string
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			return check{"integrity", statusFail, err.Error()}
-		}
-		findings = append(findings, line)
-	}
-	if err := rows.Err(); err != nil {
-		return check{"integrity", statusFail, err.Error()}
-	}
-	if len(findings) == 1 && findings[0] == "ok" {
+// integrityCheck reports PRAGMA integrity_check findings; none means ok.
+func integrityCheck(findings []string) check {
+	if len(findings) == 0 {
 		return check{"integrity", statusOK, "PRAGMA integrity_check: ok"}
 	}
 	if len(findings) > integrityRowsShown {
-		findings = append(findings[:integrityRowsShown], "...")
+		findings = append(findings[:integrityRowsShown:integrityRowsShown], "...")
 	}
 	return check{"integrity", statusFail, strings.Join(findings, "; ")}
 }

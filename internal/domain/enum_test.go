@@ -134,6 +134,40 @@ func TestEnumsRoundTripAndRejectInvalid(t *testing.T) {
 		domain.Result.Valid,
 		[]string{"succeeded", "failed", "denied", "pending"},
 	}.check(t)
+	enum[domain.RuntimeType]{
+		"RuntimeType", domain.AllRuntimeTypes, domain.ParseRuntimeType,
+		domain.RuntimeType.Valid,
+		[]string{"systemd", "docker"},
+	}.check(t)
+	enum[domain.ServiceKind]{
+		"ServiceKind", domain.AllServiceKinds, domain.ParseServiceKind,
+		domain.ServiceKind.Valid,
+		[]string{"systemd_unit", "docker_container"},
+	}.check(t)
+	enum[domain.ServiceVerb]{
+		"ServiceVerb", domain.AllServiceVerbs, domain.ParseServiceVerb,
+		domain.ServiceVerb.Valid,
+		[]string{"start", "stop", "restart"},
+	}.check(t)
+}
+
+func TestServiceKindRuntime(t *testing.T) {
+	want := map[domain.ServiceKind]domain.RuntimeType{
+		domain.ServiceSystemdUnit:     domain.RuntimeSystemd,
+		domain.ServiceDockerContainer: domain.RuntimeDocker,
+		domain.ServiceKind("bogus"):   "",
+	}
+	for kind, runtime := range want {
+		if got := kind.Runtime(); got != runtime {
+			t.Errorf("%q.Runtime() = %q, want %q", kind, got, runtime)
+		}
+	}
+}
+
+func TestServiceVerbAction(t *testing.T) {
+	if got := domain.VerbRestart.Action(); got != "service.restart" {
+		t.Errorf("restart.Action() = %q, want service.restart", got)
+	}
 }
 
 func TestRiskClassRank(t *testing.T) {

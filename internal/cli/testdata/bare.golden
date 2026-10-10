@@ -5,10 +5,21 @@ Usage:
   sm [command]
 
 Available Commands:
+  approvals   List jobs awaiting approval with the plan hash to approve against
   completion  Generate a shell completion script
   config      Inspect and validate configuration
+  daemon      Run the SuperMgmt daemon (started on demand by the other commands)
+  docker      Open lazydocker on a node over SSH
   doctor      Diagnose configuration, paths and database health
+  events      List audit events
   help        Help about any command
+  jobs        List and govern jobs (default: list)
+  nodes       List, add, inspect and probe nodes
+  services    List services, read their logs and start, stop or restart them
+  ssh         Open an interactive shell on a node with your own SSH credentials
+  ssh-key     Show the instance SSH identity
+  status      Show the daemon identity, node reachability and pending work
+  tui         Open the terminal UI
   version     Print version, commit, build date, Go version and platform
 
 Flags:
@@ -18,5 +29,3 @@ Flags:
       --log-level string   log level: debug|info|warn|error (default "info")
 
 Use "sm [command] --help" for more information about a command.
-
-The TUI arrives in milestone M1; see ROADMAP.md.

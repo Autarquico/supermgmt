@@ -122,10 +122,12 @@ func ListProviders(ctx context.Context, q Querier) ([]domain.Provider, error) {
 // ---- nodes -----------------------------------------------------------------
 
 type endpointRecord struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	User          string `json:"user"`
-	HostPublicKey string `json:"host_public_key"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	User               string `json:"user"`
+	AdminUser          string `json:"admin_user"`
+	AdminCredentialRef string `json:"admin_credential_ref"`
+	HostPublicKey      string `json:"host_public_key"`
 }
 
 const nodeColumns = `id, provider_id, native_id, name, kind, environment_id, management_state, reachability,

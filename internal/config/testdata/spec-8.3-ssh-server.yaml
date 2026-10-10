@@ -4,6 +4,7 @@ endpoint:
   host: 10.42.0.10
   port: 22
   user: supermgmt
+  admin_user: alex
   host_public_key: "ssh-ed25519 AAAA..."
 credential_ref: secret://ssh/default
 environment: production
