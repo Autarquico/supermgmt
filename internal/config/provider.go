@@ -20,6 +20,16 @@ var providerBranches = map[string]reflect.Type{
 	ProviderSSH:     reflect.TypeFor[SSHProvider](),
 }
 
+// selectProviderBranch tells the strict decoder which struct describes a
+// provider node, from its `type` discriminator.
+func selectProviderBranch(n *yaml.Node) (reflect.Type, string) {
+	kind := scalarField(n, "type")
+	if branch, ok := providerBranches[kind]; ok {
+		return branch, ""
+	}
+	return nil, fmt.Sprintf("unsupported provider type %q (supported: proxmox, ssh)", kind)
+}
+
 // Provider is the provider union: exactly one branch is non-nil.
 type Provider struct {
 	Proxmox *ProxmoxProvider

@@ -38,7 +38,7 @@ func WithComponent(l *slog.Logger, name string) *slog.Logger {
 
 func redactAttr(groups []string, a slog.Attr) slog.Attr {
 	a.Value = a.Value.Resolve()
-	if sensitiveKey(a.Key) && !credentialReference(a.Value.Any()) || slices.ContainsFunc(groups, sensitiveKey) {
+	if sensitiveKey(a.Key) && !keepAsReference(a.Key, a.Value.Any()) || slices.ContainsFunc(groups, sensitiveKey) {
 		return slog.String(a.Key, Redacted)
 	}
 	switch a.Value.Kind() { //nolint:exhaustive // other kinds carry no free text

@@ -34,6 +34,7 @@ func (s Secret) Reveal() string { return string(s) }
 var sensitiveKeyParts = []string{
 	"password", "passwd", "secret", "token", "authorization", "private_key",
 	"privatekey", "credential", "api_key", "apikey", "cookie", "session",
+	"passphrase", "dsn",
 }
 
 func sensitiveKey(key string) bool {
@@ -52,12 +53,17 @@ var (
 	privateKeyPattern = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z ]*PRIVATE KEY-----|\z)`)
 )
 
-// credentialReference reports whether v is a credential reference URI (spec
-// §8.4): it names a secret without containing one, so it is safe to keep even
-// under a sensitive key such as credential_ref.
-func credentialReference(v any) bool {
-	ref, ok := v.(string)
-	return ok && (strings.HasPrefix(ref, "secret://") || strings.HasPrefix(ref, "ssh-agent://") || strings.HasPrefix(ref, "file://"))
+// referenceValue is the full grammar of a credential reference (spec §8.4):
+// a value that names a secret without containing one.
+var referenceValue = regexp.MustCompile(`^(?:secret://[A-Za-z0-9._@:/-]+|ssh-agent://default|file:///[A-Za-z0-9._@+:/-]+)$`)
+
+// keepAsReference reports whether the value under key may stay visible: only
+// an explicit reference field (name ending in _ref, such as credential_ref)
+// holding a complete reference. Every other sensitive key is always masked,
+// whatever its value looks like.
+func keepAsReference(key string, value any) bool {
+	ref, ok := value.(string)
+	return ok && strings.HasSuffix(strings.ToLower(key), "_ref") && referenceValue.MatchString(ref)
 }
 
 // ScrubString removes bearer tokens, basic credentials and PEM private keys
@@ -77,7 +83,7 @@ func RedactMap(m map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(m))
 	for key, value := range m {
-		if sensitiveKey(key) && !credentialReference(value) {
+		if sensitiveKey(key) && !keepAsReference(key, value) {
 			out[key] = Redacted
 			continue
 		}

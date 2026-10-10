@@ -12,6 +12,8 @@ import (
 
 const envPrefix = "SUPERMGMT_"
 
+var durationType = reflect.TypeFor[time.Duration]()
+
 // InstallerEnvVars are the installer's own variables (spec §3.6). They are
 // not configuration overrides and never produce an unknown-variable warning.
 var InstallerEnvVars = []string{
