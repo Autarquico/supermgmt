@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "M5 — MCP"
+title: M5 — MCP
 type: epic
-status: draft
+status: active
 priority: P1
 size: L
 issue: null
 prs: []
-related_issues: []
+related_issues: [5]
 depends_on: [m4-apps-deployments]
 supersedes: []
 related_specs: []
