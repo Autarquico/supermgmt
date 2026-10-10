@@ -1,0 +1,153 @@
+{
+  "risk": "operational",
+  "steps": [
+    "preflight",
+    "snapshot",
+    "pre-deploy-backup",
+    "pull",
+    "materialize",
+    "verify-on-node",
+    "deploy",
+    "health-check"
+  ],
+  "parameters": {
+    "\ud83d\ude00": 2,
+    "\uffff": 1,
+    "nested": {
+      "m": [
+        {
+          "x": 1,
+          "y": 0
+        }
+      ],
+      "a": true,
+      "z": null
+    },
+    "ctl": "\u0001\u001f\u007f",
+    "note": "caf\u00e9 <ok> & \"quoted\" \\ /\t\u20ac",
+    "labels": [
+      "b",
+      "a"
+    ],
+    "replicas": 3
+  },
+  "sub_actions": [
+    {
+      "target": {
+        "id": "01970000-0000-7000-8000-000000000b04",
+        "type": "node"
+      },
+      "action": "node.snapshot.create"
+    },
+    {
+      "target": {
+        "id": "01970000-0000-7000-8000-000000000b04",
+        "type": "node"
+      },
+      "action": "node.backup_template.run"
+    }
+  ],
+  "content": {
+    "secret_bindings": [
+      {
+        "version": 9007199254740991,
+        "secret_id": "01970000-0000-7000-8000-000000000b07",
+        "env_name": "DATABASE_URL",
+        "service": "web"
+      },
+      {
+        "version": 4,
+        "secret_id": "01970000-0000-7000-8000-000000000b06",
+        "env_name": "API_KEY",
+        "service": "web"
+      }
+    ],
+    "rollback_target": null,
+    "host_ports": [
+      "127.0.0.1:9090",
+      "127.0.0.1:8080"
+    ],
+    "deployment_policy_hash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "health_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "exceptions_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "images": [
+      {
+        "binding": "attestation",
+        "ref": "ghcr.io/acme/api@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "service": "web"
+      },
+      {
+        "binding": "pinned",
+        "ref": "docker.io/library/redis@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "service": "redis"
+      }
+    ],
+    "compose_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "manifest_blob_sha": "5d41402abc4b2a76b9719d911017c592ae0a1b2c",
+    "commit_sha": "a84f2d1c0e9b7a5d3f2e1c0b9a8d7e6f5a4b3c2d"
+  },
+  "inputs": [
+    {
+      "host_public_key_sha256": null,
+      "endpoint": null,
+      "version": 4,
+      "spec_revision": null,
+      "id": "01970000-0000-7000-8000-000000000b06",
+      "type": "secret"
+    },
+    {
+      "host_public_key_sha256": null,
+      "endpoint": null,
+      "version": null,
+      "spec_revision": 2,
+      "id": "01970000-0000-7000-8000-000000000b05",
+      "type": "repository"
+    },
+    {
+      "host_public_key_sha256": "SHA256:h0stK3yF1ngerpr1nt",
+      "endpoint": {
+        "user": "supermgmt",
+        "port": 22,
+        "address": "10.42.0.10"
+      },
+      "version": null,
+      "spec_revision": 42,
+      "id": "01970000-0000-7000-8000-000000000b04",
+      "type": "node"
+    },
+    {
+      "host_public_key_sha256": null,
+      "endpoint": null,
+      "version": null,
+      "spec_revision": 1,
+      "id": "01970000-0000-7000-8000-000000000b03",
+      "type": "health_check"
+    },
+    {
+      "host_public_key_sha256": null,
+      "endpoint": null,
+      "version": null,
+      "spec_revision": 3,
+      "id": "01970000-0000-7000-8000-000000000b02",
+      "type": "environment"
+    },
+    {
+      "host_public_key_sha256": null,
+      "endpoint": null,
+      "version": null,
+      "spec_revision": 12,
+      "id": "01970000-0000-7000-8000-000000000b01",
+      "type": "app"
+    }
+  ],
+  "targets": [
+    {
+      "spec_revision": 7,
+      "id": "01970000-0000-7000-8000-000000000a01",
+      "type": "app_target"
+    }
+  ],
+  "actor": "identity/01970000-0000-7000-8000-0000000000aa",
+  "action": "deployment.create",
+  "version": 3
+}
