@@ -270,3 +270,25 @@ func TestValidateReportsAllProblemsAtOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateNeverEchoesCredentialRefValues(t *testing.T) {
+	for _, ref := range []string{"hunter2-plaintext", "pa ss://word", "Hunter2-Plain://x"} {
+		c := validServer(t)
+		c.Auth.OIDC.ClientSecretRef = ref
+		c.Providers = []Provider{{SSH: &SSHProvider{
+			Type: "ssh", Name: "n", CredentialRef: ref,
+			Endpoint: SSHEndpoint{Host: "h", Port: 22, User: "u"},
+		}}}
+
+		err := c.Validate()
+
+		if err == nil || strings.Contains(err.Error(), "hunter2") || strings.Contains(err.Error(), "pa ss") || strings.Contains(err.Error(), "Plain") {
+			t.Errorf("ref %q: error %v must reject without echoing the value", ref, err)
+		}
+	}
+	c := validServer(t)
+	c.Auth.OIDC.ClientSecretRef = "hunter2-plaintext"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "missing a scheme") {
+		t.Errorf("err = %v, want a missing-scheme message", err)
+	}
+}

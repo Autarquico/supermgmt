@@ -182,3 +182,24 @@ func specPolicyBlocks(t *testing.T) []string {
 	}
 	return blocks
 }
+
+func TestParse_ErrorsNameYAMLPathAndLine(t *testing.T) {
+	cases := []struct {
+		name, yaml, want string
+	}{
+		{"unknown rule field", "version: 1\nrules:\n  - name: a\n    subjects: ['*']\n    allow: [node.read]\n    bogus: 1\n", "rules[0].bogus (line 6): unknown field"},
+		{"unknown top-level field", "version: 1\nrules: []\nextra: 1\n", "extra (line 3): unknown field"},
+		{"duplicate key", "version: 1\nrules:\n  - name: a\n    name: b\n", "rules[0].name (line 4): duplicate key"},
+		{"anchor", "version: 1\nrules:\n  - name: &n a\n    subjects: ['*']\n", "anchors are not supported"},
+		{"alias", "version: 1\nrules:\n  - name: &n a\n    subjects: [*n]\n", "aliases are not supported"},
+		{"merge key", "version: 1\nrules:\n  - <<: {name: a}\n", "merge keys are not supported"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}

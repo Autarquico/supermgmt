@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"path"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -272,12 +273,20 @@ func (v *validator) secretRefOnly(yamlPath, ref string) {
 	if err := validateCredentialRef(ref, v.cfg.Instance.Mode); err != "" {
 		v.add(yamlPath, "%s", err)
 	} else if !strings.HasPrefix(ref, "secret://") {
-		v.add(yamlPath, "must be a secret:// reference, got %q", scheme(ref))
+		v.add(yamlPath, "must be a secret:// reference, got scheme %q", scheme(ref))
 	}
 }
 
+var schemePattern = regexp.MustCompile(`^[a-z][a-z0-9+.-]{0,15}$`)
+
+// scheme returns the "<scheme>://" prefix of ref, or "" when ref has none or
+// its prefix does not look like a scheme, so a bare value (which may be a
+// pasted secret) is never echoed.
 func scheme(ref string) string {
-	s, _, _ := strings.Cut(ref, "://")
+	s, _, found := strings.Cut(ref, "://")
+	if !found || !schemePattern.MatchString(s) {
+		return ""
+	}
 	return s + "://"
 }
 
@@ -298,7 +307,11 @@ func validateCredentialRef(ref string, mode Mode) string {
 			return "file:// reference needs an absolute path"
 		}
 	default:
-		return fmt.Sprintf("unsupported credential reference %q (allowed: secret://<path>, ssh-agent://default, file://<abs-path>)", scheme(ref))
+		const allowed = "(allowed: secret://<path>, ssh-agent://default, file://<abs-path>)"
+		if sc := scheme(ref); sc != "" {
+			return fmt.Sprintf("unsupported credential reference scheme %q %s", sc, allowed)
+		}
+		return "credential reference is missing a scheme " + allowed
 	}
 	return ""
 }

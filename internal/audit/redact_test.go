@@ -179,21 +179,34 @@ func TestRedactMapNil(t *testing.T) {
 	}
 }
 
-func TestRedactMapKeepsCredentialReferences(t *testing.T) {
-	out := RedactMap(map[string]any{
+func TestRedactMapKeepsOnlyCompleteReferencesInReferenceFields(t *testing.T) {
+	kept := map[string]any{
 		"credential_ref":    "secret://providers/home-pve/token",
 		"client_secret_ref": "secret://oidc/client",
 		"key_ref":           "file:///etc/supermgmt/id_ed25519",
-		"agent_credential":  "ssh-agent://default",
-		"credential":        plaintext,
-	})
-
-	for _, key := range []string{"credential_ref", "client_secret_ref", "key_ref", "agent_credential"} {
-		if out[key] == Redacted {
-			t.Errorf("%s: a reference URI is not a secret and must be kept", key)
+		"agent_ref":         "ssh-agent://default",
+	}
+	for key, value := range RedactMap(kept) {
+		if value != kept[key] {
+			t.Errorf("%s = %v, a complete reference in a *_ref field must be kept", key, value)
 		}
 	}
-	if out["credential"] != Redacted {
-		t.Errorf("credential = %v, a non-reference value under a sensitive key must be masked", out["credential"])
+
+	masked := map[string]any{
+		"password":       "secret://x",
+		"agent_password": "ssh-agent://default",
+		"credential":     "secret://x",
+		"api_key_ref":    "secret://x y",
+		"cookie_ref":     "secret://" + plaintext + " trailing",
+		"secret_ref":     "file://relative",
+		"token_ref":      "ssh-agent://other",
+		"passphrase":     plaintext,
+		"dsn":            "postgres://u:" + plaintext + "@h/db",
+		"credential_ref": plaintext,
+	}
+	for key, value := range RedactMap(masked) {
+		if value != Redacted {
+			t.Errorf("%s = %v, want it masked", key, value)
+		}
 	}
 }

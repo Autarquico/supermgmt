@@ -3,11 +3,9 @@ package policy
 import (
 	"bytes"
 	"errors"
-	"io"
-
-	"go.yaml.in/yaml/v3"
 
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/yamlstrict"
 )
 
 // Parse decodes and validates a policy file. Decoding is strict: unknown
@@ -30,17 +28,11 @@ func New(doc Document) (*Policy, error) {
 
 func decode(data []byte) (Document, error) {
 	var doc Document
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&doc); err != nil {
-		if errors.Is(err, io.EOF) {
-			return Document{}, invalidPolicy("policy file is empty", nil)
-		}
+	switch err := yamlstrict.Decode(bytes.NewReader(data), &doc); {
+	case errors.Is(err, yamlstrict.ErrEmpty):
+		return Document{}, invalidPolicy("policy file is empty", nil)
+	case err != nil:
 		return Document{}, invalidPolicy("cannot decode policy", err)
-	}
-	var extra yaml.Node
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return Document{}, invalidPolicy("policy file must contain exactly one YAML document", err)
 	}
 	return doc, nil
 }
