@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "M4 — Apps, GitHub and deployments"
+title: M4 — Apps, GitHub and deployments
 type: epic
-status: draft
+status: active
 priority: P1
 size: XL
 issue: null
 prs: []
-related_issues: []
+related_issues: [4]
 depends_on: [m3-proxmox-installer]
 supersedes: []
 related_specs: []
