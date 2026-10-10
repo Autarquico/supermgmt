@@ -9,6 +9,7 @@ import (
 
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/runtimes"
+	"github.com/autarquico/supermgmt/internal/textsafe"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -61,6 +62,9 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 	if err != nil {
 		return SetupOutcome{}, err
 	}
+	if err := CheckSystemctlTrust(ctx, ex, systemctl); err != nil {
+		return SetupOutcome{}, err
+	}
 	for _, g := range p.Grants {
 		if err := CheckTrust(ctx, ex, g.Unit); err != nil {
 			return SetupOutcome{}, err
@@ -76,15 +80,15 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 	}{
 		{"user", func(ctx context.Context) error { return s.ensureUser(ctx, p.User) }},
 		{"directories", func(ctx context.Context) error { return s.ensureDirectories(ctx, p.User) }},
-		{"authorized_keys", func(ctx context.Context) error {
-			return s.installFile(ctx, templates.AuthorizedKeysPath, "0600", p.User, p.User, files.authorizedKeys, nil)
-		}},
 		{"groups", func(ctx context.Context) error { return s.ensureGroups(ctx, p) }},
 		{"tmpfiles", func(ctx context.Context) error { return s.ensureTmpfiles(ctx, files.tmpfiles) }},
 		{"broker", func(ctx context.Context) error { return s.ensureBroker(ctx, p, files) }},
 		{"sudoers", func(ctx context.Context) error {
 			return s.installFile(ctx, templates.SudoersPath, "0440", "root", "root", files.sudoers, s.checkSudoers)
 		}},
+		// The key goes in last: only an account that passed every check above
+		// ever becomes reachable with the instance identity.
+		{"authorized_keys", func(ctx context.Context) error { return s.installOwnFile(ctx, p.User, files.authorizedKeys) }},
 	}
 	for _, step := range steps {
 		if err := step.run(ctx); err != nil {
@@ -177,7 +181,9 @@ func (s stepper) systemctlPath(ctx context.Context, p SetupParams) (string, erro
 const maxSystemUID = 999
 
 // ensureUser creates the dedicated account, keeps one that is exactly ours and
-// refuses any other (CONFLICT): an existing account is never hijacked.
+// refuses any other (CONFLICT): an existing account is never hijacked. The
+// password field is set on every run, so a run interrupted between useradd and
+// usermod converges.
 func (s stepper) ensureUser(ctx context.Context, user string) error {
 	res, err := read(ctx, s.ex, "setup.user_entry", map[string]string{"user": user})
 	if err != nil {
@@ -185,22 +191,30 @@ func (s stepper) ensureUser(ctx context.Context, user string) error {
 	}
 	switch res.ExitStatus {
 	case 0:
-		return checkOwnAccount(user, string(res.Stdout))
+		if err := s.checkOwnAccount(ctx, user, string(res.Stdout)); err != nil {
+			return err
+		}
 	case 2:
 		if err := s.do(ctx, "setup.user_add", map[string]string{"user": user}, nil); err != nil {
 			return err
 		}
-		return s.do(ctx, "setup.user_unlock", map[string]string{"user": user}, nil)
+	default:
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("looking up %s failed (exit %d)", user, res.ExitStatus))
 	}
-	return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("looking up %s failed (exit %d)", user, res.ExitStatus))
+	return s.do(ctx, "setup.user_unlock", map[string]string{"user": user}, nil)
 }
 
-// checkOwnAccount accepts a passwd entry with our home, shell and a system UID.
-func checkOwnAccount(user, entry string) error {
+// checkOwnAccount accepts a passwd entry with our home, shell, a system UID
+// (never 0) and the account's own group as primary group.
+func (s stepper) checkOwnAccount(ctx context.Context, user, entry string) error {
 	fields := strings.Split(strings.TrimSpace(entry), ":")
 	uid, err := strconv.Atoi(fieldAt(fields, 2))
-	ours := len(fields) == 7 && fields[0] == user && err == nil && uid >= 0 && uid <= maxSystemUID &&
+	ours := len(fields) == 7 && fields[0] == user && err == nil && uid >= 1 && uid <= maxSystemUID &&
 		fields[5] == templates.HomeDir && fields[6] == "/bin/sh"
+	if ours {
+		out, readErr := succeeded(ctx, s.ex, "setup.user_primary_group", map[string]string{"user": user})
+		ours = readErr == nil && strings.TrimSpace(out) == user
+	}
 	if !ours {
 		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("account %s already exists and is not the SuperMgmt service account", user))
 	}
@@ -214,11 +228,15 @@ func fieldAt(fields []string, i int) string {
 	return ""
 }
 
+// ensureDirectories sets the home directory as root (its parent is root-owned)
+// and everything below it as the dedicated user itself: a symlink the user
+// plants there can only redirect the user's own privileges.
 func (s stepper) ensureDirectories(ctx context.Context, user string) error {
-	for _, d := range []struct{ mode, path string }{
-		{"0750", templates.HomeDir}, {"0700", templates.MarkerDir}, {"0700", templates.SSHDir},
-	} {
-		if err := s.ensureDir(ctx, d.mode, user, user, d.path); err != nil {
+	if err := s.ensureDir(ctx, "0750", user, user, templates.HomeDir); err != nil {
+		return err
+	}
+	for _, d := range []struct{ mode, path string }{{"0700", templates.MarkerDir}, {"0700", templates.SSHDir}} {
+		if err := s.do(ctx, "setup.own_dir", map[string]string{"user": user, "mode": d.mode, "path": d.path}, nil); err != nil {
 			return err
 		}
 	}
@@ -227,6 +245,17 @@ func (s stepper) ensureDirectories(ctx context.Context, user string) error {
 
 func (s stepper) ensureDir(ctx context.Context, mode, owner, group, path string) error {
 	return s.do(ctx, "setup.dir", map[string]string{"mode": mode, "owner": owner, "group": group, "path": path}, nil)
+}
+
+// installOwnFile installs authorized_keys as the dedicated user, through a
+// staging name, so the node holds the old file or the new one.
+func (s stepper) installOwnFile(ctx context.Context, user, content string) error {
+	staged := templates.StagingPath(templates.AuthorizedKeysPath)
+	if err := s.do(ctx, "setup.own_file_stage", map[string]string{"user": user, "mode": "0600", "path": staged}, []byte(content)); err != nil {
+		_ = s.do(context.WithoutCancel(ctx), "setup.own_file_discard", map[string]string{"user": user, "path": staged}, nil)
+		return err
+	}
+	return s.do(ctx, "setup.own_file_commit", map[string]string{"user": user, "from": staged, "to": templates.AuthorizedKeysPath}, nil)
 }
 
 // installFile writes content to a staging name, validates it, and moves it
@@ -274,6 +303,22 @@ func (s stepper) ensureGroups(ctx context.Context, p SetupParams) error {
 		}
 		if err != nil {
 			return err
+		}
+	}
+	return s.checkMemberships(ctx, p.User, wanted)
+}
+
+// checkMemberships refuses an account that belongs to any group other than its
+// own and the ones requested: privileged memberships this run cannot remove
+// (docker, sudo, wheel, adm...) mean the account is not ours.
+func (s stepper) checkMemberships(ctx context.Context, user string, wanted []string) error {
+	out, err := succeeded(ctx, s.ex, "setup.user_groups", map[string]string{"user": user})
+	if err != nil {
+		return err
+	}
+	for _, group := range strings.Fields(out) {
+		if group != user && !slices.Contains(wanted, group) {
+			return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("account %s belongs to the unrequested group %s", user, textsafe.Line(group)))
 		}
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // Paths node.setup manages on a node (ADR-0009 d). Steps may touch only these:
@@ -32,11 +33,17 @@ const SudoVariantSuffix = ".sudo"
 // often lack the sbin directories that useradd and visudo live in.
 const rootPath = `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" `
 
+// Everything below the home directory is controlled by the dedicated user and
+// may be replaced by a symlink at any time. Root therefore never touches it:
+// ownDirectories and ownFiles are written as the dedicated user itself, so a
+// planted symlink can only redirect that user's own privileges.
 var (
-	setupDirectories = []string{HomeDir, HomeDir + "/markers", SSHDir, BrokerDir, BrokerConfigDir}
-	setupFiles       = []string{AuthorizedKeysPath, SudoersPath, TmpfilesPath, BrokerPath, BrokerUnitsPath}
-	setupGroups      = []string{"systemd-journal", "adm", "docker"}
-	modeRE           = regexp.MustCompile(`^0[0-7]{3}$`)
+	rootDirectories = []string{HomeDir, BrokerDir, BrokerConfigDir}
+	rootFiles       = []string{SudoersPath, TmpfilesPath, BrokerPath, BrokerUnitsPath}
+	ownDirectories  = []string{MarkerDir, SSHDir}
+	ownFiles        = []string{AuthorizedKeysPath}
+	setupGroups     = []string{"systemd-journal", "adm", "docker"}
+	modeRE          = regexp.MustCompile(`^0[0-7]{3}$`)
 )
 
 // StagingPath returns the staging file of a managed destination.
@@ -51,12 +58,12 @@ func oneOf(what string, allowed []string) func(string) error {
 	}
 }
 
-func stagingPaths() []string {
-	staged := make([]string, len(setupFiles))
-	for i, f := range setupFiles {
-		staged[i] = StagingPath(f)
+func staged(files []string) []string {
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = StagingPath(f)
 	}
-	return staged
+	return out
 }
 
 var (
@@ -64,15 +71,20 @@ var (
 	paramOwner     = Param{Name: "owner", Validate: ValidateSystemUser}
 	paramOwnGroup  = Param{Name: "group", Validate: ValidateSystemUser}
 	paramMode      = Param{Name: "mode", Validate: Matching(modeRE)}
-	paramDir       = Param{Name: "path", Validate: oneOf("directory", setupDirectories)}
-	paramStaged    = Param{Name: "path", Validate: oneOf("staging file", stagingPaths())}
-	paramFrom      = Param{Name: "from", Validate: oneOf("staging file", stagingPaths())}
-	paramTo        = Param{Name: "to", Validate: oneOf("destination", setupFiles)}
+	paramDir       = Param{Name: "path", Validate: oneOf("directory", rootDirectories)}
+	paramOwnDir    = Param{Name: "path", Validate: oneOf("directory", ownDirectories)}
+	paramStaged    = Param{Name: "path", Validate: oneOf("staging file", staged(rootFiles))}
+	paramFrom      = Param{Name: "from", Validate: oneOf("staging file", staged(rootFiles))}
+	paramTo        = Param{Name: "to", Validate: oneOf("destination", rootFiles)}
+	paramOwnStaged = Param{Name: "path", Validate: oneOf("staging file", staged(ownFiles))}
+	paramOwnFrom   = Param{Name: "from", Validate: oneOf("staging file", staged(ownFiles))}
+	paramOwnTo     = Param{Name: "to", Validate: oneOf("destination", ownFiles)}
 	paramPlatGroup = Param{Name: "group", Validate: oneOf("group", setupGroups)}
 )
 
-// privilegedStep is one node.setup command that needs root. It is registered
-// twice: as is for admin_user = root, and as a `sudo -n` variant otherwise.
+// privilegedStep is one node.setup command. It is registered twice: as is for
+// admin_user = root, and as a `sudo -n` variant otherwise. In a body, @ROOT@
+// runs the following command as root and @AS@ as the dedicated user.
 type privilegedStep struct {
 	name   string
 	body   string
@@ -82,27 +94,41 @@ type privilegedStep struct {
 var privilegedSteps = []privilegedStep{
 	{
 		"setup.user_add",
-		"useradd --system --user-group --home-dir " + HomeDir + " --create-home --shell /bin/sh {{user}}",
+		"@ROOT@useradd --system --user-group --home-dir " + HomeDir + " --create-home --shell /bin/sh {{user}}",
 		[]Param{paramUser},
 	},
-	{"setup.user_unlock", "usermod -p '*' {{user}}", []Param{paramUser}},
+	{"setup.user_unlock", "@ROOT@usermod -p '*' {{user}}", []Param{paramUser}},
 	{
+		// Root-controlled paths only (their parent is root-owned); a symlink is refused.
 		"setup.dir",
-		"install -d -m {{mode}} -o {{owner}} -g {{group}} {{path}}",
+		"@ROOT@test ! -L {{path}} && @ROOT@install -d -m {{mode}} -o {{owner}} -g {{group}} {{path}}",
 		[]Param{paramMode, paramOwner, paramOwnGroup, paramDir},
 	},
 	{
+		"setup.own_dir",
+		`@AS@sh -c 'test ! -L "$1" && install -d -m "$2" -- "$1"' sh {{path}} {{mode}}`,
+		[]Param{paramUser, paramOwnDir, paramMode},
+	},
+	{
+		// cat first: the pipe is the dedicated user's own, so /dev/stdin can be reopened.
+		"setup.own_file_stage",
+		`@AS@sh -c 'cat | install -m "$2" /dev/stdin "$1"' sh {{path}} {{mode}}`,
+		[]Param{paramUser, paramMode, paramOwnStaged},
+	},
+	{"setup.own_file_commit", "@AS@mv -f {{from}} {{to}}", []Param{paramUser, paramOwnFrom, paramOwnTo}},
+	{"setup.own_file_discard", "@AS@rm -f {{path}}", []Param{paramUser, paramOwnStaged}},
+	{
 		// The content arrives on stdin and is written to a staging path.
 		"setup.file_stage",
-		"install -m {{mode}} -o {{owner}} -g {{group}} /dev/stdin {{path}}",
+		"@ROOT@install -m {{mode}} -o {{owner}} -g {{group}} /dev/stdin {{path}}",
 		[]Param{paramMode, paramOwner, paramOwnGroup, paramStaged},
 	},
-	{"setup.file_commit", "mv -f {{from}} {{to}}", []Param{paramFrom, paramTo}},
-	{"setup.file_discard", "rm -f {{path}}", []Param{paramStaged}},
-	{"setup.sudoers_check", "visudo -cf {{path}}", []Param{paramStaged}},
-	{"setup.group_add", "usermod -aG {{group}} {{user}}", []Param{paramPlatGroup, paramUser}},
-	{"setup.group_remove", "gpasswd -d {{user}} {{group}}", []Param{paramUser, paramPlatGroup}},
-	{"setup.tmpfiles_apply", "systemd-tmpfiles --create " + TmpfilesPath, nil},
+	{"setup.file_commit", "@ROOT@mv -f {{from}} {{to}}", []Param{paramFrom, paramTo}},
+	{"setup.file_discard", "@ROOT@rm -f {{path}}", []Param{paramStaged}},
+	{"setup.sudoers_check", "@ROOT@visudo -cf {{path}}", []Param{paramStaged}},
+	{"setup.group_add", "@ROOT@usermod -aG {{group}} {{user}}", []Param{paramPlatGroup, paramUser}},
+	{"setup.group_remove", "@ROOT@gpasswd -d {{user}} {{group}}", []Param{paramUser, paramPlatGroup}},
+	{"setup.tmpfiles_apply", "@ROOT@systemd-tmpfiles --create " + TmpfilesPath, nil},
 }
 
 // setupReads are the unprivileged reads node.setup decides on and verifies
@@ -111,6 +137,7 @@ var setupReads = []Template{
 	{Name: "setup.user_entry", Params: []Param{paramUser}, Body: "getent passwd {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.group_entry", Params: []Param{paramPlatGroup}, Body: "getent group {{group}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.user_groups", Params: []Param{paramUser}, Body: "id -nG {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
+	{Name: "setup.user_primary_group", Params: []Param{paramUser}, Body: "id -gn {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.systemctl_path", Body: "command -v systemctl", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.verify_id", Body: "id -un", MaxBytes: 1 << 10, MaxLines: 2},
 	{
@@ -126,9 +153,14 @@ func buildSetupTemplates() []Template {
 	all := slices.Clone(setupReads)
 	for _, s := range privilegedSteps {
 		all = append(all,
-			Template{Name: s.name, Body: rootPath + s.body, Params: s.params, Setup: true, MaxBytes: 64 << 10, MaxLines: 500},
-			Template{Name: s.name + SudoVariantSuffix, Body: "sudo -n " + s.body, Params: s.params, Setup: true, MaxBytes: 64 << 10, MaxLines: 500},
+			setupTemplate(s.name, s, rootPath, rootPath+"runuser -u {{user}} -- "),
+			setupTemplate(s.name+SudoVariantSuffix, s, "sudo -n ", "sudo -n -u {{user}} "),
 		)
 	}
 	return all
+}
+
+func setupTemplate(name string, s privilegedStep, root, as string) Template {
+	body := strings.ReplaceAll(strings.ReplaceAll(s.body, "@ROOT@", root), "@AS@", as)
+	return Template{Name: name, Body: body, Params: s.params, Setup: true, MaxBytes: 64 << 10, MaxLines: 500}
 }

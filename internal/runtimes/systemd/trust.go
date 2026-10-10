@@ -24,8 +24,31 @@ var (
 	execEntry      = regexp.MustCompile(`\{ path=(.*?) ; argv\[\]=(.*?) ; ignore_errors=`)
 	envFileEntry   = regexp.MustCompile(`(\S+) \(ignore_errors=(yes|no)\)`)
 	interpreterRE  = regexp.MustCompile(`^(sh|bash|dash|python[0-9.]*|perl|ruby|node|php)$`)
-	inlineCodeRE   = regexp.MustCompile(`^-[A-Za-z]*[ceEmr][A-Za-z]*$|^--(command|eval|exec|execute|print|run)$`)
+	// safeOptions are the only options each interpreter family may be started
+	// with. An option that is not listed is refused, never skipped: attached
+	// values (-cCODE), assignments (--command=CODE) and combined flags (-lc)
+	// all hide inline code from a denylist.
+	safeOptions = map[string]*regexp.Regexp{
+		"shell":  regexp.MustCompile(`^-[euxfv]+$`),
+		"bash":   regexp.MustCompile(`^-[euxfv]+$|^--(norc|noprofile|posix)$`),
+		"python": regexp.MustCompile(`^-[BsSuIOqRbE]+$`),
+		"perl":   regexp.MustCompile(`^-[wWtTX]+$`),
+		"ruby":   regexp.MustCompile(`^-w$|^-W[012]$`),
+		"node":   regexp.MustCompile(`^--no-warnings$`),
+		"php":    regexp.MustCompile(`^-[qn]+$`),
+	}
 )
+
+// interpreterFamily maps an interpreter's file name to its safeOptions key.
+func interpreterFamily(base string) string {
+	switch {
+	case base == "sh" || base == "dash":
+		return "shell"
+	case strings.HasPrefix(base, "python"):
+		return "python"
+	}
+	return base
+}
 
 // CheckTrust applies the unit trust profile of spec §16: the unit file, every
 // drop-in, every executable, every interpreter script, every EnvironmentFile
@@ -171,17 +194,21 @@ func scriptPaths(ctx context.Context, ex transport.Executor, unit, program strin
 // interpreterScripts resolves `interpreter [options] script [args]`: inline
 // code is refused and the script must be a plain absolute path.
 func interpreterScripts(unit, program string, args []string) ([]string, error) {
+	safe := safeOptions[interpreterFamily(path.Base(program))]
 	script := -1
 	for i, a := range args {
 		if a == "--" {
-			continue
-		}
-		if inlineCodeRE.MatchString(a) {
-			return nil, notEligible(unit, "executable", program, "interpreter runs inline code or a module")
+			if i+1 < len(args) {
+				script = i + 1
+			}
+			break
 		}
 		if !strings.HasPrefix(a, "-") {
 			script = i
 			break
+		}
+		if safe == nil || !safe.MatchString(a) {
+			return nil, notEligible(unit, "executable", program, "interpreter option is not allowed (inline code, modules and unknown options are refused)")
 		}
 	}
 	if script < 0 {
@@ -223,20 +250,59 @@ func hasShebang(ctx context.Context, ex transport.Executor, unit, program string
 
 // verifyChain stats the path and every parent (and the resolved path's chain).
 func verifyChain(ctx context.Context, ex transport.Executor, unit string, t target) error {
-	res, err := read(ctx, ex, "systemd.path_chain", map[string]string{"path": t.path})
+	bad, readable, err := chainFault(ctx, ex, t.path)
 	if err != nil {
 		return err
 	}
-	if res.ExitStatus != 0 && t.missingOK {
+	if !readable && t.missingOK {
 		return verifyChain(ctx, ex, unit, target{path: path.Dir(t.path)})
 	}
-	if res.ExitStatus != 0 || res.Truncated {
+	if !readable {
 		return notEligible(unit, "file", t.path, "cannot be inspected")
+	}
+	if bad != "" {
+		return notEligible(unit, "file", bad, "must be root-owned and not group/other-writable")
+	}
+	return nil
+}
+
+// chainFault walks the path, every parent and the resolved path's chain. It
+// returns the first entry that is not root-owned or is group/other-writable,
+// or readable=false when the chain cannot be inspected.
+func chainFault(ctx context.Context, ex transport.Executor, p string) (bad string, readable bool, err error) {
+	res, err := read(ctx, ex, "systemd.path_chain", map[string]string{"path": p})
+	if err != nil {
+		return "", false, err
+	}
+	if res.ExitStatus != 0 || res.Truncated {
+		return "", false, nil
 	}
 	for _, line := range splitLines(res.Stdout) {
 		if bad := untrustedEntry(line); bad != "" {
-			return notEligible(unit, "file", bad, "must be root-owned and not group/other-writable")
+			return bad, true, nil
 		}
+	}
+	return "", true, nil
+}
+
+// CheckSystemctlTrust requires the systemctl binary sudoers will grant, its
+// resolved path and every parent directory to be root-owned and not
+// group/other-writable. The path comes from the administrator's session and
+// is never taken on trust: a service-user-writable systemctl would be root
+// code execution through the granted line.
+func CheckSystemctlTrust(ctx context.Context, ex transport.Executor, systemctlPath string) error {
+	if err := templates.ValidateSystemctlPath(systemctlPath); err != nil {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "systemctl path: "+err.Error())
+	}
+	bad, readable, err := chainFault(ctx, ex, systemctlPath)
+	switch {
+	case err != nil:
+		return err
+	case !readable:
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("systemctl %q cannot be inspected", textsafe.Line(systemctlPath)))
+	case bad != "":
+		return smerr.New(smerr.CodeCapabilityUnavailable, "",
+			fmt.Sprintf("systemctl is not trusted: %q must be root-owned and not group/other-writable", textsafe.Line(bad)))
 	}
 	return nil
 }

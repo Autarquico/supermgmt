@@ -29,10 +29,11 @@ func (c containerState) marshal() (json.RawMessage, error) {
 	return b, nil
 }
 
-// startedAfter reports whether the container started strictly after t.
-func (c containerState) startedAfter(t time.Time) bool {
-	started, err := time.Parse(time.RFC3339Nano, c.StartedAt)
-	return err == nil && started.After(t)
+// startedAfter reports whether the container started strictly after prev did.
+func (c containerState) startedAfter(prev containerState) bool {
+	now, errNow := time.Parse(time.RFC3339Nano, c.StartedAt)
+	then, errThen := time.Parse(time.RFC3339Nano, prev.StartedAt)
+	return errNow == nil && errThen == nil && now.After(then)
 }
 
 // inspected is the part of `docker inspect` the adapter reads.

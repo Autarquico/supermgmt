@@ -194,7 +194,7 @@ func TestFixturesSetup_RerunIsANoOp(t *testing.T) {
 	if after := p.stateSnapshot(t); after != before {
 		t.Errorf("node state changed on re-run:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
-	for _, creating := range []string{"setup.user_add", "setup.user_unlock", "setup.group_add", "setup.group_remove"} {
+	for _, creating := range []string{"setup.user_add", "setup.group_add", "setup.group_remove"} {
 		if rec.ran(creating) {
 			t.Errorf("re-run executed %s; an ensure step must skip what already holds", creating)
 		}

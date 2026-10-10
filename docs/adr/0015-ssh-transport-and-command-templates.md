@@ -83,7 +83,7 @@ Proof and outcome are judged and persisted separately. A pair of samples counts 
 | systemd, `systemctl list-jobs` shows a job for the unit | none (still settling) | — |
 | systemd restart, no job queued | `systemd_no_jobs` | InvocationID changed ∧ `ActiveState=active` → `complete`; unchanged → `not_started`; changed ∧ not active → `unknown` (held) |
 | systemd start/stop | as restart | ActiveState/SubState vs the verb; start also needs a new InvocationID |
-| Docker verbs, `.done` with exit 0 | `done_file` | `State.StartedAt > dispatched_at ∧ Running` (start, restart) or `¬Running` (stop) → `complete`; otherwise `unknown` |
+| Docker verbs, `.done` with exit 0 | `done_file` | `State.StartedAt > pre_state.StartedAt ∧ Running` (start, restart) or `¬Running` (stop) → `complete`; otherwise `unknown` |
 | Docker, `.done` missing or nonzero | none | held for `job.resolve` (§20.4 fixed fallback) |
 
 Persisted evidence carries the proof kind, the post-state fingerprint and the pre-state captured before dispatch.
@@ -93,3 +93,4 @@ Persisted evidence carries the proof kind, the post-state fingerprint and the pr
 - Interactive sessions depend on a system OpenSSH client. It is isolated from user and system configuration (`-F /dev/null`, a temporary `known_hosts` keyed by `HostKeyAlias`, and every proxy, command and control option set to `none`/`no`).
 - Units whose names need systemd escaping cannot be granted in V1.
 - Docker actions without a `.done` proof always wait for a human.
+- Docker restart evidence compares `State.StartedAt` with the pre-state's `StartedAt`, both read from the node's own clock. The spec's `dispatched_at` is the daemon's clock, so comparing the two would misjudge any node with clock skew. `dispatched_at` is no longer used for Docker.

@@ -31,6 +31,9 @@ func Verify(ctx context.Context, ex transport.Executor, p VerifyParams) error {
 	if err := verifyIdentity(ctx, ex, p.User); err != nil {
 		return err
 	}
+	if err := CheckSystemctlTrust(ctx, ex, p.SystemctlPath); err != nil {
+		return err
+	}
 	got, err := listedSudo(ctx, ex)
 	if err != nil {
 		return err

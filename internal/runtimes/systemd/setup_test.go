@@ -2,6 +2,7 @@ package systemd
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,6 +33,7 @@ func setupParams() SetupParams {
 type setupNode struct {
 	*fakeNode
 	account, members string
+	primary          string
 	groups           []string
 	sudoersInvalid   bool
 	files            map[string]string // destination -> content committed
@@ -39,7 +41,7 @@ type setupNode struct {
 }
 
 func newSetupNode(t *testing.T) *setupNode {
-	n := &setupNode{fakeNode: newFakeNode(t), groups: []string{"systemd-journal", "docker"}, files: map[string]string{}, staging: map[string]string{}}
+	n := &setupNode{fakeNode: newFakeNode(t), groups: []string{"systemd-journal", "docker"}, primary: "supermgmt", files: map[string]string{}, staging: map[string]string{}}
 	trusted := trustNode(t, goodShow(), nil, nil)
 	for name, h := range trusted.handlers {
 		n.on(name, h)
@@ -59,23 +61,39 @@ func newSetupNode(t *testing.T) *setupNode {
 		return transport.Result{ExitStatus: 2}
 	})
 	n.on("setup.user_groups", func(templates.Command) transport.Result { return transport.Result{Stdout: []byte(n.members)} })
-	for _, base := range []string{"setup.user_add", "setup.user_unlock", "setup.dir", "setup.group_add", "setup.group_remove", "setup.tmpfiles_apply"} {
+	n.on("setup.user_primary_group", func(templates.Command) transport.Result { return transport.Result{Stdout: []byte(n.primary + "\n")} })
+	for _, base := range []string{"setup.user_add", "setup.user_unlock", "setup.dir", "setup.own_dir", "setup.tmpfiles_apply"} {
 		n.on(base, ok)
 		n.on(base+templates.SudoVariantSuffix, ok)
 	}
 	for _, suffix := range []string{"", templates.SudoVariantSuffix} {
-		n.on("setup.file_stage"+suffix, func(c templates.Command) transport.Result {
-			n.staging[argument(c.Line, -1)] = string(c.Stdin)
+		n.on("setup.group_add"+suffix, func(c templates.Command) transport.Result {
+			n.members += " " + argument(c.Line, 0)
 			return transport.Result{}
 		})
-		n.on("setup.file_commit"+suffix, func(c templates.Command) transport.Result {
-			n.files[argument(c.Line, -1)] = n.staging[argument(c.Line, -2)]
+		n.on("setup.group_remove"+suffix, func(c templates.Command) transport.Result {
+			group := argument(c.Line, -1)
+			n.members = strings.Join(slices.DeleteFunc(strings.Fields(n.members), func(g string) bool { return g == group }), " ")
 			return transport.Result{}
 		})
-		n.on("setup.file_discard"+suffix, func(c templates.Command) transport.Result {
-			delete(n.staging, argument(c.Line, -1))
-			return transport.Result{}
-		})
+		for _, kind := range []string{"setup.file_", "setup.own_file_"} {
+			n.on(kind+"stage"+suffix, func(c templates.Command) transport.Result {
+				path := argument(c.Line, -1)
+				if strings.Contains(c.Line, "cat | install") {
+					path = argument(c.Line, -2) // the mode follows the path
+				}
+				n.staging[path] = string(c.Stdin)
+				return transport.Result{}
+			})
+			n.on(kind+"commit"+suffix, func(c templates.Command) transport.Result {
+				n.files[argument(c.Line, -1)] = n.staging[argument(c.Line, -2)]
+				return transport.Result{}
+			})
+			n.on(kind+"discard"+suffix, func(c templates.Command) transport.Result {
+				delete(n.staging, argument(c.Line, -1))
+				return transport.Result{}
+			})
+		}
 		n.on("setup.sudoers_check"+suffix, func(templates.Command) transport.Result {
 			if n.sudoersInvalid {
 				return transport.Result{ExitStatus: 1, Stderr: []byte("\x1b[31mparse error near line 2\n")}
@@ -116,8 +134,8 @@ func TestSetupProvisionsANewNodeAsRoot(t *testing.T) {
 			t.Errorf("setup.%s ran %d times", w, node.count("setup."+w))
 		}
 	}
-	if node.count("setup.dir") != 3 {
-		t.Errorf("dirs = %d", node.count("setup.dir"))
+	if node.count("setup.dir") != 1 || node.count("setup.own_dir") != 2 {
+		t.Errorf("root dirs = %d, own dirs = %d; only the home directory is set by root", node.count("setup.dir"), node.count("setup.own_dir"))
 	}
 	if got := node.files[templates.AuthorizedKeysPath]; got != "restrict "+testKey+" supermgmt@inst-1\n" {
 		t.Errorf("authorized_keys = %q", got)
@@ -187,7 +205,10 @@ func TestSetupIsIdempotentForOurOwnAccount(t *testing.T) {
 	if _, err := Setup(context.Background(), node, setupParams()); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"setup.user_add", "setup.user_unlock", "setup.group_add", "setup.group_remove"} {
+	if node.count("setup.user_unlock") != 1 {
+		t.Errorf("the password field must be ensured on every run, ran %d times", node.count("setup.user_unlock"))
+	}
+	for _, name := range []string{"setup.user_add", "setup.group_add", "setup.group_remove"} {
 		if node.count(name) != 0 {
 			t.Errorf("%s ran on an already provisioned node", name)
 		}
@@ -296,8 +317,12 @@ func TestSetupDiscardsAnInvalidSudoersFileAndNeverInstallsIt(t *testing.T) {
 
 func TestSetupRefusesIneligibleUnitsBeforeChangingAnything(t *testing.T) {
 	node := newSetupNode(t)
+	inner := node.handlers["systemd.path_chain"]
 	node.on("systemd.path_chain", func(c templates.Command) transport.Result {
-		return transport.Result{Stdout: []byte("1000 777 /usr/local/bin/app\n")}
+		if strings.Contains(c.Line, "/usr/local/bin/app") {
+			return transport.Result{Stdout: []byte("1000 777 /usr/local/bin/app\n")}
+		}
+		return inner(c)
 	})
 	_, err := Setup(context.Background(), node, setupParams())
 	assertNotEligible(t, err, "/usr/local/bin/app")
@@ -359,7 +384,7 @@ User supermgmt may run the following commands on node:
 `
 
 func verifyNode(t *testing.T, user, markers, sudoOut string, sudoExit int) *fakeNode {
-	return newFakeNode(t).reply("setup.verify_id", user+"\n").reply("setup.verify_markers", markers).
+	return trustNode(t, goodShow(), nil, nil).reply("setup.verify_id", user+"\n").reply("setup.verify_markers", markers).
 		on("setup.verify_sudo", func(templates.Command) transport.Result {
 			return transport.Result{Stdout: []byte(sudoOut), ExitStatus: sudoExit}
 		})

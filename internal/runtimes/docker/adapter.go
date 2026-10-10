@@ -93,9 +93,9 @@ func (Adapter) Mutate(s runtimes.ServiceRef, v domain.ServiceVerb, marker string
 // marker's .done file with exit status 0 is proof (ADR-0015); without it the
 // result is an error and the job waits for a human.
 func (Adapter) Observe(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, v domain.ServiceVerb, marker string,
-	pre json.RawMessage, dispatchedAt time.Time,
+	pre json.RawMessage, _ time.Time,
 ) (jobs.Evidence, error) {
-	o, err := observe(ctx, ex, s, v, marker, pre, dispatchedAt)
+	o, err := observe(ctx, ex, s, v, marker, pre)
 	if err != nil {
 		return jobs.Evidence{}, err
 	}

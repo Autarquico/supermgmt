@@ -191,7 +191,7 @@ func TestObserveMapsEvidence(t *testing.T) {
 		{"start started after dispatch", domain.VerbStart, "done 0\n", 0, inspectOne("2026-10-10T10:00:03Z", true), jobs.ClassComplete, false},
 		{"restart not restarted", domain.VerbRestart, "done 0\n", 0, inspectOne("2026-10-10T09:00:00Z", true), jobs.ClassUnknown, false},
 		{"restart started but stopped", domain.VerbRestart, "done 0\n", 0, inspectOne("2026-10-10T10:00:03Z", false), jobs.ClassUnknown, false},
-		{"start at exactly dispatch time", domain.VerbStart, "done 0\n", 0, inspectOne("2026-10-10T10:00:00Z", true), jobs.ClassUnknown, false},
+		{"start on a node whose clock is behind the daemon", domain.VerbStart, "done 0\n", 0, inspectOne("2026-10-10T09:30:00Z", true), jobs.ClassComplete, false},
 		{"stop stopped", domain.VerbStop, "done 0\n", 0, inspectOne("2026-10-10T09:00:00Z", false), jobs.ClassComplete, false},
 		{"stop still running", domain.VerbStop, "done 0\n", 0, inspectOne("2026-10-10T09:00:00Z", true), jobs.ClassUnknown, false},
 		{"done file missing", domain.VerbRestart, "started\n", 0, inspectOne("2026-10-10T10:00:03Z", true), "", true},
@@ -218,7 +218,7 @@ func TestObserveMapsEvidence(t *testing.T) {
 			if got := node.calls[0]; got.Template != "marker.state" || !strings.HasSuffix(got.Line, "'0190-m1'") {
 				t.Errorf("done file read = %s", got.Line)
 			}
-			o, _ := observe(context.Background(), node, ref("web"), tt.verb, "0190-m1", json.RawMessage(pre), dispatched)
+			o, _ := observe(context.Background(), node, ref("web"), tt.verb, "0190-m1", json.RawMessage(pre))
 			if o.Proof != ProofDoneFile || string(o.Pre) != pre || !strings.Contains(string(o.Fingerprint), `"started_at"`) {
 				t.Errorf("observation = %+v", o)
 			}

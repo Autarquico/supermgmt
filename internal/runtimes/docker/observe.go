@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/jobs"
@@ -31,10 +30,11 @@ type observation struct {
 }
 
 func observe(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, v domain.ServiceVerb, marker string,
-	pre json.RawMessage, dispatchedAt time.Time,
+	pre json.RawMessage,
 ) (observation, error) {
-	if !json.Valid(pre) {
-		return observation{}, fmt.Errorf("decode pre-state: not JSON")
+	var before containerState
+	if err := json.Unmarshal(pre, &before); err != nil {
+		return observation{}, fmt.Errorf("decode pre-state: %w", err)
 	}
 	if err := requireDoneFile(ctx, ex, marker); err != nil {
 		return observation{}, err
@@ -47,7 +47,7 @@ func observe(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, 
 	if err != nil {
 		return observation{}, err
 	}
-	return observation{Proof: ProofDoneFile, Classification: classify(v, after, dispatchedAt), Fingerprint: fingerprint, Pre: pre}, nil
+	return observation{Proof: ProofDoneFile, Classification: classify(v, before, after), Fingerprint: fingerprint, Pre: pre}, nil
 }
 
 // requireDoneFile succeeds only when the marker's .done file holds exit 0.
@@ -64,10 +64,14 @@ func requireDoneFile(ctx context.Context, ex transport.Executor, marker string) 
 }
 
 // classify judges the outcome once completion is proven (ADR-0015 table).
-func classify(v domain.ServiceVerb, after containerState, dispatchedAt time.Time) jobs.Classification {
+//
+// A start or restart is complete when the container runs and State.StartedAt
+// moved past the pre-state's StartedAt. Both values come from the node's own
+// clock, so skew between the node and the daemon cannot matter.
+func classify(v domain.ServiceVerb, before, after containerState) jobs.Classification {
 	switch v {
 	case domain.VerbStart, domain.VerbRestart:
-		if after.Running && after.startedAfter(dispatchedAt) {
+		if after.Running && after.startedAfter(before) {
 			return jobs.ClassComplete
 		}
 	case domain.VerbStop:
