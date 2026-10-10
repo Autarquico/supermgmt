@@ -1,0 +1,3 @@
+config: <tmp>/config.yaml: invalid
+  - instance.nope (line 4): unknown field
+  - bogus (line 5): unknown field
