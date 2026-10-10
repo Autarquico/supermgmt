@@ -55,6 +55,7 @@ func newRootCmd(build version.Build, env []string) *cobra.Command {
 
 	root.AddCommand(newVersionCmd(build), newCompletionCmd(), newConfigCmd(env), newDoctorCmd(env))
 	root.AddCommand(clientCommands(env)...)
+	root.AddCommand(newDaemonCmd(env))
 	root.AddCommand(newTUICmd(env))
 	return root
 }

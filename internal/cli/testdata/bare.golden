@@ -8,6 +8,7 @@ Available Commands:
   approvals   List jobs awaiting approval with the plan hash to approve against
   completion  Generate a shell completion script
   config      Inspect and validate configuration
+  daemon      Run the SuperMgmt daemon (started on demand by the other commands)
   docker      Open lazydocker on a node over SSH
   doctor      Diagnose configuration, paths and database health
   events      List audit events
