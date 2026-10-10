@@ -22,7 +22,7 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
-	integration-fixtures cross-build api-check e2e snapshot release-check
+	integration-fixtures cross-build api-check e2e snapshot release-check install-test
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -80,8 +80,13 @@ api-check: ## Not available until M2
 e2e: ## Not available until M2
 	$(NOT_YET)
 
-snapshot: ## Not available until M2
-	$(NOT_YET)
+snapshot: ## Build a snapshot release into dist/ signed with a throwaway key (needs goreleaser v2 and syft)
+	packaging/release/snapshot.sh
 
-release-check: ## Not available until M2
-	$(NOT_YET)
+release-check: ## Verify the signed snapshot in dist/ (archives, SBOMs, checksums, signatures)
+	packaging/release/check.sh dist dist/test-trust/allowed_signers
+
+install-test: ## Run the install.sh tamper matrix under dash and bash (needs shellcheck)
+	shellcheck -s sh install.sh packaging/release/*.sh
+	shellcheck -x test/install/*.sh
+	@set -e; for sh in dash bash; do test/install/run.sh $$sh; done

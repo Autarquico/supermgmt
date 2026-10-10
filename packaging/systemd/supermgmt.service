@@ -1,0 +1,28 @@
+[Unit]
+Description=SuperMgmt control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=supermgmt
+Group=supermgmt
+ExecStart=/usr/local/bin/sm server --config /etc/supermgmt/config.yaml
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/supermgmt
+RuntimeDirectory=supermgmt
+RuntimeDirectoryMode=0750
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

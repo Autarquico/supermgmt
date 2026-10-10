@@ -1,0 +1,53 @@
+# GoReleaser v2 builds the archives and SBOMs. Checksums, signatures and publication are done by
+# packaging/release/finalize.sh and the workflows, because checksums.txt needs a signed
+# version/channel header (spec 3.2) that GoReleaser cannot write.
+version: 2
+project_name: sm
+
+builds:
+  - id: sm
+    main: ./cmd/sm
+    binary: sm
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -buildid=
+      - -X github.com/autarquico/supermgmt/internal/version.Version=v{{ .Version }}
+      - -X github.com/autarquico/supermgmt/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/autarquico/supermgmt/internal/version.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: sm
+    formats: [tar.gz]
+    name_template: "sm_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
+    builds_info:
+      mtime: "{{ .CommitDate }}"
+
+checksum:
+  disable: true
+
+sboms:
+  - id: archives
+    artifacts: archive
+    cmd: syft
+    documents:
+      - "${artifact}.spdx.json"
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+release:
+  disable: true
+
+changelog:
+  disable: true
