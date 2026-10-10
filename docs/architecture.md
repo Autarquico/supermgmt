@@ -1,27 +1,31 @@
 # Architecture
 
-Source of truth: [`spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md). This page summarizes it and states what exists today. Markers: **[M0]** exists in the repository now; **[planned Mx]** does not exist.
+Source of truth: [`spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md). This page summarizes it and states what exists today. Markers: **[M0]** and **[M1]** exist in the repository now; **[planned Mx]** does not exist.
 
 ## Process model (SPEC §2.1.1)
 
-Exactly one process, the **daemon**, owns the database, job workers, sync loops and connectors. TUI, CLI and MCP are always clients of its API; there is no in-process TUI backend. Local and remote use share one code path. **[planned M1]** (local), **[planned M2]** (HTTPS).
+Exactly one process, the **daemon**, owns the database, job workers, refreshers and connectors. The TUI and the CLI are clients of its API; there is no in-process TUI backend ([ADR-0005](adr/0005-daemon-process-model.md), [ADR-0014](adr/0014-local-api-and-daemon-lifecycle.md)). Local and remote use share one code path. **[M1]** (local), **[planned M2]** (HTTPS), **[planned M5]** (MCP).
 
 ```text
-Laptop / server
-├── daemon (single owner of state)          [planned M1]
-│   ├── API: Unix socket 0600 / HTTPS       [planned M1 / M2]
-│   ├── SQLite                              [M0: schema, migrations, repositories]
-│   ├── job workers, reconciler, scheduler  [M0: job engine and reconciler; planned M1: wiring into the daemon]
-│   └── connectors: SSH, Proxmox, GitHub    [planned M1, M3, M4]
-└── sm TUI / CLI / MCP bridge: API clients  [planned M1, M5]
+Laptop
+├── daemon (single owner of state)            [M1]
+│   ├── API: Unix socket 0600                 [M1]   (HTTPS: planned M2)
+│   ├── SQLite                                [M0 schema; M1 migration 000002]
+│   ├── job workers, reconciler, refresher    [M0 engine; M1 wired to SSH, systemd, Docker]
+│   └── connectors: SSH, local                [M1]   (Proxmox M3, GitHub M4)
+└── sm TUI / CLI: API clients                 [M1]   (MCP bridge: planned M5)
+        │ interactive SSH only: the terminal is handed to the system `ssh`, which
+        └ the daemon authorizes and audits but does not proxy
 ```
 
 Two exceptions to "everything is an API client":
 
-- **Offline commands** need no daemon: `sm version`, `sm completion` **[M0]**, `sm config validate`, `sm doctor --offline` **[M0]**. They take the database lock themselves and refuse while a daemon holds it. Other offline commands (`sm install`, `sm secrets import --offline`, `sm backup restore --offline`) are planned for later milestones.
-- The daemon's own entry points and the server admin socket.
+- **Offline commands** need no daemon: `sm version`, `sm completion`, `sm config validate`, `sm doctor --offline` **[M0]**. They take the database lock themselves and refuse while a daemon holds it. `sm doctor` without `--offline` is not implemented. Other offline commands (`sm install`, `sm secrets import --offline`, `sm backup restore --offline`) are planned for later milestones.
+- The daemon's own entry point, `sm daemon` **[M1]**. Any other command that needs the daemon starts it when none runs: a new session, output to `daemon.log` in the state directory, then up to 5 seconds of polling the socket (ADR-0014).
 
-Two independent `flock`s protect a running daemon: a database lock on `<canonical db path>.lock` and a socket lock on `<socket>.lock` **[M0: database lock; planned M1: socket lock and peer-credential auth]**. Local mode trusts code running as the same OS user (see [security.md](security.md)).
+Two independent `flock`s protect a running daemon: a database lock on `<canonical db path>.lock` and a socket lock on `<socket>.lock`, with the PID written in both **[M1]**. The socket directory must be a real directory owned by the daemon user with mode 0700, and the daemon refuses to start otherwise. Both ends check the peer's UID (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS) and close the connection on a mismatch or a lookup failure. Local mode trusts code running as the same OS user (see [security.md](security.md)).
+
+**Residency (ADR-0014).** The daemon exits after `daemon.idle_exit` only when no client holds the presence stream open, no request is in flight and no job is outside `succeeded`, `failed` and `cancelled`. A job waiting in `awaiting_approval` therefore keeps the daemon alive. `daemon.resident: true` disables the idle exit; a user unit that starts the daemon at login arrives in M2.
 
 ## Layers and package map (SPEC §5)
 
@@ -30,26 +34,33 @@ Dependencies point inward: adapters (CLI, API, TUI, MCP) call application servic
 | Package | Role | Status |
 |---|---|---|
 | `cmd/sm` | entry point, imports only `internal/cli` | M0 |
-| `internal/cli` | command tree, exit codes, output | M0 (`version`, `completion`, `config validate`, `doctor --offline`) |
+| `internal/cli` | command tree, exit codes, output; talks to the daemon through `internal/client` | M0 offline commands; M1 `nodes`, `services`, `jobs`, `approvals`, `events`, `status`, `ssh`, `docker`, `ssh-key`, `daemon`, `tui` |
 | `internal/domain`, `internal/domain/plan` | pure types, enums, clock, IDs, canonical plan and hash | M0 |
 | `internal/errors` | typed errors and reason codes (`smerr`) | M0 |
 | `internal/version` | build metadata | M0 |
 | `internal/config` | typed schema, strict decoding, env overrides, validation, paths | M0 |
 | `internal/audit` | event creation, redaction, correlation IDs, structured logger | M0 |
-| `internal/database`, `migrations` | SQLite, embedded migrations, lock, transaction-scoped repositories | M0 |
+| `internal/database`, `migrations` | SQLite, embedded migrations (`000001_initial`, `000002_m1`), lock, transaction-scoped repositories | M0, M1 |
 | `internal/policy` | action catalog, evaluation, governance, quorum, default policy | M0 |
 | `internal/jobs` | claim, leases and fencing, intents, resource locks, retry classes, reconciler | M0 |
-| `internal/app` | application services: plans, approvals, revalidation, lock planning, audit of denials | M0 |
-| `internal/yamlstrict` | strict YAML decoding with path and line errors, shared by config and policy | M0 |
-| `internal/daemon`, `internal/api`, `internal/client` | process lifecycle, API, typed client | planned M1, M2 |
-| `internal/secrets`, `internal/auth` | envelope encryption, identities and sessions | planned M2 |
-| `internal/tui` | Bubble Tea UI | planned M1 |
-| `internal/transport/ssh`, `internal/providers/*`, `internal/runtimes/*` | SSH, inventory sources, Docker and systemd | planned M1, M3, M4 |
-| `internal/deployments/*`, `internal/health` | Compose pipeline, health checks | planned M4 |
+| `internal/app` | application services: plans, approvals, inventory, probes, services, `node.setup`, sessions, idempotent writes, refresher | M0, M1 |
+| `internal/yamlstrict` | strict YAML decoding with path and line errors | M0 |
+| `internal/api`, `internal/api/wire` | `/api/v1` on the Unix socket; the JSON contract shared with the client | M1 |
+| `internal/client` | typed client, daemon autostart, interactive-session command builder | M1 |
+| `internal/daemon` | process lifecycle: locks, socket, residency, assembly | M1 |
+| `internal/tui` | Bubble Tea UI | M1 |
+| `internal/transport`, `internal/transport/ssh`, `.../templates` | the `Executor` seam, the SSH pool and credentials, the closed catalog of remote commands | M1 |
+| `internal/providers/ssh`, `internal/providers/local` | SSH node description and connection-user rule; the read-only local executor | M1 |
+| `internal/runtimes`, `internal/runtimes/systemd`, `.../docker` | runtime adapter contract; systemd (logs, trust profile, setup, actions); Docker | M1 |
+| `internal/discovery` | turns one probe into a typed snapshot and capabilities | M1 |
+| `internal/secrets` | AES-256-GCM envelope, file KEKs, versioned store, instance SSH identity | M1 (slice of M2; ADR-0016) |
+| `internal/textsafe` | sanitizing of untrusted text | M1 |
+| `internal/auth` | identities and sessions beyond the local socket | planned M2 |
+| `internal/providers/proxmox`, `internal/deployments/*`, `internal/health` | Proxmox, Compose pipeline, health checks | planned M3, M4 |
 | `internal/mcp` | MCP transport, tools, resources | planned M5 |
 | `internal/installer`, `internal/backup` | installer logic, backup and restore | planned M2, M3 |
 
-Enforced boundaries today: `internal/domain` imports only the standard library, `uuid` and `internal/errors`; `internal/policy` does not import `internal/database` or `internal/jobs`; `database/sql` and the SQLite driver stay in `internal/database`, `internal/jobs` and `migrations`; `time.Now` and `fmt.Print*` are linted away from library code.
+Enforced boundaries today (`.golangci.yml`): `internal/domain` imports only the standard library, `uuid` and `internal/errors`; `internal/api/wire` imports only the standard library, `internal/domain` and `internal/errors`; `internal/policy` does not import `internal/database` or `internal/jobs`; `database/sql` and the SQLite driver stay in `internal/database`, `internal/jobs` and `migrations`; `internal/tui` and `internal/client` never import `app`, `jobs`, `database`, `daemon`, `transport`, `runtimes` or `providers`; `internal/api` reaches nodes only through `app`; `internal/cli` does not import `app`, `jobs` or `transport`; `cmd/` imports only `internal/cli`; `time.Now` and `fmt.Print*` are linted away from library code.
 
 ## Domain graph (SPEC §6)
 
@@ -67,7 +78,7 @@ Repository ─► Application ─► Deployment ───┘
                   └──── Environment / Target
 ```
 
-M0 defines the cross-cutting entities and the tables for providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations and events. Repository, Application and Deployment arrive with M4.
+M0 defines the cross-cutting entities and the tables for providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations and events. M1 adds the `secrets` table and the rows the SSH connector needs (migration `000002_m1`). Repository, Application and Deployment arrive with M4.
 
 Configured state and observed state are kept apart (SPEC §6.4). Configured resources carry one `spec_revision`, which increments only when desired state changes and is used for optimistic concurrency. Observations (reachability, metrics, versions) live in separate records and never bump it. Consequence: periodic discovery does not invalidate approvals. **[M0]**
 
@@ -109,7 +120,19 @@ Key properties:
 - Locks are acquired at claim and held until the job is terminal, including while it is `interrupted` or requeued, so a retrying job cannot lose its resources to a rival (ADR-0013, SPEC §20.5). **[M0]**
 - The reconciler acts only on a quiescent job and only on confirmed evidence: the completion signal with exit status 0 plus a classification observed identically in two samples at least 30 seconds apart, collected until `deadline_at` + 5 minutes. Missing, contradictory or inconclusive evidence holds the job `interrupted`. Only fake evidence adapters exist in M0; real ones (SSH, Docker, systemd, Proxmox) arrive with their milestones. **[M0]**
 - A claim error that is a per-job data fault fails only that job, so one poison job cannot block the queue. **[M0]**
-- Human resolution of a held job (`job.resolve`) is an action in the catalog; its API arrives in M1. **[planned M1]**
+- Human resolution of a held job (`job.resolve`) is an action in the catalog, served by `POST /api/v1/jobs/{id}/resolve` and `sm jobs resolve`. It needs the plan hash and an outcome. **[M1]**
+
+## Remote execution (M1)
+
+How a service restart reaches a node (ADR-0009, ADR-0015):
+
+1. The caller is the `human` identity `local:<uid>` on the socket. Every route maps to exactly one catalog action, and every POST, PATCH and DELETE carries an `Idempotency-Key`; a replay returns the stored response bytes.
+2. A restart is a plan, then a job. In a `production` environment it waits in `awaiting_approval` until a plan-hash-bound approval arrives.
+3. Before dispatch the worker captures the unit's pre-state, records the intent and commits `MarkDispatched`. The command is rendered from the closed template catalog and runs as `supermgmt` over the pooled SSH connection: `sudo -n <systemctl> <verb> <unit>` wrapped so a marker file exists before it starts and a `.done` file records its exit status.
+4. If the daemon dies mid-job, the job becomes `interrupted` and keeps its locks. After the node is quiet, the reconciler judges completion from evidence read over SSH (the marker, `systemctl` job list and `InvocationID`, or Docker state plus `.done`). Evidence is accepted only when two samples at least `SampleGap` apart agree; anything else holds the job for `sm jobs resolve`.
+5. Reads (discovery, logs) never need setup, but a node without `node.setup` is read as `admin_user` and advertises no mutating capability.
+
+Nodes are never given a SuperMgmt binary. What `node.setup` creates on them is listed in [providers.md](providers.md).
 
 ## Further reading
 

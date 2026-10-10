@@ -1,31 +1,39 @@
 # Security
 
-Authoritative sources: SPEC §30 (threat model), §11 (policy and approvals), §2.1.1 (local trust boundary). Vulnerability reporting: [`../SECURITY.md`](../SECURITY.md).
+Authoritative sources: SPEC §30 (threat model), §11 (policy and approvals), §2.1.1 (local trust boundary), §12 and §16 (nodes). Vulnerability reporting: [`../SECURITY.md`](../SECURITY.md).
 
-SuperMgmt is **pre-alpha**. In M0 the controls below exist as tested libraries. No daemon, network service, installer or MCP endpoint ships yet, so most of the attack surface in the threat model does not exist yet either. **[M0]** = implemented in the repository now; **[planned Mx]** = not implemented.
+SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI. There is still no network service, installer or MCP endpoint, and no independent security audit. **[M0]** and **[M1]** mark what is implemented in the repository now; **[planned Mx]** is not implemented.
+
+## Trust boundaries in one page
+
+Read this before you point SuperMgmt at a machine you care about.
+
+1. **The local boundary is the OS user.** The daemon listens on a Unix socket and accepts connections from its own UID only. Anything running as you can drive SuperMgmt, approve its own plans (`security.allow_self_approval` defaults to `true` in local mode) and use the instance SSH identity. Local mode does not defend against malicious software under your user. **[M1]**
+2. **The node credential can read all logs in `journal-group` mode.** That mode puts `supermgmt` in `systemd-journal` (or `adm`), so a stolen node credential reads the node's entire system journal, not only selected units. Mediation by the API limits what clients see, not what the credential can read. `broker` mode avoids the group: see [Log modes](#log-modes-on-a-node).
+3. **Docker access is root.** The `docker` group is equivalent to root on the node. Setup asks for `docker_access` explicitly, has no default, and shows this warning.
+4. **A unit grant is a trust profile, not a proof.** Granting restart on a unit trusts everything that unit executes.
+5. **The KEK files are separate from the database and must be backed up separately.** Export arrives in M2.
+6. **Setup needs root once.** Afterwards SuperMgmt holds no standing root on the node.
 
 ## Threat model summary (SPEC §30)
-
-Threats the design considers:
 
 | Threat | Main mitigation | Status |
 |---|---|---|
 | Stolen browser or OIDC session | short TTLs, CSRF protection, secure headers | planned M2 |
 | Compromised MCP client; malicious prompt asking for a privileged action | MCP is its own actor type with no inherited roles; hard approval floor for operational writes; MCP can never approve | policy rules **[M0]**; MCP itself planned M5 |
-| Compromised managed node | least privilege, bounded output and timeouts | planned M1 |
+| Compromised managed node | least privilege on the node, bounded and sanitized output, timeouts | **[M1]** |
 | Malicious repository or PR | closed-schema Compose pipeline, immutable digests | planned M4 |
 | Forged or replayed GitHub webhook | signature check and replay dedupe | planned M4 |
-| SSH MITM or host key change | strict pinned host keys; changed keys fail the job | planned M1 |
+| SSH MITM or host key change | pinned host key compared byte for byte; a changed key fails the job | **[M1]** |
 | Leaked API token | hashed storage, scopes, revocation, rate limits | planned M2 |
-| Terminal escape sequences in remote logs | output sanitization before rendering | planned M1 |
-| Command injection via names or parameters | fixed command templates, argument escaping | planned M1 |
+| Another local user reaching the daemon | socket directory 0700, peer UID checked on both ends, `Authorization` header rejected | **[M1]**; refusal of a second user is tested on Linux CI only, on macOS it rests on the same-UID test and a manual check |
+| Terminal escape sequences in remote logs | ANSI, C0 and C1 controls stripped and UTF-8 repaired at the transport boundary | **[M1]** |
+| Command injection via names or parameters | closed command catalog, per-parameter allowlists, no leading `-`, POSIX quoting, setup content on stdin | **[M1]** |
 | SSRF via health URLs or provider endpoints | outbound request filter | planned M4 |
 | Supply-chain compromise | pinned dependencies, scanning, signed releases | CI scanning **[M0]**; signing planned M2 |
-| Backup theft; control-plane database theft | envelope encryption of secrets | planned M2 |
+| Backup theft; control-plane database theft | envelope encryption of secrets | **[M1]** for the SSH identity; backups planned M2 |
 
-Trust boundary in local mode: code running as the same OS user is trusted (SPEC §2.1.1), so local mode does not defend against malicious software under that user. MCP content is untrusted input: a model asking for an action has no more authority than its authenticated identity and policy grant.
-
-Docker access is root-equivalent on the host it controls. Treat any grant of Docker-level actions on a node as a grant of root there.
+MCP content is untrusted input: a model asking for an action has no more authority than its authenticated identity and policy grant.
 
 ## Controls implemented in M0
 
@@ -46,7 +54,7 @@ A plan lists every input that can change what executes, including the `spec_revi
 
 ### Append-only audit **[M0]**
 
-The `events` table is protected by database triggers that reject `UPDATE` and `DELETE` (migration `000001_initial.up.sql`). The emitter assigns the event ID and timestamp itself, so callers cannot backdate the trail, and every event carries actor, resource and correlation ID. The requirement that denied actions and unavailable capabilities are audited as well as accepted ones (SPEC §30) is implemented in `internal/app`, which writes a `policy.<decision>` event with result `denied` for every DENY and CAPABILITY_UNAVAILABLE outcome on plan creation, submission, revalidation and approval decisions.
+The `events` table is protected by database triggers that reject `UPDATE` and `DELETE` (migration `000001_initial.up.sql`). The emitter assigns the event ID and timestamp itself, so callers cannot backdate the trail, and every event carries actor, resource and correlation ID. Denied actions and unavailable capabilities are audited as well as accepted ones (SPEC §30): `internal/app` writes a `policy.<decision>` event with result `denied` for every DENY and CAPABILITY_UNAVAILABLE outcome on plan creation, submission, revalidation and approval decisions.
 
 ### Redaction **[M0]**
 
@@ -60,14 +68,119 @@ Unknown configuration fields fail validation, credential references are limited 
 
 SQLite runs in WAL mode with `synchronous=FULL` and a single writer ([ADR-0001](adr/0001-sqlite-driver.md)). CI runs `go vet`, `golangci-lint` (including `gosec`), tests with the race detector on Linux and macOS, `govulncheck`, CodeQL and dependency review.
 
+## Controls implemented in M1
+
+### Local socket and daemon **[M1]**
+
+([ADR-0014](adr/0014-local-api-and-daemon-lifecycle.md))
+
+- The socket directory must be a real directory (no symlink) owned by the daemon user with mode exactly 0700; otherwise the daemon refuses to start. The daemon runs with umask 0177.
+- The daemon reads the peer UID of every connection (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS) and closes it on a mismatch or on a lookup error, before reading any byte. The client checks the listener's UID the same way before its first request, so it does not talk to another user's daemon.
+- Any `Authorization` header gets 401 `UNAUTHENTICATED`; tokens arrive with MCP in M5.
+- The caller is the `human` identity `local:<uid>`, bound to `admin`.
+- Every route maps to exactly one catalog action, enforced by a test. Every POST, PATCH and DELETE needs an `Idempotency-Key`; a key reused with a different request gets 409.
+- Two daemons on one database, or two databases on one socket, are refused (exit 2).
+
+### Host keys **[M1]**
+
+([ADR-0015](adr/0015-ssh-transport-and-command-templates.md))
+
+- The `host_public_key` stored in the database is the only trust anchor. The check compares the exact key bytes. `ssh.known_hosts_file` is not consulted, and neither are the user's `~/.ssh/known_hosts` or `ssh_config`.
+- First trust is explicit. `sm nodes add` scans the key and shows its SHA256 fingerprint; nothing is trusted until you confirm it (type `yes`, or pass `--fingerprint SHA256:...` verified out of band). The confirmed key is the one stored, so a key that changes between the scan and the first authenticated probe fails with `SSH_HOST_KEY_MISMATCH`.
+- A changed host key fails the connection; there is no automatic re-pinning. The `sm` commands offer no way to replace a pinned key in M1 (not verified against the API's node patch).
+- SSH CA trust is not supported until M2.
+
+### Command execution on nodes **[M1]**
+
+- Commands come only from a closed catalog. Each argument is checked for non-empty valid UTF-8, no NUL and no leading `-`, then against its parameter's allowlist, then quoted for POSIX `sh`. Content that must reach a node (setup files) travels on stdin.
+- Reads are bounded by `ssh.command_timeout` and by per-template byte and line limits. Remote output is untrusted: ANSI, C0 and C1 control characters are stripped before anything is stored or rendered.
+- Mutating commands are wrapped so that a marker file exists before the command starts and a `.done` file records its exit status. Without the marker directory (created only by `node.setup`) nothing runs.
+- Sudo-executed commands equal their sudoers line byte for byte: `sudo -n <systemctl_path> <verb> <unit>`. Unit names must match `^[A-Za-z0-9][A-Za-z0-9@._-]*\.service$`, which excludes every sudoers metacharacter. A unit whose name needs systemd escaping cannot be granted in V1.
+
+### Unit trust profile **[M1]**
+
+Before a unit gets a sudoers line, and again at every action, SuperMgmt reads the unit's `systemctl show` properties and requires that the unit file, every drop-in, every executable named in an `Exec*` line, every `EnvironmentFile` and the `WorkingDirectory` are root-owned and not group- or other-writable, as is every parent directory up to `/`. When an `Exec*` program is an interpreter (`sh`, `bash`, `dash`, `python*`, `perl`, `ruby`, `node`, `php`), its script arguments must satisfy the same rule and inline code (`-c`, `-e`) is refused. Anything that cannot be resolved to a plain path makes the unit ineligible, and the action is refused with `CAPABILITY_UNAVAILABLE` naming the failing path (`internal/runtimes/systemd/trust.go`).
+
+This is a **trust profile, not a proof**. It narrows what an unprivileged user on the node can tamper with. It does not make the unit safe: a restart grant lets SuperMgmt run, as root, whatever that unit executes, so grant it only for units whose code you already trust as root. A file that changes between the check and the action, or an executable that behaves differently when run, is outside what the profile can see.
+
+### Log modes on a node
+
+| Mode | What `supermgmt` gets | Consequence |
+|---|---|---|
+| `journal-group` (default in the TUI) | membership of `systemd-journal`, or `adm` if the node has no such group | can read the whole system journal of that node |
+| `broker` (opt-in, `setup <node> broker`) | no journal group; may run only the root-owned `/usr/local/libexec/supermgmt/unit-logs` through sudo | reads only units listed in `/etc/supermgmt/allowed-units`, at most 10000 lines |
+
+In both modes `journalctl` itself is never granted through sudo. Log lines are bounded and sanitized before display. The config key `ssh.logs_mode` is validated but, in M1, the mode of a node comes from the `logs_mode` parameter of its `node.setup` plan, not from that key.
+
+### Docker access
+
+`docker_access` is a required `"true"` or `"false"` parameter of `node.setup`. When true, `supermgmt` joins the `docker` group on the node, which is equivalent to root there: anyone holding the node credential can start a privileged container and read or write the whole host. Without it, Docker capabilities disappear once automated sessions switch to `supermgmt`. Grant it only on nodes where handing SuperMgmt root is acceptable, and treat any policy rule that allows Docker-level actions on a node as a root grant. The API/policy layer limits what SuperMgmt asks for, not what the credential could do.
+
+### Secrets and the instance SSH identity **[M1]**
+
+([ADR-0016](adr/0016-m1-secrets-slice-and-ssh-identity.md), [ADR-0003](adr/0003-aes-gcm-envelope.md))
+
+At first start the daemon generates one Ed25519 key, the **instance SSH identity**, and stores the private half in the `secrets` table inside an AES-256-GCM envelope: a fresh data-encryption key per secret version, wrapped by a key-encryption key (KEK). Nodes authenticate `supermgmt` with this key; its public half is printed by `sm ssh-key show` and authorized on a node by `node.setup`.
+
+- **KEK files.** KEKs live in `security.keys_dir` (default `<instance.data_dir>/secrets/keys`) as `<kek_id>.key`: 32 random bytes, mode 0600, a regular file owned by the daemon user, opened without following symlinks. The directory must be mode 0700. Wrong permissions, a symlink or a wrong owner refuse to start. `*.pending` files are ignored.
+- **The database does not contain the KEK.** A copy of the database alone cannot decrypt the identity. Because the default `keys_dir` sits inside the data directory, copying the whole data directory copies both: keep database backups and KEK backups in different places, and put the KEK copy somewhere with its own access control.
+- **Back the KEK files up separately.** There is no export in M1 (`export-key`, `import-key` and the passphrase-protected export format arrive in M2). If a KEK file is lost, the daemon fails at start (exit 4) and names the missing KEK ids, and the encrypted identity cannot be recovered. The remedy is to generate a new identity and re-run `node.setup` on every node so they authorize the new key. M1 has no command that performs that reset (not verified on a real instance); expect to start from a fresh data directory.
+- **Plaintext.** The private key is decrypted into memory on first use and cached as a signer; buffers are zeroed best effort. It does not appear in logs, events, API responses, errors or plans, and the events about it carry the fingerprint only. Tests scan the database file, its WAL and the data directory for the key bytes. The KEK files are the one place on disk where key material is not encrypted (by design of the envelope).
+- **Rotation.** A node keeps working with the key version pinned at setup; rotating the identity is M2 and will need setup to be re-run.
+
+### Bootstrap privilege during setup **[M1]**
+
+`node.setup` is a high-risk, approval-gated job that runs as the node's `admin_user`, with your own credential (`ssh-agent://default` by default):
+
+- `admin_user: root`: commands run directly.
+- Any other `admin_user`: every privileged command is `sudo -n <exact command>`; SuperMgmt never prompts for a password. If the account is neither root nor able to run passwordless sudo, setup fails before changing anything with `CAPABILITY_UNAVAILABLE` ("admin_user needs root or passwordless sudo for setup").
+- The plan shows the bootstrap identity, and the job writes `node.setup.privileged_session` events when the privileged session starts and ends.
+- If you grant a temporary `NOPASSWD` rule to make setup possible, **you** must revoke it afterwards. SuperMgmt only needs it again to re-run setup.
+
+### Interactive SSH isolation **[M1]**
+
+`s` in the TUI and `sm ssh` open a shell as `admin_user` (or `--user`) with **your** credential; `d` and `sm docker` run `lazydocker` the same way. The terminal is handed to the system OpenSSH client, but the client builds the command (from connection details the daemon returns) so that nothing on your machine can redirect it (`internal/client/interactive.go`):
+
+- `-F /dev/null`: your `~/.ssh/config` and the system config are not read.
+- A temporary `known_hosts` containing only the node's pinned key under `HostKeyAlias=sm-<node id>`, with `UserKnownHostsFile` pointing at it, `GlobalKnownHostsFile=/dev/null`, `StrictHostKeyChecking=yes`, `UpdateHostKeys=no` and `CheckHostIP=no`. The file is removed when the session ends.
+- `ProxyCommand=none`, `ProxyJump=none`, `KnownHostsCommand=none`, `ControlMaster=no`, `ControlPath=none`, `PermitLocalCommand=no`.
+- No shell is involved: the arguments are validated again on the client and passed as an argv. The remote command is a fixed literal (none for a shell, `lazydocker`, `btop` or `tmux`).
+
+The session is issued and ended through the API, so it is audited with the exit code. What stays yours: the credential `ssh` picks (your agent and OpenSSH's default identity handling), and everything you type in the remote shell. The shell is as privileged as `admin_user`, and SuperMgmt does not restrict or record it. SuperMgmt never installs `lazydocker`; when it is missing the TUI shows where to get it.
+
+## The dedicated `supermgmt` user and how to remove it
+
+([ADR-0009](adr/0009-node-provisioning.md)) `node.setup` creates exactly this on a node and nothing else. No SuperMgmt binary or daemon is installed there.
+
+| What | Where | Notes |
+|---|---|---|
+| User and group `supermgmt` | home `/var/lib/supermgmt`, shell `/bin/sh` | system account, no password, not locked (so key login works) |
+| Authorized key | `/var/lib/supermgmt/.ssh/authorized_keys` (0600) | one line: `restrict <instance key> supermgmt@<instance id>`; no pty, no forwarding |
+| Marker directory | `/var/lib/supermgmt/markers` (0700) | completion evidence for mutating commands |
+| Sudoers drop-in | `/etc/sudoers.d/supermgmt` (0440, root) | one line per granted unit and verb: `supermgmt ALL=(root) NOPASSWD: <systemctl> <verb> <unit>`; checked with `visudo -cf` |
+| Group membership | `systemd-journal` or `adm`, in `journal-group` mode; `docker` only if `docker_access` is true | see above |
+| tmpfiles entry | `/etc/tmpfiles.d/supermgmt.conf` | creates `/run/supermgmt/locks` |
+| Log broker (broker mode only) | `/usr/local/libexec/supermgmt/unit-logs`, `/etc/supermgmt/allowed-units` | root-owned |
+
+An existing `supermgmt` account that does not match is never taken over: setup fails with `CONFLICT`. Setup re-runs are idempotent.
+
+**There is no automated teardown in M1.** To remove SuperMgmt's footprint from a node, as root:
+
+1. In SuperMgmt, retire the node (`sm nodes remove <node>`; its history is kept). Do this first, or the node will start failing probes.
+2. Delete `/etc/sudoers.d/supermgmt`.
+3. In broker mode, delete `/usr/local/libexec/supermgmt/unit-logs` and `/etc/supermgmt/allowed-units`.
+4. Delete `/etc/tmpfiles.d/supermgmt.conf` and, if present, `/run/supermgmt`.
+5. End the user's sessions, then `userdel -r supermgmt`. This removes the account, its group, `.ssh/authorized_keys` and `markers/`. Check that `/var/lib/supermgmt` is gone.
+6. Revoke any temporary `NOPASSWD` rule you created for the bootstrap.
+
+Steps 2 to 6 are derived from the list above. Only `userdel -r supermgmt` is exercised by the test fixtures (as cleanup); the sequence as a whole has not been tested.
+
 ## Planned controls
 
 Not implemented; listed so nothing is mistaken for shipped.
 
-- Peer-credential authentication on the local socket; mutually verified daemon UID (M1)
-- Strict SSH host-key pinning, fixed command templates, output sanitization and bounds (M1)
-- AES-256-GCM envelope encryption of secrets and key management ([ADR-0003](adr/0003-aes-gcm-envelope.md), M2)
 - Sessions, API tokens, OIDC, CSRF protection, rate limiting, secure headers (M2)
+- Secret export and import, `rotate-master-key`, identity rotation, per-node keys, SSH CA trust, backup key checks (M2)
 - Signed releases, checksums, SBOM, provenance; signature-verifying installer ([ADR-0004](adr/0004-openssh-release-signatures.md), M2)
 - Outbound request filter and closed-schema Compose pipeline (M4)
 - Webhook signature and replay protection (M4)
@@ -77,5 +190,10 @@ Not implemented; listed so nothing is mistaken for shipped.
 ## Accepted limitations
 
 - Local mode does not protect against malicious code running as the same OS user.
+- `journal-group` logs mode exposes the node's whole journal to the node credential; `docker_access` exposes root on the node; a unit grant trusts the unit's code.
+- The KEK files are not backed up by SuperMgmt, cannot be exported before M2, and losing them forces a new identity and a new setup on every node.
+- Refusal of another local user on the socket is tested on Linux CI only; on macOS it relies on the same-UID test and a manual check.
+- Real terminal emulators are not automated; restoring the terminal after an interactive session is covered by a pseudo-terminal test and the [manual checklist](manual-checks/m1-handoff.md).
+- Node setup is verified in CI on Debian only. Other distributions are an assumption.
 - The `curl | bash` installer path (planned M2) trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that (SPEC §3.2).
 - No independent security audit has been performed.
