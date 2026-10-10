@@ -28,13 +28,13 @@ func (c core) authorize(req policy.Request) policy.Result {
 	return c.cfg.Policy.Evaluate(req)
 }
 
-// authorizeGovernance evaluates a governance action. The system actor can never
-// approve, reject or resolve (spec §11.4).
-func (c core) authorizeGovernance(actor domain.Actor, action string, targets []policy.Target) policy.Result {
+// authorizeGovernance evaluates a governance action on the plan's target and
+// sub-actions. The system actor can never approve, reject or resolve (spec §11.4).
+func (c core) authorizeGovernance(actor domain.Actor, action string, b built) policy.Result {
 	if actor.Type == domain.ActorSystem {
 		return policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonDefaultDeny}
 	}
-	return c.cfg.Policy.EvaluateGovernance(actor, action, targets, nil)
+	return c.cfg.Policy.EvaluateGovernance(actor, action, []policy.Target{b.target}, b.subs)
 }
 
 // decisionError turns a non-allow result into its typed error; nil when allowed.
@@ -65,7 +65,7 @@ func (c core) auditDecision(ctx context.Context, q database.Querier, actor domai
 // countApprovals evaluates the stored decisions on the job's plan hash: only
 // unexpired approvals from approvers who still hold approval.grant count, and
 // any rejection blocks (spec §11.4).
-func (c core) countApprovals(ctx context.Context, q database.Querier, job jobs.Job, requester domain.Actor, required int, targets []policy.Target) (policy.QuorumResult, error) {
+func (c core) countApprovals(ctx context.Context, q database.Querier, job jobs.Job, requester domain.Actor, required int, b built) (policy.QuorumResult, error) {
 	decisions, err := database.ListDecisions(ctx, q, job.ID, job.PlanHash)
 	if err != nil {
 		return policy.QuorumResult{}, err
@@ -77,7 +77,7 @@ func (c core) countApprovals(ctx context.Context, q database.Querier, job jobs.J
 		if _, known := authorized[d.ApproverID]; known {
 			continue
 		}
-		if authorized[d.ApproverID], err = c.mayApprove(ctx, q, d.ApproverID, targets); err != nil {
+		if authorized[d.ApproverID], err = c.mayApprove(ctx, q, d.ApproverID, b); err != nil {
 			return policy.QuorumResult{}, err
 		}
 	}
@@ -94,7 +94,7 @@ func (c core) countApprovals(ctx context.Context, q database.Querier, job jobs.J
 // mayApprove reports whether the identity is currently allowed approval.grant
 // on every target. An identity that is gone or disabled is simply not allowed;
 // only infrastructure failures are errors.
-func (c core) mayApprove(ctx context.Context, q database.Querier, id domain.ID, targets []policy.Target) (bool, error) {
+func (c core) mayApprove(ctx context.Context, q database.Querier, id domain.ID, b built) (bool, error) {
 	actor, err := loadActor(ctx, q, id, domain.CredentialContext{})
 	if isTyped(err) {
 		return false, nil
@@ -102,6 +102,6 @@ func (c core) mayApprove(ctx context.Context, q database.Querier, id domain.ID, 
 	if err != nil {
 		return false, err
 	}
-	res := c.authorizeGovernance(actor, policy.ActionApprovalGrant, targets)
+	res := c.authorizeGovernance(actor, policy.ActionApprovalGrant, b)
 	return res.Decision == policy.DecisionAllow, nil
 }

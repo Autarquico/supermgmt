@@ -61,10 +61,14 @@ func (c Config) validated() (Config, error) {
 }
 
 // Caller is an authenticated request: the daemon-issued identity and the
-// credential it presented (spec §11.1).
+// credential it presented (spec §11.1). Source names the transport the request
+// arrived on ("api"); it is stamped on the audit events the request causes.
+// Idempotency is set for mutating requests that carry an Idempotency-Key.
 type Caller struct {
-	ID         domain.ID
-	Credential domain.CredentialContext
+	ID          domain.ID
+	Credential  domain.CredentialContext
+	Source      string
+	Idempotency *Idempotency
 }
 
 // core is what every service shares.
@@ -81,35 +85,6 @@ func newCore(cfg Config) (core, error) {
 	return core{cfg: cfg, emitter: audit.Emitter{Clock: cfg.Clock, IDs: cfg.IDs, Source: eventSource}}, nil
 }
 
-// rejection is an outcome the caller must see as an error although what the
-// transaction wrote before it (an audit event, a plan expiry) has to commit.
-type rejection struct{ err error }
-
-func (r rejection) Error() string { return r.err.Error() }
-func (r rejection) Unwrap() error { return r.err }
-
-// reject ends a write with err while keeping what the transaction has written.
-func reject(err error) error { return rejection{err} }
-
-// write runs fn in one writer transaction. A plain error rolls everything back;
-// an error wrapped by reject commits and is then returned.
-func (c core) write(ctx context.Context, fn func(ctx context.Context, tx *database.Tx) error) error {
-	var rejected error
-	err := c.cfg.DB.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
-		err := fn(ctx, tx)
-		var r rejection
-		if errors.As(err, &r) {
-			rejected = r.err
-			return nil
-		}
-		return err
-	})
-	if err != nil {
-		return err
-	}
-	return rejected
-}
-
 func severityOf(result domain.Result) domain.Severity {
 	switch result {
 	case domain.ResultDenied:
@@ -124,6 +99,7 @@ func severityOf(result domain.Result) domain.Severity {
 
 func (c core) emit(ctx context.Context, q database.Querier, actor domain.Actor, action string, ref domain.ResourceRef, result domain.Result, data map[string]any) error {
 	_, err := c.emitter.Emit(ctx, database.EventsIn(q), domain.Event{
+		Source:       sourceOf(ctx),
 		ActorType:    actor.Type,
 		ActorID:      actor.ID,
 		Action:       action,

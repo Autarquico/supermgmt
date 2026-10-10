@@ -28,6 +28,7 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"proxmox.snapshot.delete":   domain.LockExclusive,
 	"proxmox.backup.create":     domain.LockExclusive,
 	"node.setup":                domain.LockExclusive,
+	"control_plane.apply":       domain.LockExclusive,
 	"sudoers.write":             domain.LockExclusive,
 	"log_broker.install":        domain.LockExclusive,
 	"service.start":             domain.LockExclusive,
@@ -37,9 +38,9 @@ var lockModeByJobType = map[string]domain.LockMode{
 
 // ownLock is the lock on the job's own resource. A service is locked through
 // what runs it (spec §20.5): its Compose project on the node when the service
-// row records one (metadata "compose_project"), else its systemd unit
-// (kind "unit"). A service row with neither cannot be locked, so its actions
-// are not executable and the job fails with a typed error.
+// row records one (metadata "compose_project"), else its systemd unit or its
+// Docker container. A service row with none of them cannot be locked, so its
+// actions are not executable and the job fails with a typed error.
 func ownLock(ctx context.Context, q database.Querier, job jobs.Job, mode domain.LockMode) (domain.LockSpec, error) {
 	if job.Resource.Type != domain.ResourceService {
 		return domain.ResourceLock(job.Resource, mode), nil
@@ -51,10 +52,6 @@ func ownLock(ctx context.Context, q database.Querier, job jobs.Job, mode domain.
 	return serviceLock(service, mode)
 }
 
-// serviceKindUnit is the services.kind of a systemd unit. It belongs in
-// internal/domain next to the other closed vocabularies.
-const serviceKindUnit = "unit"
-
 // serviceLock names what a service is locked by; UNIT_NOT_ELIGIBLE when the
 // row records neither a Compose project nor a unit. Plan creation applies the
 // same rule, so this is the claim-time defense.
@@ -62,11 +59,16 @@ func serviceLock(service domain.Service, mode domain.LockMode) (domain.LockSpec,
 	if project, _ := service.Metadata["compose_project"].(string); project != "" {
 		return domain.ComposeProjectLock(service.NodeID, project, mode), nil
 	}
-	if service.Kind == serviceKindUnit && service.NativeID != "" {
-		return domain.LockSpec{Key: fmt.Sprintf("unit:%s:%s", service.NodeID, service.NativeID), Mode: mode}, nil
+	if service.NativeID != "" {
+		switch domain.ServiceKind(service.Kind) {
+		case domain.ServiceSystemdUnit:
+			return domain.LockSpec{Key: fmt.Sprintf("unit:%s:%s", service.NodeID, service.NativeID), Mode: mode}, nil
+		case domain.ServiceDockerContainer:
+			return domain.LockSpec{Key: fmt.Sprintf("container:%s:%s", service.NodeID, service.NativeID), Mode: mode}, nil
+		}
 	}
 	return domain.LockSpec{}, smerr.FromReason(smerr.ReasonUnitNotEligible,
-		"service has neither a compose project nor a unit to lock; its actions are not executable")
+		"service has neither a compose project, a unit nor a container to lock; its actions are not executable")
 }
 
 // LockPlanner implements jobs.LockPlanner for the M0 job-mode actions.

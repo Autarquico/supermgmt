@@ -7,7 +7,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
-	"github.com/autarquico/supermgmt/internal/policy"
 )
 
 // Revalidator implements jobs.Revalidator: inside the claim transaction it
@@ -65,12 +64,12 @@ func (r *Revalidator) Revalidate(ctx context.Context, q database.Querier, job jo
 	if !res.ApprovalRequired {
 		return nil
 	}
-	return r.requireQuorum(ctx, q, job, requester, res.Quorum, current.target)
+	return r.requireQuorum(ctx, q, job, requester, res.Quorum, current)
 }
 
 // requireQuorum re-counts the approvals on the job's plan hash (spec §11.4).
-func (r *Revalidator) requireQuorum(ctx context.Context, q database.Querier, job jobs.Job, requester domain.Actor, required int, target policy.Target) error {
-	counted, err := r.countApprovals(ctx, q, job, requester, required, []policy.Target{target})
+func (r *Revalidator) requireQuorum(ctx context.Context, q database.Querier, job jobs.Job, requester domain.Actor, required int, b built) error {
+	counted, err := r.countApprovals(ctx, q, job, requester, required, b)
 	if err != nil {
 		return err
 	}

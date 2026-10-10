@@ -59,39 +59,40 @@ type CreatedPlan struct {
 // plan with the current spec_revision of every input, and persists it with its
 // expiry. The caller needs plan.create and the read permission on the target.
 func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (CreatedPlan, error) {
-	var out CreatedPlan
-	err := p.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+	return commit(ctx, p.core, by, func(ctx context.Context, tx *database.Tx) (CreatedPlan, error) {
 		actor, err := loadCaller(ctx, tx, by)
 		if err != nil {
-			return err
+			return CreatedPlan{}, err
 		}
 		if err := p.requireActive(ctx, by.Credential); err != nil {
-			return err
+			return CreatedPlan{}, err
+		}
+		if err := requireJobAction(req.Action); err != nil {
+			return CreatedPlan{}, err
 		}
 		b, err := build(ctx, tx, req.Action, by.ID, req.Target, req.Parameters)
 		if err != nil {
-			return err
+			return CreatedPlan{}, err
 		}
 		if err := p.requireMayPlan(ctx, tx, actor, b.target); err != nil {
-			return err
+			return CreatedPlan{}, err
 		}
 		res := p.authorize(b.request(actor))
 		if err := p.auditDecision(ctx, tx, actor, req.Action, req.Target, res); err != nil {
-			return err
+			return CreatedPlan{}, err
 		}
 		rec, err := p.persist(ctx, tx, by, b.plan)
 		if err != nil {
-			return err
+			return CreatedPlan{}, err
 		}
 		parsed, err := plan.Parse(rec.PlanJSON)
 		if err != nil {
-			return err
+			return CreatedPlan{}, err
 		}
-		out = CreatedPlan{Record: rec, Plan: parsed, Policy: res}
-		return p.emit(ctx, tx, actor, "plan.create", domain.ResourceRef{Type: domain.ResourcePlan, ID: rec.ID},
+		err = p.emit(ctx, tx, actor, "plan.create", domain.ResourceRef{Type: domain.ResourcePlan, ID: rec.ID},
 			domain.ResultSucceeded, map[string]any{"action": req.Action, "plan_hash": rec.PlanHash})
+		return CreatedPlan{Record: rec, Plan: parsed, Policy: res}, err
 	})
-	return out, err
 }
 
 // requireMayPlan checks plan.create and the target's read permission. A denial
@@ -145,48 +146,46 @@ type Submission struct {
 // starts awaiting_approval when policy requires approval, queued otherwise.
 // The submitting request's credential context is the one stored on the job.
 func (p *Plans) Submit(ctx context.Context, by Caller, planID domain.ID, planHash string) (Submission, error) {
-	var out Submission
-	err := p.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+	return commit(ctx, p.core, by, func(ctx context.Context, tx *database.Tx) (Submission, error) {
 		rec, err := database.GetPlan(ctx, tx, planID)
 		if err != nil {
-			return err
+			return Submission{}, err
 		}
 		actor, err := loadCaller(ctx, tx, by)
 		if err != nil {
-			return err
+			return Submission{}, err
 		}
 		if rec.ActorID != by.ID {
-			return p.refuseForeignSubmit(ctx, tx, actor, rec)
+			return Submission{}, p.refuseForeignSubmit(ctx, tx, actor, rec)
 		}
 		if err := p.checkSubmittable(rec, planHash); err != nil {
-			return err
+			return Submission{}, err
 		}
 		if err := p.requireActive(ctx, by.Credential); err != nil {
-			return err
+			return Submission{}, err
 		}
 		b, err := rebuild(ctx, tx, rec)
 		if err != nil {
-			return err
+			return Submission{}, err
 		}
 		res := p.authorize(b.request(actor))
 		if err := p.auditDecision(ctx, tx, actor, rec.Action, b.target.Ref, res); err != nil {
-			return err
+			return Submission{}, err
 		}
 		if err := decisionError(res); err != nil {
-			return reject(err)
+			return Submission{}, reject(err)
 		}
 		job, err := p.enqueue(ctx, tx, by, rec, b, res)
 		if err != nil {
-			return err
+			return Submission{}, err
 		}
 		if err := database.MarkSubmitted(ctx, tx, rec.ID, job.ID); err != nil {
-			return err
+			return Submission{}, err
 		}
-		out = Submission{Job: job, Policy: res}
-		return p.emit(ctx, tx, actor, "plan.submit", domain.ResourceRef{Type: domain.ResourcePlan, ID: rec.ID},
+		err = p.emit(ctx, tx, actor, "plan.submit", domain.ResourceRef{Type: domain.ResourcePlan, ID: rec.ID},
 			domain.ResultSucceeded, map[string]any{"job_id": job.ID.String(), "approval_required": res.ApprovalRequired})
+		return Submission{Job: job, Policy: res}, err
 	})
-	return out, err
 }
 
 // refuseForeignSubmit audits and rejects a submit by someone other than the plan's actor.
@@ -218,7 +217,7 @@ func (p *Plans) enqueue(ctx context.Context, q database.Querier, by Caller, rec 
 		return jobs.Job{}, fmt.Errorf("encode job payload: %w", err)
 	}
 	return p.jobs.Enqueue(ctx, q, jobs.NewJob{
-		Type:             rec.Action,
+		Type:             jobTypeOf(b.spec),
 		Resource:         b.target.Ref,
 		ActorID:          by.ID,
 		Credential:       by.Credential,

@@ -58,6 +58,7 @@ type fixture struct {
 	bob      domain.ID // operator
 	carol    domain.ID // operator
 	dave     domain.ID // no roles
+	admin    domain.ID // admin
 	service  domain.Service
 }
 
@@ -112,7 +113,7 @@ func (f *fixture) seed() {
 		now := f.clock.Now()
 		var err error
 		f.provider, err = database.CreateProvider(ctx, tx, domain.Provider{
-			ID: f.ids.NewID(), Type: "ssh", Name: "ssh-hosts", Origin: domain.ProviderStatic, CreatedAt: now, UpdatedAt: now,
+			ID: f.ids.NewID(), Type: "ssh", Name: "ssh-hosts", Origin: domain.ProviderAPI, CreatedAt: now, UpdatedAt: now,
 		})
 		if err != nil {
 			return err
@@ -126,12 +127,17 @@ func (f *fixture) seed() {
 		f.node, err = database.CreateNode(ctx, tx, domain.Node{
 			ID: f.ids.NewID(), ProviderID: f.provider.ID, NativeID: "web-1", Name: "web-1", Kind: "ssh",
 			EnvironmentID: &f.env.ID, ManagementState: domain.ManagementManaged, Reachability: domain.ReachabilityUnknown,
-			Tags: []string{"web"}, CreatedAt: now, UpdatedAt: now,
+			Endpoint: domain.NodeEndpoint{
+				Host: "10.0.0.5", Port: 22, User: "supermgmt", AdminUser: "admin",
+				AdminCredentialRef: "ssh-agent://default", HostPublicKey: testHostKey,
+			},
+			CredentialRef: "secret://ssh/default",
+			Tags:          []string{"web"}, CreatedAt: now, UpdatedAt: now,
 		})
 		if err != nil {
 			return err
 		}
-		for _, capability := range []string{"node.reboot", "service.restart", "service.read", "node.read"} {
+		for _, capability := range []string{"node.reboot", "service.restart", "service.read", "node.read", "node.ssh", "service.logs"} {
 			err = database.SetNodeCapability(ctx, tx, f.node.ID, database.NodeCapability{
 				Capability: capability, Available: true, CheckedAt: now,
 			})
@@ -144,7 +150,7 @@ func (f *fixture) seed() {
 			return err
 		}
 		f.service, err = database.CreateService(ctx, tx, domain.Service{
-			ID: f.ids.NewID(), RuntimeID: runtime.ID, NodeID: f.node.ID, NativeID: "nginx.service", Name: "nginx", Kind: "unit",
+			ID: f.ids.NewID(), RuntimeID: runtime.ID, NodeID: f.node.ID, NativeID: "nginx.service", Name: "nginx", Kind: string(domain.ServiceSystemdUnit),
 		})
 		if err != nil {
 			return err
@@ -154,6 +160,7 @@ func (f *fixture) seed() {
 		f.bob = f.identity(ctx, tx, "bob", domain.ActorHuman, operator)
 		f.carol = f.identity(ctx, tx, "carol", domain.ActorHuman, operator)
 		f.dave = f.identity(ctx, tx, "dave", domain.ActorHuman, "")
+		f.admin = f.identity(ctx, tx, "root", domain.ActorHuman, f.role(ctx, tx, "admin"))
 		return nil
 	})
 }
