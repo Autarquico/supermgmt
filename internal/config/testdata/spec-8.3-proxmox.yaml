@@ -1,0 +1,7 @@
+type: proxmox
+name: home-pve
+endpoint: https://pve.local:8006
+credential_ref: secret://providers/home-pve/token
+verify_tls: true
+ca_file: /etc/supermgmt/pve-ca.pem
+sync_interval: 30s
