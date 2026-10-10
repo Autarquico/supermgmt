@@ -167,6 +167,8 @@ type fakeDialer struct {
 	routes map[domain.ID]*fakeNode // a node with its own behavior, whoever logs in
 	states map[domain.ID]ssh.ConnState
 	dialed []ssh.Target
+	// invalidated lists "<node>/<user>" of every dropped connection, in order.
+	invalidated []string
 }
 
 func newFakeDialer(t *testing.T) *fakeDialer {
@@ -199,6 +201,13 @@ func (d *fakeDialer) For(t ssh.Target) transport.Executor {
 		return routed
 	}
 	return d.as(t.User)
+}
+
+// Invalidate records that a connection was dropped.
+func (d *fakeDialer) Invalidate(node domain.ID, user string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.invalidated = append(d.invalidated, node.String()+"/"+user)
 }
 
 func (d *fakeDialer) State(node domain.ID) ssh.ConnState {

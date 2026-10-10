@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/discovery"
@@ -13,7 +14,9 @@ import (
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/runtimes/systemd"
 	"github.com/autarquico/supermgmt/internal/secrets"
+	"github.com/autarquico/supermgmt/internal/textsafe"
 	"github.com/autarquico/supermgmt/internal/transport"
+	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
 const (
@@ -181,13 +184,54 @@ func (h setupHandler) sessionEvent(ctx context.Context, lease jobs.Lease, job jo
 // verify is ADR-0009 (f) step 8: a fresh session as the dedicated user, with
 // the key version just authorized.
 func (h setupHandler) verify(ctx context.Context, node domain.Node, req setupRequest, id secrets.Identity, outcome systemd.SetupOutcome) error {
+	h.conn.Invalidate(node, node.Endpoint.User)
 	dedicated, err := h.conn.Dedicated(node, pinnedIdentityRef(id))
 	if err != nil {
 		return err
 	}
-	return systemd.Verify(ctx, dedicated, systemd.VerifyParams{
+	if err := systemd.Verify(ctx, dedicated, systemd.VerifyParams{
 		User: node.Endpoint.User, SystemctlPath: outcome.SystemctlPath, Grants: req.Grants, LogsMode: req.LogsMode,
-	})
+	}); err != nil {
+		return err
+	}
+	return verifyGroups(ctx, dedicated, node.Endpoint.User, req)
+}
+
+// verifyGroups checks the groups the fresh session really has: the account's
+// own, the journal group in journal-group mode, docker with docker_access, and
+// nothing else. Docker access is root-equivalent, so it is verified, not assumed.
+func verifyGroups(ctx context.Context, ex transport.Executor, user string, req setupRequest) error {
+	c, err := templates.Render("setup.user_groups", map[string]string{"user": user})
+	if err != nil {
+		return err
+	}
+	res, err := ex.Run(ctx, c)
+	if err != nil {
+		return err
+	}
+	if res.ExitStatus != 0 {
+		return verifyFailure("cannot read the groups of the dedicated user")
+	}
+	var journal, docker bool
+	for _, group := range strings.Fields(string(res.Stdout)) {
+		switch group {
+		case user:
+		case "systemd-journal", "adm":
+			journal = true
+		case "docker":
+			docker = true
+		default:
+			return verifyFailure("the dedicated user belongs to the unrequested group " + textsafe.Line(group))
+		}
+	}
+	if docker != req.DockerAccess || journal != (req.LogsMode == runtimes.LogsJournalGroup) {
+		return verifyFailure("the groups of the dedicated user do not match the requested setup")
+	}
+	return nil
+}
+
+func verifyFailure(why string) error {
+	return smerr.New(smerr.CodeCapabilityUnavailable, "", "node.setup verification failed: "+why)
 }
 
 func pinnedIdentityRef(id secrets.Identity) string {

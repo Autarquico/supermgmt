@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -270,56 +271,59 @@ type sent struct {
 	pre        json.RawMessage
 }
 
-// conclude closes the intent with what was established and ends the job. A
-// command that exited non-zero failed; one whose outcome cannot be observed is
-// reported as unknown, never as success.
+// conclude closes the intent with what was established. Only evidence that
+// proves how the action ended settles it: complete succeeds the job, a proven
+// "did not take effect" fails it. Everything else (no evidence, an unclassified
+// or partial state, a lost connection, a non-zero exit nobody could confirm)
+// leaves the intent recorded and returns jobs.ErrOutcomeUnknown, so the engine
+// interrupts the job, keeps its locks and lets the reconciler or a human
+// decide (spec §20.4 fixed fallback). The exit status of the command is a
+// clue, never the verdict.
 func (h actionHandler) conclude(ctx context.Context, lease jobs.Lease, intent domain.ID, d dispatch, r sent) error {
 	switch {
-	case r.runErr == nil && r.exit != 0:
-		failed := jobs.Evidence{
-			Done: true, ExitStatus: r.exit, Proof: jobs.ProofDoneFile, Classification: jobs.ClassUnknown,
-			Fingerprint: json.RawMessage(fmt.Sprintf(`{"exit_status":%d}`, r.exit)), Pre: r.pre,
-		}
-		return h.fail(ctx, lease, intent, failed, smerr.New(smerr.CodeInternal, "",
-			fmt.Sprintf("%s %s failed (exit status %d)", d.verb, d.svc.Name, r.exit)))
 	case r.observeErr != nil:
-		if err := h.store.CompleteIntent(ctx, lease, intent, jobs.OutcomeFailed, nil); err != nil {
-			return err
-		}
-		return outcomeUnknown(d, r.runErr, r.observeErr)
-	case r.evidence.Classification != jobs.ClassComplete:
-		return h.fail(ctx, lease, intent, r.evidence, notDone(d, r.evidence.Classification))
+		return outcomeUnknown(d, r, r.observeErr)
+	case !r.evidence.Proven():
+		return outcomeUnknown(d, r, errors.New("the evidence carries no completion proof"))
+	case r.evidence.Classification == jobs.ClassComplete:
+		return h.complete(ctx, lease, intent, r.evidence, jobs.OutcomeSucceeded, nil)
+	case r.evidence.Classification == jobs.ClassNotStarted:
+		return h.complete(ctx, lease, intent, r.evidence, jobs.OutcomeFailed, didNotTakeEffect(d, r))
 	}
-	evidence, err := json.Marshal(r.evidence)
-	if err != nil {
-		return fmt.Errorf("encode evidence: %w", err)
-	}
-	return h.store.CompleteIntent(ctx, lease, intent, jobs.OutcomeSucceeded, evidence)
+	return outcomeUnknown(d, r, fmt.Errorf("the state after %s could not be classified (%s)", d.verb, r.evidence.Classification))
 }
 
-func (h actionHandler) fail(ctx context.Context, lease jobs.Lease, intent domain.ID, ev jobs.Evidence, cause error) error {
+// complete records the settled outcome, then ends the handler with cause (nil
+// for success).
+func (h actionHandler) complete(ctx context.Context, lease jobs.Lease, intent domain.ID, ev jobs.Evidence, outcome string, cause error) error {
 	evidence, err := json.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("encode evidence: %w", err)
 	}
-	if err := h.store.CompleteIntent(ctx, lease, intent, jobs.OutcomeFailed, evidence); err != nil {
+	if err := h.store.CompleteIntent(ctx, lease, intent, outcome, evidence); err != nil {
 		return err
 	}
 	return cause
 }
 
-func outcomeUnknown(d dispatch, runErr, observeErr error) error {
-	cause := observeErr
-	if runErr != nil {
-		cause = runErr
+// outcomeUnknown is the error of a dispatched action whose result cannot be
+// established; it wraps jobs.ErrOutcomeUnknown.
+func outcomeUnknown(d dispatch, r sent, cause error) error {
+	if r.runErr != nil {
+		cause = errors.Join(cause, r.runErr)
 	}
-	return smerr.Wrap(cause, smerr.CodeNodeUnreachable, "", fmt.Sprintf(
-		"%s %s was dispatched but its outcome could not be established; check the service before retrying", d.verb, d.svc.Name))
+	detail := fmt.Sprintf("%s %s was dispatched but its outcome could not be established", d.verb, d.svc.Name)
+	if r.runErr == nil && r.exit != 0 {
+		detail += fmt.Sprintf(" (the command exited with status %d)", r.exit)
+	}
+	return smerr.Wrap(fmt.Errorf("%w: %w", jobs.ErrOutcomeUnknown, cause), smerr.CodeNodeUnreachable, "",
+		detail+"; check the service and resolve the job")
 }
 
-func notDone(d dispatch, class jobs.Classification) error {
-	if class == jobs.ClassUnknown || class == jobs.ClassPartialStable {
-		return smerr.New(smerr.CodeInternal, "", fmt.Sprintf("%s %s ended in a state that could not be confirmed", d.verb, d.svc.Name))
+func didNotTakeEffect(d dispatch, r sent) error {
+	msg := fmt.Sprintf("%s %s did not take effect", d.verb, d.svc.Name)
+	if r.runErr == nil && r.exit != 0 {
+		msg += fmt.Sprintf(" (the command exited with status %d)", r.exit)
 	}
-	return smerr.New(smerr.CodeInternal, "", fmt.Sprintf("%s %s did not take effect", d.verb, d.svc.Name))
+	return smerr.New(smerr.CodeInternal, "", msg)
 }

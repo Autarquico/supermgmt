@@ -227,7 +227,7 @@ func buildCatalog() []ActionSpec {
 	setup := job(ActionNodeSetup, domain.ResourceNode, high, idem, "node.ssh", 3)
 	setup.Params = []ParamSpec{
 		{Name: ParamDockerAccess, Type: ParamString, Required: true, Values: []string{"true", "false"}},
-		{Name: ParamLogsMode, Type: ParamString, Required: true, Values: []string{"journal-group", "broker"}},
+		{Name: ParamLogsMode, Type: ParamString, Values: []string{"journal-group", "broker"}},
 		{Name: ParamGrants, Type: ParamStringList},
 	}
 

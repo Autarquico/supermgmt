@@ -560,3 +560,36 @@ func TestLogsAreReadAsTheAdminAccountBeforeSetupAndTheDedicatedOneAfter(t *testi
 		t.Errorf("targets = %+v", targets)
 	}
 }
+
+func TestLogsAreRedactedAsAWholeUnlessTurnedOff(t *testing.T) {
+	pem := "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk=\n-----END OPENSSH PRIVATE KEY-----"
+	text := "starting\n" + pem + "\nAuthorization: Bearer abc.def.ghi\ndone\n"
+	for _, raw := range []bool{false, true} {
+		n := newNodeFixture(t)
+		n.inv.redactLogs = !raw
+		n.dialer.as("admin").reply("systemd.logs_group", text)
+
+		chunk, err := n.inv.ServiceLogs(context.Background(), n.caller(n.alice), n.service.ID, 50)
+
+		mustf(t, err, "ServiceLogs")
+		joined := strings.Join(chunk.Lines, "\n")
+		leaks := strings.Contains(joined, "b3BlbnNzaC1rZXk=") || strings.Contains(joined, "abc.def.ghi")
+		if leaks == !raw || !strings.Contains(joined, "starting") || !strings.Contains(joined, "done") {
+			t.Errorf("raw=%v: leaks=%v in %q", raw, leaks, joined)
+		}
+	}
+}
+
+func TestANewNodeCanBeProbedAtOnce(t *testing.T) {
+	n := newNodeFixture(t)
+	node := n.addApplied("web-2", n.withStaging())
+
+	created, err := n.plans.Create(context.Background(), n.caller(n.alice), PlanRequest{
+		Action: "node.probe", Target: domain.ResourceRef{Type: domain.ResourceNode, ID: node.ID},
+	})
+
+	mustf(t, err, "Create")
+	if created.Policy.Decision != "allow" {
+		t.Errorf("policy = %+v; a node that was just added must accept a probe before the first refresh", created.Policy)
+	}
+}

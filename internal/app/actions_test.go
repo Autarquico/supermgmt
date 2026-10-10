@@ -216,7 +216,17 @@ func TestTheHandlerWaitsForTheActionToSettle(t *testing.T) {
 	}
 }
 
-func TestACommandThatExitsNonZeroFailsTheJobWithItsEvidence(t *testing.T) {
+func (a *action) wantInterrupted(err error, job domain.ID) {
+	a.t.Helper()
+	if !errors.Is(err, jobs.ErrOutcomeUnknown) {
+		a.t.Fatalf("error = %v, want one wrapping ErrOutcomeUnknown (the engine interrupts the job)", err)
+	}
+	if in := a.intents(job)[0]; in.State != jobs.IntentRecorded || in.DispatchedAt == nil {
+		a.t.Errorf("intent = %+v; an unknown outcome leaves the dispatched intent recorded for the reconciler", in)
+	}
+}
+
+func TestANonZeroExitIsObservedNotConcluded(t *testing.T) {
 	a := newAction(t)
 	job := a.restartApproved()
 	a.dialer.as("supermgmt").exit("fake.restart", 3)
@@ -224,49 +234,59 @@ func TestACommandThatExitsNonZeroFailsTheJobWithItsEvidence(t *testing.T) {
 
 	_, err := a.run()
 
-	if smerr.CodeOf(err) != smerr.CodeInternal {
-		t.Fatalf("error = %v", err)
+	a.wantInterrupted(err, job.ID)
+}
+
+func TestANonZeroExitWithProofThatNothingChangedFailsTheJob(t *testing.T) {
+	a := newAction(t)
+	job := a.restartApproved()
+	a.dialer.as("supermgmt").exit("fake.restart", 124) // timeout(1)
+	a.adapter.observe = func(int) (jobs.Evidence, error) { return complete(jobs.ClassNotStarted), nil }
+
+	_, err := a.run()
+
+	if smerr.CodeOf(err) != smerr.CodeInternal || errors.Is(err, jobs.ErrOutcomeUnknown) {
+		t.Fatalf("error = %v, want a proven failure", err)
 	}
-	in := a.intents(job.ID)[0]
-	var ev jobs.Evidence
-	_ = json.Unmarshal(in.Evidence, &ev)
-	if in.Outcome != jobs.OutcomeFailed || ev.ExitStatus != 3 || ev.Proven() {
-		t.Errorf("intent %s, evidence %+v; a non-zero exit is failure evidence, never proof", in.Outcome, ev)
+	if in := a.intents(job.ID)[0]; in.Outcome != jobs.OutcomeFailed || len(in.Evidence) == 0 {
+		t.Errorf("intent = %+v", in)
 	}
 }
 
-func TestAnActionThatDidNotTakeEffectFails(t *testing.T) {
-	for _, class := range []jobs.Classification{jobs.ClassNotStarted, jobs.ClassUnknown, jobs.ClassPartialStable} {
+func TestOnlyProvenNotStartedFailsAndAnythingElseIsUnknown(t *testing.T) {
+	for _, class := range []jobs.Classification{jobs.ClassUnknown, jobs.ClassPartialStable} {
 		a := newAction(t)
 		job := a.restartApproved()
 		a.adapter.observe = func(int) (jobs.Evidence, error) { return complete(class), nil }
 
 		_, err := a.run()
 
-		if smerr.CodeOf(err) != smerr.CodeInternal {
-			t.Errorf("%s: error = %v", class, err)
-		}
-		if in := a.intents(job.ID)[0]; in.Outcome != jobs.OutcomeFailed {
-			t.Errorf("%s: intent outcome %q", class, in.Outcome)
-		}
+		a.wantInterrupted(err, job.ID)
 	}
+	a := newAction(t)
+	job := a.restartApproved()
+	a.adapter.observe = func(int) (jobs.Evidence, error) {
+		ev := complete(jobs.ClassNotStarted)
+		ev.Done = false // classified, but nothing proves the platform finished
+		return ev, nil
+	}
+	_, err := a.run()
+	a.wantInterrupted(err, job.ID)
 }
 
-func TestAnUnobservableOutcomeIsReportedAsUnknownAndNeverRetried(t *testing.T) {
+func TestAnUnobservableOutcomeInterruptsTheJobAndIsNeverRetried(t *testing.T) {
 	a := newAction(t)
 	job := a.restartApproved()
 	a.adapter.observe = func(int) (jobs.Evidence, error) { return jobs.Evidence{}, errors.New("node went away") }
 
 	_, err := a.run()
 
-	if smerr.CodeOf(err) != smerr.CodeNodeUnreachable {
-		t.Fatalf("error = %v, want NODE_UNREACHABLE (outcome unknown)", err)
-	}
+	a.wantInterrupted(err, job.ID)
 	if got := len(a.adapter.dispatches()); got != 1 {
 		t.Errorf("%d dispatches; the command must never be sent twice", got)
 	}
-	if in := a.intents(job.ID)[0]; in.State != jobs.IntentCompleted || in.Outcome != jobs.OutcomeFailed {
-		t.Errorf("intent = %+v", in)
+	if smerr.CodeOf(err) != smerr.CodeNodeUnreachable {
+		t.Errorf("code = %s", smerr.CodeOf(err))
 	}
 }
 
@@ -290,7 +310,7 @@ func TestALostConnectionWaitsOutTheRemoteDeadlineBeforeGivingUp(t *testing.T) {
 
 	_, err := a.run()
 
-	if smerr.CodeOf(err) != smerr.CodeNodeUnreachable {
+	if !errors.Is(err, jobs.ErrOutcomeUnknown) {
 		t.Fatalf("error = %v", err)
 	}
 	if want := templates.ActionDeadline + templates.KillAfter; a.slept < want {

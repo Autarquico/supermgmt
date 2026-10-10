@@ -23,6 +23,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/policy"
+	"github.com/autarquico/supermgmt/internal/runtimes"
 )
 
 const (
@@ -42,6 +43,10 @@ type Config struct {
 	PlanTTL           time.Duration // default 24h (spec §11.4)
 	ApprovalTTL       time.Duration // security.approval_ttl; default 15m
 	AllowSelfApproval bool          // security.allow_self_approval
+
+	// DefaultLogsMode is ssh.logs_mode: the logs_mode a node.setup plan gets
+	// when it names none. Default journal-group.
+	DefaultLogsMode runtimes.LogsMode
 }
 
 func (c Config) validated() (Config, error) {
@@ -62,6 +67,9 @@ func (c Config) validated() (Config, error) {
 	}
 	if c.ApprovalTTL <= 0 {
 		c.ApprovalTTL = defaultApprovalTTL
+	}
+	if c.DefaultLogsMode == "" {
+		c.DefaultLogsMode = runtimes.LogsJournalGroup
 	}
 	return c, nil
 }

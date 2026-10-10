@@ -410,7 +410,7 @@ func classifyHandshake(ctx context.Context, err error, mismatch *hostKeyMismatch
 	text := err.Error()
 	switch {
 	case mismatch != nil:
-		return smerr.Wrap(mismatch, smerr.CodeSSHHostKeyMismatch, "", "ssh host key changed: "+mismatch.Error())
+		return smerr.Wrap(mismatch, smerr.CodeSSHHostKeyMismatch, "", "ssh host key does not match the pinned key")
 	case strings.Contains(text, "no common algorithm for host key"):
 		return smerr.Wrap(err, smerr.CodeSSHHostKeyMismatch, "", "server does not offer the pinned host key type")
 	case ctx.Err() != nil:

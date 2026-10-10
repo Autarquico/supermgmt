@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -70,6 +71,7 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 		if err := requireJobAction(req.Action); err != nil {
 			return CreatedPlan{}, err
 		}
+		req.Parameters = p.withDefaults(req.Action, req.Parameters)
 		b, err := build(ctx, tx, req.Action, by.ID, req.Target, req.Parameters)
 		if err != nil {
 			return CreatedPlan{}, err
@@ -93,6 +95,19 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 			domain.ResultSucceeded, map[string]any{"action": req.Action, "plan_hash": rec.PlanHash})
 		return CreatedPlan{Record: rec, Plan: parsed, Policy: res}, err
 	})
+}
+
+// withDefaults fills what a plan may leave out, so the plan (and its hash)
+// states everything that will execute: a node.setup without logs_mode gets
+// ssh.logs_mode.
+func (p *Plans) withDefaults(action string, params map[string]any) map[string]any {
+	if _, given := params[policy.ParamLogsMode]; action != policy.ActionNodeSetup || given {
+		return params
+	}
+	filled := make(map[string]any, len(params)+1)
+	maps.Copy(filled, params)
+	filled[policy.ParamLogsMode] = string(p.cfg.DefaultLogsMode)
+	return filled
 }
 
 // requireMayPlan checks plan.create and the target's read permission. A denial

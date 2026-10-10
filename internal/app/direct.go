@@ -217,6 +217,9 @@ type setupRequest struct {
 func parseSetupRequest(params map[string]any) (setupRequest, error) {
 	docker, _ := params[policy.ParamDockerAccess].(string)
 	mode, _ := params[policy.ParamLogsMode].(string)
+	if mode == "" {
+		mode = string(runtimes.LogsJournalGroup)
+	}
 	grants, err := parseGrants(params[policy.ParamGrants])
 	if err != nil {
 		return setupRequest{}, err

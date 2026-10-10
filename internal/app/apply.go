@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -64,10 +65,21 @@ func (i *Inventory) applyNodeAdd(ctx context.Context, q database.Querier, actor 
 		return domain.Node{}, err
 	}
 	fingerprint, _ := sshnode.Fingerprint(p.HostPublicKey)
+	if err := seedReadCapability(ctx, q, node.ID, now); err != nil {
+		return domain.Node{}, err
+	}
 	return node, i.emit(ctx, q, actor, actionNodeAdd, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
 		"name": node.Name, "host": p.Host, "port": p.Port, "user": p.User, "admin_user": p.AdminUser,
 		"host_key_fingerprint": fingerprint, "environment": p.Environment,
 	})
+}
+
+// seedReadCapability makes a new node readable and probeable at once: node.read
+// is what node.probe requires, and every probe reports it as available anyway
+// (discovery.Capabilities), so waiting for the first refresher pass only made
+// `sm nodes add` followed by `sm nodes probe` fail.
+func seedReadCapability(ctx context.Context, q database.Querier, node domain.ID, at time.Time) error {
+	return database.SetNodeCapability(ctx, q, node, database.NodeCapability{Capability: "node.read", Available: true, CheckedAt: at})
 }
 
 func (i *Inventory) applyNodeUpdate(ctx context.Context, q database.Querier, actor domain.Actor, node domain.Node, patch NodePatch) (domain.Node, error) {
@@ -162,10 +174,12 @@ func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, 
 	if err != nil {
 		return domain.Provider{}, err
 	}
-	if _, err := database.CreateNode(ctx, q, domain.Node{
+	if node, err := database.CreateNode(ctx, q, domain.Node{
 		ID: p.NodeID, ProviderID: provider.ID, NativeID: local.NativeID, Name: i.localName, Kind: local.NodeKind,
 		ManagementState: domain.ManagementManaged, Reachability: domain.ReachabilityUnknown, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
+		return domain.Provider{}, err
+	} else if err := seedReadCapability(ctx, q, node.ID, now); err != nil {
 		return domain.Provider{}, err
 	}
 	return provider, i.emit(ctx, q, actor, actionProviderWite, domain.ResourceRef{Type: domain.ResourceProvider, ID: provider.ID},

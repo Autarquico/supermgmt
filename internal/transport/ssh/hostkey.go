@@ -108,10 +108,12 @@ func (p pinnedKey) algorithms() []string {
 }
 
 // hostKeyMismatch records that the server presented some other key.
-type hostKeyMismatch struct{ presented string }
+type hostKeyMismatch struct{ presented, pinned string }
 
+// Error names both fingerprints, so an operator can tell a changed key from a
+// wrong pin.
 func (e *hostKeyMismatch) Error() string {
-	return "server host key " + e.presented + " does not match the pinned key"
+	return "the server presented host key " + e.presented + " but the pinned key is " + e.pinned
 }
 
 // callback compares exact key bytes; nothing but the pinned key is trusted.
@@ -120,7 +122,7 @@ func (p pinnedKey) callback(mismatch **hostKeyMismatch) cryptossh.HostKeyCallbac
 		if bytes.Equal(key.Marshal(), p.key.Marshal()) {
 			return nil
 		}
-		*mismatch = &hostKeyMismatch{presented: cryptossh.FingerprintSHA256(key)}
+		*mismatch = &hostKeyMismatch{presented: cryptossh.FingerprintSHA256(key), pinned: cryptossh.FingerprintSHA256(p.key)}
 		return *mismatch
 	}
 }

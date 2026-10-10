@@ -25,6 +25,9 @@ const capabilitySetup = "node.setup"
 type Dialer interface {
 	For(t ssh.Target) transport.Executor
 	State(node domain.ID) ssh.ConnState
+	// Invalidate drops the pooled connection of (node, user), so the next
+	// session starts fresh and sees the account as it is now.
+	Invalidate(node domain.ID, user string)
 }
 
 // Connector turns a node into the Executor that reaches it, applying the
@@ -59,6 +62,15 @@ func (c Connector) Dedicated(n domain.Node, credentialRef string) (transport.Exe
 		return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", "the local provider has no dedicated user")
 	}
 	return c.remote(sshnode.DedicatedTarget(n, credentialRef))
+}
+
+// Invalidate forgets the live connection of (node, user). The session of an
+// account keeps the groups it logged in with, so after setup changed them the
+// verification must not reuse an older connection.
+func (c Connector) Invalidate(n domain.Node, user string) {
+	if !isLocal(n) && c.Remote != nil {
+		c.Remote.Invalidate(n.ID, user)
+	}
 }
 
 // State is the pool's view of the node's connection; it never dials.

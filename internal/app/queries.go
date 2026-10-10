@@ -54,27 +54,62 @@ func (q *Queries) Me(ctx context.Context, by Caller) (wire.Me, error) {
 	}, nil
 }
 
-// requireRead authorizes a query on a resource type without a specific
-// resource, auditing a refusal.
-func (q *Queries) requireRead(ctx context.Context, by Caller, action string, typ domain.ResourceType) (domain.Actor, error) {
-	var actor domain.Actor
+// RequireRead authorizes a query action on ref for the caller and audits a
+// refusal (spec §11.3). Nodes and services are evaluated with their own
+// attributes; any other ref (the instance, a plan, the job list) with none.
+// It returns the caller's actor on success.
+func (q *Queries) RequireRead(ctx context.Context, by Caller, action string, ref domain.ResourceRef) (domain.Actor, error) {
 	reader := q.cfg.DB.Reader()
 	actor, err := q.beginRequest(ctx, reader, by)
 	if err != nil {
 		return domain.Actor{}, err
 	}
-	target := policy.Target{Ref: domain.ResourceRef{Type: typ}}
+	target := policy.Target{Ref: ref}
+	if ref.Type == domain.ResourceNode || ref.Type == domain.ResourceService {
+		resolved, err := resolve(ctx, reader, ref)
+		if err != nil {
+			return domain.Actor{}, err
+		}
+		target = resolved.target
+	}
 	res := q.authorize(policy.Request{Actor: actor, Action: action, Targets: []policy.Target{target}})
 	if res.Decision == policy.DecisionAllow {
 		return actor, nil
 	}
 	err = q.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		if err := q.auditDecision(ctx, tx, actor, action, target.Ref, res); err != nil {
+		if err := q.auditDecision(ctx, tx, actor, action, ref, res); err != nil {
 			return err
 		}
 		return reject(decisionError(res))
 	})
 	return domain.Actor{}, err
+}
+
+func (q *Queries) requireRead(ctx context.Context, by Caller, action string, typ domain.ResourceType) (domain.Actor, error) {
+	return q.RequireRead(ctx, by, action, domain.ResourceRef{Type: typ})
+}
+
+// Plan returns a stored plan with what policy says about running it now
+// (action plan.read, GET /plans/{id}). A plan whose inputs changed since it
+// was made is reported with a PLAN_STALE verdict instead of failing the read.
+func (q *Queries) Plan(ctx context.Context, by Caller, id domain.ID) (wire.CreatedPlan, error) {
+	if _, err := q.RequireRead(ctx, by, "plan.read", domain.ResourceRef{Type: domain.ResourcePlan, ID: id}); err != nil {
+		return wire.CreatedPlan{}, err
+	}
+	reader := q.cfg.DB.Reader()
+	rec, err := database.GetPlan(ctx, reader, id)
+	if err != nil {
+		return wire.CreatedPlan{}, err
+	}
+	verdict := wire.Policy{Decision: string(policy.DecisionDeny), Reason: smerr.ReasonPlanStale}
+	if current, err := rebuild(ctx, reader, rec); err == nil {
+		if requester, err := loadActor(ctx, reader, rec.ActorID, domain.CredentialContext{}); err == nil {
+			verdict = PolicyView(q.authorize(current.request(requester)))
+		}
+	}
+	return wire.CreatedPlan{
+		PlanID: rec.ID, Plan: json.RawMessage(rec.PlanJSON), PlanHash: rec.PlanHash, ExpiresAt: rec.ExpiresAt, Policy: verdict,
+	}, nil
 }
 
 // Jobs lists jobs, newest first, optionally by state (action job.read).

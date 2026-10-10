@@ -160,3 +160,41 @@ func TestEventsPageByCursorAndFilterByResource(t *testing.T) {
 		t.Errorf("bad cursor: %v", err)
 	}
 }
+
+func TestPlanReturnsTheStoredPlanWithTheCurrentVerdict(t *testing.T) {
+	f := newFixture(t)
+	created, err := f.plans.Create(context.Background(), f.caller(f.alice), f.reboot())
+	mustf(t, err, "Create")
+	q := f.queries(t)
+
+	got, err := q.Plan(context.Background(), f.caller(f.bob), created.Record.ID)
+
+	if err != nil || got.PlanHash != created.Record.PlanHash || string(got.Plan) != string(created.Record.PlanJSON) ||
+		got.Policy.Decision != "allow" || !got.Policy.ApprovalRequired || got.Policy.Quorum != 2 {
+		t.Fatalf("Plan = %+v, %v", got, err)
+	}
+	f.bumpNodeRevision()
+	stale, err := q.Plan(context.Background(), f.caller(f.bob), created.Record.ID)
+	if err != nil || stale.Policy.Reason != smerr.ReasonPlanStale {
+		t.Errorf("stale Plan = %+v, %v; a changed input is a verdict, not an error", stale.Policy, err)
+	}
+	if _, err := q.Plan(context.Background(), f.caller(f.dave), created.Record.ID); smerr.CodePolicyDenied != smerr.CodeOf(err) {
+		t.Errorf("caller without plan.read: %v", err)
+	}
+	if _, err := q.Plan(context.Background(), f.caller(f.bob), "00000000-0000-7000-8000-00000000ffff"); smerr.CodeOf(err) != smerr.CodeNotFound {
+		t.Errorf("missing plan: %v", err)
+	}
+}
+
+func TestRequireReadAuditsARefusal(t *testing.T) {
+	f := newFixture(t)
+	q := f.queries(t)
+	ref := domain.ResourceRef{Type: domain.ResourceInstance}
+
+	_, allowed := q.RequireRead(context.Background(), f.caller(f.alice), "config.read", ref)
+	_, denied := q.RequireRead(context.Background(), f.caller(f.dave), "config.read", ref)
+
+	if allowed != nil || smerr.CodeOf(denied) != smerr.CodePolicyDenied || len(f.events("policy.deny")) != 1 {
+		t.Errorf("allowed %v, denied %v, deny events %d", allowed, denied, len(f.events("policy.deny")))
+	}
+}

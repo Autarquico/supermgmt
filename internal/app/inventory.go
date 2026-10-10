@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -43,6 +44,9 @@ type InventoryOptions struct {
 	Scan func(ctx context.Context, host string, port int) (ssh.HostKey, error)
 	// LocalName names the local provider's node; default "local".
 	LocalName string
+	// KeepLogsRaw turns off the redaction of secret patterns in command output
+	// served to clients (security.redact_command_output: false).
+	KeepLogsRaw bool
 }
 
 // Inventory is the node and service catalog: it adds, edits and retires nodes
@@ -59,6 +63,7 @@ type Inventory struct {
 	scan       func(ctx context.Context, host string, port int) (ssh.HostKey, error)
 	localName  string
 	adapters   Adapters
+	redactLogs bool
 }
 
 // NewInventory validates cfg and the options.
@@ -76,7 +81,7 @@ func NewInventory(cfg Config, o InventoryOptions) (*Inventory, error) {
 	}
 	inv := &Inventory{
 		core: c, plans: plans, jobs: o.Store, conn: o.Connector, mode: o.Mode, focus: o.Focus,
-		staleAfter: o.StaleAfter, scan: o.Scan, localName: o.LocalName, adapters: DefaultAdapters(),
+		staleAfter: o.StaleAfter, scan: o.Scan, localName: o.LocalName, adapters: DefaultAdapters(), redactLogs: !o.KeepLogsRaw,
 	}
 	if inv.staleAfter <= 0 {
 		inv.staleAfter = defaultStaleAfter
@@ -682,7 +687,16 @@ func (i *Inventory) ServiceLogs(ctx context.Context, by Caller, id domain.ID, li
 	if err != nil {
 		return wire.LogChunk{}, err
 	}
-	return wire.LogChunk{ServiceID: id, Lines: nonNil(chunk.Lines), Truncated: chunk.Truncated, CollectedAt: i.cfg.Clock.Now()}, nil
+	return wire.LogChunk{ServiceID: id, Lines: i.redacted(chunk.Lines), Truncated: chunk.Truncated, CollectedAt: i.cfg.Clock.Now()}, nil
+}
+
+// redacted scrubs secret patterns from the whole text before it is split
+// again, so a credential that spans lines (a PEM block) cannot survive.
+func (i *Inventory) redacted(lines []string) []string {
+	if !i.redactLogs || len(lines) == 0 {
+		return nonNil(lines)
+	}
+	return strings.Split(audit.ScrubString(strings.Join(lines, "\n")), "\n")
 }
 
 func logsModeOf(setup *runtimes.SetupMeta) runtimes.LogsMode {

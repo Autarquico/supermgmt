@@ -17,6 +17,15 @@ import (
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
+// rootChain is `stat` output of a systemctl whose whole path is root-owned and not writable by others.
+const rootChain = "0 755 /usr/bin/systemctl\n0 755 /usr/bin\n0 755 /usr\n0 755 /\n0 755 /usr/bin/systemctl\n0 755 /usr/bin\n0 755 /usr\n0 755 /\n"
+
+// onATrustedNode answers the questions setup asks about the systemctl chain and the account's primary group.
+func onATrustedNode(n *fakeNode) *fakeNode {
+	return n.reply("systemd.path_chain", rootChain).reply("setup.user_primary_group", "supermgmt\n").
+		reply("setup.user_groups", "supermgmt systemd-journal\n")
+}
+
 const passwdEntry = "supermgmt:x:998:998::/var/lib/supermgmt:/bin/sh\n"
 
 // setting is a node fixture ready for node.setup: an instance row, a scripted
@@ -51,8 +60,10 @@ func newSetting(t *testing.T) *setting {
 		return transport.Result{Stdout: []byte(passwdEntry)}, nil
 	})
 	admin.reply("setup.user_groups", "supermgmt systemd-journal\n")
+	onATrustedNode(admin)
 
 	dedicated := s.dialer.as("supermgmt")
+	onATrustedNode(dedicated)
 	dedicated.reply("setup.verify_id", "supermgmt\n")
 	dedicated.reply("setup.verify_markers", "writable\n")
 	dedicated.exit("setup.verify_sudo", 1) // sudo -n -l fails: no sudo rights at all
@@ -179,6 +190,7 @@ func TestSetupAsRootRunsTheStepsDirectly(t *testing.T) {
 	root.reply("setup.systemctl_path", "/usr/bin/systemctl\n")
 	root.reply("setup.user_entry", passwdEntry)
 	root.reply("setup.user_groups", "supermgmt systemd-journal\n")
+	onATrustedNode(root)
 	s.setupPlan(defaultSetup())
 
 	mustf(t, s.run(), "setup")
@@ -352,5 +364,69 @@ func TestGrantsAreMergedPerUnitInCanonicalOrder(t *testing.T) {
 	}
 	if got := grants[0].Verbs; len(got) != 2 || got[0] != domain.VerbStart || got[1] != domain.VerbRestart {
 		t.Errorf("verbs = %v, want canonical start, restart", got)
+	}
+}
+
+func TestSetupDropsTheDedicatedConnectionBeforeVerifying(t *testing.T) {
+	s := newSetting(t)
+	s.setupPlan(defaultSetup())
+
+	mustf(t, s.run(), "setup")
+
+	if want := s.node.ID.String() + "/supermgmt"; len(s.dialer.invalidated) != 1 || s.dialer.invalidated[0] != want {
+		t.Errorf("invalidated = %v, want [%s]: verification needs a fresh session that sees the new groups", s.dialer.invalidated, want)
+	}
+}
+
+func TestSetupVerifiesTheEffectiveGroupsOfTheFreshSession(t *testing.T) {
+	for name, groups := range map[string]string{
+		"docker that was not requested": "supermgmt systemd-journal docker\n",
+		"a privileged group":            "supermgmt systemd-journal sudo\n",
+		"no journal group":              "supermgmt\n",
+	} {
+		s := newSetting(t)
+		s.dialer.as("supermgmt").reply("setup.user_groups", groups)
+		s.setupPlan(defaultSetup())
+
+		err := s.run()
+
+		wantError(t, err, smerr.CodeCapabilityUnavailable, "")
+		if _, ok := s.setupCapability(); ok {
+			t.Errorf("%s: capability recorded", name)
+		}
+	}
+}
+
+func TestSetupWithDockerAccessRequiresTheDockerGroupInTheSession(t *testing.T) {
+	s := newSetting(t)
+	s.dialer.as("admin").reply("setup.user_groups", "supermgmt systemd-journal docker\n")
+	s.setupPlan(map[string]any{"docker_access": "true", "logs_mode": "journal-group", "grants": []any{}})
+
+	err := s.run() // the fresh session lacks docker
+
+	wantError(t, err, smerr.CodeCapabilityUnavailable, "")
+}
+
+func TestASetupPlanTakesTheConfiguredLogsModeWhenNoneIsGiven(t *testing.T) {
+	broker := newSetting(t)
+	broker.cfg.DefaultLogsMode = "broker"
+	plans, err := NewPlans(broker.cfg, broker.store)
+	mustf(t, err, "NewPlans")
+	created, err := plans.Create(context.Background(), broker.caller(broker.admin), PlanRequest{
+		Action: "node.setup", Target: domain.ResourceRef{Type: domain.ResourceNode, ID: broker.node.ID},
+		Parameters: map[string]any{"docker_access": "false"},
+	})
+	mustf(t, err, "Create")
+	plain, err := broker.plans.Create(context.Background(), broker.caller(broker.admin), PlanRequest{
+		Action: "node.setup", Target: domain.ResourceRef{Type: domain.ResourceNode, ID: broker.node.ID},
+		Parameters: map[string]any{"docker_access": "false"},
+	})
+	mustf(t, err, "Create")
+
+	if created.Plan.Parameters["logs_mode"] != "broker" || plain.Plan.Parameters["logs_mode"] != "journal-group" {
+		t.Errorf("logs_mode = %v and %v; the plan must state the mode that will run", created.Plan.Parameters["logs_mode"], plain.Plan.Parameters["logs_mode"])
+	}
+	if len(created.Plan.SubActions) != 2 {
+		t.Errorf("sub-actions = %+v; the defaulted broker mode is composite", created.Plan.SubActions)
 	}
 }
