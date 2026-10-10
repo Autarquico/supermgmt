@@ -31,7 +31,7 @@ Common targets (`make help` lists all):
 | `make lint` | golangci-lint and format check |
 | `make generate` | regenerate generated files and fail on drift |
 | `make vuln` | govulncheck |
-| `make integration` | integration tests (build tag `integration`) |
+| `make integration` | integration tests in `test/integration` |
 | `make cross-build` | linux/darwin x amd64/arm64 with `CGO_ENABLED=0` |
 
 `make api-check`, `make e2e`, `make snapshot` and `make release-check` are placeholders until M2.

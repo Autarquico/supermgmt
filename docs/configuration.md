@@ -2,7 +2,7 @@
 
 SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. In M0 only the loader and validator exist, and `sm config validate` is being finished. Nothing yet runs a daemon that consumes most of these settings (daemon: M1, server and auth: M2, Proxmox: M3, GitHub and deployments: M4, MCP: M5). Accepting a key in the file does not mean its feature is implemented.
+> **Status:** pre-alpha. In M0 only the loader and validator exist, exposed through `sm config validate` and `sm doctor --offline`. Nothing yet runs a daemon that consumes most of these settings (daemon: M1, server and auth: M2, Proxmox: M3, GitHub and deployments: M4, MCP: M5). Accepting a key in the file does not mean its feature is implemented.
 
 ## File location
 
@@ -28,7 +28,7 @@ In order, later steps win:
 
 ## Strict validation
 
-Unknown fields fail validation, so a typo is an error rather than a silently ignored setting. Validation reports every problem at once, each located by its YAML path, and `sm config validate` is specified to exit with code 2 on invalid input. Examples of what is checked: `version` must be 1; `instance.mode` is `local` or `server`; in server mode, `server.tls.mode: direct` needs a certificate and key, and `server.tls.mode: proxy` needs non-empty `server.trusted_proxies` and a loopback or Unix-socket listener; durations and the worker and connection counts must be positive; `ssh.host_key_policy` must be `strict`; `jobs.reconcile_grace` must be at least `ssh.connect_timeout` + `ssh.command_timeout` + 5s; `mcp.remote_enabled` needs complete `mcp.oauth` settings; environments and providers must be well formed.
+Unknown fields fail validation, so a typo is an error rather than a silently ignored setting. Validation reports every problem at once, each located by its YAML path, and `sm config validate` exits with code 2 on invalid input (it reports the problems first). Decoding rejects duplicate keys, YAML aliases, anchors and merge keys as well as unknown fields. Examples of what is checked: `version` must be 1; `instance.mode` is `local` or `server`; in server mode, `server.tls.mode: direct` needs a certificate and key, and `server.tls.mode: proxy` needs non-empty `server.trusted_proxies` and a loopback or Unix-socket listener; durations and the worker and connection counts must be positive; `ssh.host_key_policy` must be `strict`; `jobs.reconcile_grace` must be at least `ssh.connect_timeout` + `ssh.command_timeout` + 5s; `mcp.remote_enabled` needs complete `mcp.oauth` settings; environments and providers must be well formed.
 
 Secrets are never written inline. Credential references are URIs from a closed set; any other scheme fails validation:
 

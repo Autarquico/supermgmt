@@ -2,13 +2,13 @@
 
 Status as of 2026-10-10. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
 
-Statuses: **in progress**, **planned**, **done**.
+Statuses: **in progress**, **implemented** (merged, pending release-level review), **planned**.
 
 ## Committed for V1
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M0 Repository and core | Go module, strict config, audit and redaction, SQLite and migrations, domain model, action catalog and policy engine, canonical plans and approvals, durable job engine, offline CLI (`version`, `completion`, `config validate`, `doctor --offline`), CI | **In progress.** Domain, errors, config, audit, database, plans and policy are merged; the job engine, `sm config validate` and `sm doctor --offline` are not yet merged. |
+| M0 Repository and core | Go module, strict config, audit and redaction, SQLite and migrations, domain model, action catalog and policy engine, canonical plans and approvals, durable job engine, offline CLI (`version`, `completion`, `config validate`, `doctor --offline`), CI | **Implemented** on `feat/m0-core`: domain, errors, config, audit, database, plans, policy, application services, job engine and the four offline commands, with integration and spec-example tests. Pending final review. |
 | M1 Local daemon, SSH, TUI alpha | `sm daemon` with Unix socket API, typed client, local provider, agentless SSH nodes, systemd and Docker discovery and logs, policy-gated service actions, TUI | Planned |
 | M2 Server, client, auth, release pipeline | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, GoReleaser with checksums, signatures, SBOM and provenance, `install.sh`, backup and restore | Planned |
 | M3 Proxmox provider and appliance installer | Proxmox discovery, `sm install proxmox-lxc` with rollback journal, restricted credentials, power actions, upgrade and uninstall | Planned |
