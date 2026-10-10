@@ -61,7 +61,7 @@ type CreatedPlan struct {
 func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (CreatedPlan, error) {
 	var out CreatedPlan
 	err := p.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		actor, err := loadActor(ctx, tx, by.ID, by.Credential)
+		actor, err := loadCaller(ctx, tx, by)
 		if err != nil {
 			return err
 		}
@@ -151,11 +151,14 @@ func (p *Plans) Submit(ctx context.Context, by Caller, planID domain.ID, planHas
 		if err != nil {
 			return err
 		}
-		if err := p.checkSubmittable(rec, by, planHash); err != nil {
+		actor, err := loadCaller(ctx, tx, by)
+		if err != nil {
 			return err
 		}
-		actor, err := loadActor(ctx, tx, by.ID, by.Credential)
-		if err != nil {
+		if rec.ActorID != by.ID {
+			return p.refuseForeignSubmit(ctx, tx, actor, rec)
+		}
+		if err := p.checkSubmittable(rec, planHash); err != nil {
 			return err
 		}
 		if err := p.requireActive(ctx, by.Credential); err != nil {
@@ -186,11 +189,19 @@ func (p *Plans) Submit(ctx context.Context, by Caller, planID domain.ID, planHas
 	return out, err
 }
 
+// refuseForeignSubmit audits and rejects a submit by someone other than the plan's actor.
+func (p *Plans) refuseForeignSubmit(ctx context.Context, q database.Querier, actor domain.Actor, rec database.PlanRecord) error {
+	res := policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonNotPlanActor}
+	planRef := domain.ResourceRef{Type: domain.ResourcePlan, ID: rec.ID}
+	if err := p.auditDecision(ctx, q, actor, rec.Action, planRef, res); err != nil {
+		return err
+	}
+	return reject(smerr.FromReason(smerr.ReasonNotPlanActor, "only the plan's actor may submit it"))
+}
+
 // checkSubmittable applies the checks that need only the stored plan.
-func (p *Plans) checkSubmittable(rec database.PlanRecord, by Caller, planHash string) error {
+func (p *Plans) checkSubmittable(rec database.PlanRecord, planHash string) error {
 	switch {
-	case rec.ActorID != by.ID:
-		return smerr.FromReason(smerr.ReasonNotPlanActor, "only the plan's actor may submit it")
 	case rec.SubmittedJobID != nil:
 		return smerr.FromReason(smerr.ReasonAlreadySubmitted, "plan already has a submitted job")
 	case rec.PlanHash != planHash:

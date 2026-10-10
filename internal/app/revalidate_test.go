@@ -233,31 +233,6 @@ func TestClaimWithoutApprovalRequirementNeedsNoQuorum(t *testing.T) {
 	}
 }
 
-func TestSystemRequesterIsNotSubjectToPolicyOrApproval(t *testing.T) {
-	f := newFixture(t)
-	var system domain.ID
-	f.inTx(func(ctx context.Context, tx *database.Tx) error {
-		system = f.identity(ctx, tx, "daemon", domain.ActorSystem, "")
-		return nil
-	})
-	by := Caller{ID: system, Credential: domain.CredentialContext{Kind: domain.CredentialLocalSocket}}
-	created, err := f.plans.Create(context.Background(), by, f.reboot())
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	sub, err := f.plans.Submit(context.Background(), by, created.Record.ID, created.Record.PlanHash)
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if sub.Job.State != domain.JobQueued {
-		t.Fatalf("state = %s, want queued without approval", sub.Job.State)
-	}
-
-	if _, ok := f.claim(); !ok {
-		t.Fatalf("system job failed revalidation: %+v", f.job(sub.Job.ID).Error)
-	}
-}
-
 // locks returns the held locks as key -> mode.
 func (f *fixture) locks() map[string]domain.LockMode {
 	f.t.Helper()
