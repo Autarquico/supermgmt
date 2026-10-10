@@ -1,0 +1,27 @@
+{
+  "component": "api",
+  "correlation_id": "00000000-0001-7000-8000-000000000000",
+  "credential_ref": "secret://providers/home-pve/token",
+  "err": "dial: Bearer [REDACTED] rejected",
+  "key": "[REDACTED]",
+  "level": "INFO",
+  "msg": "login failed for header Authorization: Bearer [REDACTED]",
+  "password": "[REDACTED]",
+  "payload": {
+    "ok": "yes",
+    "token": "[REDACTED]"
+  },
+  "req": {
+    "authorization": "[REDACTED]",
+    "headers": {
+      "Cookie": "[REDACTED]",
+      "count": 2
+    },
+    "path": "/api/v1/nodes"
+  },
+  "session": {
+    "id": "[REDACTED]"
+  },
+  "typed": "[REDACTED]",
+  "user": "alice"
+}

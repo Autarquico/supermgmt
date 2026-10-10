@@ -1,0 +1,6 @@
+environments:
+  - name: production
+    risk_level: production        # development | staging | production
+    require_provenance: true      # §18
+    approvals_required: 1         # minimum quorum for operational+ writes (1..5)
+    allow_automatic_rollback: true

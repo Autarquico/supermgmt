@@ -1,0 +1,107 @@
+version: 1
+
+instance:
+  name: home
+  mode: server # local|server
+  data_dir: /var/lib/supermgmt
+
+server:
+  listen: 127.0.0.1:8787
+  public_url: https://mgmt.example.com
+  tls:
+    mode: proxy            # direct | proxy  (§23.1)
+    cert_file: ""          # required when mode=direct
+    key_file: ""           # required when mode=direct
+  trusted_proxies: ["127.0.0.1/32"]   # required non-empty when tls.mode=proxy
+  admin_socket: /run/supermgmt/admin.sock
+  request_timeout: 30s
+  shutdown_timeout: 20s
+
+daemon:
+  socket: ""            # local mode; default per §2.1.1
+  idle_exit: 10m        # local mode only
+  resident: false       # local mode; true keeps daemon alive for schedules
+
+ui:
+  theme: auto
+
+refresh:
+  focused_interval: 5s      # node/service currently open in a client
+  inventory_interval: 60s   # status of all managed nodes
+  metrics_interval: 30s     # CPU/RAM/disk samples for managed nodes
+  discovery_interval: 5m    # full capability re-probe
+
+storage:
+  sqlite:
+    path: /var/lib/supermgmt/supermgmt.db
+    busy_timeout: 5s
+    wal: true
+
+security:
+  keys_dir: /var/lib/supermgmt/secrets/keys   # master key files (§10)
+  policy_file: /etc/supermgmt/policies.yaml   # optional; built-in default policy if absent
+  session_ttl: 12h
+  approval_ttl: 15m
+  allow_self_approval: false   # default true when instance.mode=local (§11.4)
+  redact_command_output: true
+
+auth:
+  bootstrap:
+    code_ttl: 24h             # one-time admin bootstrap code (§11.5)
+  oidc:
+    enabled: false
+    issuer: ""
+    client_id: ""
+    client_secret_ref: ""     # secret:// reference
+    redirect_url: ""          # web callback; CLI uses loopback redirect (§23.1)
+    allowed_domains: []
+
+ssh:
+  connect_timeout: 8s
+  command_timeout: 30s
+  keepalive_interval: 30s
+  max_dials_in_flight: 16          # concurrent new handshakes
+  max_connections: 512             # persistent connections (one per managed node)
+  max_sessions_per_connection: 4
+  idle_connection_ttl: 10m
+  known_hosts_file: /var/lib/supermgmt/known_hosts
+  host_key_policy: strict
+  logs_mode: journal-group         # journal-group | broker  (§16)
+
+jobs:
+  workers: 4
+  lease: 60s
+  heartbeat: 15s
+  reconcile_grace: 45s             # >= ssh.connect_timeout + ssh.command_timeout + 5s
+  retry_base: 2s                   # max attempts are per action (§11.2)
+
+health:
+  allowed_private_cidrs: []        # control-plane checks only (§21)
+
+outbound:
+  proxy: ""                        # optional explicit HTTPS proxy URL; ambient *_PROXY env is ignored (§21.1)
+
+github:
+  oidc_audience: ""               # default: server.public_url; required `aud` for Actions OIDC (§18)
+  ci_poll_initial: 15s
+  ci_poll_max: 2m
+  ci_timeout: 2h
+
+mcp:
+  enabled: true
+  remote_enabled: false
+  oauth:                           # required when remote_enabled (§24)
+    issuer: ""
+    resource: ""                   # canonical MCP resource URL; token audience
+    jwks_url: ""                   # or introspection_url
+    introspection_url: ""
+    required_scopes: ["supermgmt:mcp"]
+  allow_interactive_exec: false
+  write_tools_enabled: false
+
+providers: []
+
+backup:
+  schedule: "0 3 * * *"            # server mode default; local mode: disabled unless daemon.resident
+  retention: 14
+  directory: /var/lib/supermgmt/backups

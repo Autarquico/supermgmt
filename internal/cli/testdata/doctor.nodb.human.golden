@@ -1,0 +1,7 @@
+STATUS  CHECK          DETAIL
+ok      config         <tmp>/config.yaml
+ok      environment    no unrecognized SUPERMGMT_* variables
+warn    data_dir       <tmp>/data: does not exist yet
+ok      socket         <tmp>/run/sm.sock: directory is created by the daemon
+warn    database_file  <tmp>/data/supermgmt.db: does not exist yet (the daemon creates it)
+warn    database_lock  skipped: database directory does not exist

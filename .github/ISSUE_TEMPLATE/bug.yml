@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Redact secrets and hostnames** (tokens, keys, passwords, internal hostnames, IP addresses) from everything you paste here.
+        Security vulnerabilities go through private vulnerability reporting, not this form.
+  - type: input
+    id: version
+    attributes:
+      label: sm version
+      description: Output of `sm version`
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS, architecture and install mode (local, server, appliance)
+      placeholder: Debian 13 arm64, server mode
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output (redacted)
+      render: text
