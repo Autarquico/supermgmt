@@ -70,6 +70,9 @@ func resolveService(ctx context.Context, q database.Querier, id domain.ID) (reso
 	if err != nil {
 		return resolved{}, err
 	}
+	if _, err := serviceLock(service, domain.LockExclusive); err != nil {
+		return resolved{}, err
+	}
 	out, err := resolveNode(ctx, q, service.NodeID)
 	if err != nil {
 		return resolved{}, err

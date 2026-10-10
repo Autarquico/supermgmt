@@ -47,13 +47,24 @@ func ownLock(ctx context.Context, q database.Querier, job jobs.Job, mode domain.
 	if err != nil {
 		return domain.LockSpec{}, err
 	}
+	return serviceLock(service, mode)
+}
+
+// serviceKindUnit is the services.kind of a systemd unit. It belongs in
+// internal/domain next to the other closed vocabularies.
+const serviceKindUnit = "unit"
+
+// serviceLock names what a service is locked by; UNIT_NOT_ELIGIBLE when the
+// row records neither a Compose project nor a unit. Plan creation applies the
+// same rule, so this is the claim-time defense.
+func serviceLock(service domain.Service, mode domain.LockMode) (domain.LockSpec, error) {
 	if project, _ := service.Metadata["compose_project"].(string); project != "" {
 		return domain.ComposeProjectLock(service.NodeID, project, mode), nil
 	}
-	if service.Kind == "unit" && service.NativeID != "" {
+	if service.Kind == serviceKindUnit && service.NativeID != "" {
 		return domain.LockSpec{Key: fmt.Sprintf("unit:%s:%s", service.NodeID, service.NativeID), Mode: mode}, nil
 	}
-	return domain.LockSpec{}, smerr.New(smerr.CodeInvalidArgument, "",
+	return domain.LockSpec{}, smerr.FromReason(smerr.ReasonUnitNotEligible,
 		"service has neither a compose project nor a unit to lock; its actions are not executable")
 }
 

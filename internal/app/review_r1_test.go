@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -106,5 +107,36 @@ func TestServiceLocksUseTheComposeProjectWhenRecordedAndFailTypedWhenUnlockable(
 
 	set("container", `{}`)
 	_, err = LockPlanner{}.PlanLocks(context.Background(), f.db.Reader(), job)
-	wantError(t, err, smerr.CodeInvalidArgument, "")
+	wantError(t, err, smerr.CodeCapabilityUnavailable, smerr.ReasonUnitNotEligible)
+}
+
+func TestUnlockableServiceIsRefusedAtPlanCreation(t *testing.T) {
+	f := newFixture(t)
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE services SET kind = 'container', metadata_json = '{}' WHERE id = ?`, f.service.ID)
+		return err
+	})
+
+	_, err := f.plans.Create(context.Background(), f.caller(f.alice), PlanRequest{
+		Action: "service.restart", Target: domain.ResourceRef{Type: domain.ResourceService, ID: f.service.ID},
+	})
+
+	wantError(t, err, smerr.CodeCapabilityUnavailable, smerr.ReasonUnitNotEligible)
+}
+
+func TestCredentialStoreOutageIsMarkedAsInfrastructureSoTheJobStaysQueued(t *testing.T) {
+	f := newFixture(t)
+	sub, _ := f.submitReboot()
+	f.approveToQuorum(sub.Job)
+	f.cfg.Credentials = failingCredentials{errors.New("store down")}
+	reval, err := NewRevalidator(f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = reval.Revalidate(context.Background(), f.db.Reader(), f.job(sub.Job.ID))
+
+	if !errors.Is(err, jobs.ErrInfrastructure) {
+		t.Fatalf("err = %v, want jobs.ErrInfrastructure", err)
+	}
 }
