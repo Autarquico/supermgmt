@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "M0 — Repository and core"
+title: M0 — Repository and core
 type: epic
-status: draft
+status: active
 priority: P0
 size: XL
 issue: null
 prs: []
-related_issues: []
+related_issues: [1]
 depends_on: []
 supersedes: []
 related_specs: []
