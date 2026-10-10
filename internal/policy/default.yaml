@@ -1,0 +1,28 @@
+version: 1
+rules:
+  - name: builtin-read
+    subjects: ["role:viewer", "role:operator", "role:deployer", "role:admin"]
+    allow: ["*.read", "service.logs", "node.connect", "plan.create"]
+  - name: builtin-operator
+    subjects: ["role:operator", "role:admin"]
+    allow: ["service.start", "service.stop", "service.restart", "node.probe",
+            "node.reboot", "proxmox.vm.power", "proxmox.snapshot.create",
+            "proxmox.backup.create", "job.cancel", "job.resolve"]
+  - name: builtin-deployer
+    subjects: ["role:deployer", "role:admin"]
+    allow: ["deployment.create", "deployment.rollback", "job.cancel",
+            "node.backup_template.run"]
+  - name: builtin-approver
+    subjects: ["role:operator", "role:deployer", "role:admin"]
+    allow: ["approval.grant", "approval.reject"]
+  - name: builtin-admin
+    subjects: ["role:admin"]
+    allow: ["config.write", "environment.write", "provider.write", "node.add",
+            "node.update", "node.remove", "app.write", "app_target.write",
+            "identity.write", "role_binding.write", "mcp_client.register",
+            "mcp_client.issue_token", "mcp_client.delete",
+            "token.create", "token.revoke", "enrollment.create", "secret.write",
+            "backup.create", "sudoers.write", "log_broker.install"]
+  - name: builtin-mcp-read
+    subjects: ["type:mcp"]
+    allow: ["*.read", "plan.create"]

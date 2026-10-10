@@ -1,0 +1,24 @@
+version: 1
+rules:
+  - name: mcp-read
+    subjects: ["type:mcp"]
+    allow: ["*.read", "plan.create"]
+  - name: human-staging
+    subjects: ["role:operator"]
+    resources: ["environment:staging"]
+    allow: ["service.restart", "deployment.create"]
+  - name: production-deploy
+    subjects: ["role:deployer"]
+    resources: ["environment:production"]
+    allow: ["deployment.create", "deployment.rollback", "node.backup_template.run"]
+    require_approval: true
+    approvals: 2
+  - name: ci-deploy-staging
+    # automation identity registered for repository 123456789, workflow ci.yml
+    subjects: ["identity:0190a5e2-7c41-7b9e-9f0e-3d2c1b0a9f88"]
+    resources: ["environment:staging"]
+    allow: ["deployment.create"]
+    require_approval: false
+  - name: never-mcp-destructive
+    subjects: ["type:mcp"]
+    deny: ["node.shutdown", "provider.delete", "proxmox.snapshot.delete"]
