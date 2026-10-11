@@ -153,7 +153,7 @@ func TestImportEnforcesTheCostBoundsBeforeDerivingAnything(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			blob := rawHeader(id, c.log2N, c.r, c.p)
 			if !c.ok {
-				start := time.Now()
+				start := time.Now() //nolint:forbidigo // wall-clock bound on a rejection path
 				_, _, err := DecodeKeyExport(blob, testPassphrase)
 				if smerr.CodeOf(err) != smerr.CodeInvalidArgument {
 					t.Errorf("error = %v, want INVALID_ARGUMENT", err)

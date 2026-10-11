@@ -301,15 +301,14 @@ func TestRetireRemovesAnUnreferencedKeyAndRestartStillWorks(t *testing.T) {
 }
 
 func TestRetireRefusals(t *testing.T) {
-	ctx := context.Background()
 	t.Run("active key", func(t *testing.T) {
 		f := newAdminFixture(t)
 		active, _ := f.keys.Active()
-		requireCode(t, f.admin.Retire(ctx, active), smerr.CodeConflict)
+		requireCode(t, f.admin.Retire(t.Context(), active), smerr.CodeConflict)
 	})
 	t.Run("unknown key", func(t *testing.T) {
 		f := newAdminFixture(t)
-		requireCode(t, f.admin.Retire(ctx, f.ids.NewID()), smerr.CodeNotFound)
+		requireCode(t, f.admin.Retire(t.Context(), f.ids.NewID()), smerr.CodeNotFound)
 	})
 	t.Run("a secret row still references it", func(t *testing.T) {
 		f := newAdminFixture(t)
@@ -317,7 +316,7 @@ func TestRetireRefusals(t *testing.T) {
 		oldID, _ := f.keys.Active()
 		f.mustRotate(t)
 		f.repo.Update("demo/a", 1, func(r *secrets.Record) { r.KEKID = oldID })
-		requireCode(t, f.admin.Retire(ctx, oldID), smerr.CodeConflict)
+		requireCode(t, f.admin.Retire(t.Context(), oldID), smerr.CodeConflict)
 		if _, loaded := f.keys.Key(oldID); !loaded {
 			t.Error("a refused retirement unloaded the key")
 		}
@@ -327,7 +326,7 @@ func TestRetireRefusals(t *testing.T) {
 		oldID, _ := f.keys.Active()
 		f.mustRotate(t)
 		f.archives.ids = []domain.ID{oldID}
-		requireCode(t, f.admin.Retire(ctx, oldID), smerr.CodeConflict)
+		requireCode(t, f.admin.Retire(t.Context(), oldID), smerr.CodeConflict)
 		if !slices.Contains(keyFiles(t, f.dir), oldID.String()+".key") {
 			t.Error("a refused retirement removed the key file")
 		}
@@ -337,7 +336,7 @@ func TestRetireRefusals(t *testing.T) {
 		oldID, _ := f.keys.Active()
 		f.mustRotate(t)
 		f.archives.err = errors.New("manifest.json: invalid character")
-		requireCode(t, f.admin.Retire(ctx, oldID), smerr.CodeConflict)
+		requireCode(t, f.admin.Retire(t.Context(), oldID), smerr.CodeConflict)
 		if _, loaded := f.keys.Key(oldID); !loaded {
 			t.Error("an unreadable manifest let the key go")
 		}
@@ -434,17 +433,16 @@ func TestExportThenImportRestoresAKeyOnAFreshHost(t *testing.T) {
 }
 
 func TestImportKeyRefusals(t *testing.T) {
-	ctx := context.Background()
 	f := newAdminFixture(t)
 	id, _ := f.keys.Active()
-	export, err := f.admin.Export(ctx, id, passphrase)
+	export, err := f.admin.Export(t.Context(), id, passphrase)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("wrong passphrase writes nothing", func(t *testing.T) {
 		dir := keysDir(t)
-		if _, err := secrets.ImportKey(ctx, dir, nil, export, "not the passphrase"); err == nil {
+		if _, err := secrets.ImportKey(t.Context(), dir, nil, export, "not the passphrase"); err == nil {
 			t.Fatal("accepted")
 		}
 		if _, err := os.Stat(dir); err == nil && len(keyFiles(t, dir)) != 0 {
@@ -455,23 +453,23 @@ func TestImportKeyRefusals(t *testing.T) {
 		wrongDB := secretstest.NewMemRepo()
 		wrongKeys := mustOpenKeys(t, keysDir(t), wrongDB, f.ids)
 		wrongID, _ := wrongKeys.Active()
-		wrongExport, err := secrets.NewKeyAdmin(wrongKeys, wrongDB, f.ids, &fakeArchives{}).Export(ctx, wrongID, passphrase)
+		wrongExport, err := secrets.NewKeyAdmin(wrongKeys, wrongDB, f.ids, &fakeArchives{}).Export(t.Context(), wrongID, passphrase)
 		if err != nil {
 			t.Fatal(err)
 		}
 		// The database holds a check record sealed under another key for that id.
-		if err := wrongDB.PutSettings(ctx, map[string]string{"kek_check." + wrongID.String(): f.checkRecord(t, id)}); err != nil {
+		if err := wrongDB.PutSettings(t.Context(), map[string]string{"kek_check." + wrongID.String(): f.checkRecord(t, id)}); err != nil {
 			t.Fatal(err)
 		}
 		dir := keysDir(t)
-		_, err = secrets.ImportKey(ctx, dir, wrongDB, wrongExport, passphrase)
+		_, err = secrets.ImportKey(t.Context(), dir, wrongDB, wrongExport, passphrase)
 		requireCode(t, err, smerr.CodeInvalidArgument)
 		if names := keyFiles(t, dir); len(names) != 0 {
 			t.Errorf("a key that does not match the database was kept: %v", names)
 		}
 	})
 	t.Run("an installed key is not overwritten", func(t *testing.T) {
-		_, err := secrets.ImportKey(ctx, f.dir, f.repo, export, passphrase)
+		_, err := secrets.ImportKey(t.Context(), f.dir, f.repo, export, passphrase)
 		requireCode(t, err, smerr.CodeConflict)
 	})
 }

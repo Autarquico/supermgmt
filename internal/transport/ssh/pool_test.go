@@ -585,3 +585,27 @@ func TestClosedPoolRefusesNewConnections(t *testing.T) {
 	_, err := r.run("x")
 	requireCode(t, err, smerr.CodeNodeUnreachable)
 }
+
+// TestRepinDiscardsTheOldConnectionAndTheOldPinNoLongerConnects: after the node
+// presents a new key, dropping the pooled connection and re-pinning makes the
+// new key the only one that connects; the old pin is a host-key mismatch.
+func TestRepinDiscardsTheOldConnectionAndTheOldPinNoLongerConnects(t *testing.T) {
+	r := newRig(t, defaultConfig(), nil)
+	if _, err := r.run("x"); err != nil {
+		t.Fatal(err)
+	}
+	oldPin := r.target()
+	r.server.setHostKey(newSigner(t))
+	r.pool.Invalidate(r.nodeID, oldPin.User)
+
+	_, err := r.pool.For(oldPin).Run(context.Background(), templatesRead("x"))
+	requireCode(t, err, smerr.CodeSSHHostKeyMismatch)
+
+	repinned := r.target()
+	if repinned.HostKey == oldPin.HostKey {
+		t.Fatal("the rig did not move to the new key")
+	}
+	if _, err := r.pool.For(repinned).Run(context.Background(), templatesRead("x")); err != nil {
+		t.Fatalf("new pin: %v", err)
+	}
+}
