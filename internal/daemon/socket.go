@@ -213,9 +213,14 @@ func unlinkStaleSocket(socket string) error {
 }
 
 func listenPrivately(ctx context.Context, socket string) (net.Listener, error) {
+	return listenMasked(ctx, socket, socketUmask)
+}
+
+// listenMasked listens on a Unix socket created under umask.
+func listenMasked(ctx context.Context, socket string, umask int) (net.Listener, error) {
 	umaskMu.Lock()
 	defer umaskMu.Unlock()
-	previous := syscall.Umask(socketUmask)
+	previous := syscall.Umask(umask)
 	defer syscall.Umask(previous)
 	var config net.ListenConfig
 	return config.Listen(ctx, "unix", socket)

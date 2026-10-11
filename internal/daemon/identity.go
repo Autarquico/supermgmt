@@ -12,9 +12,14 @@ import (
 
 const (
 	localIssuer  = "local"
+	systemIssuer = "system"
 	adminRole    = "admin"
 	eventSource  = "daemon"
 	eventCreated = "identity.local.created"
+	// SystemIdentityID is the identity row of the daemon acting for itself
+	// (scheduled backups): actor type system, no roles, never a request's
+	// caller. The id is fixed, in the family of the built-in roles.
+	SystemIdentityID domain.ID = "01970000-0000-7000-8002-000000000001"
 )
 
 // LocalIdentityID is the identity of the OS user uid in local mode. The id is

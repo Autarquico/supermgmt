@@ -48,14 +48,8 @@ type ConfigSources struct {
 	Policy []byte
 }
 
-// Reconcile applies the file in one transaction. Proxmox providers arrive in
-// M3 and are ignored here. It stores no configuration snapshot: the daemon
-// calls Activate.
-func (s *StaticReconciler) Reconcile(ctx context.Context, envs []config.Environment, providers []config.Provider) error {
-	return s.reconcile(ctx, envs, providers, nil)
-}
-
-// Activate is Reconcile plus settings.config_snapshot (spec §29.1): the exact
+// Activate applies the file in one transaction (Proxmox providers arrive in
+// M3 and are ignored here) and stores settings.config_snapshot (spec §29.1): the exact
 // source bytes and the next generation commit in the same transaction as the
 // reconcile, so a backup never sees a configuration whose effects are missing
 // or effects whose configuration is missing. Every activation advances the
