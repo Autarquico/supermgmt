@@ -345,7 +345,7 @@ func (in *Installer) printBootstrap(ctx context.Context, l layout) error {
 	if code == "" {
 		return fail(ExitConfiguration, "obtain bootstrap code: empty output")
 	}
-	in.say("SuperMgmt is running.\nBootstrap code (shown once, single use): %s\nRun `sm login` against your public URL and enter the code to become admin.", code)
+	in.say("SuperMgmt is running.\nBootstrap code (shown once, single use): %s\nRun `sm login --bootstrap` against your public URL and enter the code to become admin.", code)
 	return nil
 }
 

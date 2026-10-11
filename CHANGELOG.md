@@ -29,8 +29,7 @@ Milestones M0 (repository and core), M1 (local daemon, SSH, TUI) and M2 (server,
 - Dex puts the OIDC client secret in the device-flow verification URL; there is no separate device client key. Only Dex has been exercised.
 - Backup archives are not encrypted. A lost master key without an export is unrecoverable.
 - Cloudflare is a guide, not tested against a real account. The real macOS keychain and `secret-tool` are manual checks.
-- `sm login --bootstrap` on a server without OIDC may fail for lack of a display name (not verified end to end).
-- Not built: SSH CA trust, per-node keys, `sm secrets import --offline`, an orphan-key report in `sm doctor`, Providers and Settings screens.
+- Not built: SSH CA trust, per-node keys.
 
 ### Added in M1
 

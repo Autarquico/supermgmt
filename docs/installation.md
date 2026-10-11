@@ -53,7 +53,7 @@ Environment: `SUPERMGMT_VERSION`, `SUPERMGMT_CHANNEL`, `SUPERMGMT_MODE`, `SUPERM
 
 ### OpenSSH 8.2 or newer
 
-`install.sh` and `scripts/join.sh` refuse an `ssh-keygen` that cannot pass the self-test and tell you "OpenSSH 8.2 or newer is required" (`install.sh` line 79). SPEC §3.2 and ADR-0019 say 8.1. **The scripts are stricter than the spec.** The repository does not record why 8.2 was chosen; the likely reason is the `valid-after`, `valid-before` and `namespaces` options that the `allowed_signers` file relies on, but that is an inference, not something verified. The spec and ADR text should be aligned with the scripts.
+`install.sh` and `scripts/join.sh` refuse an `ssh-keygen` that cannot pass the self-test and tell you "OpenSSH 8.2 or newer is required" (`install.sh` line 79). SPEC §3.2 and ADR-0019 require 8.2 as well: the self-test signs with a `valid-after` option in `allowed_signers`, which older releases reject.
 
 ### The default mode does not work yet
 
@@ -105,12 +105,9 @@ sm profile add prod --url https://mgmt.example.com --use
 sm login --bootstrap          # reads the code from the terminal or stdin
 ```
 
-Two cautions, both from reading the code:
+On a server **without OIDC**, `sm login --bootstrap --display-name <name>` creates the first admin; on a terminal the name is prompted for, defaulting to `$USER`.
 
-- The installer's closing message says to run `sm login`; the exchange of the code is `sm login --bootstrap` (`internal/installer/install.go` printBootstrap, `internal/cli/login.go`).
-- On a server **without OIDC**, `sm login --bootstrap` sends only the code, but the server then requires a `display_name` (`internal/app/auth.go` `createAdmin`). Whether the exchange works end to end is **not verified**, and as read it looks like a defect: the CLI test uses a fake server, and no test drives the real handler without a name. If it fails with `display_name is required`, the request body of `POST /api/v1/auth/bootstrap` does accept `{"code": "...", "display_name": "..."}`, so a direct HTTPS call works around it; the response carries the session and first API token (also not verified).
-
-With OIDC configured, the code is exchanged *after* a normal `sm login` by the identity that is to become admin. OIDC needs its client secret in the secret store first, which needs an admin: enable OIDC in two steps. See [operations.md](operations.md#enabling-oidc-on-a-fresh-server).
+With OIDC configured, the code is exchanged *after* a normal `sm login` by the identity that is to become admin. OIDC needs its client secret in the secret store first: store it with `sm secrets import --offline` while the service is stopped. See [operations.md](operations.md#enabling-oidc-on-a-fresh-server).
 
 ## Joining a node (`sm join`)
 

@@ -48,8 +48,12 @@ func (q *Queries) Me(ctx context.Context, by Caller) (wire.Me, error) {
 	if err != nil {
 		return wire.Me{}, err
 	}
+	name := identity.DisplayName
+	if name == "" {
+		name = identity.Subject
+	}
 	return wire.Me{
-		IdentityID: identity.ID, ActorType: identity.ActorType, DisplayName: identity.Subject,
+		IdentityID: identity.ID, ActorType: identity.ActorType, DisplayName: name,
 		Credential: by.Credential.Kind, Roles: nonNil(actor.Roles), InstanceMode: string(q.mode),
 	}, nil
 }
