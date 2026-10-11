@@ -62,6 +62,7 @@ func newFakeAPI(t *testing.T, handler http.HandlerFunc) *fakeAPI {
 	}
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body)) // handlers read it again
 		f.mu.Lock()
 		f.requests = append(f.requests, sentRequest{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Clone(), string(body)})
 		f.mu.Unlock()

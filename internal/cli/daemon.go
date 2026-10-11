@@ -30,17 +30,21 @@ func newDaemonCmd(env []string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configFlag, _ := cmd.Flags().GetString("config")
 			level, _ := cmd.Flags().GetString("log-level")
-			cfg, err := loadDaemonConfig(configPath(configFlag, env), env)
+			file := configPath(configFlag, env)
+			cfg, err := loadDaemonConfig(file, env)
 			if err != nil {
 				return err
 			}
+			if !fileExists(file) {
+				file = "" // built-in defaults: the snapshot stores the effective configuration
+			}
 			if cfg.Instance.Mode != config.ModeLocal {
-				return smerr.New(smerr.CodeCapabilityUnavailable, "", "server mode arrives in milestone M2; set instance.mode to local")
+				return smerr.New(smerr.CodeCapabilityUnavailable, "", "sm daemon runs local mode; this configuration is a server: run `sm server`")
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 			err = daemon.Run(ctx, daemon.Options{
-				Config: cfg, Socket: socketPath(cfg, env), Log: daemonLogger(cmd, level),
+				Config: cfg, ConfigFile: file, Socket: socketPath(cfg, env), Log: daemonLogger(cmd, level),
 			})
 			return daemonExit(cmd, err)
 		},

@@ -1,0 +1,24 @@
+┌ SuperMgmt · Providers ────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ NAME                  TYPE        ORIGIN    STATUS    LAST SYNC              │
+│ local                 local       api       ready     never                  │
+│ ssh                   ssh         static    ready     10-10 11:59:00         │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ r refresh  esc back  / command  ? help  q quit                               │
+└──────────────────────────────────────────────────────────────────────────────┘

@@ -29,12 +29,34 @@ func clientCommands(env []string) []*cobra.Command {
 	return []*cobra.Command{
 		newNodesCmd(env), newServicesCmd(env), newJobsCmd(env), newApprovalsCmd(env),
 		newSSHCmd(env), newDockerCmd(env), newStatusCmd(env), newEventsCmd(env), newSSHKeyCmd(env),
+		newLoginCmd(env, defaultLoginDeps(env)), newLogoutCmd(env), newProfileCmd(env), newTokensCmd(env),
+		newSecretsCmd(env), newBackupCmd(env),
 	}
 }
 
-// newClient builds the API client for cmd from --config and the environment.
+// newClient builds the API client for cmd: the remote server of the current
+// profile, or the local daemon (spec §8.4, ADR-0014).
 func newClient(cmd *cobra.Command, env []string) (*client.Client, error) {
-	configFlag, _ := cmd.Flags().GetString("config")
+	api, _, err := connect(cmd, env)
+	return api, err
+}
+
+// connect is newClient that also says which target it chose.
+func connect(cmd *cobra.Command, env []string) (*client.Client, target, error) {
+	where, err := resolveTarget(cmd, env)
+	if err != nil {
+		return nil, target{}, err
+	}
+	if where.remote != nil {
+		api, err := remoteClient(cmd.Context(), env, where.name, *where.remote)
+		return api, where, err
+	}
+	api, err := newLocalClient(env, where.configFile)
+	return api, where, err
+}
+
+// newLocalClient dials the daemon the configuration file describes.
+func newLocalClient(env []string, configFlag string) (*client.Client, error) {
 	socket, stateDir, err := daemonLocation(configFlag, env)
 	if err != nil {
 		return nil, err

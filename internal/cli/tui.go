@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/tui"
 )
@@ -43,7 +44,7 @@ func runTUI(cmd *cobra.Command, env []string) error {
 	if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 		return usageErrorf("the TUI needs an interactive terminal; use the sm subcommands in scripts")
 	}
-	api, err := newClient(cmd, env)
+	api, where, err := connect(cmd, env)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,21 @@ func runTUI(cmd *cobra.Command, env []string) error {
 	if _, err := api.Me(ready); err != nil {
 		return err
 	}
-	return tui.Run(cmd.Context(), api, tui.Options{Presence: api.HoldPresence})
+	return tui.Run(cmd.Context(), api, tuiOptions(api, where))
+}
+
+// tuiOptions wires the TUI to its target. A local daemon is kept resident by
+// presence; a remote server pushes events over SSE instead.
+func tuiOptions(api *client.Client, where target) tui.Options {
+	opts := tui.Options{Settings: tui.Settings{Profile: where.name, Server: api.Server()}}
+	if !api.Remote() {
+		opts.Presence = api.HoldPresence
+		return opts
+	}
+	opts.Follow = func(ctx context.Context, handle func(wire.Event) error) error {
+		return api.FollowEvents(ctx, wire.EventQuery{}, handle)
+	}
+	return opts
 }
 
 // isTerminal reports whether stream is a character device other than

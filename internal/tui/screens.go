@@ -595,11 +595,75 @@ func (m *Model) emptyEvents() string {
 	return "loading…"
 }
 
+// ---- providers (read-only) ----------------------------------------------------------
+
+func (m *Model) providersBody(bw, bh int) []string {
+	head := " " + m.th.dim.Render(clip(cell("NAME", 22)+cell("TYPE", 12)+cell("ORIGIN", 10)+cell("STATUS", 10)+"LAST SYNC", bw-2))
+	var rows []string
+	for _, p := range m.providers {
+		text := cell(safe(p.Name), 22) + cell(safe(p.Type), 12) + cell(string(p.Origin), 10) + cell(safe(p.Status), 10) + m.whenPtr(p.LastSyncAt)
+		rows = append(rows, " "+clip(text, bw-2))
+	}
+	if len(rows) == 0 {
+		rows = append(rows, m.th.dim.Render(" "+m.emptyProviders()))
+	}
+	return append([]string{head}, rows[:min(len(rows), max(bh-1, 1))]...)
+}
+
+func (m *Model) emptyProviders() string {
+	if m.state(keyProviders).loaded {
+		return "no providers yet"
+	}
+	return "loading…"
+}
+
+// ---- settings (read-only) -------------------------------------------------------------
+
+func (m *Model) settingsBody(bw int) []string {
+	server, profile := m.opts.Settings.Server, m.opts.Settings.Profile
+	if server == "" {
+		server = "this machine (local daemon)"
+	}
+	lines := []string{
+		"",
+		m.heading("Connection"),
+		m.kv("mode", dashIfEmpty(safe(m.me.InstanceMode)), bw),
+		m.kv("profile", dashIfEmpty(safe(profile)), bw),
+		m.kv("server", safe(server), bw),
+		m.kv("updates", m.updatesText(), bw),
+		"",
+		m.heading("Identity"),
+		m.kv("name", dashIfEmpty(safe(m.me.DisplayName)), bw),
+		m.kv("id", dashIfEmpty(string(m.me.IdentityID)), bw),
+		m.kv("type", dashIfEmpty(string(m.me.ActorType)), bw),
+		m.kv("credential", dashIfEmpty(string(m.me.Credential)), bw),
+		m.kv("roles", dashIfEmpty(safe(strings.Join(m.me.Roles, ", "))), bw),
+	}
+	if !m.state(keyMe).loaded {
+		lines = append(lines, "", m.th.dim.Render(" loading…"))
+	}
+	return lines
+}
+
+func (m *Model) updatesText() string {
+	refresh := "refresh on demand (r)"
+	if m.opts.Refresh > 0 {
+		refresh = "refresh every " + m.opts.Refresh.String()
+	}
+	switch m.followState {
+	case followLive:
+		return "live (server events), " + refresh
+	case followStopped:
+		return "live stream stopped, " + refresh
+	}
+	return refresh
+}
+
 // ---- help -------------------------------------------------------------------------
 
 func (m *Model) helpBody(bw int) []string {
 	rows := [][2]string{
-		{"1 2 3 4 5", "Dashboard, Resources, Jobs, Approvals, Events"},
+		{"1-7", "Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings"},
 		{"j k / arrows", "move; g top, G bottom"},
 		{"enter", "open the selected item"},
 		{"esc", "back"},

@@ -62,11 +62,11 @@ func TestASecondDaemonExitsWithCode2NamingThePID(t *testing.T) {
 	}
 }
 
-func TestTheDaemonRefusesServerModeInM1(t *testing.T) {
+func TestTheDaemonRefusesServerModeAndPointsToSMServer(t *testing.T) {
 	configFile, env, _ := daemonConfig(t, "server")
 	var stderr bytes.Buffer
 	code := runDaemonCmd([]string{"daemon", "--config", configFile}, env, &stderr)
-	if code != 3 || !strings.Contains(stderr.String(), "M2") {
-		t.Errorf("code %d, stderr %q; want 3 (unsupported) mentioning M2", code, stderr.String())
+	if code != 3 || !strings.Contains(stderr.String(), "sm server") || strings.Contains(stderr.String(), "M2") {
+		t.Errorf("code %d, stderr %q; want 3 (unsupported) pointing to `sm server`", code, stderr.String())
 	}
 }

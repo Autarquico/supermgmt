@@ -7,6 +7,7 @@ Usage:
 Available Commands:
   admin       Administer a server through its admin socket (root or the service user)
   approvals   List jobs awaiting approval with the plan hash to approve against
+  backup      Create and list backups; restore one offline
   completion  Generate a shell completion script
   config      Inspect and validate configuration
   daemon      Run the SuperMgmt daemon (started on demand by the other commands)
@@ -16,12 +17,17 @@ Available Commands:
   help        Help about any command
   install     Install SuperMgmt (invoked by install.sh)
   jobs        List and govern jobs (default: list)
+  login       Sign in to a remote server
+  logout      Sign out: revoke the session on the server and forget the stored credential
   nodes       List, add, inspect and probe nodes
+  profile     Manage the servers sm talks to
+  secrets     Import secrets and manage the master keys
   server      Run the SuperMgmt server (the systemd service)
   services    List services, read their logs and start, stop or restart them
   ssh         Open an interactive shell on a node with your own SSH credentials
-  ssh-key     Show the instance SSH identity
+  ssh-key     Show or rotate the instance SSH identity
   status      Show the daemon identity, node reachability and pending work
+  tokens      List, create and revoke API tokens
   tui         Open the terminal UI
   version     Print version, commit, build date, Go version and platform
 
