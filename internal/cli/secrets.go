@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -49,15 +51,22 @@ func newSecretsCmd(env []string) *cobra.Command {
 
 func newSecretsImportCmd(env []string) *cobra.Command {
 	var name, fromFile string
+	var offline bool
 	cmd := &cobra.Command{
 		Use:   "import",
 		Short: "Store a secret value as the next version of a named secret",
 		Long: "Store a secret value, read from the terminal (no echo), from standard input or from a file with --from-file\n" +
-			"(which must not be readable by others). The value is sealed on the server and never shown again.",
+			"(which must not be readable by others). The value is sealed on the server and never shown again.\n\n" +
+			"With --offline (for a value the server needs before any administrator exists, such as the OIDC client\n" +
+			"secret) nothing is requested: the service must be stopped, the value comes from the terminal or standard\n" +
+			"input only, and it is sealed with the active master key straight into the database.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" {
 				return usageErrorf("--name is required")
+			}
+			if offline {
+				return importSecretOffline(cmd, env, name, fromFile)
 			}
 			value, err := secretValue(cmd, fromFile)
 			if err != nil {
@@ -78,7 +87,72 @@ func newSecretsImportCmd(env []string) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "secret name, e.g. providers/pve/token")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the value from this file (mode 0600) instead of the terminal or stdin")
+	cmd.Flags().BoolVar(&offline, "offline", false, "store the value with the service stopped, without an administrator")
 	return cmd
+}
+
+// ---- secrets import --offline ---------------------------------------------------------
+
+const eventSecretImported = "secret.imported"
+
+func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string) error {
+	switch {
+	case fromFile != "":
+		return usageErrorf("--offline reads the value from the terminal or standard input only, not --from-file")
+	case name == secrets.SSHIdentityName:
+		return usageErrorf("secret %s is the instance SSH identity: it is never imported", name)
+	}
+	value, err := readSecret(cmd, secretInput{prompt: "Secret value: ", whole: true, limit: maxSecretValueBytes})
+	if err != nil {
+		return err
+	}
+	session, err := openOffline(cmd, env)
+	if err != nil {
+		return err
+	}
+	defer session.close()
+	db, err := session.writableDatabase(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	ref, err := storeOffline(cmd.Context(), db, session.keysDir, name, value)
+	if err != nil {
+		return err
+	}
+	return emit(cmd, wire.SecretVersion{Name: ref.Name, Version: ref.Version}, func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "stored %s version %d\n", ref.Name, ref.Version)
+		return err
+	})
+}
+
+// storeOffline seals value with the active master key as the next version of
+// name and records who did it: the system actor, and the uid of the person
+// running this command (there is no peer to verify).
+func storeOffline(ctx context.Context, db *database.DB, keysDir, name, value string) (secrets.Ref, error) {
+	clock, ids := domain.SystemClock{}, domain.UUIDv7Generator{}
+	repo := offlineSecrets{ReadOnlySecrets: database.ReadOnlySecrets{Q: db.Reader()}, db: db}
+	keys, err := secrets.OpenFileKeys(ctx, keysDir, repo, ids)
+	if err != nil {
+		return secrets.Ref{}, err
+	}
+	ref, err := secrets.NewStore(keys, repo, ids, clock).Put(ctx, name, audit.Secret(value), map[string]any{"source": "import"})
+	if err != nil {
+		return secrets.Ref{}, err
+	}
+	emitter := audit.Emitter{Clock: clock, IDs: ids, Source: "offline_cli"}
+	err = db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		_, err := emitter.Emit(ctx, database.EventsIn(tx), domain.Event{
+			ActorType: domain.ActorSystem, Action: eventSecretImported, ResourceType: domain.ResourceSecret,
+			Severity: domain.SeverityInfo, Result: domain.ResultSucceeded,
+			Data: map[string]any{"name": ref.Name, "version": ref.Version, "peer_uid": os.Getuid(), "via": "offline"},
+		})
+		return err
+	})
+	if err != nil {
+		return secrets.Ref{}, fmt.Errorf("the secret was stored but its audit event was not: %w", err)
+	}
+	return ref, nil
 }
 
 func secretValue(cmd *cobra.Command, fromFile string) (string, error) {
@@ -109,6 +183,43 @@ func trimFinalNewline(s string) string {
 		}
 	}
 	return s
+}
+
+// offlineSecrets is the secrets.Repo of an offline import: it reads like the
+// read-only repository and writes only new versions. The database lock makes
+// the version the store computed the one the insert assigns.
+type offlineSecrets struct {
+	database.ReadOnlySecrets
+	db *database.DB
+}
+
+func (r offlineSecrets) Get(ctx context.Context, name string, version int) (secrets.Record, error) {
+	stored, err := database.GetSecret(ctx, r.db.Reader(), name, version)
+	if err != nil {
+		return secrets.Record{}, err
+	}
+	metadata, err := json.Marshal(stored.Metadata)
+	if err != nil {
+		return secrets.Record{}, fmt.Errorf("encode secret metadata: %w", err)
+	}
+	return secrets.Record{
+		ID: stored.ID, Name: stored.Name, Version: stored.Version, EnvelopeVersion: stored.EnvelopeVersion, KEKID: stored.KEKID,
+		WrappedDEK: stored.WrappedDEK, Ciphertext: stored.Ciphertext, MetadataJSON: string(metadata), CreatedAt: stored.CreatedAt,
+	}, nil
+}
+
+func (r offlineSecrets) Put(ctx context.Context, rec secrets.Record) error {
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(rec.MetadataJSON), &metadata); err != nil {
+		return fmt.Errorf("decode secret metadata: %w", err)
+	}
+	return r.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		_, err := database.PutSecretVersion(ctx, tx, database.SecretRecord{
+			ID: rec.ID, Name: rec.Name, EnvelopeVersion: rec.EnvelopeVersion, KEKID: rec.KEKID,
+			WrappedDEK: rec.WrappedDEK, Ciphertext: rec.Ciphertext, Metadata: metadata, CreatedAt: rec.CreatedAt,
+		})
+		return err
+	})
 }
 
 // ---- keys -------------------------------------------------------------------------------
@@ -496,6 +607,23 @@ func (s *offlineSession) repo(ctx context.Context) (secrets.Repo, error) {
 	}
 	s.db = db
 	return database.ReadOnlySecrets{Q: db.Querier()}, nil
+}
+
+// writableDatabase opens the database for writing. It must already exist with
+// a schema: the service creates both on its first start.
+func (s *offlineSession) writableDatabase(ctx context.Context) (*database.DB, error) {
+	repo, err := s.repo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if repo == nil {
+		return nil, usageErrorf("there is no initialized database at %s: start the service once, then stop it and import", s.dbPath)
+	}
+	db, err := database.Open(ctx, s.dbPath, database.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("open the database: %w", err)
+	}
+	return db, nil
 }
 
 func (s *offlineSession) close() {

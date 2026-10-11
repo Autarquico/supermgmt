@@ -154,15 +154,15 @@ In server mode `security.allow_self_approval` defaults to `false`. **A single op
 
 ## Enabling OIDC on a fresh server
 
-Bootstrapping with OIDC needs a completed OIDC login, and OIDC needs its client secret in the secret store, which needs an admin. So the order is:
+Bootstrapping with OIDC needs a completed OIDC login, and OIDC needs its client secret in the secret store. An online import needs an admin, so the first secret goes in offline, with the service stopped. The order is:
 
-1. Install without OIDC and bootstrap the first admin ([installation.md](installation.md#after-a-server-install)).
-2. Store the client secret: `sm secrets import --name auth/oidc-client-secret`, then approve the job (see above; a single operator needs `allow_self_approval`).
+1. Install and start the server once (it creates the database and the master key), then stop it.
+2. Store the client secret without an admin: `sudo sm secrets import --offline --name auth/oidc-client-secret`. The value comes from the terminal or standard input only. It is sealed with the active master key and audited as `secret.imported` by the system actor, with the uid of the person who ran it.
 3. Edit `/etc/supermgmt/config.yaml`: `auth.oidc.enabled: true`, `issuer`, `client_id`, `client_secret_ref: secret://auth/oidc-client-secret`, `allowed_domains`, and `allowed_endpoint_origins` only if the IdP serves endpoints from another origin. Restart the service.
 4. Register the redirect URI at the IdP: `http://127.0.0.1:<port>/callback` (loopback, RFC 8252). An IdP that matches redirect URIs exactly (a Dex confidential client does) needs one fixed port: register it and sign in with `sm login --callback-port <port>`. The device grant (`sm login --device`) needs the IdP's own device callback registered (Dex: `/device/callback`).
-5. `sm login`. A new OIDC identity has **no roles**. The admin from step 1 gives it one on the server: `sudo sm admin grant <identity-id> admin` (the id is printed by `sm login`).
+5. `sm login`. A new OIDC identity has **no roles**. Bind the first admin with `sudo sm admin bootstrap-code`, then `sm login --bootstrap` while signed in; or grant the role on the server: `sudo sm admin grant <identity-id> admin` (the id is printed by `sm login`).
 
-Discovery of the IdP happens on first use, not at start: a wrong issuer or an unreachable IdP shows up as `PROVIDER_ERROR` at login time, and the service starts anyway (the ADR text says "refuses the start"; the code is lazy, `internal/daemon/login.go`). Identity-provider endpoints must be `https`; private ranges are allowed, loopback and cloud-metadata addresses are never allowed, so an IdP on `127.0.0.1` cannot be used. Redirects from the IdP are not followed.
+Discovery of the IdP happens on first use, not at start: a wrong issuer or an unreachable IdP shows up as `PROVIDER_ERROR` at login time, and the service starts anyway (`internal/daemon/login.go`). Identity-provider endpoints must be `https`; private ranges are allowed, loopback and cloud-metadata addresses are never allowed, so an IdP on `127.0.0.1` cannot be used. Redirects from the IdP are not followed.
 
 This sequence is derived from the code and has not been run end to end. See also the device-flow caveat in [security.md](security.md#oidc-and-the-device-flow-client-secret).
 

@@ -47,6 +47,8 @@ type Keys interface {
 	ExportKey(ctx context.Context, by Caller, r wire.ExportKeyRequest) (DirectResult[wire.ExportedKey], error)
 	ImportSecret(ctx context.Context, by Caller, r wire.ImportSecretRequest) (DirectResult[wire.SecretVersion], error)
 	RotateSSHIdentity(ctx context.Context, by Caller) (DirectResult[wire.SSHKey], error)
+	// ListKeys describes the master keys: metadata, never key material.
+	ListKeys(ctx context.Context, by Caller) ([]wire.MasterKey, error)
 }
 
 // Backups is backup.create (a job) and backup.read (spec §29.1, ADR-0020).

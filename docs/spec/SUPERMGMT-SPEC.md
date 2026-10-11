@@ -166,7 +166,7 @@ ssh-keygen -Y verify -f allowed_signers -I release@supermgmt -n supermgmt-releas
 
 `install.sh` is a small bootstrapper (target: under 300 lines of POSIX shell). It MUST NOT install arbitrary files from the moving `main` branch beyond itself. It does only this:
 
-1. Detect platform and prerequisites (§3.3), including the verifier: it runs `ssh-keygen -Y verify` against an embedded known-good test signature **before downloading anything**. OpenSSH 8.1 or newer is required for `-Y`; hosts without a capable `ssh-keygen` (or without the OpenSSH client at all) fail with exit code 4 and instructions to install the client or verify manually on another machine. Verification is never skipped.
+1. Detect platform and prerequisites (§3.3), including the verifier: it runs `ssh-keygen -Y verify` against an embedded known-good test signature **before downloading anything**. OpenSSH 8.2 or newer is required (`-Y` is 8.1, but the `valid-after`/`valid-before` options of `allowed_signers`, which the self-test uses, are 8.2); hosts without a capable `ssh-keygen` (or without the OpenSSH client at all) fail with exit code 4 and instructions to install the client or verify manually on another machine. Verification is never skipped.
 2. Resolve the version.
    - Precedence: `SUPERMGMT_VERSION=vX.Y.Z` (pinned) > `SUPERMGMT_VERSION=latest` / `SUPERMGMT_CHANNEL` > default channel `stable`.
    - A channel is resolved by downloading `channels/<channel>.json` and `.sig` from the release host. The signed file contains `{channel, version, issued_at, valid_until}`, and the bootstrap rejects it if signature verification fails, `now > valid_until`, `issued_at > now + 5m`, or `valid_until − issued_at > 30 days`. Channel files are re-signed at least every 14 days, so a replayed channel file is at most 30 days stale.
@@ -3479,6 +3479,8 @@ App. C  Plan v3: sorted inputs, secret bindings (refs), sub-actions, credential 
         staged version that approval activates (rejection deletes it); export-key is a request plus a one-time
         execution by the same identity within 24h. Plans never hold a secret value or a passphrase.
 §11.2   note on secret.write approval.
+§3.2    minimum OpenSSH is 8.2, not 8.1: the verifier self-test needs valid-after in allowed_signers (install.sh
+        already enforced 8.2; ADR-0019 follows).
 ```
 
 ---

@@ -255,6 +255,6 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Refusal of another local user on the socket is tested on Linux CI only; on macOS it relies on the same-UID test and a manual check.
 - Real terminal emulators are not automated; restoring the terminal after an interactive session is covered by a pseudo-terminal test and the [manual checklist](manual-checks/m1-handoff.md).
 - Node setup is verified in CI on Debian only. Other distributions are an assumption.
-- The `curl | bash` installer path trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that (SPEC §3.2). The installer requires OpenSSH 8.2 or newer, stricter than the spec's 8.1.
+- The `curl | bash` installer path trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that (SPEC §3.2). The installer requires OpenSSH 8.2 or newer (`valid-after` in `allowed_signers`).
 - No release exists and the production signing key has not been generated; the placeholder trust root makes real installs fail closed.
 - No independent security audit has been performed.

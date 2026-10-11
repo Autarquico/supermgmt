@@ -618,9 +618,9 @@ func TestLoginBootstrapReadsTheCodeFromStdinAndKeepsItOutOfEverything(t *testing
 	})
 	b.useProfile()
 
-	r := b.runLogin(loginDeps{sleep: sleepContext}, code+"\n", "--bootstrap")
+	r := b.runLogin(loginDeps{sleep: sleepContext}, code+"\n", "--bootstrap", "--display-name", "Root")
 
-	if r.code != 0 || got.Code != code {
+	if r.code != 0 || got.Code != code || got.DisplayName != "Root" {
 		t.Fatalf("exit %d, request %+v, stderr %s", r.code, got, r.stderr)
 	}
 	assertNoSecret(t, code, r)
