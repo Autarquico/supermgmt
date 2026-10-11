@@ -42,13 +42,13 @@ In server mode the daemon is the OIDC client and holds the client secret (§23.1
 - `POST /auth/oidc/device` starts a device authorization at the IdP. The server keeps a transaction `{txn_id (random 128 bits), device_code, interval, expires_at = IdP expires_in}`; the IdP device code never leaves the server. The client receives `txn_id`, `user_code` and the verification URIs.
 - `POST /auth/oidc/device/poll` takes `txn_id`. Polls of one transaction are serialized. A poll sooner than `interval` answers `slow_down` and adds 5 s to the interval (as the IdP would). The server polls the IdP at most once per client poll.
 - Completion is single use: the first successful poll returns the session and deletes the transaction; any later poll is `CONFLICT`. An expired transaction is `UNAUTHENTICATED`/`OIDC_INVALID`.
-- `client_id` and `client_secret` are sent as form fields at the device endpoint (Dex ignores HTTP Basic there). Dex then echoes the secret in the browser verification URL; `docs/configuration.md` states this, and production use of the device flow with Dex needs a dedicated client.
+- `client_id` and `client_secret` are sent as form fields at the device endpoint (Dex ignores HTTP Basic there). Dex can echo the form, secret included, into the verification URL, and `POST /auth/oidc/device` is unauthenticated, so the server fails closed: if either verification URI contains the client secret (raw or URL-encoded) or a `client_secret` parameter, the start is refused with `PROVIDER_ERROR` and nothing is returned. Such an IdP cannot be used for the device flow with a confidential client until it stops echoing the secret.
 - IdPs may return tokens for the same device code more than once (Dex does); single use is enforced by the server, not assumed from the IdP.
 - RFC 8628 has no nonce parameter; the device flow therefore does not require one and relies on the single-use, server-held device code plus `iss`, `aud` and `exp`.
 
 ### State and restarts
 
-Login state and device transactions live in memory, bounded (1,000 entries, oldest evicted). A restart invalidates logins in progress; the user retries. Sessions are unaffected.
+Login state and device transactions live in memory, bounded (1,000 entries). A new entry first drops the expired ones; one client address (the requester after the ADR-0017 proxy rules) may hold 20 pending entries, and past that its own oldest is evicted, so an unauthenticated caller cannot push other users' logins out. Only past the global bound is the oldest entry overall evicted. A restart invalidates logins in progress; the user retries. Sessions are unaffected.
 
 ### Bootstrap
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
+	"github.com/autarquico/supermgmt/internal/auth/oidc"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
@@ -86,7 +87,8 @@ func (s *Server) publicCall(status int, call func(ctx context.Context, a app.Aut
 		if err != nil {
 			return err
 		}
-		out, err := call(r.Context(), s.svc.Auth, in)
+		ctx := oidc.WithClient(r.Context(), scopeOf(r.Context()).client.String())
+		out, err := call(ctx, s.svc.Auth, in)
 		if err != nil {
 			return err
 		}

@@ -47,6 +47,10 @@ func (c *Client) DeviceStart(ctx context.Context) (DeviceTxn, error) {
 	if err := checkDeviceAuth(auth); err != nil {
 		return DeviceTxn{}, invalid("identity provider returned a malformed device authorization", err)
 	}
+	if echoesClientSecret(auth, c.clientSecret.Reveal()) {
+		return DeviceTxn{}, smerr.New(smerr.CodeProviderError, "",
+			"the identity provider put the client secret in a verification URL; refusing to hand it to an unauthenticated caller")
+	}
 	now := c.clock.Now()
 	interval := time.Duration(auth.Interval) * time.Second
 	if interval <= 0 {
@@ -62,7 +66,7 @@ func (c *Client) DeviceStart(ctx context.Context) (DeviceTxn, error) {
 		lastPoll:   now,
 	}
 	id := rand.Text()
-	c.txns.put(id, txn)
+	c.txns.put(id, clientOf(ctx), txn, txn.expiresAt, now)
 	return DeviceTxn{
 		ID:                      id,
 		UserCode:                auth.UserCode,
@@ -89,6 +93,30 @@ func checkDeviceAuth(auth *oauth2.DeviceAuthResponse) error {
 		}
 	}
 	return nil
+}
+
+// echoesClientSecret reports whether a verification URI carries the client
+// secret, raw, URL-encoded or as a client_secret parameter. Dex builds the
+// complete URI from the request form, which holds the secret (ADR-0018), and
+// the endpoint that returns it is unauthenticated.
+func echoesClientSecret(auth *oauth2.DeviceAuthResponse, secret string) bool {
+	for _, raw := range []string{auth.VerificationURI, auth.VerificationURIComplete} {
+		if raw == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(raw), "client_secret") {
+			return true
+		}
+		if secret == "" {
+			continue
+		}
+		for _, form := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
+			if strings.Contains(raw, form) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Client) DevicePoll(ctx context.Context, txnID string) (Claims, error) {

@@ -312,26 +312,51 @@ func TestEnrollRejectsMalformedRequestsWithoutCostingASlot(t *testing.T) {
 	}
 }
 
-func TestAFreshTokenForAnEnrolledNodeRefreshesTagsWithoutDuplicating(t *testing.T) {
+func TestAnEnrolledNodeIsNeverChangedByAnotherRequest(t *testing.T) {
 	e := newEnrollmentFixture(t)
 	first := e.issue(wire.EnrollmentRequest{Tags: []string{"old"}})
 	node, err := e.enroll(enrollAs(first.Token, "edge-1"))
 	if err != nil {
 		t.Fatalf("first Enroll: %v", err)
 	}
-	second := e.issue(wire.EnrollmentRequest{Tags: []string{"new"}})
-
-	again, err := e.enroll(enrollAs(second.Token, "edge-1"))
-
-	if err != nil || again.NodeID != node.NodeID {
-		t.Fatalf("re-join = %+v, %v; want node %s", again, err, node.NodeID)
+	fresh := e.issue(wire.EnrollmentRequest{Tags: []string{"new"}})
+	spent := e.issue(wire.EnrollmentRequest{Tags: []string{"spent"}})
+	otherKey := newAuthorizedKey()
+	if _, err := e.enroll(wire.EnrollRequest{Token: spent.Token, HostPublicKey: otherKey, Hostname: "edge-2"}); err != nil {
+		t.Fatalf("enroll with the token to be spent: %v", err)
 	}
-	stored, _ := database.GetNode(context.Background(), e.db.Reader(), node.NodeID)
-	if strings.Join(stored.Tags, ",") != "new" {
-		t.Fatalf("tags = %v, want refreshed to [new]", stored.Tags)
+
+	for name, token := range map[string]string{"fresh token": fresh.Token, "exhausted token": spent.Token} {
+		t.Run(name, func(t *testing.T) {
+			_, err := e.enroll(enrollAs(token, "edge-1"))
+
+			wantError(t, err, smerr.CodeConflict, "")
+			stored, _ := database.GetNode(context.Background(), e.db.Reader(), node.NodeID)
+			if strings.Join(stored.Tags, ",") != "old" {
+				t.Fatalf("tags = %v, want unchanged [old]", stored.Tags)
+			}
+			if got, _ := database.GetJoinToken(context.Background(), e.db.Reader(), fresh.ID); got.Uses != 0 {
+				t.Fatalf("fresh token uses = %d, want none", got.Uses)
+			}
+			if n := e.count(`SELECT count(*) FROM events WHERE action = 'enrollment.denied'`); n == 0 {
+				t.Fatal("refusal was not audited")
+			}
+		})
 	}
-	if token, _ := database.GetJoinToken(context.Background(), e.db.Reader(), second.ID); token.Uses != 0 {
-		t.Fatalf("second token uses = %d, want none", token.Uses)
+}
+
+func TestTheExactReplayOnAnExhaustedTokenStillReturnsItsNode(t *testing.T) {
+	e := newEnrollmentFixture(t)
+	issued := e.issue(wire.EnrollmentRequest{})
+	first, err := e.enroll(enrollAs(issued.Token, "edge-1"))
+	if err != nil {
+		t.Fatalf("first Enroll: %v", err)
+	}
+
+	again, err := e.enroll(enrollAs(issued.Token, "edge-1"))
+
+	if err != nil || again != first {
+		t.Fatalf("replay = %+v, %v; want %+v", again, err, first)
 	}
 }
 

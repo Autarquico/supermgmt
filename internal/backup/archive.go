@@ -137,7 +137,10 @@ func (w *Writer) add(m Manifest, name string, size int64, r io.Reader) error {
 // ReadManifest returns the manifest of an archive: its first member. It
 // decompresses only as much as the manifest needs.
 func ReadManifest(r io.Reader) (Manifest, error) {
-	zr, err := zstd.NewReader(r, zstd.WithDecoderConcurrency(1))
+	zr, err := zstd.NewReader(r,
+		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderMaxWindow(maxWindowBytes),
+		zstd.WithDecoderMaxMemory(maxWindowBytes))
 	if err != nil {
 		return Manifest{}, fmt.Errorf("open zstd stream: %w", err)
 	}

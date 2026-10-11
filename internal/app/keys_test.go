@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -248,6 +250,10 @@ func TestImportSecretWaitsStagedAndNeverLeaksTheValue(t *testing.T) {
 	}
 	if strings.Contains(k.stored(), value) {
 		t.Error("the value reached a plan, job payload, event or idempotency record")
+	}
+	sum := sha256.Sum256([]byte(value))
+	if strings.Contains(k.stored(), hex.EncodeToString(sum[:])) {
+		t.Error("a plan, job payload or event carries an unkeyed hash of the value")
 	}
 }
 

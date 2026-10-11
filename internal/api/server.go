@@ -184,6 +184,7 @@ type Server struct {
 	ready     func(context.Context) error
 
 	authLimit  *limiter
+	pollLimit  *limiter
 	writeLimit *limiter
 	openMu     sync.Mutex
 	open       map[domain.ID]int // event streams per identity
@@ -213,7 +214,7 @@ func New(o Options) (*Server, error) {
 	s := &Server{
 		responder: responder{log: o.Log}, svc: o.Services, ids: o.IDs, resolver: o.Resolver, proxy: o.Proxy, db: o.DB,
 		stream: o.Stream.withDefaults(), timeout: o.RequestTimeout, residency: o.Residency, ready: o.Ready,
-		authLimit: newLimiter(authRate, o.Clock.Now), writeLimit: newLimiter(writeRate, o.Clock.Now),
+		authLimit: newLimiter(authRate, o.Clock.Now), pollLimit: newLimiter(pollRate, o.Clock.Now), writeLimit: newLimiter(writeRate, o.Clock.Now),
 		open: map[domain.ID]int{}, closing: make(chan struct{}),
 	}
 	if o.Resolver != nil {
@@ -414,7 +415,7 @@ func (s *Server) admitRemote(r *http.Request, rt route) (scope, error) {
 		return scope{}, err
 	}
 	if rt.isAuth() {
-		if ok, after := s.authLimit.allow(client.String()); !ok {
+		if ok, after := s.loginLimiter(rt).allow(client.String()); !ok {
 			return scope{}, &rateLimited{after: after}
 		}
 	}
@@ -428,6 +429,15 @@ func (s *Server) admitRemote(r *http.Request, rt route) (scope, error) {
 		}
 	}
 	return scope{caller: by, client: client}, nil
+}
+
+// loginLimiter is the per-address bucket of an unauthenticated route: device
+// polls have their own, everything else shares the login bucket.
+func (s *Server) loginLimiter(rt route) *limiter {
+	if rt.pattern == wire.PathOIDCDevicePoll {
+		return s.pollLimit
+	}
+	return s.authLimit
 }
 
 func (s *Server) bearerCaller(r *http.Request, mode authMode) (app.Caller, error) {

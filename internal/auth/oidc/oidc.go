@@ -95,8 +95,10 @@ const ClientAuthStyle = oauth2.AuthStyleInHeader
 var signingAlgs = []string{gooidc.RS256, gooidc.ES256, gooidc.EdDSA}
 
 const (
-	loginStateTTL  = 10 * time.Minute
-	registryLimit  = 1000
+	loginStateTTL = 10 * time.Minute
+	registryLimit = 1000
+	// ownerLimit is how many pending logins one client address may hold.
+	ownerLimit     = 20
 	clockSkew      = time.Minute
 	defaultPollGap = 5 * time.Second
 )
@@ -167,8 +169,8 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 			Now:                  cfg.Clock.Now,
 		}),
 		replay: replay,
-		states: newRegistry[loginState](registryLimit),
-		txns:   newRegistry[*deviceTxn](registryLimit),
+		states: newRegistry[loginState](registryLimit, ownerLimit),
+		txns:   newRegistry[*deviceTxn](registryLimit, ownerLimit),
 	}, nil
 }
 
