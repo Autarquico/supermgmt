@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -38,7 +40,7 @@ func newSecretsCmd(env []string) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newSecretsImportCmd(env), newRotateMasterKeyCmd(env), newRetireKeyCmd(env),
-		newExportKeyCmd(env), newImportKeyCmd(env),
+		newExportKeyCmd(env), newImportKeyCmd(env), newKeysListCmd(env),
 	)
 	return cmd
 }
@@ -107,6 +109,43 @@ func trimFinalNewline(s string) string {
 		}
 	}
 	return s
+}
+
+// ---- keys -------------------------------------------------------------------------------
+
+func newKeysListCmd(env []string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "keys",
+		Short: "List the master key ids (never the keys)",
+		Long:  "List the master keys the server knows: the ids to give to export-key and retire-key, which one is active,\nand whether the daemon holds each. Key material is never shown.",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			api, err := newClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			page, err := api.ListMasterKeys(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return emit(cmd, page, func(w io.Writer) error { return writeMasterKeys(w, page.Items) })
+		},
+	}
+}
+
+func writeMasterKeys(w io.Writer, keys []wire.MasterKey) error {
+	rows := make([][]string, len(keys))
+	for i, k := range keys {
+		rows[i] = []string{string(k.ID), yesNo(k.Active), yesNo(k.Loaded), formatTime(k.CreatedAt)}
+	}
+	return table(w, []string{"ID", "ACTIVE", "LOADED", "CREATED"}, rows)
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // ---- rotate and retire ---------------------------------------------------------------
@@ -412,7 +451,7 @@ type offlineSession struct {
 	lock    *database.Lock
 	dbPath  string
 	keysDir string
-	db      *database.DB
+	db      *database.ReadOnly
 }
 
 func openOffline(cmd *cobra.Command, env []string) (*offlineSession, error) {
@@ -438,22 +477,25 @@ func openOffline(cmd *cobra.Command, env []string) (*offlineSession, error) {
 	return &offlineSession{lock: lock, dbPath: dbPath, keysDir: keysDir}, nil
 }
 
-// repo opens the database as a secrets.Repo, or returns nil when there is no
-// database with a schema yet (import-key then leaves the key pending).
+// repo opens the database read-only as a secrets.Repo, or returns nil when
+// there is no database with a schema yet (import-key then leaves the key pending).
 func (s *offlineSession) repo(ctx context.Context) (secrets.Repo, error) {
-	found, err := database.Inspect(ctx, s.dbPath)
-	if err != nil {
-		return nil, err
-	}
-	if !found.Exists || !found.HasSchema {
+	if _, err := os.Stat(s.dbPath); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil //nolint:nilnil // no database is a valid state
+	} else if err != nil {
+		return nil, fmt.Errorf("stat the database: %w", err)
 	}
-	db, err := database.Open(ctx, s.dbPath, database.Options{})
+	db, err := database.OpenReadOnly(ctx, s.dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open the database: %w", err)
 	}
+	hasSchema, err := db.HasSchema(ctx)
+	if err != nil || !hasSchema {
+		_ = db.Close()
+		return nil, err
+	}
 	s.db = db
-	return offlineSecrets{q: db.Reader()}, nil
+	return database.ReadOnlySecrets{Q: db.Querier()}, nil
 }
 
 func (s *offlineSession) close() {

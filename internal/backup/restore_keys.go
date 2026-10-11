@@ -14,7 +14,6 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
-	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/secrets"
 )
 
@@ -33,56 +32,13 @@ type keyPromotion struct {
 	sha256 string
 }
 
-// stagedSecrets is a read-only secrets.Repo over the staged database: the key
-// check must never write to it.
-type stagedSecrets struct{ q database.Querier }
-
-var _ secrets.Repo = stagedSecrets{}
-
-var errStagedReadOnly = errors.New("the staged database is read-only during the key check")
-
-func (stagedSecrets) Put(context.Context, secrets.Record) error { return errStagedReadOnly }
-
-func (stagedSecrets) Get(context.Context, string, int) (secrets.Record, error) {
-	return secrets.Record{}, errStagedReadOnly
-}
-
-func (stagedSecrets) PutSettings(context.Context, map[string]string) error { return errStagedReadOnly }
-
-func (stagedSecrets) PutStaged(context.Context, secrets.Record) error { return errStagedReadOnly }
-
-func (stagedSecrets) GetByID(context.Context, domain.ID) (secrets.Record, error) {
-	return secrets.Record{}, errStagedReadOnly
-}
-
-func (stagedSecrets) ActivateStaged(context.Context, domain.ID) (secrets.Record, error) {
-	return secrets.Record{}, errStagedReadOnly
-}
-
-func (stagedSecrets) DeleteStaged(context.Context, domain.ID) error { return errStagedReadOnly }
-
-func (s stagedSecrets) ReferencedKEKs(ctx context.Context) ([]domain.ID, error) {
-	return database.ReferencedKEKIDs(ctx, s.q)
-}
-
-func (s stagedSecrets) Setting(ctx context.Context, key string) (string, bool, error) {
-	setting, err := database.GetSetting(ctx, s.q, key)
-	if smerr.CodeOf(err) == smerr.CodeNotFound {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return string(setting.Value), true, nil
-}
-
 // checkKeys is phase A step 3: every KEK the staged database needs must have
 // a key file in keysDir (<id>.key, or <id>.key.pending from an offline import)
 // that passes the check record stored in the staged database. It reuses the
 // daemon's own loader on a private copy of the candidate files, so the verdict
 // is the one the daemon will reach, and writes nothing to keysDir.
 func checkKeys(ctx context.Context, q database.Querier, ids domain.IDGenerator, keysDir, staging string) ([]keyPromotion, error) {
-	repo := stagedSecrets{q: q}
+	repo := database.ReadOnlySecrets{Q: q}
 	_, hasActive, err := repo.Setting(ctx, activeKEKKey)
 	if err != nil {
 		return nil, fmt.Errorf("read the staged active key: %w", err)

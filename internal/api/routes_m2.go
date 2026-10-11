@@ -181,6 +181,10 @@ func (rs *routeSet) keys() {
 			return s.svc.Keys.RotateSSHIdentity(ctx, by)
 		})),
 	})
+	rs.add(route{
+		method: http.MethodGet, pattern: wire.PathMasterKeys, action: actionConfigRead,
+		do: s.requireKeys(reading(s, s.listMasterKeys)),
+	})
 	// Export answers with a wrapped master key. It exists only on the local
 	// socket (spec §10) and never goes through the Idempotency-Key store: the
 	// execution is single-use by itself (ADR-0021).
@@ -204,6 +208,24 @@ func (rs *routeSet) keys() {
 			return nil
 		}),
 	})
+}
+
+// keyLister is the read side of key management: master-key metadata, never
+// key material. app.KeyManager implements it.
+type keyLister interface {
+	ListKeys(ctx context.Context, by app.Caller) ([]wire.MasterKey, error)
+}
+
+func (s *Server) listMasterKeys(ctx context.Context, by app.Caller, _ input) (wire.Page[wire.MasterKey], error) {
+	lister, ok := s.svc.Keys.(keyLister)
+	if !ok {
+		return wire.Page[wire.MasterKey]{}, unavailable("key listing")
+	}
+	keys, err := lister.ListKeys(ctx, by)
+	if keys == nil {
+		keys = []wire.MasterKey{}
+	}
+	return wire.Page[wire.MasterKey]{Items: keys}, err
 }
 
 func (s *Server) requireKeys(next endpoint) endpoint {

@@ -13,6 +13,7 @@ Available Commands:
   daemon      Run the SuperMgmt daemon (started on demand by the other commands)
   docker      Open lazydocker on a node over SSH
   doctor      Diagnose configuration, paths and database health
+  enrollments Issue join tokens for nodes that enroll themselves
   events      List audit events
   help        Help about any command
   install     Install SuperMgmt (invoked by install.sh)

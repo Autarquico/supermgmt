@@ -35,7 +35,7 @@ const passphrase = "correct horse battery"
 // writableSecrets lets a test create the first master key, and its check
 // record, in a real database; the product code only ever reads it.
 type writableSecrets struct {
-	offlineSecrets
+	database.ReadOnlySecrets
 	db *database.DB
 }
 
@@ -346,7 +346,7 @@ func keyedSandbox(t *testing.T) (sandbox, domain.ID) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	keys, err := secrets.OpenFileKeys(context.Background(), result.Config.Security.KeysDir, writableSecrets{offlineSecrets: offlineSecrets{q: db.Reader()}, db: db}, domain.UUIDv7Generator{})
+	keys, err := secrets.OpenFileKeys(context.Background(), result.Config.Security.KeysDir, writableSecrets{ReadOnlySecrets: database.ReadOnlySecrets{Q: db.Reader()}, db: db}, domain.UUIDv7Generator{})
 	if err != nil {
 		t.Fatal(err)
 	}
