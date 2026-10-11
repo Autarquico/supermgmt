@@ -91,6 +91,6 @@ release-check: ## Verify the signed snapshot in dist/ (archives, SBOMs, checksum
 	packaging/release/check.sh dist dist/test-trust/allowed_signers
 
 install-test: ## Run the install.sh tamper matrix under dash and bash (needs shellcheck)
-	shellcheck -s sh install.sh packaging/release/*.sh
+	shellcheck -s sh install.sh scripts/join.sh packaging/release/*.sh
 	shellcheck -x test/install/*.sh
 	@set -e; for sh in dash bash; do test/install/run.sh $$sh; done

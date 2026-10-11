@@ -16,6 +16,7 @@ Available Commands:
   help        Help about any command
   install     Install SuperMgmt (invoked by install.sh)
   jobs        List and govern jobs (default: list)
+  join        Enroll this node with a SuperMgmt server (run as root)
   nodes       List, add, inspect and probe nodes
   server      Run the SuperMgmt server (the systemd service)
   services    List services, read their logs and start, stop or restart them
