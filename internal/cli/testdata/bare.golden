@@ -5,6 +5,7 @@ Usage:
   sm [command]
 
 Available Commands:
+  admin       Administer a server through its admin socket (root or the service user)
   approvals   List jobs awaiting approval with the plan hash to approve against
   completion  Generate a shell completion script
   config      Inspect and validate configuration
@@ -16,6 +17,7 @@ Available Commands:
   install     Install SuperMgmt (invoked by install.sh)
   jobs        List and govern jobs (default: list)
   nodes       List, add, inspect and probe nodes
+  server      Run the SuperMgmt server (the systemd service)
   services    List services, read their logs and start, stop or restart them
   ssh         Open an interactive shell on a node with your own SSH credentials
   ssh-key     Show the instance SSH identity
