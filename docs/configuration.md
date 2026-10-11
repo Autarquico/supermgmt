@@ -2,7 +2,7 @@
 
 SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`, and since M1 the local daemon reads the file at start. Accepting a key does not mean its feature is implemented: [Which keys M1 reads](#which-keys-m1-reads) lists what is wired. Server mode and auth: M2, Proxmox: M3, GitHub and deployments: M4, MCP: M5.
+> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox: M3, GitHub and deployments: M4, MCP: M5.
 
 ## File location
 
@@ -18,9 +18,9 @@ Paths that you do not set (`instance.data_dir`, `storage.sqlite.path`, `security
 
 The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that variable is set, otherwise `<state dir>/run/sm.sock` (state dir `$XDG_STATE_HOME/supermgmt`, default `~/.local/state/supermgmt`; on macOS `~/Library/Application Support/SuperMgmt/state`). `daemon.socket` overrides it. The autostarted daemon writes its log to `daemon.log` in the state directory.
 
-## Which keys M1 reads
+## Which keys are read
 
-Read by the local daemon and CLI:
+### Local daemon and CLI (M1)
 
 - `instance.*`, `daemon.*` (`socket`, `idle_exit`, `resident`), `storage.sqlite.*`
 - `security.keys_dir`, `security.policy_file`, `security.approval_ttl`, `security.allow_self_approval`
@@ -28,12 +28,23 @@ Read by the local daemon and CLI:
 - `refresh.*`, `jobs.*`, `server.shutdown_timeout`
 - `environments` and SSH `providers`, applied when the daemon starts
 
-Validated but not read in M1 (no reader outside the config package):
+### Server (M2), read by `sm server`
 
-- `ssh.known_hosts_file`: the pinned host key in the database is the only trust anchor ([ADR-0015](adr/0015-ssh-transport-and-command-templates.md)).
+- `server.listen`, `server.tls.*`, `server.trusted_proxies`, `server.admin_socket`, `server.request_timeout`, `server.shutdown_timeout`; see [Server](#server-transport-and-tls)
+- `auth.bootstrap.code_ttl`, `security.session_ttl`
+- `auth.oidc.*` except `redirect_url`; see [OIDC](#oidc)
+- `backup.schedule`, `backup.retention`, `backup.directory`; see [Backup](#backup)
+- `security.redact_command_output` (when false, raw log output is kept)
+- `outbound.proxy`, used only for requests to the identity provider
+- `ssh.known_hosts_file`: only as the file that goes into a backup archive (and is restored to `<data_dir>/known_hosts`). The pinned host key in the database is still the only trust anchor ([ADR-0015](adr/0015-ssh-transport-and-command-templates.md)).
+
+Reading was checked by searching the code for each key; a key not listed has no reader outside the config package.
+
+### Validated but not read
+
 - `ssh.host_key_policy` (must be `strict`) and `ssh.logs_mode`: the log mode of a node comes from the `logs_mode` parameter of its `node.setup` plan.
-- `ui.theme`, `security.session_ttl`, `security.redact_command_output`
-- the rest of `server.*`, `auth.*`, `health.*`, `outbound.*`, `github.*`, `mcp.*`, `backup.*`
+- `ui.theme`, `server.public_url` (only the installer and the default of `github.oidc_audience` use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
+- `health.*`, `github.*`, `mcp.*`
 - Proxmox providers (M3)
 
 ## How a value is resolved
@@ -54,7 +65,7 @@ Secrets are never written inline. Credential references are URIs from a closed s
 
 | Reference | Meaning |
 |---|---|
-| `secret://<path>` | encrypted secret in the SuperMgmt store. In M1 only `secret://ssh/default` (the instance SSH identity) resolves; any other name fails with `CAPABILITY_UNAVAILABLE`. The secrets CLI arrives in M2 |
+| `secret://<path>` | encrypted secret in the SuperMgmt store. `secret://ssh/default` is the instance SSH identity; other names are stored with `sm secrets import --name <path>` ([operations.md](operations.md#key-management)). `secret://<path>@<n>` pins version `n`. The key that reads such a name in M2 is `auth.oidc.client_secret_ref`; whether provider `credential_ref` values other than `secret://ssh/default` resolve for SSH nodes is not verified |
 | `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode. In M1 it serves `admin_user` only |
 | `file://<abs-path>` | key file at an absolute path; discouraged, supported for migration |
 
@@ -62,7 +73,7 @@ Secrets are never written inline. Credential references are URIs from a closed s
 
 Every scalar setting and every string list can be overridden with an environment variable named `SUPERMGMT_` plus the upper-cased YAML path with dots replaced by underscores (`server.listen` becomes `SUPERMGMT_SERVER_LISTEN`). Lists are comma-separated. Durations use Go syntax (`30s`, `10m`). Lists of structures, `environments` and `providers`, can only be set in the file.
 
-Variables that start with `SUPERMGMT_` but are neither overrides nor installer variables are reported as warnings and ignored. The installer's own variables (such as `SUPERMGMT_VERSION` and `SUPERMGMT_CHANNEL`, planned M2) are not configuration overrides.
+Variables that start with `SUPERMGMT_` but are neither overrides nor installer variables are reported as warnings and ignored. The installer's own variables (`SUPERMGMT_VERSION`, `SUPERMGMT_CHANNEL`, `SUPERMGMT_MODE`, `SUPERMGMT_INSTALL_DIR`, `SUPERMGMT_CONFIG_DIR`, `SUPERMGMT_DATA_DIR`, `SUPERMGMT_NONINTERACTIVE`, `SUPERMGMT_YES`, `SUPERMGMT_RELEASE_BASE_URL`) are not configuration overrides ([installation.md](installation.md)).
 
 The table below is generated from the schema by `make generate` (`go generate ./...`). Do not edit it by hand; CI fails on drift.
 
@@ -105,6 +116,7 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_AUTH_OIDC_CLIENT_SECRET_REF` | `auth.oidc.client_secret_ref` | string |
 | `SUPERMGMT_AUTH_OIDC_REDIRECT_URL` | `auth.oidc.redirect_url` | string |
 | `SUPERMGMT_AUTH_OIDC_ALLOWED_DOMAINS` | `auth.oidc.allowed_domains` | list (comma-separated) |
+| `SUPERMGMT_AUTH_OIDC_ALLOWED_ENDPOINT_ORIGINS` | `auth.oidc.allowed_endpoint_origins` | list (comma-separated) |
 | `SUPERMGMT_SSH_CONNECT_TIMEOUT` | `ssh.connect_timeout` | duration |
 | `SUPERMGMT_SSH_COMMAND_TIMEOUT` | `ssh.command_timeout` | duration |
 | `SUPERMGMT_SSH_KEEPALIVE_INTERVAL` | `ssh.keepalive_interval` | duration |
@@ -140,6 +152,69 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_BACKUP_DIRECTORY` | `backup.directory` | string |
 <!-- END GENERATED ENV TABLE -->
 
+## Server transport and TLS
+
+Only for `instance.mode: server`. Validation (`internal/config/validate.go`):
+
+```yaml
+server:
+  listen: 127.0.0.1:8787            # proxy: loopback or unix:/path or an absolute socket path
+  public_url: https://mgmt.example.com
+  tls:
+    mode: proxy                     # proxy (default) | direct
+    cert_file: ""                   # direct only; required then
+    key_file: ""                    # direct only; required then
+  trusted_proxies: ["127.0.0.1/32"] # proxy only; must be non-empty; IPs or CIDRs
+  admin_socket: /run/supermgmt/admin.sock
+```
+
+- `proxy`: the daemon speaks plain HTTP and a reverse proxy terminates TLS. A non-loopback, non-Unix `listen` is a validation error. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from a peer inside `trusted_proxies`, and a forwarded proto other than `https` is a 400. A loopback connection is not trusted for anything else.
+- `direct`: the daemon terminates TLS 1.2 or newer; `cert_file` and `key_file` are re-read on `SIGHUP` (a failed reload keeps the old pair). There is **no ACME and no certificate generation**.
+- `admin_socket` is created with mode 0660 for the service user; only root or the service user may connect.
+- Default `server.listen` (`127.0.0.1:8787`) is the proxy default. The installer picks `0.0.0.0:8443` for `--tls direct` and writes it explicitly.
+
+See [installation.md](installation.md#tls-proxy-or-direct) and [cloudflare.md](cloudflare.md).
+
+## OIDC
+
+```yaml
+auth:
+  bootstrap:
+    code_ttl: 24h
+  oidc:
+    enabled: true
+    issuer: https://dex.example.com       # https, no userinfo; must equal the discovery document's issuer byte for byte
+    client_id: supermgmt
+    client_secret_ref: secret://auth/oidc-client-secret   # required when enabled; only secret:// is accepted
+    allowed_domains: [example.com]        # optional; matched against a verified email
+    allowed_endpoint_origins: []          # extra https origins, e.g. https://keys.example.com
+```
+
+- The **server** is the OIDC client and holds the client secret. The CLI logs in with Authorization Code + PKCE (S256) over a loopback redirect `http://127.0.0.1:<port>/callback`, or with the device authorization grant (`sm login --device`).
+- Discovery trust: the document's `issuer` must equal `auth.oidc.issuer`; the authorization, token, device-authorization and JWKS endpoints must be `https` and on the issuer's origin or on an origin in `allowed_endpoint_origins` (an entry is a scheme and host with no path). The userinfo endpoint is never called; claims come only from the verified ID token (RS256, ES256 or EdDSA; `iss`, `aud`, `azp`, `exp`, `iat`, `nonce`, verified email).
+- Discovery runs on first use rather than at start, so a wrong issuer or an unreachable IdP fails at login time with `PROVIDER_ERROR`.
+- Requests to the IdP go through the outbound filter: private ranges are allowed, loopback and cloud-metadata addresses never, redirects are not followed, bodies are capped. An IdP that listens only on loopback cannot be used.
+- The token endpoint authenticates the client with HTTP Basic (`client_secret_basic`).
+
+**The only identity provider exercised is Dex**, `ghcr.io/dexidp/dex:v2.45.1`, by hand in a spike (code flow with PKCE and the device grant, confidential client); the automated Dex end-to-end suite was not part of the code this page was written against. No other IdP has been tested; Google, Okta, Entra ID, Keycloak and the rest are untested assumptions. Real-IdP login is on the [manual checklist](manual-checks/m2-handoff.md).
+
+Dex specifics found while testing:
+
+- A Dex confidential client rejects a loopback redirect with a port it has not registered. Register one fixed redirect (`http://127.0.0.1:5555/callback`, say) and sign in with `sm login --callback-port 5555`.
+- With the device grant, Dex puts the `client_secret` into the verification URL shown in the browser. See [security.md](security.md#oidc-and-the-device-flow-client-secret) before enabling the device flow with Dex.
+- Register Dex's `/device/callback` for the device flow; use an issuer at the root of the host (an issuer path puts that callback outside it).
+
+## Backup
+
+```yaml
+backup:
+  schedule: "0 3 * * *"   # 5-field cron, UTC; default in server mode; empty in local mode
+  retention: 14           # newest archives to keep, at least 1
+  directory: ""           # default <instance.data_dir>/backups
+```
+
+In local mode the schedule only runs when `daemon.resident: true`. Details, restore and key handling: [operations.md](operations.md).
+
 ## Environments and providers
 
 These are lists of structures and are set in the file only (see SPEC §8.2.1 and §8.3).
@@ -173,5 +248,5 @@ Permissions are granted only by policy rules. The binary embeds a built-in defau
 ## Defaults that depend on mode
 
 - `security.allow_self_approval` defaults to `true` in local mode and `false` in server mode (SPEC §11.4); set it explicitly to override.
-- Local mode keeps the daemon alive while a client is connected or a job is not finished (including `awaiting_approval`), then exits after `daemon.idle_exit` unless `daemon.resident: true`. A user unit that starts a resident daemon at login arrives in M2.
-- `backup.schedule` defaults to nightly in server mode and is disabled in local mode unless the daemon is resident (backups: M2).
+- Local mode keeps the daemon alive while a client is connected or a job is not finished (including `awaiting_approval`), then exits after `daemon.idle_exit` unless `daemon.resident: true`. `sm install local --resident` registers a user unit (systemd) or launch agent (macOS) that starts a resident daemon at login; the unit and agent are rendered and tested with fakes, and a real launchd or user-systemd run is not verified.
+- `backup.schedule` defaults to `0 3 * * *` (UTC) in server mode and is empty in local mode; a schedule in local mode runs only when the daemon is resident.

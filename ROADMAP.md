@@ -1,25 +1,39 @@
 # Roadmap
 
-Status as of 2026-10-10. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
+Status as of 2026-10-11. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
 
 Statuses: **in progress**, **implemented** (merged, pending release-level review), **planned**.
+
+### M2 accepted scope and honest deferrals
+
+Built: server mode over HTTPS (TLS direct or behind a proxy, no ACME), sessions, API tokens, admin socket, bootstrap code, OIDC (PKCE loopback and device grant), remote client profiles and credential store, SSE, secrets CLI and API with key rotate, retire, export and import, backup and offline restore with restore hold, join and enrollment, the signed release pipeline, `install.sh`, `sm install local|server|client|restore`. Not in M2, or not verified:
+
+- **Clean Debian VM acceptance: amended and deferred.** The CI gate is a Debian container with systemd; a real VM run (optional QEMU/KVM job or a recorded manual run) is not done.
+- **Production signing and provenance: unverified.** CI uses an ephemeral test key; the owner must create the release key and run a protected tag build ([manual-checks/m2-handoff.md](docs/manual-checks/m2-handoff.md)).
+- Identity providers: Dex only, exercised by hand. Dex puts the client secret in the device-flow verification URL; a dedicated public device client needs a new configuration key and spec change.
+- Cloudflare: a guide only, never run against a real account. No edge assertion is consumed.
+- macOS keychain and Linux `secret-tool` credential stores: unit-tested with fakes, manual checks pending.
+- `install.sh` modes `auto`, `upgrade`, `uninstall`, `proxmox-lxc`: M3 (exit 3 now). `sm secrets import --offline` and the orphan-key report in `sm doctor` are not built.
+- SSH CA trust and per-node keys: not scheduled. Providers and Settings TUI screens: not built.
+- The installer requires OpenSSH 8.2 or newer; the spec says 8.1.
+- A defect candidate: `sm login --bootstrap` on a server without OIDC sends no display name, which the server requires (`internal/cli/login.go`, `internal/app/auth.go`). Not verified end to end.
 
 ### M1 accepted scope and honest deferrals
 
 M1 TUI screens: Dashboard, Resources tree, Node detail, Service list and detail, Logs, Jobs, Approvals, Events, Help. The palette supports ssh, logs, services, refresh, setup and probe. Not in M1:
 
 - Applications, Deployments and the Wizard screens: M4. Providers and Settings screens: M2.
-- SSE: M2; the TUI polls in tiers.
-- SSH CA trust, the secrets CLI and `secret.write`, identity rotation, per-node keys, key export: M2. `ssh.known_hosts_file` is unused.
-- `sm daemon install-user-unit` and resident schedules: M2, with backups.
+- SSE: built in M2 for remote profiles; the local TUI still polls in tiers.
+- The secrets CLI, `secret.write`, identity rotation and key export: built in M2. SSH CA trust and per-node keys: not scheduled. `ssh.known_hosts_file` is only the file that goes into a backup.
+- Resident schedules and a user unit: M2 (`sm install local --resident`); there is no `sm daemon install-user-unit`.
 - The metrics endpoint (SPEC §33): not built.
 - Scale: the 500-node target is shown with fakes and benchmarks, not with real nodes.
 - Peer-credential refusal of another user: Linux CI only; macOS relies on the same-UID test and a manual check.
 - Terminal restore after an interactive handoff: PTY tests plus the manual checklist; real emulators are not automated.
 - lazydocker: offered only as `ssh -t ... lazydocker` on the node (never installed); no local lazydocker over an SSH Docker context.
 - Local provider: read-only; macOS has no systemd.
-- `node.setup`: no `deploy_root` (M4), no automated teardown, no server-mode key authorization (M2), no standalone `sudoers.write` or `log_broker.install` jobs (re-run setup instead).
-- `sm doctor` without `--offline`.
+- `node.setup`: no `deploy_root` (M4), no automated teardown, no standalone `sudoers.write` or `log_broker.install` jobs (re-run setup instead). Server-mode key authorization was an M2 item; whether setup from a server works against a real node was not verified here.
+- `sm doctor` without `--offline`: built in M2 for servers (admin socket).
 
 ## Committed for V1
 
@@ -27,7 +41,7 @@ M1 TUI screens: Dashboard, Resources tree, Node detail, Service list and detail,
 |---|---|---|
 | M0 Repository and core | Go module, strict config, audit and redaction, SQLite and migrations, domain model, action catalog and policy engine, canonical plans and approvals, durable job engine, offline CLI (`version`, `completion`, `config validate`, `doctor --offline`), CI | **Implemented** on `feat/m0-core`: domain, errors, config, audit, database, plans, policy, application services, job engine and the four offline commands, with integration and spec-example tests. Pending final review. |
 | M1 Local daemon, SSH, TUI alpha | `sm daemon` with Unix socket API, typed client, local provider, agentless SSH nodes with `node.setup`, systemd and Docker discovery and logs, policy-gated service actions, TUI | **Implemented** on `feat/m1-local-ssh-tui`: pending the manual terminal checklist ([docs/manual-checks/m1-handoff.md](docs/manual-checks/m1-handoff.md)) and release-level review. Accepted scope and deferrals below. |
-| M2 Server, client, auth, release pipeline | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, GoReleaser with checksums, signatures, SBOM and provenance, `install.sh`, backup and restore | Planned |
+| M2 Server, client, auth, release pipeline | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, GoReleaser with checksums, signatures, SBOM and provenance, `install.sh`, backup and restore, join | **Implemented** on `feat/m2-server-auth-release`: pending the manual checks in [docs/manual-checks/m2-handoff.md](docs/manual-checks/m2-handoff.md), the production release key and release-level review. Accepted scope and deferrals above. |
 | M3 Proxmox provider and appliance installer | Proxmox discovery, `sm install proxmox-lxc` with rollback journal, restricted credentials, power actions, upgrade and uninstall | Planned |
 | M4 Apps, GitHub, deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | Planned |
 | M5 MCP | MCP client registration, stdio bridge, remote MCP as OAuth protected resource, read tools, plan submission, optional write tools off by default | Planned |
@@ -59,7 +73,9 @@ These cannot be completed by code alone and block specific milestones:
 | Item | Needed before | Owner |
 |---|---|---|
 | Real-Proxmox acceptance run on a supported PVE host | M3 acceptance, V1 | Maintainer |
-| Release signing key generated, stored in the protected release environment, fingerprint published out-of-band | First signed release (M2) | Maintainer |
+| Release signing key generated, stored in the protected `release` environment (owner as required reviewer), public key embedded in `install.sh` and `scripts/join.sh`, fingerprint published out-of-band | First signed release (M2) | Maintainer |
+| M2 manual checks: macOS keychain, Linux `secret-tool`, real OIDC provider, real reverse proxy, real VM install | M2 sign-off | Maintainer |
+| Decision on a separate public client for the OIDC device flow (Dex leaks the client secret) | Production use of the device flow | Maintainer |
 | Project name and trademark check (GitHub, registries, domain, trademark) | First public release | Maintainer |
 | License confirmation (Apache-2.0 by default) and dependency license scan | First public release | Maintainer |
 | Replacement of the `<ORG>` placeholder in installer URLs | First release | Maintainer |

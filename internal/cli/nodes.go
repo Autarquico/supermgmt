@@ -21,7 +21,8 @@ func newNodesCmd(env []string) *cobra.Command {
 		Args:  noArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newNodesListCmd(env), newNodesGetCmd(env), newNodesAddCmd(env), newNodesRemoveCmd(env), newNodesProbeCmd(env))
+	cmd.AddCommand(newNodesListCmd(env), newNodesGetCmd(env), newNodesAddCmd(env), newNodesRemoveCmd(env), newNodesProbeCmd(env),
+		newNodesSetupCmd(env), newNodesRepinCmd(env))
 	return cmd
 }
 

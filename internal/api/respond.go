@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
@@ -82,17 +85,33 @@ func writeBytes(w http.ResponseWriter, status int, body []byte) {
 	_, _ = w.Write(body)
 }
 
-func (s *Server) writeData(w http.ResponseWriter, r *http.Request, status int, data any) {
+// responder writes responses; the public server and the admin server share it.
+type responder struct{ log *slog.Logger }
+
+func (s responder) writeData(w http.ResponseWriter, r *http.Request, status int, data any) {
 	writeBytes(w, status, envelope(data, correlationOf(r)))
 }
 
+// rateLimited is the refusal of a request over its limit. The error code set
+// of spec §38 has no rate-limit code, so the body is a TIMEOUT (try again
+// later) and the status, 429, and Retry-After carry the meaning.
+type rateLimited struct{ after time.Duration }
+
+func (e *rateLimited) Error() string { return "rate limit exceeded" }
+
 // writeError renders err. An *app.Replay is not a failure: it carries the
 // stored answer of an earlier identical request and is written verbatim.
-func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
+func (s responder) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var replay *app.Replay
 	if errors.As(err, &replay) {
 		w.Header().Set(wire.HeaderIdempotentReplayed, "true")
 		writeBytes(w, replay.Status, replay.Envelope)
+		return
+	}
+	var limited *rateLimited
+	if errors.As(err, &limited) {
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(limited.after.Seconds())))))
+		writeBytes(w, http.StatusTooManyRequests, errorEnvelope(smerr.New(smerr.CodeTimeout, "", "rate limit exceeded; retry later"), correlationOf(r)))
 		return
 	}
 	public := publicError(err)

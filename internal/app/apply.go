@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -70,7 +71,16 @@ func (i *Inventory) applyNodeAdd(ctx context.Context, q database.Querier, actor 
 	})
 }
 
+// applyNodeUpdate applies patch to node. A new host key re-pins first (it is
+// its own audited event), then the other fields change under the new revision.
 func (i *Inventory) applyNodeUpdate(ctx context.Context, q database.Querier, actor domain.Actor, node domain.Node, patch NodePatch) (domain.Node, error) {
+	if patch.HostPublicKey != nil {
+		repinned, err := i.applyRepin(ctx, q, actor, node, strings.TrimSpace(*patch.HostPublicKey))
+		if err != nil {
+			return domain.Node{}, err
+		}
+		node, patch.HostPublicKey = repinned, nil
+	}
 	updated, changed, err := i.patched(ctx, q, node, patch)
 	if err != nil || len(changed) == 0 {
 		return node, err
@@ -170,6 +180,53 @@ func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, 
 	}
 	return provider, i.emit(ctx, q, actor, actionProviderWite, domain.ResourceRef{Type: domain.ResourceProvider, ID: provider.ID},
 		domain.ResultSucceeded, map[string]any{"type": local.ProviderType, "node_id": p.NodeID.String()})
+}
+
+// runApproved executes a control_plane.apply job. Key operations manage their
+// own transactions (rotation rewraps every secret in one), so they cannot run
+// inside the fenced transaction the other direct actions use.
+func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease) error {
+	action, err := i.approvedAction(ctx, lease)
+	if err != nil {
+		return err
+	}
+	if action == actionSecretWrite {
+		return i.runSecretWrite(ctx, lease)
+	}
+	return i.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := lease.Fence(ctx, tx); err != nil {
+			return err
+		}
+		job, err := i.jobs.Get(ctx, tx, lease.JobID)
+		if err != nil {
+			return err
+		}
+		actor, err := loadActor(ctx, tx, job.ActorID, credentialOf(job))
+		if err != nil {
+			return err
+		}
+		return i.applyApproved(ctx, tx, actor, action, job)
+	})
+}
+
+// approvedAction is the action of the plan the job carries.
+func (i *Inventory) approvedAction(ctx context.Context, lease jobs.Lease) (string, error) {
+	job, err := i.jobs.Get(ctx, i.cfg.DB.Reader(), lease.JobID)
+	if err != nil {
+		return "", err
+	}
+	if job.PlanID == nil {
+		return "", smerr.New(smerr.CodeInternal, "", "control_plane.apply job has no plan")
+	}
+	rec, err := database.GetPlan(ctx, i.cfg.DB.Reader(), *job.PlanID)
+	return rec.Action, err
+}
+
+func (i *Inventory) runSecretWrite(ctx context.Context, lease jobs.Lease) error {
+	if i.keys == nil {
+		return smerr.New(smerr.CodeInternal, "", "key management is not available on this instance")
+	}
+	return i.keys.runApproved(ctx, lease)
 }
 
 // applyApproved performs the change an approved control_plane.apply job carries.

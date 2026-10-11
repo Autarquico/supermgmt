@@ -6,7 +6,7 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](ROADMAP.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries) and M1 (local daemon, agentless SSH nodes, TUI) are implemented on the integration branch and await release-level review. There is no installer, no server mode, no HTTPS API and no MCP endpoint yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
+> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) and M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) are implemented on the integration branch and await release-level review. There is no MCP endpoint and no Proxmox support yet. No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
 
 SuperMgmt is a local-first, terminal-first control plane for developers. Connect Linux machines, Proxmox, Docker, systemd, GitHub repositories and deployments in one place; manage them from a fast TUI/CLI, or expose the same policy-controlled operations to AI agents through MCP.
 
@@ -47,7 +47,7 @@ The target architecture (SPEC §2, §6). One daemon owns state; every other surf
      (agentless)  VE API      systemd       API          optional)
 ```
 
-What exists today (M0 and M1): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), plus the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted instance SSH identity, `node.setup`, the TUI and the CLI. Not present: HTTPS server mode, Proxmox, GitHub, deployments, MCP. Details: [docs/architecture.md](docs/architecture.md).
+What exists today (M0 to M2): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer. Not present: Proxmox, GitHub, deployments, MCP. Details: [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
@@ -79,15 +79,21 @@ sm                                   # open the TUI
 
 Until setup, a node is read with read-only probes as your `admin_user`. Starting, stopping and restarting services needs `node.setup` first. Step by step, and what setup changes on the node: [docs/providers.md](docs/providers.md). Trust and risk: [docs/security.md](docs/security.md).
 
-Planned, not available yet:
+Installer and server mode (M2). **Unreleased: the installer's trust root is a placeholder until the owner creates the release key, so a real `install.sh` run fails closed with exit 5.** What it does once a signed release exists, the review-first alternative to `curl | bash`, and the honest trust roots: [docs/installation.md](docs/installation.md). Running a server: [docs/operations.md](docs/operations.md).
+
+```bash
+# on a Debian/Ubuntu host with systemd, as root (not verified against a real release)
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | bash -s -- server --public-url https://mgmt.example.com
+```
+
+Still planned:
 
 | Step | Command | Available from |
 |---|---|---|
-| Universal installer (no clone) | `curl -fsSL .../install.sh \| bash` | M2 (local, server), M3 (Proxmox) |
-| Proxmox host: automatic unprivileged LXC | same installer, detected automatically | M3 |
-| Local laptop install | `sm install local` | M2 |
+| Installer default mode `auto`, `upgrade`, `uninstall` | `install.sh` with no mode | M3 (today these exit 3) |
+| Proxmox host: automatic unprivileged LXC | `proxmox-lxc` | M3 |
 
-Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doctor` without `--offline` is not implemented yet and exits with a usage error.
+Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doctor` without `--offline` asks a running server over its admin socket (run it as root or the service user); on a local install use `--offline`.
 
 ## Feature matrix
 
@@ -115,10 +121,21 @@ Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doc
 | Local provider (this machine, read-only) | Implemented (M1) | §14 |
 | TUI: Dashboard, Resources, Node, Services, Logs, Jobs, Approvals, Events, Help; palette for ssh, logs, services, setup, probe, refresh. Polls in tiers | Implemented (M1) | §22 |
 | CLI: `nodes`, `services`, `jobs`, `approvals`, `events`, `status`, `ssh`, `docker`, `ssh-key`, `daemon`, `tui` | Implemented (M1) | §4 |
-| Server mode over HTTPS, sessions, tokens, OIDC, SSE | Planned (M2) | §23 |
-| Secrets CLI and API, identity rotation, key export and import, per-node keys, SSH CA trust | Planned (M2) | §10 |
-| Signed releases, `install.sh`, backup and restore, resident-daemon user unit | Planned (M2) | §3, §29, §36 |
-| Providers and Settings screens in the TUI | Planned (M2) | §22 |
+| Server mode over HTTPS (TLS direct or behind a proxy, no ACME), sessions, API tokens with scopes, admin socket, bootstrap code, rate limits, SSE | Implemented (M2) | §23, §11.5, ADR-0017 |
+| OIDC login (PKCE loopback and device grant), tested against Dex only | Implemented (M2) | §23.1, ADR-0018 |
+| Remote client profiles, `sm login`, credential store (macOS keychain, `secret-tool`, 0600 file), remote TUI | Implemented (M2); real keychain and `secret-tool` are manual checks | Appendix B |
+| Secrets CLI and API, master-key rotate, retire, export and import, instance SSH-key rotation, host-key re-pin, approvals for `secret.write` | Implemented (M2) | §10, ADR-0021 |
+| Outbound request filter (identity-provider endpoints) | Implemented (M2); health URLs M4 | §21.1 |
+| Backup and offline restore with journal, crash-injection tests and restore hold | Implemented (M2); no real-VM run | §29, ADR-0020 |
+| Join and enrollment (`sm enrollments create`, `sm join`, `join.sh`) | Implemented (M2) | §13, ADR-0022 |
+| Signed release pipeline (GoReleaser, OpenSSH signatures, SBOM, provenance), `install.sh`, `sm install local\|server\|client\|restore` | Implemented (M2); verified with a CI test key only, the production key and provenance are unverified | §3, §36, ADR-0019 |
+| Cloudflare Tunnel/Access | Guide only, not verified against a real account; no edge assertion is consumed | §25 |
+| Resident-daemon user unit (`sm install local --resident`) | Implemented (M2); not run under real launchd or user systemd | §2.1.1 |
+| SSH CA trust, per-node keys | Not scheduled | §10 |
+| Providers and Settings screens in the TUI | Not built (still planned) | §22 |
+| `install.sh` modes `auto`, `upgrade`, `uninstall`, `proxmox-lxc` | Planned (M3); exit 3 today | §3.4 |
+
+M2 was verified in CI with unit and integration tests, fakes and an in-process test identity provider, and install tamper tests under a test signing key. Dex was exercised by hand in a spike (code flow, device grant) on a developer machine; the Docker-based end-to-end suite (Dex login, install in a Debian systemd container, crash-injected restore) was not part of the code this documentation was written against and is not claimed. Not verified: a real Debian VM (the criterion is amended to a systemd container; a VM run is deferred), the production signing key and provenance, a real Cloudflare account, any identity provider other than Dex, and the real macOS keychain. The steps for those are in [docs/manual-checks/m2-handoff.md](docs/manual-checks/m2-handoff.md).
 | Proxmox discovery, appliance installer, power actions | Planned (M3) | §3.5, §15 |
 | GitHub connector, apps, deployments, Applications, Deployments and Wizard screens, rollback | Planned (M4) | §18-§21 |
 | MCP server (read tools, plan submission) | Planned (M5) | §24 |
@@ -135,7 +152,8 @@ Summary only; see [SECURITY.md](SECURITY.md) and [docs/security.md](docs/securit
 - Local mode trusts code running as the same OS user: the daemon socket accepts that user only.
 - Nodes: the pinned host key is the only trust anchor, remote output is sanitized, and commands come from a fixed catalog. After setup SuperMgmt holds no standing root on a node.
 - The `journal-group` log mode lets the node credential read the node's entire system journal. Docker access is root-equivalent. Granting restart on a unit trusts everything that unit executes (a trust profile, not a proof).
-- The KEK files in `security.keys_dir` are not in the database and must be backed up separately. Key export arrives in M2.
+- The KEK files in `security.keys_dir` are not in the database or in backup archives and must be backed up separately (`sm secrets export-key`). Archives are not encrypted.
+- Server mode: every request needs a bearer token (session from OIDC, or an API token); key operations and secret imports are approval-gated jobs. `curl | bash` trusts the `main` branch; the review-first path does not (see [docs/installation.md](docs/installation.md)).
 - MCP content is untrusted input; an MCP identity can never approve its own plans (planned, M5).
 
 ## Supported platforms and integrations
@@ -144,18 +162,18 @@ Summary only; see [SECURITY.md](SECURITY.md) and [docs/security.md](docs/securit
 |---|---|
 | Build and test: Linux and macOS, amd64 and arm64, Go 1.27, `CGO_ENABLED=0` | Cross-compiled in CI |
 | Machine running `sm`: Linux and macOS | Implemented (M1). The local provider is read-only; macOS has no systemd |
-| Released binaries | None yet (M2) |
+| Released binaries | None yet. The pipeline exists (M2); no signed tag has been built and the release key does not exist |
 | Managed nodes: generic Linux over SSH | Implemented (M1). Verified in CI on Debian only; other distributions are an untested assumption |
 | systemd and Docker discovery, service actions | Implemented (M1) |
 | Proxmox VE | Planned (M3) |
 | Docker Compose deployments | Planned (M4) |
 | GitHub | Planned (M4) |
 | MCP clients | Planned (M5) |
-| Cloudflare | Optional, guide and hooks only (M2) |
+| Cloudflare | Optional, guide only ([docs/cloudflare.md](docs/cloudflare.md)); not verified against a real account |
 
 ## Configuration
 
-See [docs/configuration.md](docs/configuration.md) and [examples/config.yaml](examples/config.yaml). Unknown fields fail validation. A key being accepted does not mean its feature exists; the configuration page says which keys M1 reads.
+See [docs/configuration.md](docs/configuration.md) and [examples/config.yaml](examples/config.yaml). Unknown fields fail validation. A key being accepted does not mean its feature exists; the configuration page says which keys are read.
 
 ## MCP example
 
@@ -188,11 +206,11 @@ make integration-fixtures  # Docker node fixtures (needs a local Docker daemon)
 make cross-build   # linux/darwin x amd64/arm64, CGO disabled
 ```
 
-`make api-check`, `make e2e`, `make snapshot` and `make release-check` are placeholders until M2. See [CONTRIBUTING.md](CONTRIBUTING.md).
+`make api-check`, `make snapshot`, `make release-check` and `make install-test` run the OpenAPI drift check, a signed snapshot release with a throwaway key, its verification and the `install.sh` tamper matrix. `make e2e` is still a placeholder. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
-M0 core and M1 local daemon, SSH and TUI (both implemented, pending release-level review), then M2 server and releases, M3 Proxmox, M4 deployments, M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
+M0 core, M1 local daemon, SSH and TUI, and M2 server and releases (all implemented, pending release-level review), then M3 Proxmox, M4 deployments, M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing and security
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/policy"
+	localprovider "github.com/autarquico/supermgmt/internal/providers/local"
+	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
 )
 
@@ -219,6 +222,196 @@ func TestUpdateNodeWithAStaleRevisionIsAConflict(t *testing.T) {
 	if !errors.As(err, &typed) || typed.Code != smerr.CodeConflict || typed.Details["current_spec_revision"] != node.SpecRevision {
 		t.Errorf("error = %v (%+v), want CONFLICT carrying the current revision", err, typed)
 	}
+}
+
+func requireErrorCode(t *testing.T, err error, want smerr.Code) {
+	t.Helper()
+	if smerr.CodeOf(err) != want {
+		t.Fatalf("error = %v, want %s", err, want)
+	}
+}
+
+func (n *nodeFixture) storedHostKey(id domain.ID) string {
+	n.t.Helper()
+	var key string
+	n.inTx(func(ctx context.Context, tx *database.Tx) error {
+		node, err := database.GetNode(ctx, tx, id)
+		key = node.Endpoint.HostPublicKey
+		return err
+	})
+	return key
+}
+
+func TestRepinReplacesThePinDropsTheConnectionsAndAuditsBothFingerprints(t *testing.T) {
+	n := newNodeFixture(t)
+	node := n.addApplied("web-3", n.withStaging())
+	newKey := newAuthorizedKey()
+	oldFingerprint, _ := sshnode.Fingerprint(node.Endpoint.HostPublicKey)
+	newFingerprint, _ := sshnode.Fingerprint(newKey)
+
+	res, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision, NodePatch{HostPublicKey: &newKey})
+
+	if err != nil || res.Applied == nil {
+		t.Fatalf("UpdateNode = %+v, %v", res, err)
+	}
+	if got := n.storedHostKey(node.ID); got != newKey || res.Applied.SpecRevision != node.SpecRevision+1 {
+		t.Errorf("stored pin %q, revision %d; want the new key at revision %d", got, res.Applied.SpecRevision, node.SpecRevision+1)
+	}
+	events := n.events("node.host_key.repinned")
+	if len(events) != 1 || events[0].Data["old_fingerprint"] != oldFingerprint || events[0].Data["new_fingerprint"] != newFingerprint {
+		t.Fatalf("events = %+v, want one carrying both fingerprints", events)
+	}
+	if strings.Contains(fmt.Sprint(events[0].Data), newKey) {
+		t.Error("the event carries the key itself, not just its fingerprint")
+	}
+	for _, user := range []string{"supermgmt", "admin"} {
+		if !slices.Contains(n.dialer.invalidated, node.ID.String()+"/"+user) {
+			t.Errorf("the pooled connection of %s was not dropped: %v", user, n.dialer.invalidated)
+		}
+	}
+}
+
+func TestRepinTogetherWithOtherFieldsAppliesBoth(t *testing.T) {
+	n := newNodeFixture(t)
+	node := n.addApplied("web-3", n.withStaging())
+	newKey, tags := newAuthorizedKey(), []string{"edge"}
+
+	res, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision, NodePatch{HostPublicKey: &newKey, Tags: &tags})
+
+	if err != nil || res.Applied == nil {
+		t.Fatalf("UpdateNode = %+v, %v", res, err)
+	}
+	if n.storedHostKey(node.ID) != newKey || !slices.Equal(res.Applied.Tags, tags) {
+		t.Errorf("pin %q tags %v; want both changes", n.storedHostKey(node.ID), res.Applied.Tags)
+	}
+}
+
+func TestRepinToTheCurrentKeyChangesNothing(t *testing.T) {
+	n := newNodeFixture(t)
+	node := n.addApplied("web-3", n.withStaging())
+	same := node.Endpoint.HostPublicKey
+
+	res, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision, NodePatch{HostPublicKey: &same})
+
+	if err != nil || res.Applied.SpecRevision != node.SpecRevision || len(n.events("node.host_key.repinned")) != 0 || len(n.dialer.invalidated) != 0 {
+		t.Errorf("revision %d, events %d, drops %v; a re-pin to the same key must be a no-op", res.Applied.SpecRevision, len(n.events("node.host_key.repinned")), n.dialer.invalidated)
+	}
+}
+
+func TestRepinRefusals(t *testing.T) {
+	validKey := newAuthorizedKey()
+	cases := map[string]struct {
+		key  string
+		want smerr.Code
+	}{
+		"not a key":      {"definitely not a key", smerr.CodeInvalidArgument},
+		"two keys":       {validKey + "\n" + newAuthorizedKey(), smerr.CodeInvalidArgument},
+		"an empty value": {"", smerr.CodeInvalidArgument},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			n := newNodeFixture(t)
+			node := n.addApplied("web-3", n.withStaging())
+			_, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision, NodePatch{HostPublicKey: &c.key})
+			requireErrorCode(t, err, c.want)
+			if n.storedHostKey(node.ID) != node.Endpoint.HostPublicKey {
+				t.Error("a refused re-pin changed the pin")
+			}
+		})
+	}
+
+	t.Run("a stale revision", func(t *testing.T) {
+		n := newNodeFixture(t)
+		node := n.addApplied("web-3", n.withStaging())
+		_, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision+1, NodePatch{HostPublicKey: &validKey})
+		requireErrorCode(t, err, smerr.CodeConflict)
+		if n.storedHostKey(node.ID) != node.Endpoint.HostPublicKey {
+			t.Error("a re-pin with a stale If-Match changed the pin")
+		}
+	})
+	t.Run("a caller without node.update", func(t *testing.T) {
+		n := newNodeFixture(t)
+		node := n.addApplied("web-3", n.withStaging())
+		_, err := n.inv.UpdateNode(context.Background(), n.caller(n.dave), node.ID, node.SpecRevision, NodePatch{HostPublicKey: &validKey})
+		requireErrorCode(t, err, smerr.CodePolicyDenied)
+		if n.storedHostKey(node.ID) != node.Endpoint.HostPublicKey {
+			t.Error("a denied re-pin changed the pin")
+		}
+	})
+	t.Run("the local node", func(t *testing.T) {
+		n := newNodeFixture(t)
+		var local domain.Node
+		n.inTx(func(ctx context.Context, tx *database.Tx) error {
+			now := n.clock.Now()
+			provider, err := database.CreateProvider(ctx, tx, domain.Provider{
+				ID: n.ids.NewID(), Type: localprovider.ProviderType, Name: "local", Origin: domain.ProviderAPI, CreatedAt: now, UpdatedAt: now,
+			})
+			if err != nil {
+				return err
+			}
+			local, err = database.CreateNode(ctx, tx, domain.Node{
+				ID: n.ids.NewID(), ProviderID: provider.ID, NativeID: localprovider.NativeID, Name: "local", Kind: localprovider.NodeKind,
+				ManagementState: domain.ManagementManaged, Reachability: domain.ReachabilityUnknown, CreatedAt: now, UpdatedAt: now,
+			})
+			return err
+		})
+		var err error
+		_, err = n.inv.UpdateNode(context.Background(), n.caller(n.admin), local.ID, local.SpecRevision, NodePatch{HostPublicKey: &validKey})
+		requireErrorCode(t, err, smerr.CodeInvalidArgument)
+	})
+}
+
+func TestRepinThatNeedsApprovalChangesNothingUntilTheJobAppliesTheKey(t *testing.T) {
+	n := newNodeFixture(t) // the fixture node is in production: two approvals
+	newKey, tags := newAuthorizedKey(), []string{"edge"}
+	oldFingerprint, _ := sshnode.Fingerprint(n.node.Endpoint.HostPublicKey)
+	newFingerprint, _ := sshnode.Fingerprint(newKey)
+
+	res, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), n.node.ID, n.node.SpecRevision, NodePatch{HostPublicKey: &newKey, Tags: &tags})
+
+	if err != nil || res.Pending == nil || res.Applied != nil {
+		t.Fatalf("UpdateNode = %+v, %v; want a pending job", res, err)
+	}
+	if n.storedHostKey(n.node.ID) != n.node.Endpoint.HostPublicKey || len(n.dialer.invalidated) != 0 || len(n.events("node.host_key.repinned")) != 0 {
+		t.Fatal("the pin changed before the approval")
+	}
+
+	n.approveToQuorum(res.Pending.Job)
+	claimed, ok := n.claim()
+	if !ok {
+		t.Fatal("the approved job was not claimable")
+	}
+	for range 2 { // a retried job converges
+		if err := (applyHandler{inv: n.inv}).Run(context.Background(), claimed.Lease); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+	}
+
+	if got := n.storedHostKey(n.node.ID); got != newKey {
+		t.Errorf("stored pin %q, want the approved key", got)
+	}
+	node := mustNodeByID(t, n.fixture, n.node.ID)
+	if !slices.Equal(node.Tags, tags) || node.SpecRevision != n.node.SpecRevision+2 {
+		t.Errorf("tags %v revision %d; want the other fields applied after the re-pin", node.Tags, node.SpecRevision)
+	}
+	events := n.events("node.host_key.repinned")
+	if len(events) != 1 || events[0].Data["old_fingerprint"] != oldFingerprint || events[0].Data["new_fingerprint"] != newFingerprint {
+		t.Errorf("events = %+v, want one carrying both fingerprints", events)
+	}
+	if !slices.Contains(n.dialer.invalidated, n.node.ID.String()+"/admin") {
+		t.Errorf("the pooled connection was not dropped: %v", n.dialer.invalidated)
+	}
+}
+
+func mustNodeByID(t *testing.T, f *fixture, id domain.ID) domain.Node {
+	t.Helper()
+	var node domain.Node
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		var err error
+		node, err = database.GetNode(ctx, tx, id)
+		return err
+	})
+	return node
 }
 
 func TestUpdateAndRemoveRefuseNodesDefinedInTheConfigurationFile(t *testing.T) {

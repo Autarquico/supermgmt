@@ -34,8 +34,13 @@ const (
 // AutomatedTarget is where an automated session connects (spec §6.4,
 // ADR-0009 b): as the dedicated user, signing with the key version node.setup
 // pinned, if and only if the node completed node.setup (setup != nil);
-// otherwise as admin_user with the admin credential, for read-only probes.
+// otherwise as admin_user with the admin credential, for read-only probes. A
+// joined node has no admin account (ADR-0022): until setup it is probed as the
+// dedicated user with the key version enrollment pinned in its credential_ref.
 func AutomatedTarget(n domain.Node, setup *runtimes.SetupMeta) ssh.Target {
+	if setup == nil && n.Endpoint.AdminUser == "" {
+		return DedicatedTarget(n, n.CredentialRef)
+	}
 	if setup == nil {
 		return AdminTarget(n)
 	}

@@ -28,6 +28,17 @@ func decodeError(t *testing.T, r reply) wire.Error {
 	return e.Error
 }
 
+// unkeyedWrites are the writes that take no Idempotency-Key although they are
+// not credential-issuing: a scan that changes nothing, and the two that end a
+// credential (revoking twice is already a no-op).
+var unkeyedWrites = map[string]bool{
+	"POST " + wire.PathNodesSSHHostKey: true,
+	"POST " + wire.PathLogout:          true,
+	"DELETE " + wire.PathToken:         true,
+	"POST " + wire.PathOIDCStart:       true,
+	"POST " + wire.PathOIDCDevice:      true,
+}
+
 func TestEveryRouteMapsToExactlyOneCatalogActionOrExemption(t *testing.T) {
 	h := newHarness(t)
 	seen := map[string]bool{}
@@ -38,19 +49,19 @@ func TestEveryRouteMapsToExactlyOneCatalogActionOrExemption(t *testing.T) {
 		}
 		seen[key] = true
 		_, inCatalog := policy.Lookup(rt.Action)
-		exempt := rt.Action == ExemptSelf || rt.Action == ExemptHealth
+		exempt := rt.Action == ExemptSelf || rt.Action == ExemptHealth || rt.Action == ExemptAuth
 		if inCatalog == exempt { // neither, or (impossibly) both
 			t.Errorf("%s maps to %q, which is neither a catalog action nor an exemption", key, rt.Action)
 		}
 		mutating := rt.Method != http.MethodGet
-		wantKey := mutating && rt.Pattern != wire.PathNodesSSHHostKey
+		wantKey := mutating && !rt.Credential && !unkeyedWrites[key]
 		if rt.Keyed != wantKey {
 			t.Errorf("%s: keyed = %v, want %v", key, rt.Keyed, wantKey)
 		}
 	}
 }
 
-func TestTheServedRoutesAreTheM1Contract(t *testing.T) {
+func TestTheLocalSocketServesTheContract(t *testing.T) {
 	h := newHarness(t)
 	want := []string{
 		"GET " + wire.PathHealthLive, "GET " + wire.PathHealthReady, "GET " + wire.PathMe, "GET " + wire.PathPresence,
@@ -62,6 +73,13 @@ func TestTheServedRoutesAreTheM1Contract(t *testing.T) {
 		"GET " + wire.PathNodeConnectInfo, "POST " + wire.PathNodeSessions, "POST " + wire.PathNodeSessionEnd,
 		"GET " + wire.PathService, "GET " + wire.PathServiceLogs, "POST " + wire.PathServiceStart,
 		"POST " + wire.PathServiceStop, "POST " + wire.PathServiceRestart, "GET " + wire.PathEvents,
+		"GET " + wire.PathEventStream,
+		"POST " + wire.PathOIDCStart, "POST " + wire.PathOIDCExchange, "POST " + wire.PathOIDCDevice,
+		"POST " + wire.PathOIDCDevicePoll, "POST " + wire.PathBootstrap, "POST " + wire.PathLogout,
+		"GET " + wire.PathTokens, "POST " + wire.PathTokens, "DELETE " + wire.PathToken,
+		"POST " + wire.PathSecrets, "POST " + wire.PathMasterKeyRotate, "POST " + wire.PathMasterKeyRetire,
+		"POST " + wire.PathMasterKeyExport, "POST " + wire.PathSSHKeyRotate, "GET " + wire.PathMasterKeys,
+		"GET " + wire.PathBackups, "POST " + wire.PathBackups, "POST " + wire.PathEnrollments, "POST " + wire.PathEnroll,
 	}
 	got := map[string]bool{}
 	for _, rt := range h.server.Routes() {

@@ -84,6 +84,14 @@ linters:
               desc: tui and client never run runtime adapters
             - pkg: github.com/autarquico/supermgmt/internal/providers
               desc: tui and client never talk to providers
+            - pkg: github.com/autarquico/supermgmt/internal/auth
+              desc: tui and client present tokens; they never mint or verify them
+            - pkg: github.com/autarquico/supermgmt/internal/secrets
+              desc: tui and client never hold master keys
+            - pkg: github.com/autarquico/supermgmt/internal/backup
+              desc: tui and client reach backups through the API
+            - pkg: github.com/autarquico/supermgmt/internal/installer
+              desc: tui and client do not install
         api-does-not-reach-nodes:
           files:
             - "**/internal/api/**"
@@ -104,6 +112,36 @@ linters:
               desc: cli talks to the daemon through internal/client; offline commands use database, config and policy
             - pkg: github.com/autarquico/supermgmt/internal/transport
               desc: cli never opens SSH sessions itself
+        netguard-is-stdlib:
+          files:
+            - "**/internal/netguard/**"
+          list-mode: strict
+          allow:
+            - $gostd
+        installer-shells-out:
+          files:
+            - "**/internal/installer/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/database
+              desc: the installer runs `sm` subcommands for offline database work (ADR-0019, ADR-0020)
+            - pkg: github.com/autarquico/supermgmt/internal/app
+              desc: the installer runs `sm` subcommands for offline database work (ADR-0019, ADR-0020)
+        oidc-libraries-stay-in-auth-oidc:
+          files:
+            - "**/*.go"
+            - "!**/internal/auth/oidc/**"
+          deny:
+            - pkg: github.com/coreos/go-oidc/v3
+              desc: only internal/auth/oidc talks to the IdP (ADR-0018)
+            - pkg: golang.org/x/oauth2
+              desc: only internal/auth/oidc talks to the IdP (ADR-0018)
+        zstd-stays-in-backup:
+          files:
+            - "**/*.go"
+            - "!**/internal/backup/**"
+          deny:
+            - pkg: github.com/klauspost/compress
+              desc: only internal/backup reads and writes archives (ADR-0020)
         cmd-only-imports-cli:
           files:
             - "**/cmd/**"

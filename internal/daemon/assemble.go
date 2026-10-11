@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/autarquico/supermgmt/internal/api"
 	"github.com/autarquico/supermgmt/internal/app"
+	"github.com/autarquico/supermgmt/internal/auth"
+	"github.com/autarquico/supermgmt/internal/backup"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -26,21 +31,26 @@ const (
 	staleAfterFactor = 3
 )
 
-// background is what runs next to the HTTP server for the daemon's lifetime.
+// background is what runs next to the HTTP servers for the daemon's lifetime.
 type background struct {
 	engine    *jobs.Engine
 	refresher *app.Refresher
 	sweeper   *app.Sweeper
+	backups   *backupSchedule // nil when no schedule is configured
+	authSweep *authSweep
 }
 
 // system is the assembled daemon: every service wired to one database, ready
-// to serve once a listener exists.
+// to serve once a listener exists. A local daemon has the Unix socket API, a
+// server has the HTTPS API and the admin socket.
 type system struct {
 	db        *database.DB
 	pool      *ssh.Pool
-	server    *api.Server
 	residency *Residency
 	work      background
+	local     *api.Server
+	remote    *api.Server
+	admin     *api.AdminServer
 }
 
 // close releases what assemble opened. Background work must have stopped.
@@ -49,13 +59,18 @@ func (s *system) close() error {
 	return s.db.Close()
 }
 
-// assemble performs the startup of ADR-0014 after the locks: it opens and
-// migrates the database, makes the instance row, opens the key files, ensures
-// the instance SSH identity, reconciles the static configuration and the
-// `local:<uid>` administrator, and wires the services (T8-wiring order).
+// assemble performs the startup of ADR-0020 after the locks: it finishes or
+// discards an interrupted restore (before the database is opened, because the
+// restore may have replaced the files), opens and migrates the database,
+// loads the restore hold (an unreadable hold refuses the start), makes the
+// instance row, opens the key files, ensures the instance SSH identity,
+// activates the static configuration and the identities of the mode, and
+// wires the services.
 func assemble(ctx context.Context, o Options) (*system, error) {
-	cfg := o.Config
-	db, err := openDatabase(ctx, cfg, o.Clock)
+	if err := recoverRestore(o.Config); err != nil {
+		return nil, err
+	}
+	db, err := openDatabase(ctx, o.Config, o.Clock)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +80,19 @@ func assemble(ctx context.Context, o Options) (*system, error) {
 		return nil, err
 	}
 	return sys, nil
+}
+
+// recoverRestore runs the journal recovery with the same spelling of the data
+// directory as the restore command, so both find the same journal.
+func recoverRestore(cfg *config.Config) error {
+	dataDir, err := filepath.Abs(cfg.Instance.DataDir)
+	if err != nil {
+		return fmt.Errorf("data_dir %q: %w", cfg.Instance.DataDir, err)
+	}
+	if err := backup.Recover(dataDir); err != nil {
+		return fmt.Errorf("finish the interrupted restore before starting: %w", err)
+	}
+	return nil
 }
 
 func openDatabase(ctx context.Context, cfg *config.Config, clock domain.Clock) (*database.DB, error) {
@@ -96,106 +124,240 @@ func ensureInstance(ctx context.Context, db *database.DB, cfg *config.Config, cl
 	})
 }
 
+// keyKit is the secret store with the key files and the key administrator
+// that share one set of keys.
+type keyKit struct {
+	store *secrets.Store
+	keys  *secrets.FileKeys
+	admin *secrets.KeyAdmin
+}
+
+func openSecrets(ctx context.Context, cfg *config.Config, db *database.DB, clock domain.Clock, ids domain.IDGenerator) (keyKit, error) {
+	repo := app.NewSecretsKeyRepo(db, clock)
+	keys, err := secrets.OpenFileKeys(ctx, cfg.Security.KeysDir, repo, ids)
+	if err != nil {
+		return keyKit{}, fmt.Errorf("open encryption keys: %w", err)
+	}
+	return keyKit{
+		store: secrets.NewStore(keys, repo, ids, clock),
+		keys:  keys,
+		admin: secrets.NewKeyAdmin(keys, repo, ids, backup.Archives{Dir: cfg.Backup.Directory}),
+	}, nil
+}
+
 func wireUp(ctx context.Context, o Options, db *database.DB) (*system, error) {
-	cfg, clock, ids, log := o.Config, o.Clock, o.IDs, o.Log
+	cfg, clock, ids := o.Config, o.Clock, o.IDs
 	if err := ensureInstance(ctx, db, cfg, clock, ids); err != nil {
 		return nil, fmt.Errorf("create the instance row: %w", err)
 	}
-	appCfg, err := appConfig(db, o)
+	appCfg, policyBytes, err := appConfig(db, o)
 	if err != nil {
 		return nil, err
 	}
-	store, err := openSecrets(ctx, cfg, db, clock, ids)
+	kit, err := openSecrets(ctx, cfg, db, clock, ids)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := app.EnsureInstanceIdentity(ctx, appCfg, store); err != nil {
+	if _, err := app.EnsureInstanceIdentity(ctx, appCfg, kit.store); err != nil {
 		return nil, fmt.Errorf("ensure the instance SSH identity: %w", err)
 	}
-	if err := reconcileStatic(ctx, appCfg, cfg); err != nil {
+	b := &builder{o: o, cfg: cfg, app: appCfg, db: db, kit: kit}
+	if err := b.openGate(ctx); err != nil {
 		return nil, err
 	}
-	caller, err := EnsureLocalIdentity(ctx, db, clock, ids, o.UID)
+	if err := activateConfig(ctx, appCfg, o, policyBytes); err != nil {
+		return nil, err
+	}
+	if err := b.ensureIdentities(ctx); err != nil {
+		return nil, err
+	}
+	b.pool = ssh.NewPool(poolConfig(cfg), ssh.NewCredentials(kit.store), clock)
+	sys, err := b.build(ctx)
 	if err != nil {
+		b.pool.Close()
 		return nil, err
 	}
-
-	pool := ssh.NewPool(poolConfig(cfg), ssh.NewCredentials(store), clock)
-	sys, err := services(ctx, o, appCfg, db, store, pool, caller)
-	if err != nil {
-		pool.Close()
-		return nil, err
-	}
-	log.Info("daemon assembled", slog.String("identity", caller.String()))
+	o.Log.Info("daemon assembled", slog.String("mode", string(cfg.Instance.Mode)), slog.String("identity", b.caller.String()))
 	return sys, nil
 }
 
-func services(ctx context.Context, o Options, appCfg app.Config, db *database.DB, store *secrets.Store, pool *ssh.Pool, caller domain.ID) (*system, error) {
-	cfg := o.Config
-	revalidator, err := app.NewRevalidator(appCfg)
+// builder holds what the services are wired from, in the order they exist.
+type builder struct {
+	o    Options
+	cfg  *config.Config
+	app  app.Config
+	db   *database.DB
+	kit  keyKit
+	pool *ssh.Pool
+
+	jobs   *jobs.Store
+	hold   *app.HoldService
+	caller domain.ID // local mode: the identity of the OS user
+
+	plans     *app.Plans
+	queries   *app.Queries
+	keys      *app.KeyManager
+	backups   *app.BackupService
+	auth      *app.AuthService
+	inventory *app.Inventory
+	conn      app.Connector
+	focus     *app.Focus
+	prober    *app.Prober
+}
+
+// openGate builds the job store and loads the restore hold into it: from here
+// on a persisted hold keeps every claim closed, and a hold that cannot be read
+// refuses the start. It runs before anything can submit or claim a job.
+func (b *builder) openGate(ctx context.Context) error {
+	revalidator, err := app.NewRevalidator(b.app)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	jobStore, err := jobs.NewStore(jobs.Config{
-		DB: db, Clock: o.Clock, IDs: o.IDs, Revalidator: revalidator, LockPlanner: app.LockPlanner{},
+	cfg := b.cfg
+	b.jobs, err = jobs.NewStore(jobs.Config{
+		DB: b.db, Clock: b.o.Clock, IDs: b.o.IDs, Revalidator: revalidator, LockPlanner: app.LockPlanner{},
 		LeaseTTL: cfg.Jobs.Lease, BackoffBase: cfg.Jobs.RetryBase, ReconcileGrace: cfg.Jobs.ReconcileGrace,
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	conn := app.Connector{Remote: pool, Local: local.Executor{CommandTimeout: cfg.SSH.CommandTimeout}}
-	focus := app.NewFocus(o.Clock, focusLeaseFactor*cfg.Refresh.FocusedInterval)
-	inventory, err := app.NewInventory(appCfg, app.InventoryOptions{
-		Store: jobStore, Connector: conn, Mode: cfg.Instance.Mode, Focus: focus,
-		StaleAfter: staleAfterFactor * cfg.Refresh.MetricsInterval, KeepLogsRaw: !cfg.Security.RedactCommandOutput,
-	})
+	if b.hold, err = app.NewHold(b.app, b.jobs); err != nil {
+		return err
+	}
+	held, err := b.hold.Load(ctx)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("refusing to start: %w", err)
 	}
-	prober, err := app.NewProber(appCfg, conn, nil)
-	if err != nil {
-		return nil, err
+	if held {
+		b.o.Log.Warn("restore hold in force: no job is claimed and no schedule runs until an admin runs sm admin restore-complete")
 	}
-	handlers, err := app.NewHandlers(appCfg, app.HandlersOptions{
-		Store: jobStore, Connector: conn, Inventory: inventory, Prober: prober, Identity: app.SSHIdentityOf(store),
-	})
-	if err != nil {
-		return nil, err
-	}
-	work, err := backgroundWork(appCfg, o, jobStore, conn, focus, prober, handlers)
-	if err != nil {
-		return nil, err
-	}
-	activity, err := app.NewActivity(appCfg, jobStore)
-	if err != nil {
-		return nil, err
-	}
-	residency := NewResidency(ResidencyConfig{
-		Clock: o.Clock, IdleExit: cfg.Daemon.IdleExit, Resident: cfg.Daemon.Resident, Busy: loggedBusy(activity, o.Log),
-	})
-	server, err := apiServer(o, appCfg, db, jobStore, inventory, store, caller, residency)
-	if err != nil {
-		return nil, err
-	}
-	return &system{db: db, pool: pool, server: server, residency: residency, work: work}, nil
+	return nil
 }
 
-func backgroundWork(appCfg app.Config, o Options, jobStore *jobs.Store, conn app.Connector, focus *app.Focus, prober *app.Prober, handlers *app.Handlers) (background, error) {
-	cfg, log := o.Config, o.Log
-	evidence, err := app.NewEvidenceRouter(appCfg, conn, nil)
+// ensureIdentities creates what the mode needs. The system identity exists in
+// both. Only local mode creates `local:<uid>` and binds it to admin: a server
+// gets its first admin from the bootstrap exchange (spec §11.5), which would
+// be refused forever if the daemon had bound one already.
+func (b *builder) ensureIdentities(ctx context.Context) error {
+	if err := EnsureSystemIdentity(ctx, b.db, b.o.Clock); err != nil {
+		return err
+	}
+	if b.cfg.Instance.Mode != config.ModeLocal {
+		return nil
+	}
+	caller, err := EnsureLocalIdentity(ctx, b.db, b.o.Clock, b.o.IDs, b.o.UID)
+	if err != nil {
+		return err
+	}
+	b.caller = caller
+	return nil
+}
+
+func (b *builder) build(ctx context.Context) (*system, error) {
+	if err := b.coreServices(); err != nil {
+		return nil, err
+	}
+	handlers, err := b.handlers()
+	if err != nil {
+		return nil, err
+	}
+	work, err := b.background(handlers)
+	if err != nil {
+		return nil, err
+	}
+	activity, err := app.NewActivity(b.app, b.jobs)
+	if err != nil {
+		return nil, err
+	}
+	cfg := b.cfg
+	sys := &system{db: b.db, pool: b.pool, work: work, residency: NewResidency(ResidencyConfig{
+		Clock: b.o.Clock, IdleExit: cfg.Daemon.IdleExit, Resident: cfg.Daemon.Resident, Busy: loggedBusy(activity, b.o.Log),
+	})}
+	services, err := b.apiServices()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Instance.Mode == config.ModeLocal {
+		sys.local, err = b.localServer(services, sys.residency)
+	} else {
+		sys.remote, sys.admin, err = b.serverServers(services)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sys, nil
+}
+
+// coreServices builds the services other services depend on. The key manager
+// comes before the inventory, which executes approved key operations.
+func (b *builder) coreServices() error {
+	var err error
+	if b.plans, err = app.NewPlans(b.app, b.jobs); err != nil {
+		return err
+	}
+	if b.queries, err = app.NewQueries(b.app, b.jobs, b.cfg.Instance.Mode); err != nil {
+		return err
+	}
+	if b.keys, err = app.NewKeyManager(b.app, b.jobs, b.kit.admin, b.kit.store, b.cfg.Instance.Mode); err != nil {
+		return err
+	}
+	if b.backups, err = app.NewBackupService(b.app, b.plans, b.queries, b.jobs, app.BackupOptions{
+		Directory: b.cfg.Backup.Directory, Retention: b.cfg.Backup.Retention,
+		KnownHostsPath: b.cfg.SSH.KnownHostsFile, SMVersion: b.o.SMVersion, Keys: b.kit.keys,
+	}); err != nil {
+		return err
+	}
+	login, err := b.login()
+	if err != nil {
+		return err
+	}
+	cfg := b.cfg
+	if b.auth, err = app.NewAuthService(b.app, app.AuthOptions{
+		Tokens: auth.Minter{}, OIDC: login, SessionTTL: cfg.Security.SessionTTL, BootstrapCodeTTL: cfg.Auth.Bootstrap.CodeTTL,
+	}); err != nil {
+		return err
+	}
+	b.conn = app.Connector{Remote: b.pool, Local: local.Executor{CommandTimeout: cfg.SSH.CommandTimeout}}
+	b.focus = app.NewFocus(b.o.Clock, focusLeaseFactor*cfg.Refresh.FocusedInterval)
+	if b.inventory, err = app.NewInventory(b.app, app.InventoryOptions{
+		Store: b.jobs, Connector: b.conn, Mode: cfg.Instance.Mode, Focus: b.focus, Keys: b.keys,
+		StaleAfter: staleAfterFactor * cfg.Refresh.MetricsInterval, KeepLogsRaw: !cfg.Security.RedactCommandOutput,
+	}); err != nil {
+		return err
+	}
+	b.prober, err = app.NewProber(b.app, b.conn, nil)
+	return err
+}
+
+// handlers is the job type table: the M1 handlers plus backup.create.
+func (b *builder) handlers() (map[string]jobs.Handler, error) {
+	h, err := app.NewHandlers(b.app, app.HandlersOptions{
+		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
+	})
+	if err != nil {
+		return nil, err
+	}
+	table := h.Map()
+	table[app.JobBackupCreate] = b.backups.Handler()
+	return table, nil
+}
+
+func (b *builder) background(handlers map[string]jobs.Handler) (background, error) {
+	cfg, log := b.cfg, b.o.Log
+	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil)
 	if err != nil {
 		return background{}, err
 	}
 	engine, err := jobs.NewEngine(jobs.EngineConfig{
-		Store: jobStore, Handlers: handlers.Map(), Evidence: evidence,
+		Store: b.jobs, Handlers: handlers, Evidence: evidence,
 		Workers: cfg.Jobs.Workers, HeartbeatInterval: cfg.Jobs.Heartbeat,
 		OnError: func(err error) { log.Error("job engine", slog.Any("error", err)) },
 	})
 	if err != nil {
 		return background{}, err
 	}
-	refresher, err := app.NewRefresher(appCfg, app.RefresherOptions{
-		Prober: prober, Focus: focus, Refresh: cfg.Refresh,
+	refresher, err := app.NewRefresher(b.app, app.RefresherOptions{
+		Prober: b.prober, Focus: b.focus, Refresh: cfg.Refresh,
 		OnError: func(node domain.ID, err error) {
 			log.Warn("refresh", slog.String("node", node.String()), slog.Any("error", err))
 		},
@@ -203,101 +365,128 @@ func backgroundWork(appCfg app.Config, o Options, jobStore *jobs.Store, conn app
 	if err != nil {
 		return background{}, err
 	}
-	sweeper, err := app.NewSweeper(appCfg, app.SweeperOptions{
-		Store: jobStore, OnError: func(err error) { log.Error("sweeper", slog.Any("error", err)) },
+	sweeper, err := app.NewSweeper(b.app, app.SweeperOptions{
+		Store: b.jobs, OnError: func(err error) { log.Error("sweeper", slog.Any("error", err)) },
 	})
 	if err != nil {
 		return background{}, err
 	}
-	return background{engine: engine, refresher: refresher, sweeper: sweeper}, nil
+	schedule, err := b.backupSchedule()
+	if err != nil {
+		return background{}, err
+	}
+	return background{engine: engine, refresher: refresher, sweeper: sweeper, backups: schedule, authSweep: b.authSweep()}, nil
 }
 
-func apiServer(o Options, appCfg app.Config, db *database.DB, jobStore *jobs.Store, inventory *app.Inventory, store *secrets.Store, caller domain.ID, residency *Residency) (*api.Server, error) {
-	cfg := o.Config
-	plans, err := app.NewPlans(appCfg, jobStore)
+func (b *builder) apiServices() (api.Services, error) {
+	approvals, err := app.NewApprovals(b.app, b.jobs)
 	if err != nil {
-		return nil, err
+		return api.Services{}, err
 	}
-	approvals, err := app.NewApprovals(appCfg, jobStore)
+	governance, err := app.NewGovernance(b.app, b.jobs)
 	if err != nil {
-		return nil, err
+		return api.Services{}, err
 	}
-	governance, err := app.NewGovernance(appCfg, jobStore)
+	actions, err := app.NewServices(b.app, b.jobs)
 	if err != nil {
-		return nil, err
+		return api.Services{}, err
 	}
-	actions, err := app.NewServices(appCfg, jobStore)
+	sessions, err := app.NewSessions(b.app)
 	if err != nil {
-		return nil, err
+		return api.Services{}, err
 	}
-	queries, err := app.NewQueries(appCfg, jobStore, cfg.Instance.Mode)
+	sshKeys, err := api.NewSSHKeys(app.SSHIdentityOf(b.kit.store))
 	if err != nil {
-		return nil, err
+		return api.Services{}, err
 	}
-	sessions, err := app.NewSessions(appCfg)
+	enrollments, err := app.NewEnrollments(b.app, auth.Minter{}, app.SSHIdentityOf(b.kit.store))
 	if err != nil {
-		return nil, err
+		return api.Services{}, err
 	}
-	sshKeys, err := api.NewSSHKeys(app.SSHIdentityOf(store))
-	if err != nil {
-		return nil, err
-	}
-	return api.New(api.Options{
-		Services: api.Services{
-			Plans: plans, Approvals: approvals, Governance: governance, Services: actions,
-			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: sshKeys,
-		},
-		IDs: o.IDs, Identity: caller, Residency: residency, Log: o.Log,
-		Ready: func(ctx context.Context) error {
-			_, err := database.GetInstance(ctx, db.Reader())
-			return err
-		},
-	})
-}
-
-func appConfig(db *database.DB, o Options) (app.Config, error) {
-	pol, err := loadPolicy(o.Config.Security.PolicyFile)
-	if err != nil {
-		return app.Config{}, err
-	}
-	allowSelf := o.Config.Security.AllowSelfApproval != nil && *o.Config.Security.AllowSelfApproval
-	return app.Config{
-		DB: db, Clock: o.Clock, IDs: o.IDs, Policy: pol, Credentials: app.LocalSocketCredentials{},
-		ApprovalTTL: o.Config.Security.ApprovalTTL, DefaultLogsMode: runtimes.LogsMode(o.Config.SSH.LogsMode), AllowSelfApproval: allowSelf,
+	return api.Services{
+		Plans: b.plans, Approvals: approvals, Governance: governance, Services: actions,
+		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys,
+		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
 	}, nil
 }
 
+func (b *builder) ready() func(context.Context) error {
+	return func(ctx context.Context) error {
+		_, err := database.GetInstance(ctx, b.db.Reader())
+		return err
+	}
+}
+
+func (b *builder) localServer(services api.Services, residency *Residency) (*api.Server, error) {
+	return api.New(api.Options{
+		Services: services, IDs: b.o.IDs, Identity: b.caller, DB: b.db, Clock: b.o.Clock,
+		Residency: residency, Log: b.o.Log, Ready: b.ready(),
+	})
+}
+
+func appConfig(db *database.DB, o Options) (app.Config, []byte, error) {
+	pol, policyBytes, err := loadPolicy(o.Config.Security.PolicyFile)
+	if err != nil {
+		return app.Config{}, nil, err
+	}
+	allowSelf := o.Config.Security.AllowSelfApproval != nil && *o.Config.Security.AllowSelfApproval
+	return app.Config{
+		DB: db, Clock: o.Clock, IDs: o.IDs, Policy: pol, Credentials: auth.CredentialStatus{DB: db, Clock: o.Clock},
+		ApprovalTTL: o.Config.Security.ApprovalTTL, DefaultLogsMode: runtimes.LogsMode(o.Config.SSH.LogsMode), AllowSelfApproval: allowSelf,
+	}, policyBytes, nil
+}
+
 // loadPolicy reads security.policy_file, which replaces the built-in default
-// entirely (spec §11.2); without one the embedded default applies.
-func loadPolicy(path string) (*policy.Policy, error) {
+// entirely (spec §11.2); without one the embedded default applies and there
+// are no policy bytes to snapshot.
+func loadPolicy(path string) (*policy.Policy, []byte, error) {
 	if path == "" {
-		return policy.Default()
+		pol, err := policy.Default()
+		return pol, nil, err
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // operator configuration
 	if err != nil {
-		return nil, fmt.Errorf("read policy file: %w", err)
+		return nil, nil, fmt.Errorf("read policy file: %w", err)
 	}
-	return policy.Parse(data)
+	pol, err := policy.Parse(data)
+	return pol, data, err
 }
 
-func openSecrets(ctx context.Context, cfg *config.Config, db *database.DB, clock domain.Clock, ids domain.IDGenerator) (*secrets.Store, error) {
-	repo := app.NewSecretsRepo(db, clock)
-	keys, err := secrets.OpenFileKeys(ctx, cfg.Security.KeysDir, repo, ids)
-	if err != nil {
-		return nil, fmt.Errorf("open encryption keys: %w", err)
-	}
-	return secrets.NewStore(keys, repo, ids, clock), nil
-}
-
-func reconcileStatic(ctx context.Context, appCfg app.Config, cfg *config.Config) error {
-	reconciler, err := app.NewStaticReconciler(appCfg, cfg.Instance.Mode)
+// activateConfig reconciles the static configuration and stores the exact
+// bytes of the configuration and policy in force, in one transaction.
+func activateConfig(ctx context.Context, appCfg app.Config, o Options, policyBytes []byte) error {
+	configBytes, err := o.configBytes()
 	if err != nil {
 		return err
 	}
-	if err := reconciler.Reconcile(ctx, cfg.Environments, cfg.Providers); err != nil {
+	reconciler, err := app.NewStaticReconciler(appCfg, o.Config.Instance.Mode)
+	if err != nil {
+		return err
+	}
+	src := app.ConfigSources{Config: configBytes, Policy: policyBytes}
+	if err := reconciler.Activate(ctx, src, o.Config.Environments, o.Config.Providers); err != nil {
 		return fmt.Errorf("reconcile the configuration file: %w", err)
 	}
 	return nil
+}
+
+// configBytes are the bytes the snapshot stores: the configuration file as it
+// is on disk. A daemon started without a file (the built-in local defaults,
+// or a caller that only has the parsed value) stores the effective
+// configuration re-encoded.
+func (o Options) configBytes() ([]byte, error) {
+	if o.ConfigFile != "" {
+		data, err := os.ReadFile(o.ConfigFile)
+		if err != nil {
+			return nil, fmt.Errorf("read the configuration file for its snapshot: %w", err)
+		}
+		return data, nil
+	}
+	data, err := yaml.Marshal(o.Config)
+	if err != nil {
+		return nil, fmt.Errorf("encode the effective configuration for its snapshot: %w", err)
+	}
+	return data, nil
 }
 
 func poolConfig(cfg *config.Config) ssh.PoolConfig {

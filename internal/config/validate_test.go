@@ -115,6 +115,16 @@ func TestValidateRules(t *testing.T) {
 		{"oidc client secret as secret ref", func(c *Config) { c.Auth.OIDC.ClientSecretRef = "secret://oidc/client" }, ""},
 		{"oidc client secret as file ref", func(c *Config) { c.Auth.OIDC.ClientSecretRef = "file:///etc/oidc" }, "auth.oidc.client_secret_ref"},
 		{"oidc client secret inline", func(c *Config) { c.Auth.OIDC.ClientSecretRef = "hunter2" }, "auth.oidc.client_secret_ref"},
+		{"oidc enabled and complete", func(c *Config) { enableOIDC(c) }, ""},
+		{"oidc enabled without issuer", func(c *Config) { enableOIDC(c); c.Auth.OIDC.Issuer = "" }, "auth.oidc.issuer"},
+		{"oidc issuer over http", func(c *Config) { enableOIDC(c); c.Auth.OIDC.Issuer = "http://idp.example.com" }, "auth.oidc.issuer"},
+		{"oidc enabled without client id", func(c *Config) { enableOIDC(c); c.Auth.OIDC.ClientID = "" }, "auth.oidc.client_id"},
+		{"oidc enabled without client secret", func(c *Config) { enableOIDC(c); c.Auth.OIDC.ClientSecretRef = "" }, "auth.oidc.client_secret_ref"},
+		{"oidc endpoint origin ok", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"https://keys.example.com:8443"} }, ""},
+		{"oidc endpoint origin with path", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"https://keys.example.com/jwks"} }, "auth.oidc.allowed_endpoint_origins[0]"},
+		{"oidc endpoint origin trailing slash", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"https://keys.example.com/"} }, "auth.oidc.allowed_endpoint_origins[0]"},
+		{"oidc endpoint origin over http", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"http://keys.example.com"} }, "auth.oidc.allowed_endpoint_origins[0]"},
+		{"oidc endpoint origin with userinfo", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"https://u:p@keys.example.com"} }, "auth.oidc.allowed_endpoint_origins[0]"},
 
 		{"remote MCP without oauth", func(c *Config) { c.MCP.RemoteEnabled = true }, "mcp.oauth.issuer"},
 		{"remote MCP with jwks", func(c *Config) { c.MCP.RemoteEnabled = true; c.MCP.OAuth = completeOAuth() }, ""},
@@ -310,4 +320,11 @@ func TestValidateNeverEchoesCredentialRefValues(t *testing.T) {
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "missing a scheme") {
 		t.Errorf("err = %v, want a missing-scheme message", err)
 	}
+}
+
+func enableOIDC(c *Config) {
+	c.Auth.OIDC.Enabled = true
+	c.Auth.OIDC.Issuer = "https://idp.example.com"
+	c.Auth.OIDC.ClientID = "supermgmt"
+	c.Auth.OIDC.ClientSecretRef = "secret://oidc/client"
 }

@@ -72,7 +72,7 @@ Limits in M1:
 - No standalone `sudoers.write` or `log_broker.install` job: to change the unit set or the log mode, re-run setup with the new parameters.
 - No `deploy_root` and no deployments (M4).
 - No automated teardown; the manual steps are in [security.md](security.md#the-dedicated-supermgmt-user-and-how-to-remove-it).
-- Authorizing the key on a node from a server-mode instance is M2.
+- Server-mode instances: `node.setup` authorizes the instance key as in local mode; that flow was not verified in a server-mode run here. A node can also enroll itself with `sm join` (it gets the unprivileged user only; setup still follows), see [installation.md](installation.md#joining-a-node-sm-join).
 
 ### What a set-up node can do
 
@@ -99,5 +99,5 @@ Service actions are jobs. In an environment with `risk_level: production` they w
 ## Not in M1
 
 - Proxmox: planned for M3.
-- SSH CA trust, per-node keys, identity rotation and the secrets CLI: M2. `ssh.known_hosts_file` is unused.
+- Identity rotation (`sm ssh-key rotate`), host-key re-pin (`sm nodes repin`) and the secrets CLI arrived in M2 ([operations.md](operations.md)). SSH CA trust and per-node keys are not scheduled. `ssh.known_hosts_file` is only the file that goes into a backup.
 - Hetzner, OVH and cloud providers: exploratory, not scheduled.

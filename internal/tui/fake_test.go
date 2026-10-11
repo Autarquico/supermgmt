@@ -36,6 +36,7 @@ type fakeAPI struct {
 	calls map[string]int
 	hooks map[string]func(ctx context.Context) error
 
+	providers []wire.Provider
 	nodes     []wire.Node
 	services  map[domain.ID][]wire.Service
 	jobs      []wire.Job
@@ -74,7 +75,17 @@ func (f *fakeAPI) hook(name string, fn func(ctx context.Context) error) {
 }
 
 func (f *fakeAPI) Me(ctx context.Context) (wire.Me, error) {
-	return wire.Me{DisplayName: "alex", InstanceMode: "local", Roles: []string{"admin"}}, f.enter(ctx, "Me")
+	return wire.Me{
+		IdentityID: idLaptop, ActorType: domain.ActorHuman, DisplayName: "alex", Credential: domain.CredentialSession,
+		InstanceMode: "local", Roles: []string{"admin"},
+	}, f.enter(ctx, "Me")
+}
+
+func (f *fakeAPI) ListProviders(ctx context.Context, _ wire.PageQuery) (wire.Page[wire.Provider], error) {
+	if err := f.enter(ctx, "ListProviders"); err != nil {
+		return wire.Page[wire.Provider]{}, err
+	}
+	return wire.Page[wire.Provider]{Items: f.providers}, nil
 }
 
 func (f *fakeAPI) ListNodes(ctx context.Context, _ wire.NodeQuery) (wire.Page[wire.Node], error) {
@@ -238,6 +249,10 @@ func newFake() *fakeAPI {
 	}
 	seen := epoch.Add(-time.Minute)
 	f := &fakeAPI{calls: map[string]int{}, hooks: map[string]func(context.Context) error{}}
+	f.providers = []wire.Provider{
+		{ID: "0192a000-0000-7000-8000-00000000e001", Type: "ssh", Name: "ssh", Origin: domain.ProviderStatic, Status: "ready", LastSyncAt: &seen},
+		{ID: "0192a000-0000-7000-8000-00000000e002", Type: "local", Name: "local", Origin: domain.ProviderAPI, Status: "ready"},
+	}
 	f.nodes = []wire.Node{
 		{
 			ID: idWeb, Name: "web-1", Kind: "ssh", Provider: "ssh", Environment: "production", ManagementState: domain.ManagementManaged,

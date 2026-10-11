@@ -55,6 +55,7 @@ auth:
     client_secret_ref: ""     # secret:// reference
     redirect_url: ""          # web callback; CLI uses loopback redirect (§23.1)
     allowed_domains: []
+    allowed_endpoint_origins: []   # extra https origins for token/device/JWKS endpoints (§23.1)
 
 ssh:
   connect_timeout: 8s

@@ -37,6 +37,7 @@ type harnessOptions struct {
 	peer   PeerLookup
 	uid    *uint32
 	cached Residency
+	keys   app.Keys // nil leaves key management unwired
 }
 
 func newHarness(t *testing.T, opts ...func(*harnessOptions)) *harness {
@@ -140,7 +141,7 @@ func (h *harness) build(cfg app.Config, o harnessOptions) *Server {
 	server, err := New(Options{
 		Services: Services{
 			Plans: plans, Approvals: approvals, Governance: governance, Services: actions,
-			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys,
+			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys, Keys: o.keys,
 		},
 		IDs: cfg.IDs, Identity: h.caller, Residency: o.cached,
 	})

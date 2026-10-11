@@ -239,3 +239,81 @@ func TestNothingFormatsOrStoresThePlaintext(t *testing.T) {
 		t.Error("plaintext found in the stored rows")
 	}
 }
+
+func TestAStagedSecretIsSealedInvisibleAndActivatedOnlyForTheApprovedValue(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	staged, err := f.store.Stage(ctx, "demo/token", "staged-value", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(f.repo.Dump(), []byte("staged-value")) {
+		t.Error("the staged plaintext reached the repository")
+	}
+	if _, err := f.store.Get(ctx, secrets.Ref{Name: "demo/token"}); smerr.CodeOf(err) != smerr.CodeNotFound {
+		t.Errorf("Get on a staged secret: %v, want NOT_FOUND", err)
+	}
+
+	wrong := staged
+	wrong.CiphertextSHA256 = strings.Repeat("0", 64)
+	if _, err := f.store.Activate(ctx, wrong); smerr.CodeOf(err) != smerr.CodeConflict {
+		t.Errorf("activating with another digest: %v, want CONFLICT", err)
+	}
+	ref, err := f.store.Activate(ctx, staged)
+	if err != nil || ref != (secrets.Ref{Name: "demo/token", Version: 1}) {
+		t.Fatalf("Activate = %+v, %v", ref, err)
+	}
+	again, err := f.store.Activate(ctx, staged)
+	if err != nil || again != ref {
+		t.Errorf("a repeated Activate = %+v, %v; want the same version", again, err)
+	}
+	if got, err := f.store.Get(ctx, ref); err != nil || got.Reveal() != "staged-value" {
+		t.Errorf("activated value = %q, %v", got.Reveal(), err)
+	}
+}
+
+func TestASwappedStagedRowIsNotActivated(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	approved, err := f.store.Stage(ctx, "demo/token", "approved-value", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.store.Stage(ctx, "demo/token", "other-value", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	swapped := secrets.Staged{ID: other.ID, Name: approved.Name, CiphertextSHA256: approved.CiphertextSHA256}
+
+	if _, err := f.store.Activate(ctx, swapped); smerr.CodeOf(err) != smerr.CodeConflict {
+		t.Fatalf("activating another row under the approved digest: %v, want CONFLICT", err)
+	}
+}
+
+func TestADiscardedStagedSecretCannotBeActivated(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	staged, err := f.store.Stage(ctx, "demo/token", "v", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.store.Discard(ctx, staged.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.store.Activate(ctx, staged); smerr.CodeOf(err) != smerr.CodeNotFound {
+		t.Errorf("Activate after Discard: %v, want NOT_FOUND", err)
+	}
+	if ids, _ := f.repo.ReferencedKEKs(ctx); len(ids) != 0 {
+		t.Errorf("a discarded secret still references %v", ids)
+	}
+}
+
+func TestStageRefusesAnInvalidName(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.Stage(context.Background(), "Bad Name", "v", nil); smerr.CodeOf(err) != smerr.CodeInvalidArgument {
+		t.Errorf("error = %v, want INVALID_ARGUMENT", err)
+	}
+}

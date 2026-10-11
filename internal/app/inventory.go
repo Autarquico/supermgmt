@@ -47,6 +47,9 @@ type InventoryOptions struct {
 	// KeepLogsRaw turns off the redaction of secret patterns in command output
 	// served to clients (security.redact_command_output: false).
 	KeepLogsRaw bool
+	// Keys executes approved key operations (secret.write jobs); nil when the
+	// instance has no secret store.
+	Keys *KeyManager
 }
 
 // Inventory is the node and service catalog: it adds, edits and retires nodes
@@ -64,6 +67,7 @@ type Inventory struct {
 	localName  string
 	adapters   Adapters
 	redactLogs bool
+	keys       *KeyManager
 }
 
 // NewInventory validates cfg and the options.
@@ -81,7 +85,7 @@ func NewInventory(cfg Config, o InventoryOptions) (*Inventory, error) {
 	}
 	inv := &Inventory{
 		core: c, plans: plans, jobs: o.Store, conn: o.Connector, mode: o.Mode, focus: o.Focus,
-		staleAfter: o.StaleAfter, scan: o.Scan, localName: o.LocalName, adapters: DefaultAdapters(), redactLogs: !o.KeepLogsRaw,
+		staleAfter: o.StaleAfter, scan: o.Scan, localName: o.LocalName, adapters: DefaultAdapters(), redactLogs: !o.KeepLogsRaw, keys: o.Keys,
 	}
 	if inv.staleAfter <= 0 {
 		inv.staleAfter = defaultStaleAfter
@@ -269,6 +273,9 @@ func (i *Inventory) UpdateNode(ctx context.Context, by Caller, id domain.ID, ifM
 		if err := i.validatePatch(patch); err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
+		if patch.HostPublicKey != nil && node.Kind != sshnode.NodeKind {
+			return DirectResult[wire.Node]{}, smerr.New(smerr.CodeInvalidArgument, "", "only SSH nodes have a host key")
+		}
 		params, err := toParams(patch)
 		if err != nil {
 			return DirectResult[wire.Node]{}, err
@@ -278,6 +285,35 @@ func (i *Inventory) UpdateNode(ctx context.Context, by Caller, id domain.ID, ifM
 			return DirectResult[wire.Node]{}, err
 		}
 		return i.applyOrWrap(ctx, tx, by, actor, b, func() (domain.Node, error) { return i.applyNodeUpdate(ctx, tx, actor, node, patch) })
+	})
+}
+
+const eventHostKeyRepinned = "node.host_key.repinned"
+
+// applyRepin makes key the node's only trust anchor and drops the pooled
+// connections that were authenticated against the old pin. The old and new
+// fingerprints are audited; a key equal to the current pin changes nothing.
+func (i *Inventory) applyRepin(ctx context.Context, q database.Querier, actor domain.Actor, node domain.Node, key string) (domain.Node, error) {
+	oldFingerprint, _ := sshnode.Fingerprint(node.Endpoint.HostPublicKey)
+	newFingerprint, err := sshnode.Fingerprint(key)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	if newFingerprint == oldFingerprint {
+		return node, nil
+	}
+	pinned := node
+	pinned.Endpoint.HostPublicKey = key
+	pinned.UpdatedAt = i.cfg.Clock.Now()
+	stored, err := database.UpdateNodeSpec(ctx, q, pinned, node.SpecRevision)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	for _, user := range []string{node.Endpoint.User, node.Endpoint.AdminUser} {
+		i.conn.Invalidate(stored, user)
+	}
+	return stored, i.emit(ctx, q, actor, eventHostKeyRepinned, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
+		"name": node.Name, "old_fingerprint": oldFingerprint, "new_fingerprint": newFingerprint, "spec_revision": stored.SpecRevision,
 	})
 }
 
@@ -344,6 +380,11 @@ func (i *Inventory) requireAPIOrigin(ctx context.Context, q database.Querier, no
 }
 
 func (i *Inventory) validatePatch(p NodePatch) error {
+	if p.HostPublicKey != nil {
+		if _, err := sshnode.ParseHostKey(strings.TrimSpace(*p.HostPublicKey)); err != nil {
+			return err
+		}
+	}
 	if p.Name != nil {
 		if err := sshnode.ValidateName(*p.Name); err != nil {
 			return err

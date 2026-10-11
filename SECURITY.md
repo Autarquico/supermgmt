@@ -47,13 +47,22 @@ Describe the shape instead ("a 64-character token") and give a minimal reproduct
 
 ## Security model and limits
 
-The threat model is summarized in [docs/security.md](docs/security.md) and specified in `docs/spec/SUPERMGMT-SPEC.md` §30. Defaults: deny by default, least privilege, strict host-key and TLS verification, approvals bound to an exact plan hash, append-only audit, secret redaction. In the current state (M0) these exist as tested libraries only; no network service ships yet.
+The threat model is summarized in [docs/security.md](docs/security.md) and specified in `docs/spec/SUPERMGMT-SPEC.md` §30. Defaults: deny by default, least privilege, strict host-key and TLS verification, approvals bound to an exact plan hash, append-only audit, secret redaction. As of M2 these sit behind a local daemon and an HTTPS server mode (sessions, API tokens, OIDC, approvals, encrypted secrets, signed-release installer). Nothing is released, none of it has had an independent audit, and part of M2 was verified only in CI with test keys and a Dex test identity provider ([docs/security.md](docs/security.md) says which).
 
 Explicit statements:
 
 - **Docker access is root-equivalent.** Anyone or anything that can drive the Docker daemon on a host can obtain root on that host. Granting SuperMgmt (or an agent through it) Docker-level actions on a node is granting root on that node. Scope policies accordingly.
 - **Local mode trusts code running as the same OS user** (SPEC §2.1.1). Peer credentials prove the OS user, not which program is speaking. Any process running as that user can already read its SSH keys and agent, so local mode does not defend against malicious code running as the same user. Users who need isolation from a compromised MCP client run it under a different OS user, or use server mode with per-client OAuth (both planned).
-- **`curl | bash` has a trust root.** The planned installer path (M2) trusts the repository's `main` branch: whoever can change `install.sh` there can replace both the verifier and the embedded key, so a repository compromise defeats that path. For users who need independence, every release will attach `install.sh` and `install.sh.sig`, and the release key fingerprint will be published out-of-band (this file at a signed tag, the project website, release notes), so the script can be verified with `ssh-keygen -Y verify` before it is run (SPEC §3.1, §3.2). None of this exists yet.
+- **`curl | bash` has a trust root.** The installer path trusts the repository's `main` branch: whoever can change `install.sh` there can replace both the verifier and the embedded key, so a repository compromise defeats that path. For users who need independence, every release attaches `install.sh` and `install.sh.sig`, and the release key fingerprint is published out-of-band (this file at a signed tag, the project website, release notes), so the script can be verified with `ssh-keygen -Y verify` before it is run (SPEC §3.1, §3.2, [docs/installation.md](docs/installation.md)). The installer needs OpenSSH 8.2 or newer on the machine running it. No release has been published yet.
+- **Server mode exposes a network service.** Requests are authenticated by bearer tokens only. A reverse proxy or Cloudflare in front can read them; SuperMgmt consumes no Cloudflare identity assertion ([docs/cloudflare.md](docs/cloudflare.md)). Backup archives are not encrypted, and master keys are never in them.
 - **MCP content is untrusted input.** A model asking for an action has no more authority than its authenticated identity and policy grants (planned, M5).
 
-The release signing key and its fingerprint do not exist yet; this file will state them at the first signed tag.
+## Release signing key
+
+Release artifacts (`checksums.txt`, `install.sh`, `join.sh`, channel files) are signed with an OpenSSH key in the namespace `supermgmt-release`, principal `release@supermgmt`. The private key will live only as a secret of the protected GitHub environment `release` (the repository owner is its required reviewer).
+
+```text
+Fingerprint: SHA256:<RELEASE-KEY-FINGERPRINT-NOT-PUBLISHED-YET>
+```
+
+The key and its fingerprint do not exist yet; the value above is a placeholder, and until the real key is embedded in `install.sh` every signature check fails closed. This file will state the real fingerprint at the first signed tag. Verify it against a second source (project website, release notes) before trusting it.

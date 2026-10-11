@@ -34,6 +34,7 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"service.start":             domain.LockExclusive,
 	"service.stop":              domain.LockExclusive,
 	"service.restart":           domain.LockExclusive,
+	"backup.create":             domain.LockExclusive,
 }
 
 // ownLock is the lock on the job's own resource. A service is locked through

@@ -1,0 +1,1729 @@
+openapi: 3.1.0
+info:
+  title: SuperMgmt API
+  version: 1.0.0
+  summary: The /api/v1 contract of the SuperMgmt daemon.
+  description: |
+    Hand-written and authoritative (spec section 23, ADR-0012). Every operation carries
+    `x-supermgmt-route`, exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`
+    or `exempt:self`. `make api-check` fails when this document and the Go route table differ.
+
+    Every success is `{"data": ..., "meta": {...}}`; every failure is `{"error": {...}}`.
+    Over HTTPS callers send `Authorization: Bearer <token>`. On the local-mode Unix socket the
+    caller is identified by its peer credentials and `Authorization` is refused. The four
+    admin-socket routes are outside this document (ADR-0012).
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    name: SuperMgmt maintainers
+    url: https://github.com/autarquico/supermgmt
+servers:
+  - url: https://{host}
+    description: Server mode over HTTPS. Local mode serves the same routes on a Unix socket.
+    variables:
+      host:
+        default: supermgmt.example.com
+        description: Host (and port) the daemon listens on.
+security:
+  - bearer: []
+tags:
+  - name: health
+    description: Liveness and readiness probes.
+  - name: identity
+    description: The caller's own connection.
+  - name: auth
+    description: Login and bootstrap. Not catalog actions.
+  - name: tokens
+    description: API tokens.
+  - name: plans
+    description: Plans and their submission.
+  - name: jobs
+    description: Jobs, approvals and governance.
+  - name: providers
+    description: Providers.
+  - name: nodes
+    description: Nodes and interactive sessions.
+  - name: services
+    description: Runtime-native services.
+  - name: events
+    description: The audit event log and its stream.
+  - name: keys
+    description: Master key, instance SSH identity and secrets.
+  - name: backups
+    description: Backups.
+  - name: enrollment
+    description: Join tokens and node enrollment.
+paths:
+  /health/live:
+    get:
+      operationId: healthLive
+      summary: Liveness probe.
+      tags: [health]
+      x-supermgmt-route: exempt:health
+      security: []
+      responses:
+        '200': {$ref: '#/components/responses/Health'}
+        default: {$ref: '#/components/responses/Error'}
+  /health/ready:
+    get:
+      operationId: healthReady
+      summary: Readiness probe.
+      tags: [health]
+      x-supermgmt-route: exempt:health
+      security: []
+      responses:
+        '200': {$ref: '#/components/responses/Health'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/me:
+    get:
+      operationId: getMe
+      summary: The caller as the daemon authenticated it.
+      tags: [identity]
+      x-supermgmt-route: exempt:self
+      responses:
+        '200':
+          description: The caller.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Me'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/presence:
+    get:
+      operationId: getPresence
+      summary: Hold the connection open to tell the daemon someone is watching.
+      description: Answers once with status `connected`, then stays open until the client goes or the server shuts down.
+      tags: [identity]
+      x-supermgmt-route: exempt:self
+      responses:
+        '200': {$ref: '#/components/responses/Health'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/ssh-key:
+    get:
+      operationId: getSSHKey
+      summary: The public half of the instance SSH identity.
+      tags: [keys]
+      x-supermgmt-route: action:config.read
+      responses:
+        '200':
+          description: The public key.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/SSHKey'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/ssh-key/rotate:
+    post:
+      operationId: rotateSSHKey
+      summary: Rotate the instance SSH identity.
+      tags: [keys]
+      x-supermgmt-route: action:secret.write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Rotated at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfSSHKey'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfSSHKey'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/events:
+    get:
+      operationId: listEvents
+      summary: One page of the audit event log.
+      tags: [events]
+      x-supermgmt-route: action:event.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - {name: resource_type, in: query, required: false, description: Only events about this resource type., schema: {type: string}}
+        - {name: resource_id, in: query, required: false, description: Only events about this resource., schema: {$ref: '#/components/schemas/ID'}}
+        - {name: after_seq, in: query, required: false, description: Only events with a greater seq., schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        '200':
+          description: A page of events.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfEvent'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/events/stream:
+    get:
+      operationId: streamEvents
+      summary: The audit log as server-sent events.
+      description: |
+        One frame per event, `id: <seq>`, `data:` an Event as JSON. Resumes after `Last-Event-ID`,
+        else after `after_seq`, else from the end of the log. The credential and `event.read` are
+        re-evaluated while the stream is open.
+      tags: [events]
+      x-supermgmt-route: action:event.read
+      parameters:
+        - {name: Last-Event-ID, in: header, required: false, description: Resume after this seq., schema: {type: integer, format: int64}}
+        - {name: after_seq, in: query, required: false, description: Resume after this seq when Last-Event-ID is absent., schema: {type: integer, format: int64, minimum: 0}}
+        - {name: resource_type, in: query, required: false, description: Only events about this resource type., schema: {type: string}}
+        - {name: resource_id, in: query, required: false, description: Only events about this resource., schema: {$ref: '#/components/schemas/ID'}}
+      responses:
+        '200':
+          description: An event stream.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Server-sent events whose data is an Event as JSON.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/plans:
+    post:
+      operationId: createPlan
+      summary: Create a plan for one action on one target.
+      tags: [plans]
+      x-supermgmt-route: action:plan.create
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/CreatePlan'}
+      responses:
+        '201':
+          description: The plan and its policy verdict.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/CreatedPlan'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/plans/{id}:
+    get:
+      operationId: getPlan
+      summary: A plan with its canonical document and hash.
+      tags: [plans]
+      x-supermgmt-route: action:plan.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The plan.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/CreatedPlan'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/plans/{id}/submit:
+    post:
+      operationId: submitPlan
+      summary: Submit a plan as a job.
+      tags: [plans]
+      x-supermgmt-route: action:plan.create
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/PlanHash'}
+      responses:
+        '202': {$ref: '#/components/responses/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/approvals:
+    get:
+      operationId: listApprovals
+      summary: Jobs awaiting approval with what an approver must see.
+      tags: [jobs]
+      x-supermgmt-route: action:job.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of approvals.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfApproval'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/jobs:
+    get:
+      operationId: listJobs
+      summary: One page of jobs.
+      tags: [jobs]
+      x-supermgmt-route: action:job.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - {name: state, in: query, required: false, description: Only jobs in these states; repeat for several., explode: true, schema: {type: array, items: {type: string}}}
+      responses:
+        '200':
+          description: A page of jobs.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfJob'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/jobs/{id}:
+    get:
+      operationId: getJob
+      summary: A job and its operation intents.
+      tags: [jobs]
+      x-supermgmt-route: action:job.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/JobDetail'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/jobs/{id}/approve:
+    post:
+      operationId: approveJob
+      summary: Approve a job bound to a plan hash.
+      tags: [jobs]
+      x-supermgmt-route: action:approval.grant
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/Decision'}
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/jobs/{id}/reject:
+    post:
+      operationId: rejectJob
+      summary: Reject a job; a reason is required.
+      tags: [jobs]
+      x-supermgmt-route: action:approval.reject
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/Decision'}
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/jobs/{id}/cancel:
+    post:
+      operationId: cancelJob
+      summary: Cancel a job bound to a plan hash.
+      tags: [jobs]
+      x-supermgmt-route: action:job.cancel
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/PlanHash'}
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/jobs/{id}/resolve:
+    post:
+      operationId: resolveJob
+      summary: Resolve an interrupted job by hand.
+      tags: [jobs]
+      x-supermgmt-route: action:job.resolve
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResolveRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/providers:
+    get:
+      operationId: listProviders
+      summary: The registered providers.
+      tags: [providers]
+      x-supermgmt-route: action:provider.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of providers.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfProvider'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createProvider
+      summary: Register a provider; only type `local` is accepted.
+      tags: [providers]
+      x-supermgmt-route: action:provider.write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateProviderRequest'}
+      responses:
+        '201':
+          description: Registered at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfProvider'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfProvider'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes:
+    get:
+      operationId: listNodes
+      summary: One page of nodes with their latest observations.
+      tags: [nodes]
+      x-supermgmt-route: action:node.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - {name: environment, in: query, required: false, description: Only nodes in this environment., schema: {type: string}}
+        - {name: tag, in: query, required: false, description: Only nodes with this tag., schema: {type: string}}
+        - {name: reachability, in: query, required: false, description: Only nodes with this reachability., schema: {type: string}}
+      responses:
+        '200':
+          description: A page of nodes.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfNode'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/host-key:
+    post:
+      operationId: scanHostKey
+      summary: Read-only keyscan for the first-trust confirmation.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ScanHostKeyRequest'}
+      responses:
+        '200':
+          description: The scanned host key.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/HostKey'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh:
+    post:
+      operationId: addSSHNode
+      summary: Add a node reached over SSH.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AddSSHNodeRequest'}
+      responses:
+        '201':
+          description: Added at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}:
+    get:
+      operationId: getNode
+      summary: A node with its latest observations.
+      tags: [nodes]
+      x-supermgmt-route: action:node.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - {name: focus, in: query, required: false, description: Refresh observations of a node the client is looking at., schema: {type: boolean}}
+      responses:
+        '200':
+          description: The node.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Node'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateNode
+      summary: Change a node; absent fields are unchanged.
+      tags: [nodes]
+      x-supermgmt-route: action:node.update
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodePatch'}
+      responses:
+        '200':
+          description: Updated at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: removeNode
+      summary: Remove a node from management.
+      tags: [nodes]
+      x-supermgmt-route: action:node.remove
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Removed at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/probe:
+    post:
+      operationId: probeNode
+      summary: Probe a node.
+      tags: [nodes]
+      x-supermgmt-route: action:node.probe
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': {$ref: '#/components/responses/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/services:
+    get:
+      operationId: listNodeServices
+      summary: The services of a node.
+      tags: [nodes]
+      x-supermgmt-route: action:service.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of services.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfService'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/connect-info:
+    get:
+      operationId: getNodeConnectInfo
+      summary: What an interactive client needs to run OpenSSH against a node.
+      tags: [nodes]
+      x-supermgmt-route: action:node.connect
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The connection details.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/ConnectInfo'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/sessions:
+    post:
+      operationId: openNodeSession
+      summary: Open an interactive session on a node.
+      tags: [nodes]
+      x-supermgmt-route: action:node.connect
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OpenSessionRequest'}
+      responses:
+        '201':
+          description: The session and how to reach the node.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/SessionOpened'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/sessions/{sid}/end:
+    post:
+      operationId: endNodeSession
+      summary: End an interactive session; the first end wins.
+      tags: [nodes]
+      x-supermgmt-route: action:node.connect
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Sid'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EndSessionRequest'}
+      responses:
+        '200':
+          description: The session.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Session'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}:
+    get:
+      operationId: getService
+      summary: A service with the verbs its node advertises.
+      tags: [services]
+      x-supermgmt-route: action:service.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The service.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Service'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}/logs:
+    get:
+      operationId: getServiceLogs
+      summary: Sanitized log lines of a service, oldest first.
+      tags: [services]
+      x-supermgmt-route: action:service.logs
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - {name: lines, in: query, required: false, description: Number of lines; 0 or absent means 200., schema: {type: integer, minimum: 0, maximum: 10000}}
+      responses:
+        '200':
+          description: The log lines.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/LogChunk'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}/actions/start:
+    post:
+      operationId: startService
+      summary: Start a service.
+      tags: [services]
+      x-supermgmt-route: action:service.start
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': {$ref: '#/components/responses/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}/actions/stop:
+    post:
+      operationId: stopService
+      summary: Stop a service.
+      tags: [services]
+      x-supermgmt-route: action:service.stop
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': {$ref: '#/components/responses/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}/actions/restart:
+    post:
+      operationId: restartService
+      summary: Restart a service.
+      tags: [services]
+      x-supermgmt-route: action:service.restart
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': {$ref: '#/components/responses/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/oidc/start:
+    post:
+      operationId: startOIDCLogin
+      summary: Begin an authorization-code login with PKCE.
+      tags: [auth]
+      x-supermgmt-route: exempt:auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OIDCStartRequest'}
+      responses:
+        '200':
+          description: Where to send the user.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/OIDCStart'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/oidc/exchange:
+    post:
+      operationId: exchangeOIDCCode
+      summary: Exchange the authorization code for a session token (shown once).
+      description: Rejects a request carrying `Idempotency-Key`.
+      tags: [auth]
+      x-supermgmt-route: exempt:auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OIDCExchangeRequest'}
+      responses:
+        '200':
+          description: The new session.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/LoginSession'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/oidc/device:
+    post:
+      operationId: startDeviceLogin
+      summary: Begin a device-code login.
+      tags: [auth]
+      x-supermgmt-route: exempt:auth
+      security: []
+      responses:
+        '200':
+          description: What to show the user and how often to poll.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DeviceStart'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/oidc/device/poll:
+    post:
+      operationId: pollDeviceLogin
+      summary: Poll a device-code login; the session is returned exactly once.
+      description: Rejects a request carrying `Idempotency-Key`.
+      tags: [auth]
+      x-supermgmt-route: exempt:auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DevicePollRequest'}
+      responses:
+        '200':
+          description: Where the login stands.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DevicePoll'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/bootstrap:
+    post:
+      operationId: bootstrapAdmin
+      summary: Exchange a bootstrap code to bind the first admin.
+      description: |
+        With OIDC configured, send the session of a completed login as the bearer token; without
+        OIDC, `display_name` names the admin identity to create. Rejects a request carrying
+        `Idempotency-Key`.
+      tags: [auth]
+      x-supermgmt-route: exempt:auth
+      security:
+        - bearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BootstrapRequest'}
+      responses:
+        '200':
+          description: The admin identity and, without OIDC, its first credentials.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Bootstrapped'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke the presented session.
+      tags: [auth]
+      x-supermgmt-route: exempt:auth
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/tokens:
+    get:
+      operationId: listTokens
+      summary: The caller's own API tokens.
+      tags: [tokens]
+      x-supermgmt-route: exempt:self
+      responses:
+        '200':
+          description: The tokens; values are never returned.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfToken'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createToken
+      summary: Create an API token (value shown once).
+      description: Rejects a request carrying `Idempotency-Key`.
+      tags: [tokens]
+      x-supermgmt-route: action:token.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateTokenRequest'}
+      responses:
+        '201':
+          description: The token and its value.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/TokenIssued'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/tokens/{id}:
+    delete:
+      operationId: revokeToken
+      summary: Revoke one of the caller's own tokens.
+      tags: [tokens]
+      x-supermgmt-route: exempt:self
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/secrets:
+    post:
+      operationId: importSecret
+      summary: Store a new version of a named secret.
+      tags: [keys]
+      x-supermgmt-route: action:secret.write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ImportSecretRequest'}
+      responses:
+        '200':
+          description: Stored at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfSecretVersion'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfSecretVersion'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/master-keys:
+    get:
+      operationId: listMasterKeys
+      summary: The master keys known to the database, without key material.
+      tags: [keys]
+      x-supermgmt-route: action:config.read
+      responses:
+        '200':
+          description: The keys.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfMasterKey'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/master-key/rotate:
+    post:
+      operationId: rotateMasterKey
+      summary: Rotate the master key and rewrap the stored secrets.
+      tags: [keys]
+      x-supermgmt-route: action:secret.write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Rotated at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfMasterKeyRotated'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfMasterKeyRotated'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/master-key/retire:
+    post:
+      operationId: retireMasterKey
+      summary: Retire a previous master key.
+      tags: [keys]
+      x-supermgmt-route: action:secret.write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RetireKeyRequest'}
+      responses:
+        '200':
+          description: Retired at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfEmpty'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfEmpty'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/master-key/export:
+    post:
+      operationId: exportMasterKey
+      summary: Export a master key wrapped with a passphrase.
+      description: Served on the local-mode Unix socket only. Rejects a request carrying `Idempotency-Key`.
+      tags: [keys]
+      x-supermgmt-route: action:secret.write
+      x-supermgmt-transports: [unix]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ExportKeyRequest'}
+      responses:
+        '200':
+          description: The exported key.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfExportedKey'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/backups:
+    get:
+      operationId: listBackups
+      summary: The available backup archives.
+      tags: [backups]
+      x-supermgmt-route: action:backup.read
+      responses:
+        '200':
+          description: The archives.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfBackup'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createBackup
+      summary: Create a backup.
+      tags: [backups]
+      x-supermgmt-route: action:backup.create
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': {$ref: '#/components/responses/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/enrollments:
+    post:
+      operationId: createEnrollment
+      summary: Issue a join token for `sm join` (value shown once).
+      description: Rejects a request carrying `Idempotency-Key`.
+      tags: [enrollment]
+      x-supermgmt-route: action:enrollment.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnrollmentRequest'}
+      responses:
+        '201':
+          description: The join token.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/EnrollmentIssued'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/enroll:
+    post:
+      operationId: enroll
+      summary: Consume a join token from the node being enrolled.
+      description: Rejects a request carrying `Idempotency-Key`.
+      tags: [enrollment]
+      x-supermgmt-route: exempt:auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnrollRequest'}
+      responses:
+        '200':
+          description: The key the node must authorize.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Enrolled'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: A session token or an API token. Refused on the local-mode Unix socket, where the peer's credentials identify the caller.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: Resource id.
+      schema: {$ref: '#/components/schemas/ID'}
+    Sid:
+      name: sid
+      in: path
+      required: true
+      description: Session id.
+      schema: {$ref: '#/components/schemas/ID'}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Makes a retry replay the first answer for 24 hours; reusing it with a different request is IDEMPOTENCY_MISMATCH.
+      schema: {type: string, minLength: 1}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: The spec_revision the caller read.
+      schema: {type: string}
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from the previous page.
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size; 0 or absent means 50.
+      schema: {type: integer, minimum: 0, maximum: 500}
+  requestBodies:
+    CreatePlan:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/CreatePlanRequest'}
+    PlanHash:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PlanHashRequest'}
+    Decision:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/DecisionRequest'}
+  responses:
+    Error:
+      description: |
+        A failure. `error.code` is stable; `error.details.reason` carries the reason enum (spec section 38).
+        Statuses follow the code: 400 INVALID_ARGUMENT, 401 UNAUTHENTICATED, 403 POLICY_DENIED and
+        APPROVAL_REQUIRED, 404 NOT_FOUND, 409 CONFLICT, 422 CAPABILITY_UNAVAILABLE, 502 NODE_UNREACHABLE,
+        504 TIMEOUT, 500 otherwise.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+    Health:
+      description: Probe answer.
+      content:
+        application/json:
+          schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Health'}}}]}
+    Empty:
+      description: Done; the data object is empty.
+      content:
+        application/json:
+          schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Empty'}}}]}
+    Submission:
+      description: The job created and why it is queued or awaiting approval.
+      content:
+        application/json:
+          schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Submission'}}}]}
+    Job:
+      description: The job.
+      content:
+        application/json:
+          schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Job'}}}]}
+  schemas:
+    ID:
+      type: string
+      description: A UUIDv7.
+    Timestamp:
+      type: string
+      format: date-time
+    Empty:
+      type: object
+      description: No fields.
+      additionalProperties: false
+    Envelope:
+      type: object
+      description: Wraps every success.
+      required: [data, meta]
+      properties:
+        data: {description: The payload.}
+        meta: {$ref: '#/components/schemas/Meta'}
+    Meta:
+      type: object
+      properties:
+        correlation_id: {type: string}
+    ErrorEnvelope:
+      type: object
+      description: Wraps every failure.
+      required: [error]
+      properties:
+        error: {$ref: '#/components/schemas/Error'}
+    Error:
+      type: object
+      required: [code, message, correlation_id, details]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_ARGUMENT, NOT_FOUND, CONFLICT, UNAUTHENTICATED, POLICY_DENIED, APPROVAL_REQUIRED, CAPABILITY_UNAVAILABLE, NODE_UNREACHABLE, SSH_HOST_KEY_MISMATCH, PROVIDER_ERROR, CI_NOT_PASSED, ARTIFACT_NOT_IMMUTABLE, DEPLOYMENT_FAILED, ROLLBACK_FAILED, TIMEOUT, INTERNAL]
+        message: {type: string}
+        correlation_id: {type: string}
+        details: {type: object, additionalProperties: true}
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string}
+    Me:
+      type: object
+      required: [identity_id, actor_type, display_name, credential, roles, instance_mode]
+      properties:
+        identity_id: {$ref: '#/components/schemas/ID'}
+        actor_type: {type: string}
+        display_name: {type: string}
+        credential: {type: string}
+        roles: {type: array, items: {type: string}}
+        instance_mode: {type: string}
+    SSHKey:
+      type: object
+      required: [ref, version, authorized_key, fingerprint_sha256]
+      properties:
+        ref: {type: string}
+        version: {type: integer}
+        authorized_key: {type: string}
+        fingerprint_sha256: {type: string}
+    Provider:
+      type: object
+      required: [id, type, name, origin, status, spec_revision, last_sync_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        type: {type: string}
+        name: {type: string}
+        origin: {type: string}
+        status: {type: string}
+        spec_revision: {type: integer, format: int64}
+        last_sync_at: {type: [string, 'null'], format: date-time}
+    CreateProviderRequest:
+      type: object
+      required: [type]
+      properties:
+        type: {type: string, enum: [local]}
+    Node:
+      type: object
+      required: [id, name, kind, provider_id, provider, origin, environment, management_state, reachability, endpoint, credential_ref, admin_credential_ref, os, arch, tags, capabilities, addresses, connection, metrics, setup, stale, spec_revision, last_seen_at, updated_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        kind: {type: string}
+        provider_id: {$ref: '#/components/schemas/ID'}
+        provider: {type: string}
+        origin: {type: string}
+        environment: {type: string}
+        management_state: {type: string}
+        reachability: {type: string}
+        endpoint: {$ref: '#/components/schemas/Endpoint'}
+        credential_ref: {type: string}
+        admin_credential_ref: {type: string}
+        os: {type: string}
+        arch: {type: string}
+        tags: {type: array, items: {type: string}}
+        capabilities: {type: array, items: {$ref: '#/components/schemas/Capability'}}
+        addresses: {type: array, items: {$ref: '#/components/schemas/Address'}}
+        connection: {$ref: '#/components/schemas/Connection'}
+        metrics: {oneOf: [{$ref: '#/components/schemas/Metrics'}, {type: 'null'}]}
+        setup: {oneOf: [{$ref: '#/components/schemas/Setup'}, {type: 'null'}]}
+        stale: {type: boolean}
+        spec_revision: {type: integer, format: int64}
+        last_seen_at: {type: [string, 'null'], format: date-time}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+    Endpoint:
+      type: object
+      required: [host, port, user, admin_user, host_public_key, host_key_fingerprint_sha256]
+      properties:
+        host: {type: string}
+        port: {type: integer}
+        user: {type: string}
+        admin_user: {type: string}
+        host_public_key: {type: string}
+        host_key_fingerprint_sha256: {type: string}
+    Capability:
+      type: object
+      required: [name, available, checked_at]
+      properties:
+        name: {type: string}
+        available: {type: boolean}
+        checked_at: {$ref: '#/components/schemas/Timestamp'}
+    Address:
+      type: object
+      required: [address, family, scope, preferred]
+      properties:
+        address: {type: string}
+        family: {type: string}
+        scope: {type: string}
+        preferred: {type: boolean}
+    Connection:
+      type: object
+      required: [state, last_error, next_dial_at]
+      properties:
+        state: {type: string, enum: [connected, idle, backoff, unknown]}
+        last_error: {type: string}
+        next_dial_at: {type: [string, 'null'], format: date-time}
+    Metrics:
+      type: object
+      required: [observed_at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes, uptime_seconds]
+      properties:
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        cpu_percent: {type: number}
+        memory_used_bytes: {type: integer, format: int64}
+        memory_total_bytes: {type: integer, format: int64}
+        disk_used_bytes: {type: integer, format: int64}
+        disk_total_bytes: {type: integer, format: int64}
+        uptime_seconds: {type: integer, format: int64}
+    Setup:
+      type: object
+      required: [setup_version, logs_mode, docker_access, units, key_fingerprint]
+      properties:
+        setup_version: {type: integer}
+        logs_mode: {type: string}
+        docker_access: {type: boolean}
+        units: {type: array, items: {$ref: '#/components/schemas/UnitGrant'}}
+        key_fingerprint: {type: string}
+    UnitGrant:
+      type: object
+      required: [unit, verbs]
+      properties:
+        unit: {type: string}
+        verbs: {type: array, items: {type: string}}
+    ScanHostKeyRequest:
+      type: object
+      required: [host, port]
+      properties:
+        host: {type: string}
+        port: {type: integer}
+    HostKey:
+      type: object
+      required: [authorized_key, type, fingerprint_sha256]
+      properties:
+        authorized_key: {type: string}
+        type: {type: string}
+        fingerprint_sha256: {type: string}
+    AddSSHNodeRequest:
+      type: object
+      required: [name, host, port, user, admin_user, host_public_key, credential_ref, admin_credential_ref, environment, tags]
+      properties:
+        name: {type: string}
+        host: {type: string}
+        port: {type: integer}
+        user: {type: string}
+        admin_user: {type: string}
+        host_public_key: {type: string, description: The key the user confirmed from a scan.}
+        credential_ref: {type: string}
+        admin_credential_ref: {type: string}
+        environment: {type: string}
+        tags: {type: array, items: {type: string}}
+    NodePatch:
+      type: object
+      description: Absent fields are unchanged.
+      properties:
+        name: {type: string}
+        environment: {type: string}
+        tags: {type: array, items: {type: string}}
+        admin_user: {type: string}
+        admin_credential_ref: {type: string}
+        host_public_key: {type: string}
+    ConnectInfo:
+      type: object
+      required: [node_id, host, port, user, host_public_key, host_key_alias]
+      properties:
+        node_id: {$ref: '#/components/schemas/ID'}
+        host: {type: string}
+        port: {type: integer}
+        user: {type: string}
+        host_public_key: {type: string}
+        host_key_alias: {type: string}
+    OpenSessionRequest:
+      type: object
+      required: [tool]
+      properties:
+        tool: {type: string, enum: [shell, lazydocker, btop, tmux]}
+    Session:
+      type: object
+      required: [id, node_id, tool, state, exit_code, end_reason, created_at, ended_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        node_id: {$ref: '#/components/schemas/ID'}
+        tool: {type: string, enum: [shell, lazydocker, btop, tmux]}
+        state: {type: string, enum: [issued, ended, abandoned]}
+        exit_code: {type: [integer, 'null']}
+        end_reason: {type: [string, 'null'], enum: [exited, launch_failed, abandoned, null]}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        ended_at: {type: [string, 'null'], format: date-time}
+    SessionOpened:
+      type: object
+      required: [session, connect_info]
+      properties:
+        session: {$ref: '#/components/schemas/Session'}
+        connect_info: {$ref: '#/components/schemas/ConnectInfo'}
+    EndSessionRequest:
+      type: object
+      required: [reason, exit_code]
+      properties:
+        reason: {type: string, enum: [exited, launch_failed]}
+        exit_code: {type: [integer, 'null']}
+    Service:
+      type: object
+      required: [id, node_id, node, runtime_type, kind, native_id, name, status, health, metadata, actions, spec_revision, last_seen_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        node_id: {$ref: '#/components/schemas/ID'}
+        node: {type: string}
+        runtime_type: {type: string}
+        kind: {type: string}
+        native_id: {type: string}
+        name: {type: string}
+        status: {type: string}
+        health: {type: string}
+        metadata: {type: object, additionalProperties: true}
+        actions: {type: array, items: {type: string}}
+        spec_revision: {type: integer, format: int64}
+        last_seen_at: {type: [string, 'null'], format: date-time}
+    LogChunk:
+      type: object
+      required: [service_id, lines, truncated, collected_at]
+      properties:
+        service_id: {$ref: '#/components/schemas/ID'}
+        lines: {type: array, items: {type: string}}
+        truncated: {type: boolean}
+        collected_at: {$ref: '#/components/schemas/Timestamp'}
+    ResourceRef:
+      type: object
+      required: [type, id]
+      properties:
+        type: {type: string}
+        id: {$ref: '#/components/schemas/ID'}
+    CreatePlanRequest:
+      type: object
+      required: [action, targets, parameters]
+      properties:
+        action: {type: string, description: A catalog action id.}
+        targets: {type: array, minItems: 1, maxItems: 1, items: {$ref: '#/components/schemas/ResourceRef'}}
+        parameters: {type: object, additionalProperties: true}
+    Policy:
+      type: object
+      required: [decision, approval_required, quorum, reason]
+      properties:
+        decision: {type: string}
+        approval_required: {type: boolean}
+        quorum: {type: integer}
+        reason: {type: string}
+    CreatedPlan:
+      type: object
+      required: [plan_id, plan, plan_hash, expires_at, policy]
+      properties:
+        plan_id: {$ref: '#/components/schemas/ID'}
+        plan: {type: object, description: The canonical plan document whose SHA-256 is plan_hash., additionalProperties: true}
+        plan_hash: {type: string}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        policy: {$ref: '#/components/schemas/Policy'}
+    PlanHashRequest:
+      type: object
+      required: [plan_hash]
+      properties:
+        plan_hash: {type: string}
+    Submission:
+      type: object
+      required: [job, policy]
+      properties:
+        job: {$ref: '#/components/schemas/Job'}
+        policy: {$ref: '#/components/schemas/Policy'}
+    DecisionRequest:
+      type: object
+      required: [plan_hash, reason]
+      properties:
+        plan_hash: {type: string}
+        reason: {type: string, description: Required to reject.}
+    ResolveRequest:
+      type: object
+      required: [plan_hash, outcome, note, assume_quiescent]
+      properties:
+        plan_hash: {type: string}
+        outcome: {type: string, enum: [succeeded, failed, rollback_failed]}
+        note: {type: string}
+        assume_quiescent: {type: boolean, description: Required when the node is unreachable; audited.}
+    Job:
+      type: object
+      required: [id, type, resource, actor_id, state, risk, retry_class, plan_id, plan_hash, attempts, max_attempts, created_at, scheduled_at, started_at, finished_at, error]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        type: {type: string}
+        resource: {$ref: '#/components/schemas/ResourceRef'}
+        actor_id: {$ref: '#/components/schemas/ID'}
+        state: {type: string}
+        risk: {type: string}
+        retry_class: {type: string}
+        plan_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        plan_hash: {type: string}
+        attempts: {type: integer}
+        max_attempts: {type: integer}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        scheduled_at: {$ref: '#/components/schemas/Timestamp'}
+        started_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        error: {oneOf: [{$ref: '#/components/schemas/Failure'}, {type: 'null'}]}
+    Failure:
+      type: object
+      required: [code, reason, message]
+      properties:
+        code: {type: string}
+        reason: {type: string}
+        message: {type: string}
+    JobDetail:
+      type: object
+      required: [job, intents]
+      properties:
+        job: {$ref: '#/components/schemas/Job'}
+        intents: {type: array, items: {$ref: '#/components/schemas/Intent'}}
+    Intent:
+      type: object
+      required: [id, step, state, operation, target, pre_state, deadline_at, dispatched_at, completed_at, outcome, evidence]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        step: {type: string}
+        state: {type: string}
+        operation: {type: string}
+        target: {type: string}
+        pre_state: {description: What the reconciler saw before dispatch; any JSON.}
+        deadline_at: {$ref: '#/components/schemas/Timestamp'}
+        dispatched_at: {type: [string, 'null'], format: date-time}
+        completed_at: {type: [string, 'null'], format: date-time}
+        outcome: {type: string}
+        evidence: {description: Any JSON.}
+    Approval:
+      type: object
+      required: [job, plan, environments, quorum, approvals, expires_at]
+      properties:
+        job: {$ref: '#/components/schemas/Job'}
+        plan: {type: object, additionalProperties: true}
+        environments: {type: array, items: {type: string}}
+        quorum: {type: integer}
+        approvals: {type: integer}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    Event:
+      type: object
+      required: [event_id, seq, timestamp, actor, source, action, resource, correlation_id, severity, result, data]
+      properties:
+        event_id: {$ref: '#/components/schemas/ID'}
+        seq: {type: integer, format: int64}
+        timestamp: {$ref: '#/components/schemas/Timestamp'}
+        actor: {$ref: '#/components/schemas/Actor'}
+        source: {type: string}
+        action: {type: string}
+        resource: {$ref: '#/components/schemas/ResourceRef'}
+        correlation_id: {type: string}
+        severity: {type: string}
+        result: {type: string}
+        data: {type: object, additionalProperties: true}
+    Actor:
+      type: object
+      required: [type, id]
+      properties:
+        type: {type: string}
+        id: {$ref: '#/components/schemas/ID'}
+    OIDCStartRequest:
+      type: object
+      required: [redirect_uri, code_challenge]
+      properties:
+        redirect_uri: {type: string, description: 'http://127.0.0.1:<port>/callback (RFC 8252).'}
+        code_challenge: {type: string, description: PKCE S256 challenge.}
+    OIDCStart:
+      type: object
+      required: [authorization_url, state]
+      properties:
+        authorization_url: {type: string}
+        state: {type: string}
+    OIDCExchangeRequest:
+      type: object
+      required: [code, state, code_verifier, client]
+      properties:
+        code: {type: string}
+        state: {type: string}
+        code_verifier: {type: string}
+        client: {type: string}
+    LoginSession:
+      type: object
+      required: [session_id, identity_id, token, expires_at]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        identity_id: {$ref: '#/components/schemas/ID'}
+        token: {type: string, description: Shown once.}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    DeviceStart:
+      type: object
+      required: [transaction_id, user_code, verification_uri, interval_seconds, expires_at]
+      properties:
+        transaction_id: {type: string}
+        user_code: {type: string}
+        verification_uri: {type: string}
+        verification_uri_complete: {type: string}
+        interval_seconds: {type: integer}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    DevicePollRequest:
+      type: object
+      required: [transaction_id, client]
+      properties:
+        transaction_id: {type: string}
+        client: {type: string}
+    DevicePoll:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [pending, slow_down, complete]}
+        session:
+          description: Set only with status complete, exactly once per transaction; a later poll is a CONFLICT.
+          $ref: '#/components/schemas/LoginSession'
+    BootstrapRequest:
+      type: object
+      required: [code]
+      properties:
+        code: {type: string}
+        display_name: {type: string, description: Names the admin identity to create when OIDC is not configured.}
+    Bootstrapped:
+      type: object
+      required: [identity_id]
+      properties:
+        identity_id: {$ref: '#/components/schemas/ID'}
+        session:
+          description: Set only when the exchange created the identity (no OIDC).
+          $ref: '#/components/schemas/LoginSession'
+        api_token:
+          description: Set only when the exchange created the identity (no OIDC).
+          $ref: '#/components/schemas/TokenIssued'
+    Token:
+      type: object
+      required: [id, name, scopes, created_at, expires_at, revoked_at, last_used_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        scopes: {type: array, items: {type: string}}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        revoked_at: {type: [string, 'null'], format: date-time}
+        last_used_at: {type: [string, 'null'], format: date-time}
+    CreateTokenRequest:
+      type: object
+      required: [name, scopes, expires_at]
+      properties:
+        name: {type: string}
+        scopes: {type: array, items: {type: string}, description: May only narrow the creator's permissions.}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    TokenIssued:
+      type: object
+      required: [metadata, token]
+      properties:
+        metadata: {$ref: '#/components/schemas/Token'}
+        token: {type: string, description: The token value; shown once.}
+    MasterKeyRotated:
+      type: object
+      required: [active_kek_id, previous_kek_id, rewrapped]
+      properties:
+        active_kek_id: {$ref: '#/components/schemas/ID'}
+        previous_kek_id: {$ref: '#/components/schemas/ID'}
+        rewrapped: {type: integer}
+    RetireKeyRequest:
+      type: object
+      required: [kek_id, external_backups_handled]
+      properties:
+        kek_id: {$ref: '#/components/schemas/ID'}
+        external_backups_handled: {type: boolean}
+    ExportKeyRequest:
+      type: object
+      required: [kek_id, passphrase]
+      properties:
+        kek_id: {$ref: '#/components/schemas/ID'}
+        passphrase: {type: string, minLength: 12, writeOnly: true}
+    ExportedKey:
+      type: object
+      required: [kek_id, export]
+      properties:
+        kek_id: {$ref: '#/components/schemas/ID'}
+        export: {type: string, format: byte, description: The passphrase-wrapped SMKEY1 file.}
+    ImportSecretRequest:
+      type: object
+      required: [name, value]
+      properties:
+        name: {type: string}
+        value: {type: string, writeOnly: true}
+    SecretVersion:
+      type: object
+      required: [name, version]
+      properties:
+        name: {type: string}
+        version: {type: integer}
+    Backup:
+      type: object
+      required: [name, size_bytes, created_at, schema_version, sm_version, kek_ids]
+      properties:
+        name: {type: string}
+        size_bytes: {type: integer, format: int64}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        schema_version: {type: integer}
+        sm_version: {type: string}
+        kek_ids: {type: array, items: {$ref: '#/components/schemas/ID'}}
+    MasterKey:
+      type: object
+      description: One master key (KEK); never any key material.
+      required: [id, active, loaded, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        active: {type: boolean}
+        loaded: {type: boolean}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    EnrollmentRequest:
+      type: object
+      description: Empty constraints do not restrict.
+      required: [tags, max_nodes, source_cidrs, expires_at]
+      properties:
+        tags: {type: array, items: {type: string}}
+        max_nodes: {type: integer}
+        source_cidrs: {type: array, items: {type: string}}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    EnrollmentIssued:
+      type: object
+      required: [id, token, expires_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        token: {type: string, description: The join token; shown once.}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    EnrollRequest:
+      type: object
+      required: [token, host_public_key, hostname, addresses, ssh_port]
+      properties:
+        token: {type: string}
+        host_public_key: {type: string}
+        hostname: {type: string}
+        addresses: {type: array, items: {type: string}}
+        ssh_port: {type: integer}
+    Enrolled:
+      type: object
+      required: [node_id, instance_id, ssh_user, authorized_key, key_version, fingerprint_sha256]
+      properties:
+        node_id: {$ref: '#/components/schemas/ID'}
+        instance_id: {$ref: '#/components/schemas/ID'}
+        ssh_user: {type: string}
+        authorized_key: {type: string}
+        key_version: {type: integer}
+        fingerprint_sha256: {type: string}
+    PageOfEvent:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Event'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfApproval:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Approval'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfJob:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Job'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfProvider:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Provider'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfNode:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Node'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfService:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Service'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfToken:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Token'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfBackup:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Backup'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfMasterKey:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MasterKey'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    DirectOfProvider:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/Provider'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfNode:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/Node'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfSecretVersion:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/SecretVersion'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfMasterKeyRotated:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/MasterKeyRotated'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfSSHKey:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/SSHKey'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfExportedKey:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/ExportedKey'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfEmpty:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/Empty'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}

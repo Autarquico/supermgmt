@@ -7,12 +7,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
 func newEventsCmd(env []string) *cobra.Command {
 	var q wire.EventQuery
 	var resourceType, resourceID string
+	var follow bool
 	cmd := &cobra.Command{
 		Use:   "events",
 		Short: "List audit events",
@@ -36,6 +38,9 @@ func newEventsCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if follow {
+				return followEvents(cmd, api, q)
+			}
 			page, err := api.ListEvents(cmd.Context(), q)
 			if err != nil {
 				return err
@@ -48,7 +53,24 @@ func newEventsCmd(env []string) *cobra.Command {
 	cmd.Flags().StringVar(&resourceType, "resource-type", "", "only events about this resource type")
 	cmd.Flags().StringVar(&resourceID, "resource-id", "", "only events about this resource")
 	cmd.Flags().Int64Var(&q.AfterSeq, "after-seq", 0, "only events after this sequence number")
+	cmd.Flags().BoolVar(&follow, "follow", false, "keep streaming new events (from now, or after --after-seq); reconnects by itself")
 	return cmd
+}
+
+// followEvents prints events as they happen: one line each, or one JSON
+// object per line with --json. It ends when the credential loses access.
+func followEvents(cmd *cobra.Command, api *client.Client, q wire.EventQuery) error {
+	q.Limit, q.Cursor = 0, ""
+	out := cmd.OutOrStdout()
+	asJSON := wantsJSON(cmd)
+	return api.FollowEvents(cmd.Context(), q, func(e wire.Event) error {
+		if asJSON {
+			return writeJSON(out, e)
+		}
+		_, err := fmt.Fprintf(out, "%d  %s  %s  %s  %s:%s  %s:%s  %s  %s\n",
+			e.Seq, formatTime(e.Timestamp), e.Severity, e.Action, e.Actor.Type, e.Actor.ID, e.Resource.Type, e.Resource.ID, e.Result, e.CorrelationID)
+		return err
+	})
 }
 
 func writeEvents(w io.Writer, page wire.Page[wire.Event]) error {

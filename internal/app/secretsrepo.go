@@ -52,6 +52,52 @@ func (r *SecretsRepo) Put(ctx context.Context, rec secrets.Record) error {
 	})
 }
 
+// PutStaged stores rec as a staged version; it takes no version number until
+// it is activated.
+func (r *SecretsRepo) PutStaged(ctx context.Context, rec secrets.Record) error {
+	meta, err := metadataOf(rec.MetadataJSON)
+	if err != nil {
+		return err
+	}
+	return r.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		_, err := database.StageSecret(ctx, tx, database.SecretRecord{
+			ID: rec.ID, Name: rec.Name, EnvelopeVersion: rec.EnvelopeVersion, KEKID: rec.KEKID,
+			WrappedDEK: rec.WrappedDEK, Ciphertext: rec.Ciphertext, Metadata: meta, CreatedAt: rec.CreatedAt,
+		})
+		return err
+	})
+}
+
+// GetByID returns one stored version, current or staged.
+func (r *SecretsRepo) GetByID(ctx context.Context, id domain.ID) (secrets.Record, error) {
+	stored, err := database.GetSecretByID(ctx, r.db.Reader(), id)
+	if err != nil {
+		return secrets.Record{}, err
+	}
+	return recordOf(stored)
+}
+
+// ActivateStaged makes a staged version the next current one.
+func (r *SecretsRepo) ActivateStaged(ctx context.Context, id domain.ID) (secrets.Record, error) {
+	var stored database.SecretRecord
+	err := r.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		var err error
+		stored, err = database.ActivateStagedSecret(ctx, tx, id)
+		return err
+	})
+	if err != nil {
+		return secrets.Record{}, err
+	}
+	return recordOf(stored)
+}
+
+// DeleteStaged removes a staged version and its ciphertext.
+func (r *SecretsRepo) DeleteStaged(ctx context.Context, id domain.ID) error {
+	return r.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		return database.DeleteStagedSecret(ctx, tx, id)
+	})
+}
+
 func metadataOf(text string) (map[string]any, error) {
 	if text == "" {
 		return nil, nil
@@ -69,6 +115,10 @@ func (r *SecretsRepo) Get(ctx context.Context, name string, version int) (secret
 	if err != nil {
 		return secrets.Record{}, err
 	}
+	return recordOf(stored)
+}
+
+func recordOf(stored database.SecretRecord) (secrets.Record, error) {
 	meta, err := json.Marshal(stored.Metadata)
 	if err != nil {
 		return secrets.Record{}, fmt.Errorf("encode secret metadata: %w", err)

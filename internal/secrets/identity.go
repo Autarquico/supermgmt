@@ -47,6 +47,14 @@ func EnsureSSHIdentity(ctx context.Context, s *Store) (Identity, error) {
 	return generateIdentity(ctx, s)
 }
 
+// RotateSSHIdentity stores a new version of the instance identity (ADR-0021).
+// Earlier versions are kept: nodes stay on the version their setup pinned until
+// `sm nodes setup` authorizes the new key. The caller emits the event with the
+// new fingerprint only.
+func RotateSSHIdentity(ctx context.Context, s *Store) (Identity, error) {
+	return generateIdentity(ctx, s)
+}
+
 func identityOf(rec Record) (Identity, error) {
 	var meta identityMetadata
 	if err := json.Unmarshal([]byte(rec.MetadataJSON), &meta); err != nil || meta.PublicKey == "" || meta.FingerprintSHA256 == "" {

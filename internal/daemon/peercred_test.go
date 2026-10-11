@@ -67,7 +67,7 @@ func TestDaemonRefusesAnotherUserPeerCred(t *testing.T) {
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
-	script := `use IO::Socket::UNIX; my $s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 3;
+	script := `use IO::Socket::UNIX; $SIG{PIPE} = "IGNORE"; my $s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 3;
 print $s "GET /api/v1/me HTTP/1.0\r\n\r\n"; my $got = <$s>; print defined $got ? "answered" : "closed";`
 	out, err := exec.CommandContext(context.Background(), "sudo", "-n", "-u", user, "perl", "-e", script, socket).CombinedOutput()
 	if err != nil {

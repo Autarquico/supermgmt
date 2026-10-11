@@ -1,0 +1,52 @@
+name: channels
+
+# Re-signs the channel pointers (stable, beta) at least every 14 days so that install.sh can enforce
+# freshness (spec 3.2: valid_until - issued_at <= 30 days). Runs in the protected `release` environment,
+# so every run waits for the owner's approval.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: channels
+  cancel-in-progress: false
+
+jobs:
+  channels:
+    if: github.repository == 'autarquico/supermgmt' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: sign and publish the channel pointers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SM_RELEASE_SIGNING_KEY: ${{ secrets.SM_RELEASE_SIGNING_KEY }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/release_key"
+          out="$RUNNER_TEMP/channels"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$SM_RELEASE_SIGNING_KEY" >"$key"
+          issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          valid_until=$(date -u -d '+21 days' +%Y-%m-%dT%H:%M:%SZ)
+          tags=$(gh release list --exclude-drafts --limit 50 --json tagName --jq '.[].tagName')
+          stable=$(printf '%s\n' "$tags" | packaging/release/select-version.sh stable)
+          beta=$(printf '%s\n' "$tags" | packaging/release/select-version.sh beta)
+          [ -n "$stable$beta" ] || { echo "no release to point at"; exit 0; }
+          point() { [ -z "$2" ] || SM_SIGNING_KEY_FILE="$key" packaging/release/channel.sh "$1" "$2" "$issued" "$valid_until" "$out"; }
+          point stable "$stable"
+          point beta "$beta"
+          for f in "$out"/*.json; do packaging/release/verify-asset.sh "$f" install.sh; done
+          gh release view channels >/dev/null 2>&1 ||
+            gh release create channels --target main --prerelease --title channels --notes "Signed channel pointers. Rewritten by the channels workflow; do not delete."
+          gh release upload channels "$out"/*.json "$out"/*.json.sig --clobber

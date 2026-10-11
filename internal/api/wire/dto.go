@@ -182,13 +182,15 @@ type AddSSHNodeRequest struct {
 }
 
 // NodePatch is PATCH /nodes/{id} (with If-Match: <spec_revision>). Nil fields
-// are unchanged.
+// are unchanged. HostPublicKey re-pins the node to a key the operator
+// confirmed from a fresh scan (ADR-0021).
 type NodePatch struct {
 	Name               *string   `json:"name,omitempty"`
 	Environment        *string   `json:"environment,omitempty"`
 	Tags               *[]string `json:"tags,omitempty"`
 	AdminUser          *string   `json:"admin_user,omitempty"`
 	AdminCredentialRef *string   `json:"admin_credential_ref,omitempty"`
+	HostPublicKey      *string   `json:"host_public_key,omitempty"`
 }
 
 // ConnectInfo is what an interactive client needs to run OpenSSH against a

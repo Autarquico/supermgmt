@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,9 @@ const (
 	ExemptSelf = "exempt:self"
 	// ExemptHealth is for the liveness and readiness probes.
 	ExemptHealth = "exempt:health"
+	// ExemptAuth is for the login, bootstrap, logout and enrollment routes: the
+	// authentication endpoints are not actions (spec §23).
+	ExemptAuth = "exempt:auth"
 )
 
 // Route says which catalog action (or exemption) a route stands for. The
@@ -27,21 +31,54 @@ type Route struct {
 	Method, Pattern, Action string
 	// Keyed routes require an Idempotency-Key.
 	Keyed bool
+	// Credential routes issue a credential once and reject an Idempotency-Key.
+	Credential bool
+	// UnixOnly routes are served on the local-mode Unix socket only.
+	UnixOnly bool
 }
 
 type endpoint func(w http.ResponseWriter, r *http.Request) error
 
+// authMode is how a route identifies its caller on HTTPS.
+type authMode int
+
+const (
+	authRequired authMode = iota // a valid bearer token
+	authOptional                 // a bearer token if one is sent
+	authNone                     // no token: probes and login
+)
+
 type route struct {
 	method, pattern, action string
 	keyed, longLived        bool
-	do                      endpoint
+	auth                    authMode
+	// credential: issues a credential once (or is as sensitive); refuses an
+	// Idempotency-Key and is never stored as an idempotent answer.
+	credential bool
+	unixOnly   bool
+	maxBody    int64
+	do         endpoint
+}
+
+func (rt route) isAction() bool { return rt.action != "" && !strings.HasPrefix(rt.action, "exempt:") }
+func (rt route) isAuth() bool   { return rt.action == ExemptAuth }
+func (rt route) writes() bool   { return rt.method != http.MethodGet && rt.method != http.MethodHead }
+
+func (rt route) bodyLimit() int64 {
+	if rt.maxBody > 0 {
+		return rt.maxBody
+	}
+	return maxBodyBytes
 }
 
 // Routes lists the routes the server serves.
 func (s *Server) Routes() []Route {
 	out := make([]Route, len(s.routes))
 	for i, rt := range s.routes {
-		out[i] = Route{Method: rt.method, Pattern: rt.pattern, Action: rt.action, Keyed: rt.keyed}
+		out[i] = Route{
+			Method: rt.method, Pattern: rt.pattern, Action: rt.action,
+			Keyed: rt.keyed, Credential: rt.credential, UnixOnly: rt.unixOnly,
+		}
 	}
 	return out
 }
@@ -55,7 +92,13 @@ func (s *Server) buildRoutes() []route {
 	r.nodes()
 	r.sessions()
 	r.services()
-	return r.routes
+	r.login()
+	r.tokens()
+	r.keys()
+	r.backups()
+	r.enrollment()
+	r.stream()
+	return slices.DeleteFunc(r.routes, func(rt route) bool { return rt.unixOnly && s.transport != viaUnixSocket })
 }
 
 type routeSet struct {
@@ -73,11 +116,14 @@ func (rs *routeSet) write(method, pattern, action string, do endpoint) {
 
 func (rs *routeSet) reads() {
 	s := rs.s
-	rs.read(wire.PathHealthLive, ExemptHealth, func(w http.ResponseWriter, r *http.Request) error {
-		s.writeData(w, r, http.StatusOK, wire.Health{Status: "ok"})
-		return nil
+	rs.routes = append(rs.routes, route{
+		method: http.MethodGet, pattern: wire.PathHealthLive, action: ExemptHealth, auth: authNone,
+		do: func(w http.ResponseWriter, r *http.Request) error {
+			s.writeData(w, r, http.StatusOK, wire.Health{Status: "ok"})
+			return nil
+		},
 	})
-	rs.read(wire.PathHealthReady, ExemptHealth, s.health)
+	rs.routes = append(rs.routes, route{method: http.MethodGet, pattern: wire.PathHealthReady, action: ExemptHealth, auth: authNone, do: s.health})
 	rs.read(wire.PathMe, ExemptSelf, reading(s, func(ctx context.Context, by app.Caller, _ input) (wire.Me, error) {
 		return s.svc.Queries.Me(ctx, by)
 	}))

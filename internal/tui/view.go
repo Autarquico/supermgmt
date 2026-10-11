@@ -108,6 +108,10 @@ func (m *Model) body(bw, bh int) []string {
 		return m.approvalsBody(bw, bh)
 	case screenEvents:
 		return m.eventsBody(bw, bh)
+	case screenProviders:
+		return m.providersBody(bw, bh)
+	case screenSettings:
+		return m.settingsBody(bw)
 	case screenHelp:
 		return m.helpBody(bw)
 	}
@@ -192,7 +196,7 @@ func (m *Model) keyHints() string {
 	const global = "/ command  ? help  q quit"
 	switch m.screen {
 	case screenDashboard:
-		return "1-5 screens  r refresh  " + global
+		return "1-7 screens  r refresh  " + global
 	case screenResources:
 		return "j/k move  enter detail  v services  s ssh  d docker  " + global
 	case screenNode:
@@ -211,7 +215,7 @@ func (m *Model) keyHints() string {
 		return "esc back  q quit"
 	case screenApprovals:
 		return "j/k move  A approve  R reject  esc back  " + global
-	case screenEvents:
+	case screenEvents, screenProviders, screenSettings:
 		return "r refresh  esc back  " + global
 	}
 	return "esc back  q quit"

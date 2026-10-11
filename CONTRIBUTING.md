@@ -36,7 +36,7 @@ Common targets (`make help` lists all):
 | `make test-pty` | terminal handoff tests under a pseudo-terminal |
 | `make cross-build` | linux/darwin x amd64/arm64 with `CGO_ENABLED=0` |
 
-`make api-check`, `make e2e`, `make snapshot` and `make release-check` are placeholders until M2.
+`make api-check` checks `api/openapi.yaml` against the route table, `make snapshot` builds a signed snapshot release into `dist/`, and `make release-check` verifies it.
 
 ## Architecture boundaries
 

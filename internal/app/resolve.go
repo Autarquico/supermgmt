@@ -21,13 +21,17 @@ type resolved struct {
 	inputs   []plan.Input
 }
 
-// resolve supports the resource types M0 can act on: nodes and services.
+// resolve supports nodes, services and the instance. The instance has no
+// spec_revision and no configured inputs (spec §29.1 backups act on it).
 func resolve(ctx context.Context, q database.Querier, ref domain.ResourceRef) (resolved, error) {
 	if ref.Type == domain.ResourceNode {
 		return resolveNode(ctx, q, ref.ID)
 	}
 	if ref.Type == domain.ResourceService {
 		return resolveService(ctx, q, ref.ID)
+	}
+	if ref.Type == domain.ResourceInstance {
+		return resolved{target: policy.Target{Ref: ref}}, nil
 	}
 	return resolved{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("resource type %q is not supported yet", ref.Type))
 }

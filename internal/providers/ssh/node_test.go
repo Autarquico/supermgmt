@@ -196,3 +196,15 @@ func TestValidateNameIsAnAllowlist(t *testing.T) {
 		}
 	}
 }
+
+func TestAJoinedNodeIsProbedAsTheDedicatedUserBeforeSetup(t *testing.T) {
+	node := testNode(t)
+	node.Endpoint.AdminUser, node.Endpoint.AdminCredentialRef = "", ""
+	node.CredentialRef = "secret://ssh/default@2"
+
+	target := AutomatedTarget(node, nil)
+
+	if target.User != "supermgmt" || target.CredentialRef != "secret://ssh/default@2" {
+		t.Errorf("joined node = %s with %s, want supermgmt with the key enrollment pinned", target.User, target.CredentialRef)
+	}
+}

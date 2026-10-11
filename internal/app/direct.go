@@ -116,7 +116,7 @@ func fromParams[T any](params map[string]any) (T, error) {
 // control_plane.apply job. The plan names the resource the action creates or
 // changes, so quorum, staleness and cancel work as for any other job.
 func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec, actorID domain.ID, ref domain.ResourceRef, params map[string]any) (built, error) {
-	spec.Retry, spec.MaxAttempts = domain.RetryIdempotent, 3
+	spec.Retry, spec.MaxAttempts = retryOfDirect(spec.Name)
 	target, revision, inputs, err := directTarget(ctx, q, spec, ref, params)
 	if err != nil {
 		return built{}, err
@@ -134,6 +134,16 @@ func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec
 			Risk:       spec.Risk,
 		},
 	}, nil
+}
+
+// retryOfDirect: the change of a key operation is not safe to repeat blindly
+// (a second rotation makes a second key), so a failed or interrupted one is
+// resolved by an operator instead of retried.
+func retryOfDirect(action string) (domain.RetryClass, int) {
+	if action == actionSecretWrite {
+		return domain.RetryNonRetryable, 1
+	}
+	return domain.RetryIdempotent, 3
 }
 
 func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpec, ref domain.ResourceRef, params map[string]any) (policy.Target, *int64, []plan.Input, error) {
@@ -160,6 +170,12 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 			return policy.Target{}, nil, nil, err
 		}
 		return policy.Target{Ref: ref, Attrs: policy.Attributes{Provider: p.Name}}, nil, nil, nil
+	case actionSecretWrite:
+		p, err := fromParams[secretWriteParams](params)
+		if err != nil {
+			return policy.Target{}, nil, nil, err
+		}
+		return policy.Target{Ref: ref}, nil, nil, p.validate()
 	}
 	return policy.Target{}, nil, nil, smerr.New(smerr.CodeInvalidArgument, "", "unsupported direct action "+spec.Name)
 }
@@ -326,22 +342,5 @@ type applyHandler struct {
 }
 
 func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
-	return h.inv.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		if err := lease.Fence(ctx, tx); err != nil {
-			return err
-		}
-		job, err := h.inv.jobs.Get(ctx, tx, lease.JobID)
-		if err != nil {
-			return err
-		}
-		actor, err := loadActor(ctx, tx, job.ActorID, credentialOf(job))
-		if err != nil {
-			return err
-		}
-		rec, err := database.GetPlan(ctx, tx, *job.PlanID)
-		if err != nil {
-			return err
-		}
-		return h.inv.applyApproved(ctx, tx, actor, rec.Action, job)
-	})
+	return h.inv.runApproved(ctx, lease)
 }

@@ -27,6 +27,7 @@ const (
 	keyJob       loadKey = "job"
 	keyApprovals loadKey = "approvals"
 	keyEvents    loadKey = "events"
+	keyProviders loadKey = "providers"
 )
 
 type loadState struct {
