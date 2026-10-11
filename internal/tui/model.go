@@ -36,6 +36,21 @@ type Options struct {
 	// Presence, when set, runs for the life of the TUI and tells the daemon
 	// a client is connected (client.HoldPresence).
 	Presence func(ctx context.Context) error
+	// Follow, when set, streams audit events for the life of the TUI
+	// (client.FollowEvents, which reconnects with Last-Event-ID). Each event
+	// refreshes the current screen at once; the periodic refresh stays as the
+	// fallback. It returns only for good, and the TUI then says so.
+	Follow func(ctx context.Context, handle func(wire.Event) error) error
+	// Settings describes the connection for the read-only Settings screen.
+	Settings Settings
+}
+
+// Settings is what the Settings screen shows besides the caller's identity.
+type Settings struct {
+	// Profile is the current profile name, "" without one.
+	Profile string
+	// Server is the remote server origin, "" for the local daemon.
+	Server string
 }
 
 type screen int
@@ -51,13 +66,16 @@ const (
 	screenJob
 	screenApprovals
 	screenEvents
+	screenProviders
+	screenSettings
 	screenHelp
 )
 
 var screenTitles = map[screen]string{
 	screenDashboard: "Dashboard", screenResources: "Resources", screenNode: "Node", screenServices: "Services",
 	screenService: "Service", screenLogs: "Logs", screenJobs: "Jobs", screenJob: "Job",
-	screenApprovals: "Approvals", screenEvents: "Events", screenHelp: "Help",
+	screenApprovals: "Approvals", screenEvents: "Events", screenProviders: "Providers",
+	screenSettings: "Settings", screenHelp: "Help",
 }
 
 // Model is the Bubble Tea model. It is only ever touched by Update and View;
@@ -93,6 +111,11 @@ type Model struct {
 	approvals []wire.Approval
 	apprCur   int
 	events    []wire.Event
+	providers []wire.Provider
+
+	// followState is where the live event stream stands, for the Settings
+	// screen: "" when no stream was asked for.
+	followState string
 
 	notice     notice
 	prompt     *prompt
@@ -140,8 +163,40 @@ func Run(ctx context.Context, api API, o Options) error {
 	}
 	model := New(api, o)
 	model.ctx = ctx
-	_, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
+	if o.Follow != nil {
+		model.followState = followLive
+	}
+	program := tea.NewProgram(model, tea.WithContext(ctx))
+	if o.Follow != nil {
+		go follow(ctx, o.Follow, program.Send)
+	}
+	_, err := program.Run()
 	return err
+}
+
+// Where the live event stream stands (Settings screen).
+const (
+	followLive    = "live"
+	followStopped = "stopped"
+)
+
+// streamEventMsg is one audit event from the live stream; streamEndedMsg says
+// the stream ended for good.
+type (
+	streamEventMsg struct{ event wire.Event }
+	streamEndedMsg struct{ err error }
+)
+
+// follow runs the event stream and turns it into messages. A stream that was
+// cancelled with the program says nothing.
+func follow(ctx context.Context, stream func(context.Context, func(wire.Event) error) error, send func(tea.Msg)) {
+	err := stream(ctx, func(e wire.Event) error {
+		send(streamEventMsg{event: e})
+		return nil
+	})
+	if ctx.Err() == nil {
+		send(streamEndedMsg{err: err})
+	}
 }
 
 type tickMsg struct{}
@@ -165,6 +220,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.reload(false, m.screenLoaders()...), m.tick())
+	case streamEventMsg:
+		return m, m.reload(false, m.screenLoaders()...)
+	case streamEndedMsg:
+		m.onStreamEnded(msg)
+		return m, nil
 	case loadedMsg:
 		m.onLoaded(msg)
 		return m, nil
@@ -191,6 +251,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) onStreamEnded(msg streamEndedMsg) {
+	m.followState = followStopped
+	reason := "the server ended it"
+	if msg.err != nil {
+		reason = describe(msg.err)
+	}
+	m.notice = notice{text: "live updates stopped (" + reason + "); the screen still refreshes every few seconds", isErr: true}
+}
+
 // screenLoaders are the reloads the current screen needs. Nodes and approvals
 // are always loaded: the header counts them.
 func (m *Model) screenLoaders() []loader {
@@ -212,7 +281,9 @@ func (m *Model) screenLoaders() []loader {
 		return append(always, loader{keyJob, m.loadJob})
 	case screenEvents:
 		return append(always, loader{keyEvents, m.loadEvents})
-	case screenResources, screenApprovals, screenHelp:
+	case screenProviders:
+		return append(always, loader{keyProviders, m.loadProviders})
+	case screenResources, screenApprovals, screenSettings, screenHelp:
 		return always
 	}
 	return always
@@ -270,6 +341,10 @@ func (m *Model) onKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jump(screenApprovals)
 	case "5":
 		return m.jump(screenEvents)
+	case "6":
+		return m.jump(screenProviders)
+	case "7":
+		return m.jump(screenSettings)
 	case "r":
 		return m.reload(true, m.screenLoaders()...)
 	case "esc":
@@ -296,7 +371,7 @@ func (m *Model) screenKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jobKey(key)
 	case screenApprovals:
 		return m.approvalsKey(key)
-	case screenDashboard, screenEvents, screenHelp:
+	case screenDashboard, screenEvents, screenProviders, screenSettings, screenHelp:
 		return nil
 	}
 	return nil
@@ -447,6 +522,18 @@ func (m *Model) loadEvents() tea.Cmd {
 			events := slices.Clone(page.Items)
 			slices.SortStableFunc(events, func(a, b wire.Event) int { return int(b.Seq - a.Seq) })
 			m.events = events
+		})
+}
+
+func (m *Model) loadProviders() tea.Cmd {
+	return load(m, keyProviders,
+		func(ctx context.Context) (wire.Page[wire.Provider], error) {
+			return m.api.ListProviders(ctx, wire.PageQuery{Limit: wire.MaxLimit})
+		},
+		func(m *Model, page wire.Page[wire.Provider]) {
+			providers := slices.Clone(page.Items)
+			slices.SortStableFunc(providers, func(a, b wire.Provider) int { return strings.Compare(a.Type+"\x00"+a.Name, b.Type+"\x00"+b.Name) })
+			m.providers = providers
 		})
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 )
@@ -41,14 +43,23 @@ func newDoctorCmd(env []string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose configuration, paths and database health",
-		Args:  noArgs,
+		Long: "Diagnose this machine. --offline checks the configuration, paths and database files without contacting\n" +
+			"the service. Without it, doctor asks a running server what it can tell about itself over its admin\n" +
+			"socket (run it as root or the service user).",
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !offline {
-				return usageErrorf("online doctor is not available yet; use --offline")
-			}
 			configFlag, _ := cmd.Flags().GetString("config")
 			asJSON, _ := cmd.Flags().GetBool("json")
-			report := newDoctorReport(offlineChecks(cmd.Context(), configPath(configFlag, env), env))
+			var checks []check
+			if offline {
+				checks = offlineChecks(cmd.Context(), configPath(configFlag, env), env)
+			} else {
+				var err error
+				if checks, err = onlineChecks(cmd, env); err != nil {
+					return err
+				}
+			}
+			report := newDoctorReport(checks)
 			if err := writeDoctorReport(cmd.OutOrStdout(), report, asJSON); err != nil {
 				return err
 			}
@@ -60,6 +71,44 @@ func newDoctorCmd(env []string) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&offline, "offline", false, "check this machine without contacting the daemon")
 	return cmd
+}
+
+// onlineChecks asks the server's admin socket (spec §23.1) for its doctor
+// report. Only a server has that socket: a local daemon is checked offline.
+func onlineChecks(cmd *cobra.Command, env []string) ([]check, error) {
+	configFlag, _ := cmd.Flags().GetString("config")
+	file := configPath(configFlag, env)
+	result, err := config.Load(file, env)
+	if err != nil {
+		return nil, usageErrorf("configuration %s is invalid: %s", file, joinProblems(configProblems(err)))
+	}
+	if result.Config.Instance.Mode != config.ModeServer {
+		return nil, usageErrorf("online doctor asks a server over its admin socket; this configuration is local: use --offline")
+	}
+	admin := adminClient(result.Config.Server.AdminSocket)
+	report, err := adminCall[wire.AdminDoctor](cmd.Context(), admin, http.MethodGet, wire.AdminPathDoctor, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w (use --offline when the server is stopped)", err)
+	}
+	return serverChecks(report), nil
+}
+
+// serverChecks turns the server's self-report into doctor rows: its state
+// first, then each check it ran.
+func serverChecks(r wire.AdminDoctor) []check {
+	hold := check{"restore_hold", statusOK, "not held"}
+	if r.RestoreHold {
+		hold = check{"restore_hold", statusWarn, "writes are blocked until `sm admin restore-complete`"}
+	}
+	admin := check{"administrator", statusOK, "an administrator is bound"}
+	if !r.AdminBound {
+		admin = check{"administrator", statusWarn, "none yet: issue a code with `sm admin bootstrap-code`"}
+	}
+	checks := []check{{"mode", statusOK, r.Mode}, hold, admin}
+	for _, c := range r.Checks {
+		checks = append(checks, check{c.Name, c.Status, c.Detail})
+	}
+	return checks
 }
 
 func newDoctorReport(checks []check) doctorReport {

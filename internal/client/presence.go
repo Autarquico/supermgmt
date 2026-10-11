@@ -37,10 +37,11 @@ func (c *Client) HoldPresence(ctx context.Context) error {
 
 // holdOnce blocks while the stream is open and reports whether it ever was.
 func (c *Client) holdOnce(ctx context.Context) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+apiHost+wire.PathPresence, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+wire.PathPresence, http.NoBody)
 	if err != nil {
 		return false
 	}
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return false

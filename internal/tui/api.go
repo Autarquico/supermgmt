@@ -16,6 +16,8 @@ import (
 type API interface {
 	Me(ctx context.Context) (wire.Me, error)
 
+	ListProviders(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Provider], error)
+
 	ListNodes(ctx context.Context, q wire.NodeQuery) (wire.Page[wire.Node], error)
 	// GetNode with focus refreshes the node's focus lease, so the daemon
 	// refreshes it at the focused interval while it is on screen.
