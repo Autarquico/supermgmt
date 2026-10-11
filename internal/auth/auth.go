@@ -1,19 +1,20 @@
 // Package auth turns bearer credentials into authenticated callers (spec
 // §11.1, §11.5, §23; ADR-0017): opaque tokens minted from 32 random bytes and
 // stored only as SHA-256 hashes, the database-backed credential status that
-// the request path and the job claim both consult, and the one-time admin
-// bootstrap code.
-//
-// W0 contract: signatures are frozen; bodies land in M2 task T2.
+// the request path and the job claim both consult, and the resolver that
+// admits an HTTPS request.
 package auth
 
 import (
-	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"strings"
 
-	"github.com/autarquico/supermgmt/internal/app"
 	"github.com/autarquico/supermgmt/internal/audit"
-	"github.com/autarquico/supermgmt/internal/database"
-	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 // Kind is the one-letter tag after "sm" in a token, so a token pasted into
@@ -27,34 +28,59 @@ const (
 	KindJoin      Kind = 'j'
 )
 
+const (
+	tokenPrefix = "sm"
+	tokenBytes  = 32
+	tokenHead   = len(tokenPrefix) + 2 // "sm" + kind + "_"
+)
+
+var tokenEncoding = base64.RawURLEncoding
+
+func (k Kind) valid() bool {
+	switch k {
+	case KindSession, KindAPIToken, KindBootstrap, KindJoin:
+		return true
+	}
+	return false
+}
+
 // Mint returns a new token of kind k ("sm<k>_" + base64url of 32 bytes from
 // crypto/rand) and the hash to store. The plaintext is shown once and never
 // stored.
 func Mint(k Kind) (plaintext audit.Secret, hash string, err error) {
-	panic("not implemented: M2 T2")
+	if !k.valid() {
+		return "", "", fmt.Errorf("mint token: unknown kind %q", byte(k))
+	}
+	raw := make([]byte, tokenBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", fmt.Errorf("mint token: %w", err)
+	}
+	token := tokenPrefix + string(rune(k)) + "_" + tokenEncoding.EncodeToString(raw)
+	return audit.Secret(token), hashOf(token), nil
 }
 
 // Hash parses a presented token and returns its kind and storage hash. A
 // malformed token is UNAUTHENTICATED without touching the database.
 func Hash(token string) (Kind, string, error) {
-	panic("not implemented: M2 T2")
+	if len(token) <= tokenHead || !strings.HasPrefix(token, tokenPrefix) || token[tokenHead-1] != '_' {
+		return 0, "", malformedToken()
+	}
+	kind := Kind(token[len(tokenPrefix)])
+	if !kind.valid() {
+		return 0, "", malformedToken()
+	}
+	body, err := tokenEncoding.DecodeString(token[tokenHead:])
+	if err != nil || len(body) != tokenBytes {
+		return 0, "", malformedToken()
+	}
+	return kind, hashOf(token), nil
 }
 
-// CredentialStatus is the database-backed app.CredentialStatus: local_socket
-// is always active; session and api_token are looked up by id on every call
-// (no cache, spec §23); every other kind is refused until its milestone.
-type CredentialStatus struct {
-	DB *database.DB
+func hashOf(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
-var _ app.CredentialStatus = CredentialStatus{}
-
-func (s CredentialStatus) Status(ctx context.Context, cred domain.CredentialContext) (app.CredentialState, error) {
-	panic("not implemented: M2 T2")
-}
-
-// Resolver authenticates an HTTPS request's bearer token. Errors are
-// UNAUTHENTICATED, or CREDENTIAL_REVOKED / CREDENTIAL_EXPIRED.
-type Resolver interface {
-	Resolve(ctx context.Context, bearer string) (app.Caller, error)
+func malformedToken() error {
+	return smerr.New(smerr.CodeUnauthenticated, "", "malformed token")
 }
