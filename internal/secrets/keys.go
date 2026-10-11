@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -35,15 +37,38 @@ func (e *KeysUnavailableError) Error() string {
 	return "encryption keys unavailable: " + strings.Join(e.Problems, "; ")
 }
 
-// FileKeys is the file-backed KEK provider (spec §10): every referenced KEK,
-// loaded and verified once at startup.
-type FileKeys struct {
+// keySnapshot is an immutable view of the loaded KEKs. A key operation builds
+// a new one and publishes it only after its database transaction committed.
+type keySnapshot struct {
 	active domain.ID
 	keys   map[domain.ID][]byte
 }
 
+// FileKeys is the file-backed KEK provider (spec §10): every referenced KEK,
+// loaded and verified once at startup, then changed only by KeyAdmin.
+//
+// Readers (Active, Key) are lock-free. The unexported ops mutex is the
+// process-wide keyOps of ADR-0021: it serializes rotate, retire, export,
+// Store.Put and backup reservations.
+type FileKeys struct {
+	dir  string
+	snap atomic.Pointer[keySnapshot]
+
+	ops          sync.Mutex
+	reservations map[*Reservation]struct{} // guarded by ops
+}
+
+func newFileKeys(dir string, snap *keySnapshot) *FileKeys {
+	k := &FileKeys{dir: dir, reservations: map[*Reservation]struct{}{}}
+	k.snap.Store(snap)
+	return k
+}
+
 // Active returns the id and bytes of the KEK that wraps new data keys.
-func (k *FileKeys) Active() (domain.ID, []byte) { return k.active, k.keys[k.active] }
+func (k *FileKeys) Active() (domain.ID, []byte) {
+	s := k.snap.Load()
+	return s.active, s.keys[s.active]
+}
 
 // Format keeps master-key bytes out of every fmt verb (%v, %+v, %#v, %s).
 func (*FileKeys) Format(f fmt.State, _ rune) {
@@ -52,8 +77,69 @@ func (*FileKeys) Format(f fmt.State, _ rune) {
 
 // Key returns a loaded KEK by id.
 func (k *FileKeys) Key(id domain.ID) ([]byte, bool) {
-	key, ok := k.keys[id]
+	key, ok := k.snap.Load().keys[id]
 	return key, ok
+}
+
+// Reservation protects the KEKs an in-progress backup may reference from
+// retirement (ADR-0020). Obtain one with FileKeys.Reserve before reading the
+// database snapshot and Release it when the archive is committed or abandoned.
+type Reservation struct {
+	keys *FileKeys
+	ids  []domain.ID // guarded by keys.ops
+}
+
+// Reserve records, under keyOps, every KEK currently loaded, plus any KEK a
+// rotation loads while the reservation is open. It waits for a running key
+// operation or secret write to finish, so the reservation is ordered
+// strictly before or after each of them.
+func (k *FileKeys) Reserve() *Reservation {
+	k.ops.Lock()
+	defer k.ops.Unlock()
+	r := &Reservation{keys: k}
+	for id := range k.snap.Load().keys {
+		r.ids = append(r.ids, id)
+	}
+	slices.Sort(r.ids)
+	k.reservations[r] = struct{}{}
+	return r
+}
+
+// KEKIDs returns the reserved ids, sorted.
+func (r *Reservation) KEKIDs() []domain.ID {
+	r.keys.ops.Lock()
+	defer r.keys.ops.Unlock()
+	return slices.Clone(r.ids)
+}
+
+// Release ends the reservation; it is safe to call more than once.
+func (r *Reservation) Release() {
+	r.keys.ops.Lock()
+	defer r.keys.ops.Unlock()
+	delete(r.keys.reservations, r)
+}
+
+// publishLocked installs snap as the loaded keys. Call it after the database
+// commit, with ops held.
+func (k *FileKeys) publishLocked(snap *keySnapshot) {
+	k.snap.Store(snap)
+	for r := range k.reservations {
+		for id := range snap.keys {
+			if !slices.Contains(r.ids, id) {
+				r.ids = append(r.ids, id)
+			}
+		}
+		slices.Sort(r.ids)
+	}
+}
+
+func (k *FileKeys) reservedLocked(id domain.ID) bool {
+	for r := range k.reservations {
+		if slices.Contains(r.ids, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // OpenFileKeys prepares dir, creates the first KEK when the instance has none,
@@ -161,7 +247,7 @@ func loadReferenced(ctx context.Context, dir string, repo Repo, active domain.ID
 			wanted = append(wanted, id)
 		}
 	}
-	keys := &FileKeys{active: active, keys: map[domain.ID][]byte{}}
+	loaded := map[domain.ID][]byte{}
 	failure := &KeysUnavailableError{}
 	for _, id := range wanted {
 		key, err := loadVerified(ctx, dir, repo, id)
@@ -170,12 +256,12 @@ func loadReferenced(ctx context.Context, dir string, repo Repo, active domain.ID
 			failure.Problems = append(failure.Problems, fmt.Sprintf("kek %s: %v", id, err))
 			continue
 		}
-		keys.keys[id] = key
+		loaded[id] = key
 	}
 	if len(failure.IDs) > 0 {
 		return nil, failure
 	}
-	return keys, nil
+	return newFileKeys(dir, &keySnapshot{active: active, keys: loaded}), nil
 }
 
 func loadVerified(ctx context.Context, dir string, repo Repo, id domain.ID) ([]byte, error) {
@@ -248,7 +334,10 @@ func dirProblem(info fs.FileInfo, uid int) string {
 }
 
 func writeKeyFile(dir string, id domain.ID, key []byte) error {
-	path := keyPath(dir, id)
+	return writeKeyFileAt(dir, keyPath(dir, id), key)
+}
+
+func writeKeyFileAt(dir, path string, key []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600) //nolint:gosec // path is dir + a validated UUID
 	if err != nil {
 		return fmt.Errorf("create kek file: %w", err)
@@ -257,7 +346,18 @@ func writeKeyFile(dir string, id domain.ID, key []byte) error {
 		_ = os.Remove(path)
 		return fmt.Errorf("write kek file: %w", err)
 	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync keys dir: %w", err)
+	}
 	return nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir) //nolint:gosec // the keys dir, validated by prepareDir
+	if err != nil {
+		return err
+	}
+	return errors.Join(d.Sync(), d.Close())
 }
 
 func writeAndSync(f *os.File, data []byte) error {

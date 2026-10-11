@@ -63,6 +63,8 @@ func (s *Store) Put(ctx context.Context, name string, plaintext audit.Secret, me
 	if err != nil {
 		return Ref{}, err
 	}
+	s.keys.ops.Lock() // keyOps: Put and a rotation never interleave, so the sealing KEK is still active at commit
+	defer s.keys.ops.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	version, err := s.nextVersion(ctx, name)

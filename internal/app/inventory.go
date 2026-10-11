@@ -277,7 +277,66 @@ func (i *Inventory) UpdateNode(ctx context.Context, by Caller, id domain.ID, ifM
 		if err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
+		if patch.HostPublicKey != nil {
+			return i.repinNode(ctx, tx, actor, node, b, patch)
+		}
 		return i.applyOrWrap(ctx, tx, by, actor, b, func() (domain.Node, error) { return i.applyNodeUpdate(ctx, tx, actor, node, patch) })
+	})
+}
+
+const eventHostKeyRepinned = "node.host_key.repinned"
+
+// repinNode applies an update that carries host_public_key (ADR-0021). The
+// approved-job path (apply.go) does not know the field, so a re-pin that policy
+// would park for approval is refused instead of being applied without its key.
+func (i *Inventory) repinNode(ctx context.Context, tx *database.Tx, actor domain.Actor, node domain.Node, b built, patch NodePatch) (DirectResult[wire.Node], error) {
+	if node.Kind != sshnode.NodeKind {
+		return DirectResult[wire.Node]{}, smerr.New(smerr.CodeInvalidArgument, "", "only SSH nodes have a host key")
+	}
+	res, err := i.evaluate(ctx, tx, actor, b)
+	if err != nil {
+		return DirectResult[wire.Node]{}, err
+	}
+	if res.ApprovalRequired {
+		return DirectResult[wire.Node]{}, reject(smerr.FromReason(smerr.ReasonApprovalNotSupported, "re-pinning a host key cannot wait for approval yet"))
+	}
+	repinned, err := i.applyRepin(ctx, tx, actor, node, strings.TrimSpace(*patch.HostPublicKey))
+	if err != nil {
+		return DirectResult[wire.Node]{}, err
+	}
+	patch.HostPublicKey = nil
+	updated, err := i.applyNodeUpdate(ctx, tx, actor, repinned, patch)
+	if err != nil {
+		return DirectResult[wire.Node]{}, err
+	}
+	view, err := i.nodeView(ctx, tx, updated)
+	return DirectResult[wire.Node]{Applied: &view}, err
+}
+
+// applyRepin makes key the node's only trust anchor and drops the pooled
+// connections that were authenticated against the old pin. The old and new
+// fingerprints are audited; a key equal to the current pin changes nothing.
+func (i *Inventory) applyRepin(ctx context.Context, q database.Querier, actor domain.Actor, node domain.Node, key string) (domain.Node, error) {
+	oldFingerprint, _ := sshnode.Fingerprint(node.Endpoint.HostPublicKey)
+	newFingerprint, err := sshnode.Fingerprint(key)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	if newFingerprint == oldFingerprint {
+		return node, nil
+	}
+	pinned := node
+	pinned.Endpoint.HostPublicKey = key
+	pinned.UpdatedAt = i.cfg.Clock.Now()
+	stored, err := database.UpdateNodeSpec(ctx, q, pinned, node.SpecRevision)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	for _, user := range []string{node.Endpoint.User, node.Endpoint.AdminUser} {
+		i.conn.Invalidate(stored, user)
+	}
+	return stored, i.emit(ctx, q, actor, eventHostKeyRepinned, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
+		"name": node.Name, "old_fingerprint": oldFingerprint, "new_fingerprint": newFingerprint, "spec_revision": stored.SpecRevision,
 	})
 }
 
@@ -344,8 +403,10 @@ func (i *Inventory) requireAPIOrigin(ctx context.Context, q database.Querier, no
 }
 
 func (i *Inventory) validatePatch(p NodePatch) error {
-	if p.HostPublicKey != nil { // re-pin lands with ADR-0021 (M2 T4); refuse rather than ignore
-		return smerr.New(smerr.CodeInvalidArgument, "", "host_public_key cannot be changed yet")
+	if p.HostPublicKey != nil {
+		if _, err := sshnode.ParseHostKey(strings.TrimSpace(*p.HostPublicKey)); err != nil {
+			return err
+		}
 	}
 	if p.Name != nil {
 		if err := sshnode.ValidateName(*p.Name); err != nil {
