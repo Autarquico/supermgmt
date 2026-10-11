@@ -77,7 +77,9 @@ func (r rejection) Unwrap() error { return r.err }
 // reject ends a write with err while keeping what the transaction has written.
 func reject(err error) error { return rejection{err} }
 
-// commit runs fn in one writer transaction. A plain error rolls everything
+// commit runs fn in one writer transaction. While a restore hold is in force
+// it first refuses, with RESTORE_HOLD, every write that is not on the hold's
+// exception list (hold.go). A plain error rolls everything
 // back; an error wrapped by reject commits and is then returned. When by
 // carries an Idempotency-Key the transaction first looks for a stored answer
 // (replayed as a *Replay error, fn not run) and otherwise stores the answer
@@ -91,7 +93,11 @@ func commit[T any](ctx context.Context, c core, by Caller, fn func(ctx context.C
 	if by.Source != "" {
 		ctx = context.WithValue(ctx, sourceKey{}, by.Source)
 	}
+	action := actionOf(ctx)
 	err := c.cfg.DB.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := guardHold(ctx, tx, action, by); err != nil {
+			return err
+		}
 		if by.Idempotency != nil {
 			if replay, err := c.storedAnswer(ctx, tx, by); replay != nil || err != nil {
 				return replayOr(replay, err)
