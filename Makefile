@@ -9,6 +9,8 @@ LDFLAGS := -s -w \
 
 GOVULNCHECK_VERSION := v1.8.0
 ACTIONLINT_VERSION := v1.7.7
+VACUUM_VERSION := v0.30.6
+VACUUM_VERSION := v0.30.6
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 NOT_YET := @echo "not available until M2 (spec §31)"
 
@@ -75,8 +77,9 @@ cross-build: ## Compile for linux/darwin x amd64/arm64 with CGO disabled
 		CGO_ENABLED=0 GOOS=$${target%/*} GOARCH=$${target#*/} go build -trimpath -o /dev/null ./...; \
 	done
 
-api-check: ## Not available until M2
-	$(NOT_YET)
+api-check: ## Check api/openapi.yaml against the route table and wire DTOs, then lint it
+	go test -count=1 -run OpenAPI ./internal/api/
+	go run github.com/daveshanley/vacuum@$(VACUUM_VERSION) lint -d -e --no-update-check api/openapi.yaml
 
 e2e: ## Not available until M2
 	$(NOT_YET)
