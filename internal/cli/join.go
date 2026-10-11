@@ -12,7 +12,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/join"
 )
 
-const maxTokenBytes = 4096
+const maxJoinTokenBytes = 4096
 
 // joinFactory builds the node-side steps for a server and its optional CA.
 type joinFactory func(server string, caPEM []byte) (join.Joiner, error)
@@ -97,7 +97,7 @@ func (f joinFlags) inputs(stdin io.Reader) (token string, caPEM []byte, err erro
 		defer func() { _ = file.Close() }()
 		source = file
 	}
-	raw, err := io.ReadAll(io.LimitReader(source, maxTokenBytes))
+	raw, err := io.ReadAll(io.LimitReader(source, maxJoinTokenBytes))
 	if err != nil {
 		return "", nil, fmt.Errorf("read the join token: %w", err)
 	}
