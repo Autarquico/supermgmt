@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -46,6 +47,8 @@ type loginDeps struct {
 	openBrowser func(ctx context.Context, url string) error
 	// sleep waits between device polls.
 	sleep func(ctx context.Context, d time.Duration) error
+	// callbackTimeout bounds the wait for the redirect; zero means loginTimeout.
+	callbackTimeout time.Duration
 }
 
 func defaultLoginDeps(env []string) loginDeps {
@@ -250,18 +253,15 @@ func browserLogin(cmd *cobra.Command, api *client.Client, deps loginDeps, f logi
 		_ = listener.Close()
 		return "", nil, err
 	}
-	waiting := awaitCallback(listener)
+	waiting := awaitCallback(listener, started.State)
 	defer waiting.stop()
 
 	announceLogin(cmd, deps, started.AuthorizationURL, f.noBrowser)
-	waitCtx, cancel := context.WithTimeout(ctx, loginTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, cmp.Or(deps.callbackTimeout, loginTimeout))
 	defer cancel()
 	code, state, err := waiting.result(waitCtx)
 	if err != nil {
 		return "", nil, err
-	}
-	if subtle.ConstantTimeCompare([]byte(state), []byte(started.State)) != 1 {
-		return "", nil, smerr.New(smerr.CodeUnauthenticated, "", "the redirect carried a state this login did not start: it was ignored")
 	}
 	session, err := api.OIDCExchange(ctx, wire.OIDCExchangeRequest{Code: code, State: state, CodeVerifier: verifier, Client: clientName})
 	if err != nil {
@@ -301,6 +301,7 @@ func newPKCE() (verifier, challenge string, err error) {
 // callbackServer receives the redirect of the identity provider on loopback.
 type callbackServer struct {
 	server  *http.Server
+	state   string // the only state this login accepts
 	results chan callbackResult
 }
 
@@ -309,8 +310,8 @@ type callbackResult struct {
 	err         error
 }
 
-func awaitCallback(listener net.Listener) *callbackServer {
-	c := &callbackServer{results: make(chan callbackResult, 1)}
+func awaitCallback(listener net.Listener, state string) *callbackServer {
+	c := &callbackServer{state: state, results: make(chan callbackResult, 1)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+callbackPath, c.handle)
 	c.server = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -321,11 +322,15 @@ func awaitCallback(listener net.Listener) *callbackServer {
 func (c *callbackServer) handle(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	result := callbackResult{code: q.Get("code"), state: q.Get("state")}
+	if subtle.ConstantTimeCompare([]byte(result.state), []byte(c.state)) != 1 {
+		http.Error(w, "unexpected state", http.StatusBadRequest) // a forged redirect must not end the login
+		return
+	}
 	switch {
 	case q.Get("error") != "":
 		result.err = smerr.New(smerr.CodeUnauthenticated, "", "the identity provider refused the login: "+q.Get("error"))
-	case result.code == "" || result.state == "":
-		http.Error(w, "missing code or state", http.StatusBadRequest)
+	case result.code == "":
+		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
 	select {
@@ -372,11 +377,17 @@ func deviceLogin(cmd *cobra.Command, api *client.Client, deps loginDeps) (string
 	ctx, cancel := context.WithDeadline(ctx, started.ExpiresAt)
 	defer cancel()
 	interval := time.Duration(max(started.IntervalSeconds, 1)) * time.Second
+	wait := interval
 	for {
-		if err := deps.sleep(ctx, interval); err != nil {
+		if err := deps.sleep(ctx, wait); err != nil {
 			return "", nil, deviceWaitError(ctx, err)
 		}
+		wait = interval
 		polled, err := api.DevicePoll(ctx, wire.DevicePollRequest{TransactionID: started.TransactionID, Client: clientName})
+		if after, limited := rateLimitedFor(err); limited { // not terminal: the deadline of the transaction bounds the wait
+			wait = max(after, interval)
+			continue
+		}
 		if err != nil {
 			return "", nil, deviceWaitError(ctx, err)
 		}
@@ -388,11 +399,22 @@ func deviceLogin(cmd *cobra.Command, api *client.Client, deps loginDeps) (string
 			return polled.Session.Token, &polled.Session.ExpiresAt, nil
 		case wire.DeviceSlowDown:
 			interval += slowDownBy
+			wait = interval
 		case wire.DevicePending:
 		default:
 			return "", nil, smerr.New(smerr.CodeInternal, "", fmt.Sprintf("the server answered an unknown device status %q", polled.Status))
 		}
 	}
+}
+
+// rateLimitedFor reads the wait of a rate-limited answer from the client.
+func rateLimitedFor(err error) (time.Duration, bool) {
+	var typed *smerr.Error
+	if !errors.As(err, &typed) {
+		return 0, false
+	}
+	seconds, ok := typed.Details[client.DetailRetryAfterSeconds].(int)
+	return time.Duration(seconds) * time.Second, ok
 }
 
 func deviceWaitError(ctx context.Context, err error) error {
