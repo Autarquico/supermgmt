@@ -83,7 +83,7 @@ func TestEveryPathIsUnderThePrefixOrHealth(t *testing.T) {
 		PathMe, PathPresence, PathSSHKey, PathNodes, PathServiceRestart, PathEvents, PathJobResolve,
 		PathEventStream, PathOIDCStart, PathOIDCExchange, PathOIDCDevice, PathOIDCDevicePoll, PathBootstrap,
 		PathLogout, PathTokens, PathToken, PathSecrets, PathMasterKeyRotate, PathMasterKeyRetire,
-		PathMasterKeyExport, PathSSHKeyRotate, PathBackups, PathEnrollments, PathEnroll,
+		PathMasterKeyExport, PathMasterKeys, PathSSHKeyRotate, PathBackups, PathEnrollments, PathEnroll,
 	} {
 		if !strings.HasPrefix(p, Prefix+"/") {
 			t.Errorf("%s is outside %s", p, Prefix)

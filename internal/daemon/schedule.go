@@ -18,6 +18,8 @@ const (
 	// authGrace is how long an expired credential row stays, so that it reads
 	// as expired rather than unknown to the person who held it.
 	authGrace = 24 * time.Hour
+	// stagedGrace keeps a freshly staged secret alive until its job exists.
+	stagedGrace = time.Hour
 )
 
 // backupSchedule fires scheduled backups (spec §29.1). It is off while a
@@ -78,7 +80,8 @@ func (s *backupSchedule) tick(ctx context.Context) {
 }
 
 // authSweep deletes the sessions, tokens, codes and replay records that
-// expired more than authGrace ago.
+// expired more than authGrace ago, and the staged secret versions no
+// unfinished job needs any more.
 type authSweep struct {
 	db     *database.DB
 	now    func() time.Time
@@ -108,12 +111,19 @@ func (s *authSweep) run(ctx context.Context) {
 }
 
 func (s *authSweep) once(ctx context.Context) {
-	err := s.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+	s.sweep(ctx, "expired credentials", func(ctx context.Context, tx *database.Tx) error {
 		_, err := database.SweepAuth(ctx, tx, s.now().Add(-authGrace))
 		return err
 	})
-	if err != nil && ctx.Err() == nil {
-		s.report(fmt.Errorf("sweep expired credentials: %w", err))
+	s.sweep(ctx, "orphan staged secrets", func(ctx context.Context, tx *database.Tx) error {
+		_, err := database.SweepOrphanStagedSecrets(ctx, tx, s.now().Add(-stagedGrace))
+		return err
+	})
+}
+
+func (s *authSweep) sweep(ctx context.Context, what string, fn func(context.Context, *database.Tx) error) {
+	if err := s.db.WithWriteTx(ctx, fn); err != nil && ctx.Err() == nil {
+		s.report(fmt.Errorf("sweep %s: %w", what, err))
 	}
 }
 

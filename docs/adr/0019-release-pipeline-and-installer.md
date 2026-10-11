@@ -28,7 +28,7 @@ ADR-0004 chose OpenSSH signatures for releases. M2 builds the pipeline, the `ins
 ### `install.sh` (POSIX sh, < 300 lines)
 
 1. Detect OS, architecture, root, systemd, TTY and the required commands, and print the result.
-2. Verify the verifier: `ssh-keygen -Y verify` of an embedded test message and signature. Failure, or OpenSSH < 8.1, is exit 4. This runs before any download.
+2. Verify the verifier: `ssh-keygen -Y verify` of an embedded test message and signature. Failure, or OpenSSH < 8.2, is exit 4 (`valid-after` in `allowed_signers` needs 8.2). This runs before any download.
 3. Resolve the version: `SUPERMGMT_VERSION=vX.Y.Z` > `latest`/`SUPERMGMT_CHANNEL` > `stable`. Channel files are verified and must satisfy `issued_at ≤ now + 5 min`, `now ≤ valid_until`, `valid_until − issued_at ≤ 30 days`.
 4. Download `checksums.txt`, its signature and the archive; verify the signature against the embedded `allowed_signers` (with `valid-after`/`valid-before`) and `revoked_keys` (`-r`); check the header against the request; check the archive SHA-256.
 5. Unpack into a `mktemp -d` directory and `exec sm install <mode>`.

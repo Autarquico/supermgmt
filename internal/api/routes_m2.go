@@ -210,18 +210,8 @@ func (rs *routeSet) keys() {
 	})
 }
 
-// keyLister is the read side of key management: master-key metadata, never
-// key material. app.KeyManager implements it.
-type keyLister interface {
-	ListKeys(ctx context.Context, by app.Caller) ([]wire.MasterKey, error)
-}
-
 func (s *Server) listMasterKeys(ctx context.Context, by app.Caller, _ input) (wire.Page[wire.MasterKey], error) {
-	lister, ok := s.svc.Keys.(keyLister)
-	if !ok {
-		return wire.Page[wire.MasterKey]{}, unavailable("key listing")
-	}
-	keys, err := lister.ListKeys(ctx, by)
+	keys, err := s.svc.Keys.ListKeys(ctx, by)
 	if keys == nil {
 		keys = []wire.MasterKey{}
 	}

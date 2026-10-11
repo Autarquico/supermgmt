@@ -24,9 +24,6 @@ func (l listingKeys) ListKeys(context.Context, app.Caller) ([]wire.MasterKey, er
 	return l.keys, l.err
 }
 
-// keysWithoutListing is a Keys port that predates key listing.
-type keysWithoutListing struct{ app.Keys }
-
 func TestMasterKeysAreListedAsAPage(t *testing.T) {
 	created := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 	h := newHarness(t, func(o *harnessOptions) {
@@ -71,14 +68,12 @@ func TestMasterKeyListingFollowsThePolicyVerdict(t *testing.T) {
 	}
 }
 
-func TestMasterKeyListingIsUnavailableWithoutKeyManagementOrListing(t *testing.T) {
-	for name, keys := range map[string]app.Keys{"unwired": nil, "no listing": keysWithoutListing{}} {
-		h := newHarness(t, func(o *harnessOptions) { o.keys = keys })
+func TestMasterKeyListingIsUnavailableWithoutKeyManagement(t *testing.T) {
+	h := newHarness(t, func(o *harnessOptions) { o.keys = nil })
 
-		r := h.do(http.MethodGet, wire.PathMasterKeys, "", nil)
+	r := h.do(http.MethodGet, wire.PathMasterKeys, "", nil)
 
-		if r.Status != http.StatusUnprocessableEntity || decodeError(t, r).Code != smerr.CodeCapabilityUnavailable {
-			t.Errorf("%s: status %d body %s", name, r.Status, r.Body)
-		}
+	if r.Status != http.StatusUnprocessableEntity || decodeError(t, r).Code != smerr.CodeCapabilityUnavailable {
+		t.Errorf("status %d body %s", r.Status, r.Body)
 	}
 }

@@ -12,9 +12,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -34,6 +36,7 @@ const (
 	slowDownBy       = 5 * time.Second
 	maxTokenBytes    = 512
 	maxBootstrapCode = 256
+	maxDisplayName   = 128
 )
 
 // loginDeps are the parts of `sm login` that touch the outside world; tests
@@ -85,6 +88,7 @@ type loginFlags struct {
 	noBrowser    bool
 	bootstrap    bool
 	tokenStdin   bool
+	displayName  string
 }
 
 func newLoginCmd(env []string, deps loginDeps) *cobra.Command {
@@ -97,7 +101,8 @@ func newLoginCmd(env []string, deps loginDeps) *cobra.Command {
 			"The session token is kept in the OS credential store (a 0600 file when none is usable), never printed.\n\n" +
 			"Providers with a confidential client (such as Dex) need a registered redirect: pass --callback-port.\n" +
 			"--bootstrap exchanges the one-time code of `sm admin bootstrap-code` (read from the terminal or stdin);\n" +
-			"on a server with OIDC, sign in normally first, then run --bootstrap. --token-stdin stores an API token.",
+			"on a server with OIDC, sign in normally first, then run --bootstrap. Without OIDC the administrator is created\n" +
+			"by name: --display-name, or a prompt (prefilled from $USER) on a terminal. --token-stdin stores an API token.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLogin(cmd, env, deps, f) },
 	}
@@ -106,6 +111,7 @@ func newLoginCmd(env []string, deps loginDeps) *cobra.Command {
 	cmd.Flags().BoolVar(&f.device, "device", false, "use the device authorization grant instead of a browser redirect")
 	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "print the URL instead of opening a browser")
 	cmd.Flags().BoolVar(&f.bootstrap, "bootstrap", false, "exchange a one-time bootstrap code for the first administrator")
+	cmd.Flags().StringVar(&f.displayName, "display-name", "", "name of the first administrator (--bootstrap on a server without OIDC)")
 	cmd.Flags().BoolVar(&f.tokenStdin, "token-stdin", false, "store an API token read from the terminal or stdin")
 	return cmd
 }
@@ -138,7 +144,7 @@ func runLogin(cmd *cobra.Command, env []string, deps loginDeps, f loginFlags) er
 	case f.tokenStdin:
 		token, err = readToken(cmd)
 	case f.bootstrap:
-		token, expires, err = bootstrapLogin(cmd, store, name, profile)
+		token, expires, err = bootstrapLogin(cmd, env, store, name, profile, f.displayName)
 	case f.device:
 		token, expires, err = deviceLogin(cmd, anonymous, deps)
 	default:
@@ -401,18 +407,23 @@ func deviceWaitError(ctx context.Context, err error) error {
 // bootstrapLogin exchanges the one-time code (spec §11.5). A session this
 // profile already holds travels with it: on a server with OIDC that session
 // is the identity that becomes the administrator.
-func bootstrapLogin(cmd *cobra.Command, store client.CredentialStore, name string, profile client.Profile) (string, *time.Time, error) {
+func bootstrapLogin(cmd *cobra.Command, env []string, store client.CredentialStore, name string, profile client.Profile, displayName string) (string, *time.Time, error) {
 	ctx := cmd.Context()
 	held, _ := store.Get(ctx, name)
 	api, err := client.NewRemote(client.Remote{URL: profile.URL, CAFile: profile.CAFile, Token: held}, client.Options{})
 	if err != nil {
 		return "", nil, err
 	}
+	if held == "" && displayName == "" { // no session: the server has no OIDC and must be told who the admin is
+		if displayName, err = askDisplayName(cmd, envMap(env)["USER"]); err != nil {
+			return "", nil, err
+		}
+	}
 	code, err := readSecret(cmd, secretInput{prompt: "Bootstrap code: ", limit: maxBootstrapCode})
 	if err != nil {
 		return "", nil, err
 	}
-	issued, err := api.Bootstrap(ctx, wire.BootstrapRequest{Code: code})
+	issued, err := api.Bootstrap(ctx, wire.BootstrapRequest{Code: code, DisplayName: displayName})
 	switch {
 	case err != nil:
 		return "", nil, err
@@ -425,6 +436,30 @@ func bootstrapLogin(cmd *cobra.Command, store client.CredentialStore, name strin
 		return held, nil, nil // the held session is now the administrator's
 	}
 	return "", nil, smerr.New(smerr.CodeInternal, "", "the server accepted the code but issued no credential")
+}
+
+// askDisplayName prompts on a terminal, offering suggested; anywhere else the
+// name must come from --display-name.
+func askDisplayName(cmd *cobra.Command, suggested string) (string, error) {
+	tty, ok := cmd.InOrStdin().(*os.File)
+	if !ok || !isTerminal(tty) {
+		return "", usageErrorf("--display-name is required when the server has no OIDC: it names the first administrator")
+	}
+	prompt := "Administrator display name: "
+	if suggested != "" {
+		prompt = fmt.Sprintf("Administrator display name [%s]: ", suggested)
+	}
+	answer, err := promptLine(tty, cmd.ErrOrStderr(), prompt)
+	if err != nil {
+		return "", err
+	}
+	if answer = strings.TrimSpace(answer); answer == "" {
+		answer = suggested
+	}
+	if answer == "" || len(answer) > maxDisplayName {
+		return "", usageErrorf("the display name must be 1 to %d bytes", maxDisplayName)
+	}
+	return answer, nil
 }
 
 // ---- sm logout ------------------------------------------------------------------------------

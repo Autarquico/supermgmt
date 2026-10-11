@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
+	"github.com/autarquico/supermgmt/internal/domain"
 )
 
 const (
@@ -148,7 +150,7 @@ func offlineChecks(ctx context.Context, configFile string, env []string) []check
 		socketCheck(socketPath(cfg, env)),
 		databaseFileCheck(cfg.Storage.SQLite.Path),
 	}
-	return append(checks, databaseChecks(ctx, cfg.Storage.SQLite.Path)...)
+	return append(checks, databaseChecks(ctx, cfg.Storage.SQLite.Path, cfg.Security.KeysDir)...)
 }
 
 func environmentCheck(warnings []string) check {
@@ -220,7 +222,7 @@ func modeCheck(name, path string, mode, forbidden fs.FileMode, problem string) c
 
 // databaseChecks holds the database lock for as long as it inspects the file,
 // so no daemon can start underneath it (spec §2.1.1).
-func databaseChecks(ctx context.Context, path string) []check {
+func databaseChecks(ctx context.Context, path, keysDir string) []check {
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
 		return []check{{"database_lock", statusWarn, "skipped: database directory does not exist"}}
 	}
@@ -238,7 +240,11 @@ func databaseChecks(ctx context.Context, path string) []check {
 	if !fileExists(path) {
 		return checks
 	}
-	return append(checks, inspectDatabase(ctx, path)...)
+	checks = append(checks, inspectDatabase(ctx, path)...)
+	if orphans, ok := orphanKeysCheck(ctx, path, keysDir); ok {
+		checks = append(checks, orphans)
+	}
+	return checks
 }
 
 func heldDetail(held *database.LockHeldError) string {
@@ -283,4 +289,39 @@ func integrityCheck(findings []string) check {
 		findings = append(findings[:integrityRowsShown:integrityRowsShown], "...")
 	}
 	return check{"integrity", statusFail, strings.Join(findings, "; ")}
+}
+
+// orphanKeysCheck warns about <id>.key files that nothing in the database
+// refers to (no secret, no active setting, no kek_check record): a leftover of
+// an interrupted rotation or an import, never loaded by the daemon (ADR-0021).
+// It is omitted when there is no key directory or no schema to compare with.
+// The caller holds the database lock.
+func orphanKeysCheck(ctx context.Context, dbPath, keysDir string) (check, bool) {
+	files, err := os.ReadDir(keysDir)
+	if err != nil {
+		return check{}, false
+	}
+	db, err := database.OpenReadOnly(ctx, dbPath)
+	if err != nil {
+		return check{"orphan_keys", statusWarn, "not checked: " + err.Error()}, true
+	}
+	defer func() { _ = db.Close() }()
+	if has, err := db.HasSchema(ctx); err != nil || !has {
+		return check{}, false
+	}
+	referenced, err := database.ReferencedKEKIDs(ctx, db.Querier())
+	if err != nil {
+		return check{"orphan_keys", statusWarn, "not checked: " + err.Error()}, true
+	}
+	var orphans []string
+	for _, f := range files {
+		id, isKey := strings.CutSuffix(f.Name(), ".key")
+		if isKey && !slices.Contains(referenced, domain.ID(id)) {
+			orphans = append(orphans, f.Name())
+		}
+	}
+	if len(orphans) == 0 {
+		return check{"orphan_keys", statusOK, "every key file in " + keysDir + " is referenced"}, true
+	}
+	return check{"orphan_keys", statusWarn, fmt.Sprintf("%s: not referenced by the database: %s (remove them once no backup needs them)", keysDir, strings.Join(orphans, ", "))}, true
 }
