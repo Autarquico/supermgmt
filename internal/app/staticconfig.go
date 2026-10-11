@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +14,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 )
 
@@ -38,29 +41,80 @@ func NewStaticReconciler(cfg Config, mode config.Mode) (*StaticReconciler, error
 	return &StaticReconciler{core: c, mode: mode}, nil
 }
 
+// ConfigSources are the exact bytes of the configuration file and of the
+// policy file (nil when none is in force) the daemon is activating.
+type ConfigSources struct {
+	Config []byte
+	Policy []byte
+}
+
 // Reconcile applies the file in one transaction. Proxmox providers arrive in
-// M3 and are ignored here.
+// M3 and are ignored here. It stores no configuration snapshot: the daemon
+// calls Activate.
 func (s *StaticReconciler) Reconcile(ctx context.Context, envs []config.Environment, providers []config.Provider) error {
+	return s.reconcile(ctx, envs, providers, nil)
+}
+
+// Activate is Reconcile plus settings.config_snapshot (spec §29.1): the exact
+// source bytes and the next generation commit in the same transaction as the
+// reconcile, so a backup never sees a configuration whose effects are missing
+// or effects whose configuration is missing. Every activation advances the
+// generation, even when the bytes are unchanged: it counts daemon activations.
+func (s *StaticReconciler) Activate(ctx context.Context, src ConfigSources, envs []config.Environment, providers []config.Provider) error {
+	if len(src.Config) == 0 {
+		return smerr.New(smerr.CodeInvalidArgument, "", "the configuration snapshot needs the configuration file bytes")
+	}
+	return s.reconcile(ctx, envs, providers, &src)
+}
+
+func (s *StaticReconciler) reconcile(ctx context.Context, envs []config.Environment, providers []config.Provider, snapshot *ConfigSources) error {
 	return s.write(context.WithValue(ctx, sourceKey{}, configSource), func(ctx context.Context, tx *database.Tx) error {
-		if err := s.environments(ctx, tx, envs); err != nil {
+		if err := s.apply(ctx, tx, envs, providers); err != nil {
 			return err
 		}
-		var problems []error
-		wanted := map[string]bool{}
-		for _, p := range providers {
-			if p.SSH == nil {
-				continue
-			}
-			wanted[p.SSH.Name] = true
-			if err := s.sshNode(ctx, tx, *p.SSH); err != nil {
-				problems = append(problems, fmt.Errorf("provider %q: %w", p.SSH.Name, err))
-			}
+		if snapshot == nil {
+			return nil
 		}
-		if err := errors.Join(problems...); err != nil {
-			return err
-		}
-		return s.retireRemoved(ctx, tx, wanted)
+		return s.storeSnapshot(ctx, tx, *snapshot)
 	})
+}
+
+func (s *StaticReconciler) apply(ctx context.Context, tx *database.Tx, envs []config.Environment, providers []config.Provider) error {
+	if err := s.environments(ctx, tx, envs); err != nil {
+		return err
+	}
+	var problems []error
+	wanted := map[string]bool{}
+	for _, p := range providers {
+		if p.SSH == nil {
+			continue
+		}
+		wanted[p.SSH.Name] = true
+		if err := s.sshNode(ctx, tx, *p.SSH); err != nil {
+			problems = append(problems, fmt.Errorf("provider %q: %w", p.SSH.Name, err))
+		}
+	}
+	if err := errors.Join(problems...); err != nil {
+		return err
+	}
+	return s.retireRemoved(ctx, tx, wanted)
+}
+
+func (s *StaticReconciler) storeSnapshot(ctx context.Context, tx *database.Tx, src ConfigSources) error {
+	stored, err := database.PutConfigSnapshot(ctx, tx, src.Config, src.Policy, s.cfg.Clock.Now())
+	if err != nil {
+		return err
+	}
+	data := map[string]any{"generation": stored.Generation, "config_sha256": sha256Hex(src.Config)}
+	if len(src.Policy) > 0 {
+		data["policy_sha256"] = sha256Hex(src.Policy)
+	}
+	return s.emit(ctx, tx, systemActor, "config.activate", domain.ResourceRef{Type: domain.ResourceInstance}, domain.ResultSucceeded, data)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *StaticReconciler) environments(ctx context.Context, q database.Querier, envs []config.Environment) error {
