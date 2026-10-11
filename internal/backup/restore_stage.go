@@ -144,6 +144,9 @@ func checkHeader(h *tar.Header, m Manifest, seen map[string]bool, l limits) erro
 }
 
 func extractMember(tr io.Reader, h *tar.Header, m Manifest, staging string) error {
+	if !filepath.IsLocal(filepath.FromSlash(h.Name)) || strings.Contains(h.Name, "..") {
+		return fmt.Errorf("archive member %q escapes the staging directory", h.Name)
+	}
 	target := stagedPath(staging, h.Name)
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return fmt.Errorf("create staging directory: %w", err)
