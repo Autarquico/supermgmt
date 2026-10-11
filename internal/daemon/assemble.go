@@ -399,10 +399,14 @@ func (b *builder) apiServices() (api.Services, error) {
 	if err != nil {
 		return api.Services{}, err
 	}
+	enrollments, err := app.NewEnrollments(b.app, auth.Minter{}, app.SSHIdentityOf(b.kit.store))
+	if err != nil {
+		return api.Services{}, err
+	}
 	return api.Services{
 		Plans: b.plans, Approvals: approvals, Governance: governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys,
-		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold,
+		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
 	}, nil
 }
 
