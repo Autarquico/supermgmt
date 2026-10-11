@@ -2,7 +2,7 @@
 
 Authoritative sources: SPEC §30 (threat model), §11 (policy and approvals), §2.1.1 (local trust boundary), §12 and §16 (nodes). Vulnerability reporting: [`../SECURITY.md`](../SECURITY.md).
 
-SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI. There is still no network service, installer or MCP endpoint, and no independent security audit. **[M0]** and **[M1]** mark what is implemented in the repository now; **[planned Mx]** is not implemented.
+SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI; M2 adds server mode over HTTPS with sessions, tokens and OIDC, the full secret store, backup and restore, and a signed-release installer. There is still no MCP endpoint, nothing has been released, and there is no independent security audit. **[M0]**, **[M1]** and **[M2]** mark what is implemented in the repository now; **[planned Mx]** is not implemented. Statements about M2 were read against the code; what ran only in CI with test keys, a Dex container or fakes is said so, and the production signing key, a real VM, a real Cloudflare and any identity provider other than Dex were not exercised ([manual checks](manual-checks/m2-handoff.md)).
 
 ## Trust boundaries in one page
 
@@ -12,26 +12,29 @@ Read this before you point SuperMgmt at a machine you care about.
 2. **The node credential can read all logs in `journal-group` mode.** That mode puts `supermgmt` in `systemd-journal` (or `adm`), so a stolen node credential reads the node's entire system journal, not only selected units. Mediation by the API limits what clients see, not what the credential can read. `broker` mode avoids the group: see [Log modes](#log-modes-on-a-node).
 3. **Docker access is root.** The `docker` group is equivalent to root on the node. Setup asks for `docker_access` explicitly, has no default, and shows this warning.
 4. **A unit grant is a trust profile, not a proof.** Granting restart on a unit trusts everything that unit executes.
-5. **The KEK files are separate from the database and must be backed up separately.** Export arrives in M2.
+5. **The KEK files are separate from the database and from backup archives and must be backed up separately.** `sm secrets export-key` produces a passphrase-protected copy ([operations.md](operations.md#key-management)).
 6. **Setup needs root once.** Afterwards SuperMgmt holds no standing root on the node.
+7. **Server mode puts the control plane on the network.** Every request on the HTTPS listener must carry a bearer token; a reverse proxy in front (including Cloudflare) can read that token and the traffic. The admin socket trusts root and the service user on the host.
+8. **`curl | bash` trusts the `main` branch.** The review-first path with an out-of-band key does not ([installation.md](installation.md)).
 
 ## Threat model summary (SPEC §30)
 
 | Threat | Main mitigation | Status |
 |---|---|---|
-| Stolen browser or OIDC session | short TTLs, CSRF protection, secure headers | planned M2 |
+| Stolen browser or OIDC session | session TTL (12h default), revocation on logout, no cookies so no CSRF surface, `no-store` and `nosniff` headers, no CORS | **[M2]**; there is no browser UI yet |
 | Compromised MCP client; malicious prompt asking for a privileged action | MCP is its own actor type with no inherited roles; hard approval floor for operational writes; MCP can never approve | policy rules **[M0]**; MCP itself planned M5 |
 | Compromised managed node | least privilege on the node, bounded and sanitized output, timeouts | **[M1]** |
 | Malicious repository or PR | closed-schema Compose pipeline, immutable digests | planned M4 |
 | Forged or replayed GitHub webhook | signature check and replay dedupe | planned M4 |
 | SSH MITM or host key change | pinned host key compared byte for byte; a changed key fails the job | **[M1]** |
-| Leaked API token | hashed storage, scopes, revocation, rate limits | planned M2 |
+| Leaked API token | SHA-256-only storage, expiry (at most 365 days), scopes that only narrow, revocation effective on the next request, rate limits | **[M2]** |
 | Another local user reaching the daemon | socket directory 0700, peer UID checked on both ends, `Authorization` header rejected | **[M1]**; refusal of a second user is tested on Linux CI only, on macOS it rests on the same-UID test and a manual check |
 | Terminal escape sequences in remote logs | ANSI, C0 and C1 controls stripped and UTF-8 repaired at the transport boundary | **[M1]** |
 | Command injection via names or parameters | closed command catalog, per-parameter allowlists, no leading `-`, POSIX quoting, setup content on stdin | **[M1]** |
-| SSRF via health URLs or provider endpoints | outbound request filter | planned M4 |
-| Supply-chain compromise | pinned dependencies, scanning, signed releases | CI scanning **[M0]**; signing planned M2 |
-| Backup theft; control-plane database theft | envelope encryption of secrets | **[M1]** for the SSH identity; backups planned M2 |
+| SSRF via health URLs or provider endpoints | outbound request filter (`internal/netguard`) | **[M2]** for the identity-provider endpoints; health URLs planned M4 |
+| Supply-chain compromise | pinned dependencies, scanning, signed releases | CI scanning **[M0]**; signed pipeline and verifying installer **[M2]**, production key and provenance not yet exercised |
+| Tampered installer download | embedded-key signature check of checksums and archive before anything runs | **[M2]**, tamper tests with a test key in CI; `curl \| bash` still trusts `main` |
+| Backup theft; control-plane database theft | envelope encryption of secrets; KEKs never in the archive | **[M2]**. The archive itself is not encrypted |
 
 MCP content is untrusted input: a model asking for an action has no more authority than its authenticated identity and policy grant.
 
@@ -87,8 +90,8 @@ SQLite runs in WAL mode with `synchronous=FULL` and a single writer ([ADR-0001](
 
 - The `host_public_key` stored in the database is the only trust anchor. The check compares the exact key bytes. `ssh.known_hosts_file` is not consulted, and neither are the user's `~/.ssh/known_hosts` or `ssh_config`.
 - First trust is explicit. `sm nodes add` scans the key and shows its SHA256 fingerprint; nothing is trusted until you confirm it (type `yes`, or pass `--fingerprint SHA256:...` verified out of band). The confirmed key is the one stored, so a key that changes between the scan and the first authenticated probe fails with `SSH_HOST_KEY_MISMATCH`.
-- A changed host key fails the connection; there is no automatic re-pinning. The `sm` commands offer no way to replace a pinned key in M1 (not verified against the API's node patch).
-- SSH CA trust is not supported until M2.
+- A changed host key fails the connection; there is no automatic re-pinning. Since M2, `sm nodes repin <node>` replaces a pinned key after you confirm the new fingerprint ([operations.md](operations.md#key-management)).
+- SSH CA trust is not supported (not scheduled).
 
 ### Command execution on nodes **[M1]**
 
@@ -124,9 +127,9 @@ At first start the daemon generates one Ed25519 key, the **instance SSH identity
 
 - **KEK files.** KEKs live in `security.keys_dir` (default `<instance.data_dir>/secrets/keys`) as `<kek_id>.key`: 32 random bytes, mode 0600, a regular file owned by the daemon user, opened without following symlinks. The directory must be mode 0700. Wrong permissions, a symlink or a wrong owner refuse to start. `*.pending` files are ignored.
 - **The database does not contain the KEK.** A copy of the database alone cannot decrypt the identity. Because the default `keys_dir` sits inside the data directory, copying the whole data directory copies both: keep database backups and KEK backups in different places, and put the KEK copy somewhere with its own access control.
-- **Back the KEK files up separately.** There is no export in M1 (`export-key`, `import-key` and the passphrase-protected export format arrive in M2). If a KEK file is lost, the daemon fails at start (exit 4) and names the missing KEK ids, and the encrypted identity cannot be recovered. The remedy is to generate a new identity and re-run `node.setup` on every node so they authorize the new key. M1 has no command that performs that reset (not verified on a real instance); expect to start from a fresh data directory.
+- **Back the KEK files up separately.** Since M2 there is a passphrase-protected export (`sm secrets export-key`, `import-key`; see [operations.md](operations.md#key-management)). If a KEK file is lost, the daemon fails at start (exit 4) and names the missing KEK ids, and the encrypted identity cannot be recovered. The remedy is to generate a new identity and re-run `node.setup` on every node so they authorize the new key. There is no command that performs that reset (M2 added none); expect to start from a fresh data directory.
 - **Plaintext.** The private key is decrypted into memory on first use and cached as a signer; buffers are zeroed best effort. It does not appear in logs, events, API responses, errors or plans, and the events about it carry the fingerprint only. Tests scan the database file, its WAL and the data directory for the key bytes. The KEK files are the one place on disk where key material is not encrypted (by design of the envelope).
-- **Rotation.** A node keeps working with the key version pinned at setup; rotating the identity is M2 and will need setup to be re-run.
+- **Rotation.** A node keeps working with the key version pinned at setup; since M2, `sm ssh-key rotate` creates a new version and each node needs `sm nodes setup` re-run to authorize it.
 
 ### Bootstrap privilege during setup **[M1]**
 
@@ -175,14 +178,66 @@ An existing `supermgmt` account that does not match is never taken over: setup f
 
 Steps 2 to 6 are derived from the list above. Only `userdel -r supermgmt` is exercised by the test fixtures (as cleanup); the sequence as a whole has not been tested.
 
+## Controls implemented in M2
+
+### HTTPS transport, credentials and sessions **[M2]**
+
+([ADR-0017](adr/0017-server-transport-credentials-sessions.md))
+
+- `sm server` serves the same handlers as the local socket over HTTPS. TLS is either terminated by the daemon (`direct`, TLS 1.2 or newer, certificate re-read on `SIGHUP`) or by a reverse proxy (`proxy`); no ACME. In proxy mode forwarding headers are believed only from `server.trusted_proxies`, a forwarded proto other than `https` is a 400, and a loopback peer gets no special trust. Plain HTTP on a non-loopback address is refused by config validation.
+- Credentials are bearer tokens `sm<kind>_<base64url(32 random bytes)>`: `s` session, `t` API token, `b` bootstrap code, `j` join token. Only the SHA-256 is stored, in a unique column; nothing is cached, so a revocation takes effect on the next request. A token of the wrong kind for an endpoint is refused before lookup. The HTTPS listener accepts `Authorization: Bearer` only; the Unix socket still refuses it.
+- API tokens have a mandatory expiry of at most 365 days, scopes that can only narrow the creator's permissions, and a unique name per identity. Sessions last `security.session_ttl`.
+- No cookies, so no CSRF surface. Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; no CORS headers are sent, so browsers refuse cross-origin calls.
+- Token buckets: 10 per minute with a burst of 5 per remote address on `/auth/*` and `/enroll`; 60 per minute with a burst of 20 per identity on writes. Fixed constants; 429 with `Retry-After`.
+- Event stream (`GET /events/stream`): at most 4 per identity, a heartbeat every 15 s, and the credential and `event.read` are re-checked every 30 s and on revocation events.
+
+### Admin socket **[M2]**
+
+`server.admin_socket` (mode 0660, owned by the service user). The server checks the peer UID (root or the service user; a lookup error refuses); the `sm admin` client checks that whoever answered owns the socket file before sending anything. It serves exactly `bootstrap-code`, `grant`, `restore-complete` and read-only `doctor`, and never key management. The first admin comes from a one-time bootstrap code (at least 128 bits, stored hashed, valid `auth.bootstrap.code_ttl`, a new code invalidates the old); once an admin exists it is refused except during a restore hold. In server mode the daemon never creates a `local:<uid>` admin.
+
+### OIDC **[M2]**
+
+([ADR-0018](adr/0018-oidc-adapter.md)) The server is the OIDC client. Authorization Code with PKCE S256 over a loopback redirect, or the device grant. Discovery must return the exact configured issuer and `https` endpoints on the issuer origin or an origin in `auth.oidc.allowed_endpoint_origins`; the userinfo endpoint is never called. ID tokens are verified with `go-oidc` (RS256, ES256 or EdDSA; issuer, audience, `azp`, expiry, nonce, verified email, optional domain list); a `jti` is recorded to refuse replays. Login state is held in memory (a restart invalidates logins in progress, never sessions); the device code never leaves the server, polls are rate-shaped (`slow_down`), and completion is single use. Exercised only against Dex, by hand; other providers are untested.
+
+#### OIDC and the device-flow client secret
+
+With the device grant, **Dex echoes the client secret into the verification URL it shows in the browser**, so the secret of the configured client ends up in the browser address bar and history of the person signing in. Observed in the Dex spike (`ghcr.io/dexidp/dex:v2.45.1`); not observed with other providers.
+
+- SuperMgmt has one OIDC client (`auth.oidc.client_id` and `client_secret_ref`) and sends its secret to the device endpoint as a form field because Dex ignores HTTP Basic there. **There is no separate device-flow client key**, so the secret cannot be kept out of that URL today.
+- Recommended: use the loopback flow (`sm login --callback-port N`) and do not use `sm login --device` against Dex unless you accept that exposure. A public client for the device flow (no secret to leak) is the intended remedy, but it needs a new configuration key and a spec change; it is not built.
+- If you must use the device flow with Dex, register a client used by nothing else and treat its secret as exposed to the people who sign in; rotate it if a browser profile is shared.
+
+### Outbound filter **[M2]**
+
+`internal/netguard` (SPEC §21.1) resolves a name once, normalizes IPv4-mapped, IPv4-compatible and NAT64 forms, refuses cloud-metadata, loopback, link-local, multicast and reserved ranges for every caller, refuses private and special ranges unless the caller's allowlist names them, then dials the vetted address while TLS verifies the original hostname. Redirects are off by default, bodies are capped, and ambient proxy variables are never read (`outbound.proxy` is the only proxy). In M2 only the identity-provider client uses it (private ranges allowed). 6to4 and Teredo are not unwrapped.
+
+### Secrets and keys **[M2]**
+
+([ADR-0021](adr/0021-key-and-identity-management.md)) Rotation, retirement, export and import of master keys, secret import, and instance SSH-key rotation are the high-risk `secret.write` action, so each is a job that waits for approval. Plans carry no secret value or passphrase: an imported value is sealed under the active KEK as a staged version when requested, and approval activates it. Key export is a passphrase-protected `SMKEY1` file (scrypt, AES-256-GCM) with a passphrase of at least 12 characters read from a terminal or stdin; it is served on the local-mode socket only and, on a server, by `--offline` with the service stopped. Import is offline only and installs a `.key.pending` file that the daemon never loads until a database or restore validates it. See [operations.md](operations.md#key-management). A single operator on a server cannot approve their own key operations unless `security.allow_self_approval` is turned on.
+
+### Backup and restore **[M2]**
+
+([ADR-0020](adr/0020-backup-format-and-offline-restore.md)) Archives are not encrypted and never contain a KEK. Restore is offline, stages and checks the archive first (safe extraction, checksums, integrity check, key check), neutralizes the staged database (undispatched jobs fail, running jobs become interrupted, approvals, sessions and tokens revoked, codes invalidated) and then moves files under a write-ahead journal with recovery at every start. The restored server starts in a hold where nearly every write is refused until `sm admin restore-complete`. Crash injection at every journal step is tested in CI with a build tag that release binaries do not carry (a test asserts it). Not tested on a real VM.
+
+### Releases and the installer **[M2]**
+
+([ADR-0019](adr/0019-release-pipeline-and-installer.md), [installation.md](installation.md)) Releases are built from `v*` tags in a protected environment, with OpenSSH signatures on `checksums.txt`, `install.sh`, `join.sh` and the channel files, SPDX SBOMs, and build provenance on tag builds. `install.sh` verifies the verifier first, checks signed channel freshness (30-day maximum validity), a version-and-channel-bound checksum list and the archive hash, and only then runs `sm`. A revocation list is embedded. The embedded production key is a placeholder until the owner creates the key: **production signing and provenance are unverified**, and every real install fails closed until then.
+
+### Join **[M2]**
+
+([ADR-0022](adr/0022-join-enrollment.md)) A join token is limited to a number of node slots, lives at most 24 hours, can be limited to source networks, and is stored hashed. It lets a node pin its own host key and receive the instance public key; it grants no sudo, docker or journal access. A stolen token yields at most an unprivileged, read-only node entry pinned to the thief's key.
+
+### Client credential storage **[M2]**
+
+`sm login` stores the session or API token in the macOS keychain (through `security -i` with the token on stdin), the Secret Service (`secret-tool store`, token on stdin), or a mode-0600 file when neither exists. A token is never an argument or an environment variable, and tokens are checked against the alphabet SuperMgmt issues before they reach the OS tools. Unit-tested with fakes; the real keychain and `secret-tool` are manual checks. Whether `security -i` on current macOS keeps a token on stdin out of the process list is also a manual check.
+
 ## Planned controls
 
 Not implemented; listed so nothing is mistaken for shipped.
 
-- Sessions, API tokens, OIDC, CSRF protection, rate limiting, secure headers (M2)
-- Secret export and import, `rotate-master-key`, identity rotation, per-node keys, SSH CA trust, backup key checks (M2)
-- Signed releases, checksums, SBOM, provenance; signature-verifying installer ([ADR-0004](adr/0004-openssh-release-signatures.md), M2)
-- Outbound request filter and closed-schema Compose pipeline (M4)
+- SSH CA trust and per-node keys (not scheduled)
+- Upgrade and uninstall flows (M3)
+- Outbound request filter for health URLs and the closed-schema Compose pipeline (M4)
 - Webhook signature and replay protection (M4)
 - MCP registration, tokens, OAuth protected-resource layer and security tests (M5)
 - Fuzzing and security scans across all parsers (M6)
@@ -191,9 +246,15 @@ Not implemented; listed so nothing is mistaken for shipped.
 
 - Local mode does not protect against malicious code running as the same OS user.
 - `journal-group` logs mode exposes the node's whole journal to the node credential; `docker_access` exposes root on the node; a unit grant trusts the unit's code.
-- The KEK files are not backed up by SuperMgmt, cannot be exported before M2, and losing them forces a new identity and a new setup on every node.
+- The KEK files are not backed up by SuperMgmt. `export-key` exists, but if a key is lost without an export the data it protected is gone and the remedy is a fresh data directory (a new identity and a new setup on every node).
+- Backup archives are not encrypted.
+- Dex puts the OIDC client secret in the device-flow verification URL (see above); no separate device client is configurable.
+- Only Dex has been tested as an identity provider.
+- A reverse proxy or Cloudflare in front of the server terminates TLS and can read bearer tokens. SuperMgmt consumes no Cloudflare assertion ([cloudflare.md](cloudflare.md)).
+- With a single operator, key operations need `security.allow_self_approval: true` or a second identity.
 - Refusal of another local user on the socket is tested on Linux CI only; on macOS it relies on the same-UID test and a manual check.
 - Real terminal emulators are not automated; restoring the terminal after an interactive session is covered by a pseudo-terminal test and the [manual checklist](manual-checks/m1-handoff.md).
 - Node setup is verified in CI on Debian only. Other distributions are an assumption.
-- The `curl | bash` installer path (planned M2) trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that (SPEC §3.2).
+- The `curl | bash` installer path trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that (SPEC §3.2). The installer requires OpenSSH 8.2 or newer, stricter than the spec's 8.1.
+- No release exists and the production signing key has not been generated; the placeholder trust root makes real installs fail closed.
 - No independent security audit has been performed.
