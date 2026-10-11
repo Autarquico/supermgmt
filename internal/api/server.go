@@ -406,12 +406,13 @@ func (s *Server) admitLocal(r *http.Request) (scope, error) {
 	return scope{caller: s.caller}, nil
 }
 
-// admitRemote applies, in order, the proxy rules, the per-address limit of the
+// admitRemote applies, in order, the proxy rules (health probes are exempt,
+// so a local readiness check works behind the proxy), the per-address limit of the
 // login routes, the bearer token the route asks for and the per-identity limit
 // of writes.
 func (s *Server) admitRemote(r *http.Request, rt route) (scope, error) {
 	client, err := s.proxy.clientOf(r)
-	if err != nil {
+	if err != nil && rt.action != ExemptHealth { // probes need neither the client nor the scheme
 		return scope{}, err
 	}
 	if rt.isAuth() {

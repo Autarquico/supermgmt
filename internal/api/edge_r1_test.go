@@ -71,3 +71,15 @@ func TestAUnixPeerMustForwardTheClientAddress(t *testing.T) {
 		t.Errorf("one address: %v, %v", got, err)
 	}
 }
+
+func TestHealthProbesPassAProxyWithoutForwardingHeaders(t *testing.T) {
+	proxy, err := NewProxy([]string{"127.0.0.1"})
+	must(t, err)
+	r := newRemote(t, func(o *remoteOptions) { o.proxy = proxy })
+
+	resp := r.request(http.MethodGet, wire.PathHealthLive, "", "")
+
+	if resp.Status != http.StatusOK {
+		t.Fatalf("liveness behind the proxy without forwarding headers = %d %s, want 200", resp.Status, resp.Body)
+	}
+}
