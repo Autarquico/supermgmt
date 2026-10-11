@@ -13,6 +13,7 @@ Available Commands:
   doctor      Diagnose configuration, paths and database health
   events      List audit events
   help        Help about any command
+  install     Install SuperMgmt (invoked by install.sh)
   jobs        List and govern jobs (default: list)
   nodes       List, add, inspect and probe nodes
   services    List services, read their logs and start, stop or restart them
