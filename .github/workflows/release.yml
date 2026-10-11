@@ -80,7 +80,7 @@ jobs:
           cd dist
           [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$WANT_DIGEST" ]
           sha256sum -c SHA256SUMS
-          [ "$(ls sm_*.tar.gz sm_*.tar.gz.spdx.json | sort)" = "$(cut -c67- SHA256SUMS | sort)" ]
+          [ "$(find . -maxdepth 1 -type f \( -name 'sm_*.tar.gz' -o -name 'sm_*.tar.gz.spdx.json' \) -printf '%f\n' | sort)" = "$(cut -c67- SHA256SUMS | sort)" ]
           rm SHA256SUMS
       - name: sign checksums, install.sh and join.sh
         env:
