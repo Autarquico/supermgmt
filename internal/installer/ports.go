@@ -68,6 +68,9 @@ type Probe struct {
 	URL        string
 	ServerName string // TLS server name; empty for plain HTTP
 	RootPEM    []byte // trust anchor for direct TLS; nil for plain HTTP
+	// ForwardedProto is sent as X-Forwarded-Proto: a proxy-mode server refuses requests that do not
+	// say TLS ended at the proxy, and the probe stands in for that proxy.
+	ForwardedProto string
 }
 
 // Health waits for GET /health/ready to answer 200.

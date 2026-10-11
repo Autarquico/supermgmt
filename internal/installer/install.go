@@ -311,7 +311,7 @@ func (in *Installer) probe(l layout) (Probe, error) {
 		return Probe{}, err
 	}
 	if srv.TLS.Mode == config.TLSProxy {
-		return Probe{URL: "http://" + hostport + "/health/ready"}, nil
+		return Probe{URL: "http://" + hostport + "/health/ready", ForwardedProto: "https"}, nil
 	}
 	pem, err := in.d.Files.ReadFile(srv.TLS.CertFile)
 	if err != nil {

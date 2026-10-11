@@ -12,7 +12,8 @@ ACTIONLINT_VERSION := v1.7.7
 VACUUM_VERSION := v0.30.6
 VACUUM_VERSION := v0.30.6
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
-NOT_YET := @echo "not available until M2 (spec §31)"
+E2E_DIST ?=
+E2E_TIMEOUT ?= 40m
 
 PEER_USER ?= smpeer
 PEER_BIN_DIR ?= /tmp/sm-peer
@@ -24,7 +25,7 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
-	integration-fixtures cross-build api-check e2e snapshot release-check install-test
+	integration-fixtures cross-build api-check e2e e2e-server e2e-install snapshot release-check install-test
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -81,8 +82,15 @@ api-check: ## Check api/openapi.yaml against the route table and wire DTOs, then
 	go test -count=1 -run OpenAPI ./internal/api/
 	go run github.com/daveshanley/vacuum@$(VACUUM_VERSION) lint -d -e --no-update-check api/openapi.yaml
 
-e2e: ## Not available until M2
-	$(NOT_YET)
+e2e: e2e-server e2e-install ## Run the M2 acceptance and security e2e (needs Docker; Debian systemd containers)
+
+e2e-server: ## e2e: remote control (direct and proxy TLS, Dex), local mode, backup/restore, join, secret-leak scans
+	go test -tags 'e2e fixtures' -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
+		-run 'TestM2_(RemoteControlOverHTTPS|LocalModeWithoutIdP|BackupRestoreFreshHost|JoinEnrollsFixtureNode)$$' ./test/e2e/
+
+e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (exit 5); E2E_DIST=dist serves a `make snapshot` release
+	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
+		-run 'TestM2_(CurlBashInstallsServer|TamperedReleaseFailsWithExit5|ReviewFirstDetectsModifiedScripts)$$' ./test/e2e/
 
 snapshot: ## Build a snapshot release into dist/ signed with a throwaway key (needs goreleaser v2 and syft)
 	packaging/release/snapshot.sh
