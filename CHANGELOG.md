@@ -6,7 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Milestones M0 (repository and core) and M1 (local daemon, SSH, TUI). Pre-alpha: nothing is released.
+Milestones M0 (repository and core), M1 (local daemon, SSH, TUI) and M2 (server, auth, releases). Pre-alpha: nothing is released.
+
+### Added in M2
+
+- Server mode (`sm server`): the API over HTTPS, either terminated by the daemon (`server.tls.mode: direct`, certificate re-read on `SIGHUP`) or behind a reverse proxy (`proxy`, forwarding headers believed only from `server.trusted_proxies`). No ACME (ADR-0017).
+- Bearer credentials: sessions, API tokens with expiry and narrowing scopes, bootstrap codes and join tokens, stored as SHA-256 only. Admin socket (`sm admin bootstrap-code|grant|restore-complete`, read-only `sm doctor`), rate limits, response headers, event stream (`GET /events/stream`). Migration `000003`.
+- OIDC login: Authorization Code with PKCE (loopback, `--callback-port`) and the device grant, discovery-trust rules and the new key `auth.oidc.allowed_endpoint_origins` (ADR-0018, spec 1.4.3). Exercised against Dex only.
+- Client profiles, `sm login|logout`, `sm profile`, `sm tokens`, remote TUI over SSE, and a credential store (macOS keychain, `secret-tool`, 0600 file fallback).
+- Secrets: `sm secrets import|keys|rotate-master-key|retire-key|export-key|import-key`, `sm ssh-key rotate`, `sm nodes repin`. Key operations are approval-gated `secret.write` jobs (spec 1.4.4); key export is local-socket only or `--offline` on a server (ADR-0021).
+- Outbound request filter `internal/netguard` (SPEC §21.1), used for identity-provider endpoints.
+- Backup and restore: `sm backup create|list`, scheduled backups (`backup.schedule`, `backup.retention`), offline `sm backup restore --offline` with a crash-safe journal and restore hold, `sm admin restore-complete` (ADR-0020).
+- Join: `sm enrollments create`, `sm join`, `scripts/join.sh` (ADR-0022).
+- Release pipeline: GoReleaser archives, OpenSSH signatures, SPDX SBOMs, provenance on tag builds, signed channel pointers, and `install.sh` with `sm install local|server|client|restore` (ADR-0019). The production key is a placeholder, so real installs fail closed.
+- OpenAPI description with a drift check (`make api-check`), ADR-0012 route metadata, and `make snapshot`, `make release-check`, `make install-test`.
+- Documentation: `docs/installation.md`, `docs/operations.md`, `docs/cloudflare.md` (guide only), updates to `docs/configuration.md` and `docs/security.md`, and the manual checklist `docs/manual-checks/m2-handoff.md`.
+
+### Known limits in M2
+
+- Nothing is signed with a production key; production signing and provenance are unverified. The "clean Debian VM" acceptance is amended to a systemd container and a VM run is deferred.
+- `install.sh` requires OpenSSH 8.2 or newer (the spec says 8.1) and its default mode `auto`, like `upgrade`, `uninstall` and `proxmox-lxc`, exits 3 until M3.
+- Dex puts the OIDC client secret in the device-flow verification URL; there is no separate device client key. Only Dex has been exercised.
+- Backup archives are not encrypted. A lost master key without an export is unrecoverable.
+- Cloudflare is a guide, not tested against a real account. The real macOS keychain and `secret-tool` are manual checks.
+- `sm login --bootstrap` on a server without OIDC may fail for lack of a display name (not verified end to end).
+- Not built: SSH CA trust, per-node keys, `sm secrets import --offline`, an orphan-key report in `sm doctor`, Providers and Settings screens.
 
 ### Added in M1
 

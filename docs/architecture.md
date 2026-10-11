@@ -4,12 +4,12 @@ Source of truth: [`spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md). This page s
 
 ## Process model (SPEC §2.1.1)
 
-Exactly one process, the **daemon**, owns the database, job workers, refreshers and connectors. The TUI and the CLI are clients of its API; there is no in-process TUI backend ([ADR-0005](adr/0005-daemon-process-model.md), [ADR-0014](adr/0014-local-api-and-daemon-lifecycle.md)). Local and remote use share one code path. **[M1]** (local), **[planned M2]** (HTTPS), **[planned M5]** (MCP).
+Exactly one process, the **daemon**, owns the database, job workers, refreshers and connectors. The TUI and the CLI are clients of its API; there is no in-process TUI backend ([ADR-0005](adr/0005-daemon-process-model.md), [ADR-0014](adr/0014-local-api-and-daemon-lifecycle.md)). Local and remote use share one code path. **[M1]** (local), **[M2]** (HTTPS server mode), **[planned M5]** (MCP).
 
 ```text
 Laptop
 ├── daemon (single owner of state)            [M1]
-│   ├── API: Unix socket 0600                 [M1]   (HTTPS: planned M2)
+│   ├── API: Unix socket 0600                 [M1]   (server mode: HTTPS + admin socket, M2)
 │   ├── SQLite                                [M0 schema; M1 migration 000002]
 │   ├── job workers, reconciler, refresher    [M0 engine; M1 wired to SSH, systemd, Docker]
 │   └── connectors: SSH, local                [M1]   (Proxmox M3, GitHub M4)
@@ -20,12 +20,12 @@ Laptop
 
 Two exceptions to "everything is an API client":
 
-- **Offline commands** need no daemon: `sm version`, `sm completion`, `sm config validate`, `sm doctor --offline` **[M0]**. They take the database lock themselves and refuse while a daemon holds it. `sm doctor` without `--offline` is not implemented. Other offline commands (`sm install`, `sm secrets import --offline`, `sm backup restore --offline`) are planned for later milestones.
+- **Offline commands** need no daemon: `sm version`, `sm completion`, `sm config validate`, `sm doctor --offline` **[M0]**. They take the database lock themselves and refuse while a daemon holds it. `sm doctor` without `--offline` asks a server over its admin socket **[M2]**. Other offline commands: `sm install` (the installer runs outside the daemon), `sm secrets import-key --offline`, `sm secrets export-key --offline` and `sm backup restore --offline` **[M2]**; a `sm secrets import --offline` is not built.
 - The daemon's own entry point, `sm daemon` **[M1]**. Any other command that needs the daemon starts it when none runs: a new session, output to `daemon.log` in the state directory, then up to 5 seconds of polling the socket (ADR-0014).
 
 Two independent `flock`s protect a running daemon: a database lock on `<canonical db path>.lock` and a socket lock on `<socket>.lock`, with the PID written in both **[M1]**. The socket directory must be a real directory owned by the daemon user with mode 0700, and the daemon refuses to start otherwise. Both ends check the peer's UID (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS) and close the connection on a mismatch or a lookup failure. Local mode trusts code running as the same OS user (see [security.md](security.md)).
 
-**Residency (ADR-0014).** The daemon exits after `daemon.idle_exit` only when no client holds the presence stream open, no request is in flight and no job is outside `succeeded`, `failed` and `cancelled`. A job waiting in `awaiting_approval` therefore keeps the daemon alive. `daemon.resident: true` disables the idle exit; a user unit that starts the daemon at login arrives in M2.
+**Residency (ADR-0014).** The daemon exits after `daemon.idle_exit` only when no client holds the presence stream open, no request is in flight and no job is outside `succeeded`, `failed` and `cancelled`. A job waiting in `awaiting_approval` therefore keeps the daemon alive. `daemon.resident: true` disables the idle exit; `sm install local --resident` registers a user unit or launch agent that starts it at login **[M2]**.
 
 ## Layers and package map (SPEC §5)
 
@@ -55,10 +55,12 @@ Dependencies point inward: adapters (CLI, API, TUI, MCP) call application servic
 | `internal/discovery` | turns one probe into a typed snapshot and capabilities | M1 |
 | `internal/secrets` | AES-256-GCM envelope, file KEKs, versioned store, instance SSH identity | M1 (slice of M2; ADR-0016) |
 | `internal/textsafe` | sanitizing of untrusted text | M1 |
-| `internal/auth` | identities and sessions beyond the local socket | planned M2 |
+| `internal/auth`, `internal/auth/oidc` | credentials, sessions, tokens, OIDC adapter | M2 |
+| `internal/netguard` | outbound request filter | M2 |
+| `internal/join` | node enrollment (`sm join`) | M2 |
 | `internal/providers/proxmox`, `internal/deployments/*`, `internal/health` | Proxmox, Compose pipeline, health checks | planned M3, M4 |
 | `internal/mcp` | MCP transport, tools, resources | planned M5 |
-| `internal/installer`, `internal/backup` | installer logic, backup and restore | planned M2, M3 |
+| `internal/installer`, `internal/backup` | installer logic, backup and restore | M2 (Proxmox LXC, upgrade and uninstall: M3) |
 
 Enforced boundaries today (`.golangci.yml`): `internal/domain` imports only the standard library, `uuid` and `internal/errors`; `internal/api/wire` imports only the standard library, `internal/domain` and `internal/errors`; `internal/policy` does not import `internal/database` or `internal/jobs`; `database/sql` and the SQLite driver stay in `internal/database`, `internal/jobs` and `migrations`; `internal/tui` and `internal/client` never import `app`, `jobs`, `database`, `daemon`, `transport`, `runtimes` or `providers`; `internal/api` reaches nodes only through `app`; `internal/cli` does not import `app`, `jobs` or `transport`; `cmd/` imports only `internal/cli`; `time.Now` and `fmt.Print*` are linted away from library code.
 
