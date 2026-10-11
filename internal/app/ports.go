@@ -37,13 +37,16 @@ type AdminSocket interface {
 }
 
 // Keys is master-key and secret management (spec §10, ADR-0021), action
-// secret.write. ExportKey is served on the local-mode socket only.
+// secret.write. The action is high risk, so each operation answers Pending (a
+// control_plane.apply job awaiting approval) unless policy says otherwise.
+// ExportKey is served on the local-mode socket only and takes two calls: one
+// without a passphrase requests it, one with the passphrase executes it.
 type Keys interface {
-	RotateMasterKey(ctx context.Context, by Caller) (wire.MasterKeyRotated, error)
-	RetireKey(ctx context.Context, by Caller, r wire.RetireKeyRequest) error
-	ExportKey(ctx context.Context, by Caller, r wire.ExportKeyRequest) (wire.ExportedKey, error)
-	ImportSecret(ctx context.Context, by Caller, r wire.ImportSecretRequest) (wire.SecretVersion, error)
-	RotateSSHIdentity(ctx context.Context, by Caller) (wire.SSHKey, error)
+	RotateMasterKey(ctx context.Context, by Caller) (DirectResult[wire.MasterKeyRotated], error)
+	RetireKey(ctx context.Context, by Caller, r wire.RetireKeyRequest) (DirectResult[struct{}], error)
+	ExportKey(ctx context.Context, by Caller, r wire.ExportKeyRequest) (DirectResult[wire.ExportedKey], error)
+	ImportSecret(ctx context.Context, by Caller, r wire.ImportSecretRequest) (DirectResult[wire.SecretVersion], error)
+	RotateSSHIdentity(ctx context.Context, by Caller) (DirectResult[wire.SSHKey], error)
 }
 
 // Backups is backup.create (a job) and backup.read (spec §29.1, ADR-0020).

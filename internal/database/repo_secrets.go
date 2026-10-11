@@ -27,10 +27,26 @@ type SecretRecord struct {
 	RotatedAt       *time.Time
 }
 
+// A staged secret version is sealed but not yet active (ADR-0021: an import
+// waiting for approval). It is stored with a negative version, so it can never
+// be mistaken for a current one and several can wait under the same name. The
+// version it receives on activation is the next positive one.
+const firstStagedVersion = -1
+
 // PutSecretVersion stores r as the next version of r.Name (1 for a new name)
 // and returns it with that version. r.Version is ignored. The version is
 // computed in the same statement, so concurrent writers cannot collide.
 func PutSecretVersion(ctx context.Context, q Querier, r SecretRecord) (SecretRecord, error) {
+	return insertSecret(ctx, q, r, `max(coalesce(max(version), 0), 0) + 1`)
+}
+
+// StageSecret stores r as a staged (inactive) version of r.Name. Its version is
+// negative and r.Version is ignored.
+func StageSecret(ctx context.Context, q Querier, r SecretRecord) (SecretRecord, error) {
+	return insertSecret(ctx, q, r, `min(coalesce(min(version), 0), 0) + `+fmt.Sprint(firstStagedVersion))
+}
+
+func insertSecret(ctx context.Context, q Querier, r SecretRecord, versionExpr string) (SecretRecord, error) {
 	metadata, err := encodeJSON(r.Metadata)
 	if err != nil {
 		return SecretRecord{}, err
@@ -38,7 +54,7 @@ func PutSecretVersion(ctx context.Context, q Querier, r SecretRecord) (SecretRec
 	err = q.QueryRowContext(ctx, `
 		INSERT INTO secrets (id, name, version, envelope_version, kek_id, wrapped_dek, ciphertext,
 		                     metadata_json, created_at, rotated_at)
-		SELECT ?, ?, coalesce(max(version), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM secrets WHERE name = ?
+		SELECT ?, ?, `+versionExpr+`, ?, ?, ?, ?, ?, ?, ? FROM secrets WHERE name = ?
 		RETURNING version`,
 		r.ID, r.Name, r.EnvelopeVersion, r.KEKID, r.WrappedDEK, r.Ciphertext, metadata,
 		millis(r.CreatedAt), nullMillis(r.RotatedAt), r.Name).Scan(&r.Version)
@@ -48,11 +64,46 @@ func PutSecretVersion(ctx context.Context, q Querier, r SecretRecord) (SecretRec
 	return r, nil
 }
 
+// ActivateStagedSecret makes a staged version the next current one of its name
+// and returns it. Activating a version that is already current returns it
+// unchanged, so a retried job converges. NOT_FOUND when no such version exists
+// (it was discarded).
+func ActivateStagedSecret(ctx context.Context, q Querier, id domain.ID) (SecretRecord, error) {
+	res, err := q.ExecContext(ctx, `
+		UPDATE secrets SET version = (
+			SELECT max(coalesce(max(other.version), 0), 0) + 1 FROM secrets AS other WHERE other.name = secrets.name)
+		WHERE id = ? AND version < 0`, id)
+	if err != nil {
+		return SecretRecord{}, fmt.Errorf("activate staged secret: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 1 {
+		return SecretRecord{}, fmt.Errorf("activate staged secret: %d rows updated", n)
+	}
+	r, err := GetSecretByID(ctx, q, id)
+	if err != nil {
+		return SecretRecord{}, err
+	}
+	return r, nil
+}
+
+// DeleteStagedSecret removes a staged version and its ciphertext. A version
+// that is current, or does not exist, is left alone.
+func DeleteStagedSecret(ctx context.Context, q Querier, id domain.ID) error {
+	if _, err := q.ExecContext(ctx, `DELETE FROM secrets WHERE id = ? AND version < 0`, id); err != nil {
+		return fmt.Errorf("delete staged secret: %w", err)
+	}
+	return nil
+}
+
+// GetSecretByID returns a stored version, current or staged.
+func GetSecretByID(ctx context.Context, q Querier, id domain.ID) (SecretRecord, error) {
+	return scanSecret(q.QueryRowContext(ctx, secretColumns+` FROM secrets WHERE id = ?`, id))
+}
+
 // GetSecret returns the given version of the named secret; a version below 1
-// means the latest. NOT_FOUND when there is no such secret or version.
+// means the latest. Staged versions are never returned. NOT_FOUND when there is no such secret or version.
 func GetSecret(ctx context.Context, q Querier, name string, version int) (SecretRecord, error) {
-	query := `SELECT id, name, version, envelope_version, kek_id, wrapped_dek, ciphertext, metadata_json,
-		created_at, rotated_at FROM secrets WHERE name = ?`
+	query := secretColumns + ` FROM secrets WHERE name = ? AND version >= 1`
 	args := []any{name}
 	if version >= 1 {
 		query += ` AND version = ?`
@@ -60,13 +111,21 @@ func GetSecret(ctx context.Context, q Querier, name string, version int) (Secret
 	} else {
 		query += ` ORDER BY version DESC LIMIT 1`
 	}
+	return scanSecret(q.QueryRowContext(ctx, query, args...))
+}
+
+//nolint:gosec // column names, not credentials
+const secretColumns = `SELECT id, name, version, envelope_version, kek_id, wrapped_dek, ciphertext, metadata_json,
+	created_at, rotated_at`
+
+func scanSecret(row *sql.Row) (SecretRecord, error) {
 	var (
 		r         SecretRecord
 		metadata  string
 		createdMs int64
 		rotated   sql.NullInt64
 	)
-	err := q.QueryRowContext(ctx, query, args...).Scan(&r.ID, &r.Name, &r.Version, &r.EnvelopeVersion, &r.KEKID,
+	err := row.Scan(&r.ID, &r.Name, &r.Version, &r.EnvelopeVersion, &r.KEKID,
 		&r.WrappedDEK, &r.Ciphertext, &metadata, &createdMs, &rotated)
 	if err != nil {
 		return SecretRecord{}, getErr(err, "secret")

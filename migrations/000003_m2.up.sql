@@ -67,3 +67,13 @@ CREATE TABLE join_tokens (
 ) STRICT;
 
 CREATE INDEX join_tokens_by_expiry ON join_tokens (expires_at);
+
+-- A staged secret (negative version, ADR-0021) is an import waiting for approval and
+-- belongs to one control_plane.apply job, named by staged_id in the job payload. When
+-- that job ends without activating it, its ciphertext goes with it: rejection, plan
+-- expiry, cancel and failure all end in one of these states.
+CREATE TRIGGER secrets_discard_staged AFTER UPDATE OF state ON jobs
+WHEN NEW.type = 'control_plane.apply' AND NEW.state IN ('failed', 'cancelled')
+BEGIN
+    DELETE FROM secrets WHERE version < 0 AND id = json_extract(NEW.payload_json, '$.staged_id');
+END;

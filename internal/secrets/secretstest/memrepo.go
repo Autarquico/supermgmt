@@ -47,7 +47,7 @@ func (m *MemRepo) Get(_ context.Context, name string, version int) (secrets.Reco
 	var best *secrets.Record
 	for i := range m.records {
 		r := &m.records[i]
-		if r.Name != name || (version != 0 && r.Version != version) {
+		if r.Name != name || r.Staged() || (version != 0 && r.Version != version) {
 			continue
 		}
 		if best == nil || r.Version > best.Version {
@@ -58,6 +58,60 @@ func (m *MemRepo) Get(_ context.Context, name string, version int) (secrets.Reco
 		return secrets.Record{}, smerr.New(smerr.CodeNotFound, "", "secret not found")
 	}
 	return cloneRecord(*best), nil
+}
+
+func (m *MemRepo) PutStaged(_ context.Context, r secrets.Record) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r.Version = -1
+	for _, existing := range m.records {
+		if existing.Name == r.Name && existing.Staged() {
+			r.Version = min(r.Version, existing.Version-1)
+		}
+	}
+	m.records = append(m.records, cloneRecord(r))
+	return nil
+}
+
+func (m *MemRepo) GetByID(_ context.Context, id domain.ID) (secrets.Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if i := m.indexOf(id); i >= 0 {
+		return cloneRecord(m.records[i]), nil
+	}
+	return secrets.Record{}, smerr.New(smerr.CodeNotFound, "", "secret not found")
+}
+
+func (m *MemRepo) ActivateStaged(_ context.Context, id domain.ID) (secrets.Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i := m.indexOf(id)
+	if i < 0 {
+		return secrets.Record{}, smerr.New(smerr.CodeNotFound, "", "secret not found")
+	}
+	if m.records[i].Staged() {
+		next := 0
+		for _, r := range m.records {
+			if r.Name == m.records[i].Name {
+				next = max(next, r.Version)
+			}
+		}
+		m.records[i].Version = next + 1
+	}
+	return cloneRecord(m.records[i]), nil
+}
+
+func (m *MemRepo) DeleteStaged(_ context.Context, id domain.ID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if i := m.indexOf(id); i >= 0 && m.records[i].Staged() {
+		m.records = slices.Delete(m.records, i, i+1)
+	}
+	return nil
+}
+
+func (m *MemRepo) indexOf(id domain.ID) int {
+	return slices.IndexFunc(m.records, func(r secrets.Record) bool { return r.ID == id })
 }
 
 func (m *MemRepo) ReferencedKEKs(context.Context) ([]domain.ID, error) {

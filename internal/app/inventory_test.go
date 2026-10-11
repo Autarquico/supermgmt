@@ -359,17 +359,59 @@ func TestRepinRefusals(t *testing.T) {
 		_, err = n.inv.UpdateNode(context.Background(), n.caller(n.admin), local.ID, local.SpecRevision, NodePatch{HostPublicKey: &validKey})
 		requireErrorCode(t, err, smerr.CodeInvalidArgument)
 	})
-	t.Run("a change policy would park for approval", func(t *testing.T) {
-		n := newNodeFixture(t) // the fixture node is in production: two approvals
-		_, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), n.node.ID, n.node.SpecRevision, NodePatch{HostPublicKey: &validKey})
-		wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonApprovalNotSupported)
-		if n.storedHostKey(n.node.ID) != n.node.Endpoint.HostPublicKey {
-			t.Error("the pin changed although the re-pin was refused")
+}
+
+func TestRepinThatNeedsApprovalChangesNothingUntilTheJobAppliesTheKey(t *testing.T) {
+	n := newNodeFixture(t) // the fixture node is in production: two approvals
+	newKey, tags := newAuthorizedKey(), []string{"edge"}
+	oldFingerprint, _ := sshnode.Fingerprint(n.node.Endpoint.HostPublicKey)
+	newFingerprint, _ := sshnode.Fingerprint(newKey)
+
+	res, err := n.inv.UpdateNode(context.Background(), n.caller(n.admin), n.node.ID, n.node.SpecRevision, NodePatch{HostPublicKey: &newKey, Tags: &tags})
+
+	if err != nil || res.Pending == nil || res.Applied != nil {
+		t.Fatalf("UpdateNode = %+v, %v; want a pending job", res, err)
+	}
+	if n.storedHostKey(n.node.ID) != n.node.Endpoint.HostPublicKey || len(n.dialer.invalidated) != 0 || len(n.events("node.host_key.repinned")) != 0 {
+		t.Fatal("the pin changed before the approval")
+	}
+
+	n.approveToQuorum(res.Pending.Job)
+	claimed, ok := n.claim()
+	if !ok {
+		t.Fatal("the approved job was not claimable")
+	}
+	for range 2 { // a retried job converges
+		if err := (applyHandler{inv: n.inv}).Run(context.Background(), claimed.Lease); err != nil {
+			t.Fatalf("apply: %v", err)
 		}
-		if len(n.dialer.invalidated) != 0 {
-			t.Errorf("connections dropped by a refused re-pin: %v", n.dialer.invalidated)
-		}
+	}
+
+	if got := n.storedHostKey(n.node.ID); got != newKey {
+		t.Errorf("stored pin %q, want the approved key", got)
+	}
+	node := mustNodeByID(t, n.fixture, n.node.ID)
+	if !slices.Equal(node.Tags, tags) || node.SpecRevision != n.node.SpecRevision+2 {
+		t.Errorf("tags %v revision %d; want the other fields applied after the re-pin", node.Tags, node.SpecRevision)
+	}
+	events := n.events("node.host_key.repinned")
+	if len(events) != 1 || events[0].Data["old_fingerprint"] != oldFingerprint || events[0].Data["new_fingerprint"] != newFingerprint {
+		t.Errorf("events = %+v, want one carrying both fingerprints", events)
+	}
+	if !slices.Contains(n.dialer.invalidated, n.node.ID.String()+"/admin") {
+		t.Errorf("the pooled connection was not dropped: %v", n.dialer.invalidated)
+	}
+}
+
+func mustNodeByID(t *testing.T, f *fixture, id domain.ID) domain.Node {
+	t.Helper()
+	var node domain.Node
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		var err error
+		node, err = database.GetNode(ctx, tx, id)
+		return err
 	})
+	return node
 }
 
 func TestUpdateAndRemoveRefuseNodesDefinedInTheConfigurationFile(t *testing.T) {

@@ -47,6 +47,9 @@ type InventoryOptions struct {
 	// KeepLogsRaw turns off the redaction of secret patterns in command output
 	// served to clients (security.redact_command_output: false).
 	KeepLogsRaw bool
+	// Keys executes approved key operations (secret.write jobs); nil when the
+	// instance has no secret store.
+	Keys *KeyManager
 }
 
 // Inventory is the node and service catalog: it adds, edits and retires nodes
@@ -64,6 +67,7 @@ type Inventory struct {
 	localName  string
 	adapters   Adapters
 	redactLogs bool
+	keys       *KeyManager
 }
 
 // NewInventory validates cfg and the options.
@@ -81,7 +85,7 @@ func NewInventory(cfg Config, o InventoryOptions) (*Inventory, error) {
 	}
 	inv := &Inventory{
 		core: c, plans: plans, jobs: o.Store, conn: o.Connector, mode: o.Mode, focus: o.Focus,
-		staleAfter: o.StaleAfter, scan: o.Scan, localName: o.LocalName, adapters: DefaultAdapters(), redactLogs: !o.KeepLogsRaw,
+		staleAfter: o.StaleAfter, scan: o.Scan, localName: o.LocalName, adapters: DefaultAdapters(), redactLogs: !o.KeepLogsRaw, keys: o.Keys,
 	}
 	if inv.staleAfter <= 0 {
 		inv.staleAfter = defaultStaleAfter
@@ -269,6 +273,9 @@ func (i *Inventory) UpdateNode(ctx context.Context, by Caller, id domain.ID, ifM
 		if err := i.validatePatch(patch); err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
+		if patch.HostPublicKey != nil && node.Kind != sshnode.NodeKind {
+			return DirectResult[wire.Node]{}, smerr.New(smerr.CodeInvalidArgument, "", "only SSH nodes have a host key")
+		}
 		params, err := toParams(patch)
 		if err != nil {
 			return DirectResult[wire.Node]{}, err
@@ -277,41 +284,11 @@ func (i *Inventory) UpdateNode(ctx context.Context, by Caller, id domain.ID, ifM
 		if err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
-		if patch.HostPublicKey != nil {
-			return i.repinNode(ctx, tx, actor, node, b, patch)
-		}
 		return i.applyOrWrap(ctx, tx, by, actor, b, func() (domain.Node, error) { return i.applyNodeUpdate(ctx, tx, actor, node, patch) })
 	})
 }
 
 const eventHostKeyRepinned = "node.host_key.repinned"
-
-// repinNode applies an update that carries host_public_key (ADR-0021). The
-// approved-job path (apply.go) does not know the field, so a re-pin that policy
-// would park for approval is refused instead of being applied without its key.
-func (i *Inventory) repinNode(ctx context.Context, tx *database.Tx, actor domain.Actor, node domain.Node, b built, patch NodePatch) (DirectResult[wire.Node], error) {
-	if node.Kind != sshnode.NodeKind {
-		return DirectResult[wire.Node]{}, smerr.New(smerr.CodeInvalidArgument, "", "only SSH nodes have a host key")
-	}
-	res, err := i.evaluate(ctx, tx, actor, b)
-	if err != nil {
-		return DirectResult[wire.Node]{}, err
-	}
-	if res.ApprovalRequired {
-		return DirectResult[wire.Node]{}, reject(smerr.FromReason(smerr.ReasonApprovalNotSupported, "re-pinning a host key cannot wait for approval yet"))
-	}
-	repinned, err := i.applyRepin(ctx, tx, actor, node, strings.TrimSpace(*patch.HostPublicKey))
-	if err != nil {
-		return DirectResult[wire.Node]{}, err
-	}
-	patch.HostPublicKey = nil
-	updated, err := i.applyNodeUpdate(ctx, tx, actor, repinned, patch)
-	if err != nil {
-		return DirectResult[wire.Node]{}, err
-	}
-	view, err := i.nodeView(ctx, tx, updated)
-	return DirectResult[wire.Node]{Applied: &view}, err
-}
 
 // applyRepin makes key the node's only trust anchor and drops the pooled
 // connections that were authenticated against the old pin. The old and new
