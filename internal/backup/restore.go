@@ -116,7 +116,7 @@ func deviceOf(dir string) (uint64, error) {
 	if !ok {
 		return 0, errors.New("device information is unavailable on this platform")
 	}
-	return uint64(st.Dev), nil //nolint:gosec,unconvert // Dev is signed on darwin
+	return uint64(st.Dev), nil //nolint:gosec,unconvert,nolintlint // Dev is signed on darwin, unsigned on linux
 }
 
 // stage runs phase A and C on a private copy and returns the moves of phase B.

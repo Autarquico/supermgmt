@@ -86,3 +86,15 @@ func TestPermit(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyNumericHostsAreRecognised(t *testing.T) {
+	cases := map[string]bool{
+		"127.1": true, "0x7f.1": true, "2130706433": true, "10.0.1.": true, "0X7F000001": true,
+		"example.com": false, "host1": false, "1.example": false, "123abc": false, "db-01.lan": false,
+	}
+	for host, want := range cases {
+		if got := legacyNumeric(host); got != want {
+			t.Errorf("legacyNumeric(%q) = %v, want %v", host, got, want)
+		}
+	}
+}

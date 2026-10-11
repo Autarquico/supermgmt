@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -76,11 +77,33 @@ func (d *dialer) resolve(ctx context.Context, host string) ([]netip.Addr, error)
 	if ip, err := netip.ParseAddr(host); err == nil {
 		return []netip.Addr{ip}, nil
 	}
+	if legacyNumeric(host) {
+		return nil, fmt.Errorf("%w: %s is a non-canonical numeric address", ErrBlocked, host)
+	}
 	ips, err := d.lookup(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("netguard: resolve %s: %w", host, err)
 	}
 	return ips, nil
+}
+
+// legacyNumeric reports a host some resolvers read as an IPv4 address in the
+// inet_aton shorthand (127.1, 0x7f.1, 2130706433). No top-level domain is
+// numeric, so a numeric last label is never a name; refusing it keeps the
+// verdict independent of the platform resolver.
+func legacyNumeric(host string) bool {
+	label := strings.TrimSuffix(host, ".")
+	if i := strings.LastIndexByte(label, '.'); i >= 0 {
+		label = label[i+1:]
+	}
+	if label == "" {
+		return false
+	}
+	if rest, ok := strings.CutPrefix(strings.ToLower(label), "0x"); ok {
+		label = rest
+		return strings.Trim(label, "0123456789abcdef") == ""
+	}
+	return strings.Trim(label, "0123456789") == ""
 }
 
 func (d *dialer) connect(ctx context.Context, network string, ip netip.Addr, port string) (net.Conn, error) {
