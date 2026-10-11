@@ -33,7 +33,8 @@ Join writes no sudoers and joins no `docker` or journal group. Those stay `node.
 - `request_digest = SHA-256(host_public_key ‖ 0x00 ‖ hostname)`.
 - Before `expires_at`, a request whose token and digest match a node already enrolled with that token returns that node's result (same node, same key line) without using another slot; `sm join` is therefore safe to re-run after a lost response.
 - A new digest on an exhausted token (`uses = max_nodes`) is `CONFLICT`.
-- Re-running `sm join` on an enrolled node with a fresh token whose digest matches an existing node returns that node and refreshes tags; it never creates a duplicate.
+- Enrollment never mutates an existing node. Any other request whose digest matches a node already enrolled (a fresh token, an exhausted token, a different token) is `CONFLICT`: no slot is used, tags are untouched, and the refusal is audited as `enrollment.denied` with the reason. The digest inputs (host public key, hostname) are public, so possession of a token cannot be allowed to change a node; changing tags is an authenticated `node.update`.
+- Only the exact replay above (token id recorded on the node and same digest, token not expired or invalidated) is answered from the stored node.
 
 ### Out of scope
 

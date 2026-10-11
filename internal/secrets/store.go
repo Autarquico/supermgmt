@@ -93,12 +93,14 @@ func (s *Store) Put(ctx context.Context, name string, plaintext audit.Secret, me
 }
 
 // Staged names a sealed secret version that is not current yet: an import
-// waiting for approval. SHA256 is the hex digest of the plaintext, which lets
-// the approved plan name the value without carrying it.
+// waiting for approval. CiphertextSHA256 is the hex digest of its stored ciphertext,
+// which lets the approved plan name the row without a function of the value
+// (an unkeyed hash of a secret would invite an offline dictionary attack, and
+// the ciphertext is under a random data key, so its digest reveals nothing).
 type Staged struct {
-	ID     domain.ID
-	Name   string
-	SHA256 string
+	ID               domain.ID
+	Name             string
+	CiphertextSHA256 string
 }
 
 // Stage seals plaintext under the active KEK like Put, but stores it as a
@@ -129,7 +131,7 @@ func (s *Store) Stage(ctx context.Context, name string, plaintext audit.Secret, 
 	if err := s.repo.PutStaged(ctx, rec); err != nil {
 		return Staged{}, fmt.Errorf("store staged secret %s: %w", name, err)
 	}
-	return Staged{ID: id, Name: name, SHA256: digest(payload)}, nil
+	return Staged{ID: id, Name: name, CiphertextSHA256: digest(enc.Ciphertext)}, nil
 }
 
 // Activate makes a staged version current, after checking that it still holds
@@ -150,8 +152,8 @@ func (s *Store) Activate(ctx context.Context, st Staged) (Ref, error) {
 		return Ref{}, fmt.Errorf("staged secret %s: %w", rec.Name, err)
 	}
 	defer zero(plaintext)
-	if rec.Name != st.Name || subtle.ConstantTimeCompare([]byte(digest(plaintext)), []byte(st.SHA256)) != 1 {
-		return Ref{}, smerr.New(smerr.CodeConflict, "", "the staged secret is not the value that was approved")
+	if rec.Name != st.Name || subtle.ConstantTimeCompare([]byte(digest(rec.Ciphertext)), []byte(st.CiphertextSHA256)) != 1 {
+		return Ref{}, smerr.New(smerr.CodeConflict, "", "the staged secret is not the one that was approved")
 	}
 	active, err := s.repo.ActivateStaged(ctx, st.ID)
 	if err != nil {
@@ -165,8 +167,8 @@ func (s *Store) Discard(ctx context.Context, id domain.ID) error {
 	return s.repo.DeleteStaged(ctx, id)
 }
 
-func digest(plaintext []byte) string {
-	sum := sha256.Sum256(plaintext)
+func digest(data []byte) string {
+	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 

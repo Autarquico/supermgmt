@@ -348,25 +348,35 @@ type AuthSwept struct {
 // SweepAuth deletes sessions, API tokens, bootstrap codes, join tokens and
 // OIDC replay records that expired at or before cutoff. Callers pass a cutoff
 // a little in the past so a recently expired credential still reads as
-// "expired" rather than "unknown". Revoked rows go with their expiry.
+// "expired" rather than "unknown". Revoked rows go with their expiry, except
+// sessions and API tokens that a job not yet finished was submitted with: the
+// claim-time check must still find them (spec §11.1).
 func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, error) {
 	var out AuthSwept
 	targets := []struct {
 		table   string
+		keep    string
 		counter *int64
 	}{
-		{"sessions", &out.Sessions},
-		{"api_tokens", &out.APITokens},
-		{"bootstrap_codes", &out.BootstrapCodes},
-		{"join_tokens", &out.JoinTokens},
-		{"oidc_replay", &out.OIDCReplays},
+		{"sessions", unfinishedJobCredential("session"), &out.Sessions},
+		{"api_tokens", unfinishedJobCredential("api_token"), &out.APITokens},
+		{"bootstrap_codes", "", &out.BootstrapCodes},
+		{"join_tokens", "", &out.JoinTokens},
+		{"oidc_replay", "", &out.OIDCReplays},
 	}
 	for _, t := range targets {
-		n, err := affected(ctx, q, t.table, `DELETE FROM `+t.table+` WHERE expires_at <= ?`, millis(cutoff))
+		n, err := affected(ctx, q, t.table, `DELETE FROM `+t.table+` WHERE expires_at <= ?`+t.keep, millis(cutoff))
 		if err != nil {
 			return AuthSwept{}, err
 		}
 		*t.counter = n
 	}
 	return out, nil
+}
+
+// unfinishedJobCredential is a DELETE condition that spares the credentials of
+// jobs that can still be claimed or resumed.
+func unfinishedJobCredential(kind string) string {
+	return ` AND id NOT IN (SELECT credential_id FROM jobs WHERE credential_kind = '` + kind +
+		`' AND state NOT IN ('succeeded', 'failed', 'cancelled'))`
 }

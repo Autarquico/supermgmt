@@ -255,7 +255,7 @@ func TestAStagedSecretIsSealedInvisibleAndActivatedOnlyForTheApprovedValue(t *te
 	}
 
 	wrong := staged
-	wrong.SHA256 = strings.Repeat("0", 64)
+	wrong.CiphertextSHA256 = strings.Repeat("0", 64)
 	if _, err := f.store.Activate(ctx, wrong); smerr.CodeOf(err) != smerr.CodeConflict {
 		t.Errorf("activating with another digest: %v, want CONFLICT", err)
 	}
@@ -269,6 +269,25 @@ func TestAStagedSecretIsSealedInvisibleAndActivatedOnlyForTheApprovedValue(t *te
 	}
 	if got, err := f.store.Get(ctx, ref); err != nil || got.Reveal() != "staged-value" {
 		t.Errorf("activated value = %q, %v", got.Reveal(), err)
+	}
+}
+
+func TestASwappedStagedRowIsNotActivated(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	approved, err := f.store.Stage(ctx, "demo/token", "approved-value", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.store.Stage(ctx, "demo/token", "other-value", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	swapped := secrets.Staged{ID: other.ID, Name: approved.Name, CiphertextSHA256: approved.CiphertextSHA256}
+
+	if _, err := f.store.Activate(ctx, swapped); smerr.CodeOf(err) != smerr.CodeConflict {
+		t.Fatalf("activating another row under the approved digest: %v, want CONFLICT", err)
 	}
 }
 

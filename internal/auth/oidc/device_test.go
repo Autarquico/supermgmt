@@ -73,6 +73,24 @@ func TestDeviceStartRefusals(t *testing.T) {
 			}
 		})
 	}
+	for name, uri := range map[string]string{
+		"raw secret":       issuerURL + "/device?code=" + testSecret,
+		"secret parameter": issuerURL + "/device?client_secret=anything",
+		"secret in path":   issuerURL + "/device/" + testSecret,
+	} {
+		t.Run("verification uri with "+name, func(t *testing.T) {
+			p := newIdP(t, newClock())
+			p.setDevice(func(d *deviceScript) { d.verifyURI = uri })
+			_, err := newClient(t, p).DeviceStart(t.Context())
+			var e *smerr.Error
+			if !errors.As(err, &e) || e.Code != smerr.CodeProviderError {
+				t.Fatalf("error = %v, want PROVIDER_ERROR", err)
+			}
+			if strings.Contains(err.Error(), testSecret) {
+				t.Errorf("error leaks the secret: %v", err)
+			}
+		})
+	}
 	t.Run("no expiry", func(t *testing.T) {
 		p := newIdP(t, newClock())
 		p.setDevice(func(d *deviceScript) { d.expiresIn = 0 })

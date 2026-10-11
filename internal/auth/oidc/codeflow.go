@@ -32,7 +32,7 @@ var (
 	pkceVerifier  = regexp.MustCompile(`^[A-Za-z0-9._~-]{43,128}$`)
 )
 
-func (c *Client) Start(_ context.Context, redirect, challenge string) (string, string, error) {
+func (c *Client) Start(ctx context.Context, redirect, challenge string) (string, string, error) {
 	if err := checkLoopbackRedirect(redirect); err != nil {
 		return "", "", smerr.Wrap(err, smerr.CodeInvalidArgument, "", "redirect_uri must be http://127.0.0.1:<port>/callback")
 	}
@@ -40,12 +40,14 @@ func (c *Client) Start(_ context.Context, redirect, challenge string) (string, s
 		return "", "", smerr.New(smerr.CodeInvalidArgument, "", "code_challenge must be an S256 challenge")
 	}
 	state, nonce := rand.Text(), rand.Text()
-	c.states.put(state, loginState{
+	now := c.clock.Now()
+	expiresAt := now.Add(loginStateTTL)
+	c.states.put(state, clientOf(ctx), loginState{
 		nonce:     nonce,
 		redirect:  redirect,
 		challenge: challenge,
-		expiresAt: c.clock.Now().Add(loginStateTTL),
-	})
+		expiresAt: expiresAt,
+	}, expiresAt, now)
 	conf := c.oauth
 	conf.RedirectURL = redirect
 	authURL := conf.AuthCodeURL(state,

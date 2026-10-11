@@ -55,14 +55,14 @@ var eventOfOperation = map[string]string{
 
 // secretWriteParams is what a secret.write plan and job carry. It never holds
 // a secret value or a passphrase: an import names its staged, already sealed
-// version and the SHA-256 of the value it approved.
+// version and the SHA-256 of that version's ciphertext.
 type secretWriteParams struct {
 	Operation              string    `json:"operation"`
 	KEKID                  domain.ID `json:"kek_id,omitempty"`
 	ExternalBackupsHandled bool      `json:"external_backups_handled,omitempty"`
 	Name                   string    `json:"name,omitempty"`
 	StagedID               domain.ID `json:"staged_id,omitempty"`
-	ValueSHA256            string    `json:"value_sha256,omitempty"`
+	StagedCiphertextSHA256 string    `json:"staged_ciphertext_sha256,omitempty"`
 }
 
 // validate checks that the parameters are those of a submittable plan.
@@ -78,8 +78,8 @@ func (p secretWriteParams) validate() error {
 		}
 		return p.requireKEK()
 	case opImportSecret:
-		if p.Name == "" || p.StagedID == "" || p.ValueSHA256 == "" {
-			return smerr.New(smerr.CodeInvalidArgument, "", "an import plan names the secret, its staged version and the value's digest")
+		if p.Name == "" || p.StagedID == "" || p.StagedCiphertextSHA256 == "" {
+			return smerr.New(smerr.CodeInvalidArgument, "", "an import plan names the secret, its staged version and the digest of the staged ciphertext")
 		}
 		return nil
 	}
@@ -173,7 +173,7 @@ func (k *KeyManager) ImportSecret(ctx context.Context, by Caller, r wire.ImportS
 			return secretWriteParams{}, nil, err
 		}
 		discard := func() { _ = k.store.Discard(context.WithoutCancel(ctx), staged.ID) }
-		return secretWriteParams{Operation: opImportSecret, Name: staged.Name, StagedID: staged.ID, ValueSHA256: staged.SHA256}, discard, nil
+		return secretWriteParams{Operation: opImportSecret, Name: staged.Name, StagedID: staged.ID, StagedCiphertextSHA256: staged.CiphertextSHA256}, discard, nil
 	}
 	return submitOrApply(ctx, k, by, req, func(ctx context.Context, actor domain.Actor) (wire.SecretVersion, error) {
 		return audited(ctx, k, k.write, actor, req.event(), func() (wire.SecretVersion, map[string]any, error) {
@@ -196,7 +196,7 @@ func validateImport(r wire.ImportSecretRequest) error {
 }
 
 func (k *KeyManager) activateImport(ctx context.Context, p secretWriteParams) (wire.SecretVersion, map[string]any, error) {
-	ref, err := k.store.Activate(ctx, secrets.Staged{ID: p.StagedID, Name: p.Name, SHA256: p.ValueSHA256})
+	ref, err := k.store.Activate(ctx, secrets.Staged{ID: p.StagedID, Name: p.Name, CiphertextSHA256: p.StagedCiphertextSHA256})
 	return wire.SecretVersion{Name: ref.Name, Version: ref.Version}, map[string]any{"name": ref.Name, "version": ref.Version}, err
 }
 

@@ -91,6 +91,9 @@ func (p *Proxy) forwardedClient(values []string, peer netip.Addr) (netip.Addr, e
 	for _, value := range values {
 		chain = append(chain, strings.Split(value, ",")...)
 	}
+	if len(chain) == 0 {
+		return netip.Addr{}, smerr.New(smerr.CodeInvalidArgument, "", headerForwardedFor+" is required: the proxy must append the client address")
+	}
 	client := peer
 	for i := len(chain) - 1; i >= 0; i-- {
 		addr, err := netip.ParseAddr(strings.TrimSpace(chain[i]))
@@ -126,7 +129,10 @@ type bucketRate struct {
 
 // Fixed in M2 (ADR-0017): configurable limits would need new config keys.
 var (
-	authRate  = bucketRate{perMinute: 10, burst: 5}
+	authRate = bucketRate{perMinute: 10, burst: 5}
+	// A device login polls at the IdP interval (5 s by default, 12 per minute),
+	// which the login bucket would refuse; polls get a budget of their own.
+	pollRate  = bucketRate{perMinute: 30, burst: 10}
 	writeRate = bucketRate{perMinute: 60, burst: 20}
 )
 

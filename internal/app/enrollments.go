@@ -262,17 +262,22 @@ func (e *EnrollmentService) auditDenied(ctx context.Context, q database.Querier,
 		map[string]any{"token_id": token.ID.String(), "reason": cause.Error()})
 }
 
-// enrolledNode returns the node a retry maps to, or enrolls a new one.
+// enrolledNode returns the node a lost-response replay maps to, or enrolls a
+// new one. A request for a node that is already enrolled never changes it:
+// only the exact replay (same token, same digest) is answered (ADR-0022).
 func (e *EnrollmentService) enrolledNode(ctx context.Context, tx *database.Tx, token database.JoinToken, in enrollInput, source netip.Addr, identity secrets.Identity) (domain.Node, error) {
 	now := e.cfg.Clock.Now()
-	existing, err := database.FindEnrolledNode(ctx, tx, "", in.digest)
+	replayed, err := database.FindEnrolledNode(ctx, tx, token.ID, in.digest)
 	switch {
 	case err == nil:
 		if err := e.requireLive(ctx, tx, token, now); err != nil {
 			return domain.Node{}, err
 		}
-		return e.refreshTags(ctx, tx, existing, token)
+		return database.GetNode(ctx, tx, replayed)
 	case smerr.CodeOf(err) != smerr.CodeNotFound:
+		return domain.Node{}, err
+	}
+	if err := e.refuseEnrolledNode(ctx, tx, token, in); err != nil {
 		return domain.Node{}, err
 	}
 	used, err := database.UseJoinToken(ctx, tx, token.ID, now)
@@ -288,43 +293,33 @@ func (e *EnrollmentService) enrolledNode(ctx context.Context, tx *database.Tx, t
 	return e.createNode(ctx, tx, used, in, source, identity)
 }
 
-// requireLive refuses a retry on a token that expired or was invalidated.
+// refuseEnrolledNode rejects, audited and without costing a slot, a request
+// whose host key and hostname belong to a node that another enrollment created.
+func (e *EnrollmentService) refuseEnrolledNode(ctx context.Context, tx *database.Tx, token database.JoinToken, in enrollInput) error {
+	_, err := database.FindEnrolledNode(ctx, tx, "", in.digest)
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	conflict := smerr.New(smerr.CodeConflict, "", "node is already enrolled")
+	if err := e.auditDenied(ctx, tx, token, conflict); err != nil {
+		return err
+	}
+	return reject(conflict)
+}
+
+// requireLive refuses a replay on a token that expired or was invalidated.
 func (e *EnrollmentService) requireLive(ctx context.Context, tx *database.Tx, token database.JoinToken, now time.Time) error {
 	if token.InvalidatedAt == nil && now.Before(token.ExpiresAt) {
 		return nil
 	}
-	expired := smerr.New(smerr.CodeConflict, "", "join token is expired, invalidated or exhausted")
+	expired := smerr.New(smerr.CodeConflict, "", "join token is expired or invalidated")
 	if err := e.auditDenied(ctx, tx, token, expired); err != nil {
 		return err
 	}
 	return reject(expired)
-}
-
-// refreshTags makes a node enrolled before with another token carry this
-// token's tags (ADR-0022). A retry with the node's own token changes nothing,
-// so it can never undo an operator's edit.
-func (e *EnrollmentService) refreshTags(ctx context.Context, tx *database.Tx, id domain.ID, token database.JoinToken) (domain.Node, error) {
-	node, err := database.GetNode(ctx, tx, id)
-	if err != nil {
-		return domain.Node{}, err
-	}
-	if node.Metadata[database.JoinMetaTokenID] == token.ID.String() {
-		return node, nil
-	}
-	tags := slices.Clone(token.Constraints.Tags)
-	slices.Sort(tags)
-	if slices.Equal(tags, sortedCopy(node.Tags)) {
-		return node, nil
-	}
-	node.Tags = tags
-	node.UpdatedAt = e.cfg.Clock.Now()
-	return database.UpdateNodeSpec(ctx, tx, node, node.SpecRevision)
-}
-
-func sortedCopy(in []string) []string {
-	out := slices.Clone(in)
-	slices.Sort(out)
-	return out
 }
 
 // createNode records the managed SSH node: the presented host key pinned, the
