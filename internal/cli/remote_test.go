@@ -465,7 +465,7 @@ func TestLoginFailsClearlyWhenTheCallbackPortIsTaken(t *testing.T) {
 
 func TestLoginIgnoresARedirectCarryingAnotherState(t *testing.T) {
 	l := newLoginServer(t, tokenOne)
-	deps := loginDeps{openBrowser: l.browser("code=stolen&state=someone-elses"), sleep: sleepContext}
+	deps := loginDeps{openBrowser: l.browser("code=stolen&state=someone-elses"), sleep: sleepContext, callbackTimeout: 300 * time.Millisecond}
 
 	r := l.b.runLogin(deps, "")
 
