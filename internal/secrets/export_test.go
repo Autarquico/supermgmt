@@ -35,5 +35,5 @@ func RewrapForTest(t *testing.T, repo updater, ref Ref, oldID domain.ID, oldKEK 
 
 // NewStoreWithKEKsForTest builds a Store that only knows the given KEKs.
 func NewStoreWithKEKsForTest(repo Repo, ids domain.IDGenerator, clock domain.Clock, keys map[domain.ID][]byte, active domain.ID) *Store {
-	return NewStore(&FileKeys{active: active, keys: keys}, repo, ids, clock)
+	return NewStore(newFileKeys("", &keySnapshot{active: active, keys: keys}), repo, ids, clock)
 }

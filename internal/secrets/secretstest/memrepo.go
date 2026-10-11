@@ -20,12 +20,14 @@ type MemRepo struct {
 	settings map[string]string
 
 	failSettingsOnce bool
+	failKeysOnce     bool
+	failAfterKeys    bool
 }
 
 // NewMemRepo returns an empty repository.
 func NewMemRepo() *MemRepo { return &MemRepo{settings: map[string]string{}} }
 
-var _ secrets.Repo = (*MemRepo)(nil)
+var _ secrets.KeyRepo = (*MemRepo)(nil)
 
 func (m *MemRepo) Put(_ context.Context, r secrets.Record) error {
 	m.mu.Lock()
@@ -88,6 +90,59 @@ func (m *MemRepo) PutSettings(_ context.Context, values map[string]string) error
 		m.settings[k] = v
 	}
 	return nil
+}
+
+// UpdateKeys applies the change to a copy of the rows and settings and swaps it
+// in, so a failing change stores nothing.
+func (m *MemRepo) UpdateKeys(_ context.Context, change func(rows []secrets.Record) (secrets.KeyChange, error)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failKeysOnce {
+		m.failKeysOnce = false
+		return errors.New("injected key transaction failure")
+	}
+	rows := make([]secrets.Record, len(m.records))
+	for i, r := range m.records {
+		rows[i] = cloneRecord(r)
+	}
+	result, err := change(rows)
+	if err != nil {
+		return err
+	}
+	for _, moved := range result.Rewrapped {
+		i := slices.IndexFunc(m.records, func(r secrets.Record) bool { return r.ID == moved.ID })
+		if i < 0 {
+			return errors.New("rewrapped row does not exist")
+		}
+		m.records[i].KEKID, m.records[i].WrappedDEK = moved.KEKID, slices.Clone(moved.WrappedDEK)
+	}
+	for k, v := range result.Settings {
+		m.settings[k] = v
+	}
+	for _, k := range result.DeleteSettings {
+		delete(m.settings, k)
+	}
+	if m.failAfterKeys {
+		m.failAfterKeys = false
+		return errors.New("injected failure after commit")
+	}
+	return nil
+}
+
+// FailNextUpdateKeys makes the next UpdateKeys fail before it stores anything.
+func (m *MemRepo) FailNextUpdateKeys() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failKeysOnce = true
+}
+
+// FailAfterCommitNextUpdateKeys makes the next UpdateKeys commit and then
+// report an error, as a process dying right after COMMIT would look to the
+// caller that never saw the result.
+func (m *MemRepo) FailAfterCommitNextUpdateKeys() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failAfterKeys = true
 }
 
 // FailNextPutSettings makes the next PutSettings fail without storing anything.

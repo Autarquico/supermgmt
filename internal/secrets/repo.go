@@ -36,3 +36,24 @@ type Repo interface {
 	// are stored or none (first-KEK creation depends on it).
 	PutSettings(ctx context.Context, values map[string]string) error
 }
+
+// KeyChange is what a key operation asks the repository to commit atomically.
+type KeyChange struct {
+	// Rewrapped replaces KEKID and WrappedDEK of the stored rows with the same ID.
+	Rewrapped []Record
+	// Settings are upserted; values are JSON.
+	Settings map[string]string
+	// DeleteSettings are removed.
+	DeleteSettings []string
+}
+
+// KeyRepo adds the one transactional primitive key rotation and retirement
+// need (spec §10, ADR-0021).
+type KeyRepo interface {
+	Repo
+	// UpdateKeys runs change inside ONE write transaction: it receives every
+	// secrets row and returns what to store. An error from change, or from the
+	// database, stores nothing. change may run more than once, so it must have
+	// no side effects.
+	UpdateKeys(ctx context.Context, change func(rows []Record) (KeyChange, error)) error
+}
