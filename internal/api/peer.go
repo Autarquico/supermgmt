@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"slices"
 )
 
 // PeerLookup reads the UID of the process at the other end of a Unix
@@ -14,15 +15,21 @@ type PeerLookup func(*net.UnixConn) (uint32, error)
 // is uid (spec §2.1.1, ADR-0014). A mismatch or a failed lookup closes the
 // connection before a byte is read: the check fails closed.
 func RestrictToUID(l net.Listener, uid uint32, lookup PeerLookup, log *slog.Logger) net.Listener {
+	return RestrictToUIDs(l, []uint32{uid}, lookup, log)
+}
+
+// RestrictToUIDs is RestrictToUID for several users: the admin socket admits
+// root and the service user (spec §23.1).
+func RestrictToUIDs(l net.Listener, uids []uint32, lookup PeerLookup, log *slog.Logger) net.Listener {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &peerListener{Listener: l, uid: uid, lookup: lookup, log: log}
+	return &peerListener{Listener: l, uids: slices.Clone(uids), lookup: lookup, log: log}
 }
 
 type peerListener struct {
 	net.Listener
-	uid    uint32
+	uids   []uint32
 	lookup PeerLookup
 	log    *slog.Logger
 }
@@ -51,7 +58,7 @@ func (l *peerListener) admit(conn net.Conn) (uint32, bool) {
 	case err != nil:
 		l.log.Warn("refused a connection: peer credentials unavailable", slog.Any("error", err))
 		return 0, false
-	case uid != l.uid:
+	case !slices.Contains(l.uids, uid):
 		l.log.Warn("refused a connection from another user", slog.Uint64("peer_uid", uint64(uid)))
 		return 0, false
 	}

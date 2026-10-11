@@ -11,10 +11,8 @@ import (
 	"github.com/autarquico/supermgmt/internal/backup"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
-	"github.com/autarquico/supermgmt/internal/domain/plan"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
-	"github.com/autarquico/supermgmt/internal/policy"
 )
 
 const (
@@ -106,7 +104,7 @@ func (b *BackupService) submit(ctx context.Context, tx *database.Tx, by Caller, 
 	if err != nil {
 		return Submission{}, err
 	}
-	built, err := backupPlan(instance.ID, by.ID)
+	built, err := build(ctx, tx, JobBackupCreate, by.ID, domain.ResourceRef{Type: domain.ResourceInstance, ID: instance.ID}, map[string]any{})
 	if err != nil {
 		return Submission{}, err
 	}
@@ -115,26 +113,6 @@ func (b *BackupService) submit(ctx context.Context, tx *database.Tx, by Caller, 
 		return Submission{}, err
 	}
 	return b.plans.planAndSubmit(ctx, tx, by, actor, built, res)
-}
-
-func backupPlan(instance, actor domain.ID) (built, error) {
-	spec, ok := policy.Lookup(JobBackupCreate)
-	if !ok {
-		return built{}, smerr.New(smerr.CodeInternal, "", "backup.create is missing from the action catalog")
-	}
-	ref := domain.ResourceRef{Type: domain.ResourceInstance, ID: instance}
-	return built{
-		spec:   spec,
-		target: policy.Target{Ref: ref},
-		plan: plan.Plan{
-			Version:    plan.Version,
-			Action:     spec.Name,
-			Actor:      "identity/" + actor.String(),
-			Targets:    []plan.Target{{Type: string(ref.Type), ID: ref.ID.String()}},
-			Parameters: map[string]any{},
-			Risk:       spec.Risk,
-		},
-	}, nil
 }
 
 // List returns the committed archives, newest first (policy action backup.read).

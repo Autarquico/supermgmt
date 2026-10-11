@@ -17,19 +17,41 @@ import (
 // hold (spec §29.2, `sm admin restore-complete`). It is not a catalog action.
 const ActionRestoreComplete = "restore.complete"
 
+// The admin-socket operations that write (spec §23.1). The transport stamps
+// them on the request (WithAction) so the shared write paths know which
+// operation they serve; both are on the hold exception list, because they are
+// the recovery path: a bootstrap code and a role grant are how an admin gets
+// back in during restore hold (spec §11.5, §29.2).
+const (
+	ActionAdminBootstrapCode = "admin.bootstrap_code"
+	ActionAdminGrant         = "admin.grant"
+)
+
+// The route exemptions the transport stamps on requests that are not catalog
+// actions (ADR-0012). Login, bootstrap, logout and revoking one's own token
+// only create or end credentials; none of them is a control-plane write.
+const (
+	actionExemptAuth = "exempt:auth"
+	actionExemptSelf = "exempt:self"
+)
+
 const (
 	eventRestoreCompleted = "backup.restore.completed"
 	holdMessage           = "the control plane is in restore hold: review sm doctor and the interrupted jobs, then an admin runs sm admin restore-complete"
 )
 
 // holdExceptions are the actions that still write during a restore hold
-// (ADR-0020): resolving an interrupted job and ending the hold. Reads never
+// (ADR-0020): resolving an interrupted job, ending the hold, the admin-socket
+// recovery operations and the credential routes. Reads never
 // reach the write paths. The remaining exceptions are not actions: a write
 // with no principal and no action is the daemon acting for itself or a
 // protocol that authenticates by other means (OIDC login and session
 // creation, the bootstrap code issue and exchange, reconciliation and
 // observation writes, expiry sweeps, the audit of a refused read).
-var holdExceptions = []string{policy.ActionJobResolve, ActionRestoreComplete}
+var holdExceptions = []string{
+	policy.ActionJobResolve, ActionRestoreComplete,
+	ActionAdminBootstrapCode, ActionAdminGrant, actionExemptAuth, actionExemptSelf,
+}
 
 type actionKey struct{}
 
