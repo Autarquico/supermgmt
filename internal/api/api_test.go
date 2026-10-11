@@ -78,7 +78,7 @@ func TestTheLocalSocketServesTheContract(t *testing.T) {
 		"POST " + wire.PathOIDCDevicePoll, "POST " + wire.PathBootstrap, "POST " + wire.PathLogout,
 		"GET " + wire.PathTokens, "POST " + wire.PathTokens, "DELETE " + wire.PathToken,
 		"POST " + wire.PathSecrets, "POST " + wire.PathMasterKeyRotate, "POST " + wire.PathMasterKeyRetire,
-		"POST " + wire.PathMasterKeyExport, "POST " + wire.PathSSHKeyRotate,
+		"POST " + wire.PathMasterKeyExport, "POST " + wire.PathSSHKeyRotate, "GET " + wire.PathMasterKeys,
 		"GET " + wire.PathBackups, "POST " + wire.PathBackups, "POST " + wire.PathEnrollments, "POST " + wire.PathEnroll,
 	}
 	got := map[string]bool{}

@@ -813,6 +813,19 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfSecretVersion'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/master-keys:
+    get:
+      operationId: listMasterKeys
+      summary: The master keys known to the database, without key material.
+      tags: [keys]
+      x-supermgmt-route: action:config.read
+      responses:
+        '200':
+          description: The keys.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfMasterKey'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/secrets/master-key/rotate:
     post:
       operationId: rotateMasterKey
@@ -1567,6 +1580,15 @@ components:
         schema_version: {type: integer}
         sm_version: {type: string}
         kek_ids: {type: array, items: {$ref: '#/components/schemas/ID'}}
+    MasterKey:
+      type: object
+      description: One master key (KEK); never any key material.
+      required: [id, active, loaded, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        active: {type: boolean}
+        loaded: {type: boolean}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
     EnrollmentRequest:
       type: object
       description: Empty constraints do not restrict.
@@ -1649,6 +1671,12 @@ components:
       required: [items, next_cursor]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Backup'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfMasterKey:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MasterKey'}}
         next_cursor: {type: string, description: Opaque; empty on the last page.}
     DirectOfProvider:
       type: object

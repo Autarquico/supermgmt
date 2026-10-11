@@ -1,5 +1,22 @@
 package wire
 
+import (
+	"time"
+
+	"github.com/autarquico/supermgmt/internal/domain"
+)
+
+// PathMasterKeys is GET /secrets/master-keys: the master keys' metadata.
+const PathMasterKeys = Prefix + "/secrets/master-keys"
+
+// MasterKey describes one master key (KEK) without any key material.
+type MasterKey struct {
+	ID        domain.ID `json:"id"`
+	Active    bool      `json:"active"`
+	Loaded    bool      `json:"loaded"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ---- admin socket (spec §23.1, ADR-0012) ------------------------------------
 //
 // Responses of the four admin-socket routes that the shared DTOs do not
