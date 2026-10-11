@@ -39,6 +39,12 @@ func NewKeyAdmin(keys *FileKeys, repo KeyRepo, ids domain.IDGenerator, archives 
 	return &KeyAdmin{keys: keys, repo: repo, ids: ids, archives: archives, random: rand.Reader}
 }
 
+// Loaded reports whether the key is one the process holds.
+func (a *KeyAdmin) Loaded(id domain.ID) bool {
+	_, ok := a.keys.Key(id)
+	return ok
+}
+
 // Rotation reports a completed master-key rotation.
 type Rotation struct {
 	Active    domain.ID

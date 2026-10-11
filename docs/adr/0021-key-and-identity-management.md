@@ -1,7 +1,7 @@
 # ADR-0021: Key and identity management
 
 - Status: Proposed
-- Spec: §8.4, §10 (1.4.3: export transport), §12, §29.2, §46; extends ADR-0003 and ADR-0016 (does not replace them)
+- Spec: §8.4, §10 (1.4.3: export transport; 1.4.4: approval), §12, §29.2, §46; extends ADR-0003 and ADR-0016 (does not replace them)
 
 ## Context
 
@@ -32,6 +32,15 @@ ADR-0016 shipped the envelope, file KEKs and the instance SSH identity, and defe
 - **import-key** writes `<kek_id>.key.pending` (0600). If a database exists and references the id, the key is verified against its check record and renamed to `.key`; otherwise it waits for a restore (§29.2). The daemon never loads `.pending`.
 - **retire-key** refuses while any `secrets` row, any archive manifest in `backup.directory`, or any in-progress backup reservation references the key. An unreadable manifest also refuses. `--external-backups-handled` records an audited acknowledgement (§10).
 
+### Approval of `secret.write` (spec 1.4.4)
+
+`secret.write` is high risk, so §11.3 step 8 always requires approval: each command above is a plan and a `control_plane.apply` job (`Keys` answers `Pending`), executed after approval by the job handler through the same `KeyAdmin`/`Store` code as a direct call. The jobs are `non_retryable` with one attempt: repeating a rotation would make a second key, so a failed or interrupted one is resolved by an operator. They run outside the fenced job transaction, because rotation and activation open their own; the lease is fenced before the operation and before its audit event. A plan never holds a secret value or a passphrase.
+
+- **rotate-master-key, retire-key, ssh-key rotate**: no secret in the payload; the job performs the operation.
+- **Re-pin** (`node.update` with `host_public_key`): the public key is in the plan; `applyApproved` re-pins first (event `node.host_key.repinned`), then applies the other fields. A re-pin to the pinned key is a no-op, so a retried job converges.
+- **Import**: the value is sealed under the active KEK when the request is made, as a *staged* secret version stored with a negative `version` (one per request, so several can wait under one name; `GetSecret`, `Store.Get` and `Signer` never see them). The plan carries only `staged_id` and `value_sha256`. The job decrypts the staged row, checks the digest, and gives it the next positive version; a repeated activation returns the same version. Staged rows are rewrapped by rotation and counted by `retire-key` like any secret row. A trigger on `jobs` (migration 000003) deletes the staged row when its job ends `failed` or `cancelled`: rejection, plan expiry, cancel and failure all end there. A request that fails after staging discards the row; a crash between the two transactions can leave an unreferenced staged row, which keeps its KEK from being retired until it is removed.
+- **Export**: `export-key` without a passphrase is the request: the job exports nothing. After approval (job `succeeded`) the same identity repeats the call with the passphrase and receives the export once, within 24h of the approval; the use is an `secret.master_key.exported` event on the request's resource, recorded in the transaction that follows the key derivation, so a failed derivation leaves the request unspent. A second execution or a late one is `CONFLICT`, another identity's is `POLICY_DENIED`, none at all is `APPROVAL_REQUIRED`. The execution never goes through the Idempotency-Key store. Local socket only, as before.
+
 ### SSH identity rotation
 
 `sm ssh-key rotate` stores a new version of `ssh/default` (event with the new fingerprint only). Nodes keep signing with the version pinned in their setup metadata until `sm nodes setup <node>` re-runs and authorizes the new key (ADR-0016). Versions are never reused or deleted.
@@ -48,3 +57,4 @@ A KEK lost without an export is not recoverable. The documented recovery is a fr
 
 - Key operations and secret writes are serialized; they are rare and short.
 - Server-mode export requires a short service stop.
+- Every online key operation waits for an approver; a single-operator instance needs `security.allow_self_approval` or a second identity.

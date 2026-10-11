@@ -20,6 +20,9 @@ type Record struct {
 	CreatedAt       time.Time
 }
 
+// Staged reports whether the record is a sealed version that is not current yet.
+func (r Record) Staged() bool { return r.Version < 0 }
+
 // Repo is the persistence seam of the slice. The SQL implementation lives in
 // internal/database; secretstest.MemRepo is the in-memory fake.
 type Repo interface {
@@ -28,7 +31,21 @@ type Repo interface {
 	// Get returns one version of a secret; version 0 means the latest.
 	// A missing secret is a NOT_FOUND error.
 	Get(ctx context.Context, name string, version int) (Record, error)
-	// ReferencedKEKs lists the distinct kek_id values of all secrets rows.
+	// PutStaged stores r as a staged (inactive) version of r.Name. A staged
+	// version is invisible to Get; its r.Version is ignored.
+	PutStaged(ctx context.Context, r Record) error
+	// GetByID returns one stored version, current or staged. A missing one is
+	// a NOT_FOUND error.
+	GetByID(ctx context.Context, id domain.ID) (Record, error)
+	// ActivateStaged makes a staged version the next current one and returns
+	// it. A version that is already current is returned unchanged; a missing
+	// one is a NOT_FOUND error.
+	ActivateStaged(ctx context.Context, id domain.ID) (Record, error)
+	// DeleteStaged removes a staged version. A current or missing one is left
+	// alone.
+	DeleteStaged(ctx context.Context, id domain.ID) error
+	// ReferencedKEKs lists the distinct kek_id values of all secrets rows,
+	// staged ones included.
 	ReferencedKEKs(ctx context.Context) ([]domain.ID, error)
 	// Setting reads settings.value_json (spec §9); found is false when absent.
 	Setting(ctx context.Context, key string) (valueJSON string, found bool, err error)

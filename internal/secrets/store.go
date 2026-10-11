@@ -3,6 +3,9 @@ package secrets
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,6 +90,84 @@ func (s *Store) Put(ctx context.Context, name string, plaintext audit.Secret, me
 		return Ref{}, fmt.Errorf("store secret %s: %w", name, err)
 	}
 	return Ref{Name: name, Version: version}, nil
+}
+
+// Staged names a sealed secret version that is not current yet: an import
+// waiting for approval. SHA256 is the hex digest of the plaintext, which lets
+// the approved plan name the value without carrying it.
+type Staged struct {
+	ID     domain.ID
+	Name   string
+	SHA256 string
+}
+
+// Stage seals plaintext under the active KEK like Put, but stores it as a
+// staged version: it is never returned by Get or Signer and takes no version
+// number until Activate. Discard removes it.
+func (s *Store) Stage(ctx context.Context, name string, plaintext audit.Secret, meta map[string]any) (Staged, error) {
+	if !namePattern.MatchString(name) {
+		return Staged{}, smerr.New(smerr.CodeInvalidArgument, "", "invalid secret name")
+	}
+	metadata, err := marshalMetadata(meta)
+	if err != nil {
+		return Staged{}, err
+	}
+	s.keys.ops.Lock()
+	defer s.keys.ops.Unlock()
+	kekID, kek := s.keys.Active()
+	id := s.ids.NewID()
+	payload := []byte(plaintext.Reveal())
+	defer zero(payload)
+	enc, err := seal(kek, kekID, id, payload, s.random)
+	if err != nil {
+		return Staged{}, fmt.Errorf("seal staged secret %s: %w", name, err)
+	}
+	rec := Record{
+		ID: id, Name: name, EnvelopeVersion: EnvelopeVersion, KEKID: kekID,
+		WrappedDEK: enc.WrappedDEK, Ciphertext: enc.Ciphertext, MetadataJSON: metadata, CreatedAt: s.clock.Now(),
+	}
+	if err := s.repo.PutStaged(ctx, rec); err != nil {
+		return Staged{}, fmt.Errorf("store staged secret %s: %w", name, err)
+	}
+	return Staged{ID: id, Name: name, SHA256: digest(payload)}, nil
+}
+
+// Activate makes a staged version current, after checking that it still holds
+// the value the plan approved. Activating a version that is already current
+// returns it again, so a retried job converges. A discarded version is
+// NOT_FOUND.
+func (s *Store) Activate(ctx context.Context, st Staged) (Ref, error) {
+	s.keys.ops.Lock()
+	defer s.keys.ops.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.repo.GetByID(ctx, st.ID)
+	if err != nil {
+		return Ref{}, fmt.Errorf("load staged secret: %w", err)
+	}
+	plaintext, err := s.decrypt(rec)
+	if err != nil {
+		return Ref{}, fmt.Errorf("staged secret %s: %w", rec.Name, err)
+	}
+	defer zero(plaintext)
+	if rec.Name != st.Name || subtle.ConstantTimeCompare([]byte(digest(plaintext)), []byte(st.SHA256)) != 1 {
+		return Ref{}, smerr.New(smerr.CodeConflict, "", "the staged secret is not the value that was approved")
+	}
+	active, err := s.repo.ActivateStaged(ctx, st.ID)
+	if err != nil {
+		return Ref{}, fmt.Errorf("activate staged secret %s: %w", rec.Name, err)
+	}
+	return Ref{Name: active.Name, Version: active.Version}, nil
+}
+
+// Discard deletes a staged version (rejected, expired or cancelled import).
+func (s *Store) Discard(ctx context.Context, id domain.ID) error {
+	return s.repo.DeleteStaged(ctx, id)
+}
+
+func digest(plaintext []byte) string {
+	sum := sha256.Sum256(plaintext)
+	return hex.EncodeToString(sum[:])
 }
 
 func marshalMetadata(meta map[string]any) (string, error) {

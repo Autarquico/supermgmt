@@ -468,3 +468,10 @@ BEGIN
     SELECT RAISE(ABORT, 'events are append-only');
 END;
 
+-- trigger secrets_discard_staged
+CREATE TRIGGER secrets_discard_staged AFTER UPDATE OF state ON jobs
+WHEN NEW.type = 'control_plane.apply' AND NEW.state IN ('failed', 'cancelled')
+BEGIN
+    DELETE FROM secrets WHERE version < 0 AND id = json_extract(NEW.payload_json, '$.staged_id');
+END;
+

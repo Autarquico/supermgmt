@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.3-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.4-draft (changes in Appendix F)
 
 ---
 
@@ -974,6 +974,11 @@ A crash before commit leaves the old state intact; a crash after commit leaves t
 
   `export-key` puts a wrapped master key in the response, so it is served only on the local-mode Unix socket, never over HTTPS or the admin socket. In server mode it runs offline (`sm secrets export-key --offline`, service stopped, database lock held).
 
+  **Approval of `secret.write` (1.4.4).** Every online operation here is the `secret.write` action (high risk), so §11.3 step 8 requires approval and the request becomes a plan and a `control_plane.apply` job (§11.2). A plan never holds a secret value or a passphrase:
+  - `rotate-master-key`, `retire-key` and `ssh-key rotate` carry no secret; the job performs them after approval.
+  - `secret import` seals the value at request time, under the active KEK, as a **staged** secret version. It is not readable as current and takes no version number. The plan names only the staged version id and the SHA-256 of the plaintext. Approval activates that version (after checking the digest); rejection, expiry, cancellation or failure of the job deletes the staged ciphertext. A staged version counts as a reference to its KEK for `retire-key`.
+  - `export-key` is two steps, as `mcp_client.register` and `mcp_client.issue_token` (§11.2): a request without a passphrase creates the approval-gated job, which exports nothing; after approval the **same identity** may execute the export once, within 24h, by supplying the passphrase. A second execution or a late one is `CONFLICT`; another identity's attempt is `POLICY_DENIED`. If policy does not require approval, the call that carries the passphrase exports directly.
+
 Future key providers (OS keychain, age, Vault/KMS) implement a `KeyProvider` interface returning a KEK by id.
 
 
@@ -1118,6 +1123,7 @@ Notes on the catalog:
 - `**` **Credential-issuing** direct actions (`mcp_client.issue_token`, `token.create`, `enrollment.create`) return a secret exactly once and are **never approval-gated**. Two design rules make this consistent with §11.3 step 8:
   - Their risk is `operational` and their resources (identities, the instance) have no environment, so the automatic approval floors never apply to them. The only possible trigger is an explicit `require_approval: true` rule, which `sm config validate` rejects for these actions. At runtime such a request is denied (`POLICY_DENIED`, `APPROVAL_NOT_SUPPORTED`).
   - The decision that may need approval is separated from the secret: **registering** an MCP client (`mcp_client.register`, high) is approval-gated like any high-risk direct action and creates the identity in state `pending_token`. Afterwards, `mcp_client.issue_token` is allowed **once**, only to the identity that requested the registration, only while the client is `pending_token`, and within 24h of approval. It returns the token and moves the client to `active`. A lost token requires deletion and re-registration.
+- `secret.write` is approval-gated by the high-risk floor (§11.3 step 8). Its operations carry no secret in the plan: an import is sealed as a staged version that approval activates, and `export-key` is requested, approved, then executed once by the requester with the passphrase (§10).
 - A token can never carry scopes broader than the creator's own permissions at creation; scopes only narrow (§11.3 step 7).
 - `sub-action`: never invoked directly. It is authorized as part of a composite plan (§11.3).
 - Authentication operations (`/auth/*`, bootstrap exchange) are not actions. They are governed by §23.1 and §11.5.
@@ -3462,6 +3468,17 @@ App. C  Plan v3: sorted inputs, secret bindings (refs), sub-actions, credential 
 §10     export-key only on the local-mode socket; offline in server mode.
 §23.1   OIDC discovery trust: exact issuer, https endpoints on allowed origins, no redirects.
 §25     V1 consumes no Cloudflare edge assertion; app authentication is always SuperMgmt's.
+```
+
+---
+
+## F.8 Changes from 1.4.3-draft to 1.4.4-draft
+
+```text
+§10     secret.write approval: rotate/retire/ssh-key rotate become control_plane.apply jobs; import is sealed as a
+        staged version that approval activates (rejection deletes it); export-key is a request plus a one-time
+        execution by the same identity within 24h. Plans never hold a secret value or a passphrase.
+§11.2   note on secret.write approval.
 ```
 
 ---
