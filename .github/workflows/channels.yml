@@ -39,9 +39,9 @@ jobs:
           printf '%s\n' "$SM_RELEASE_SIGNING_KEY" >"$key"
           issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           valid_until=$(date -u -d '+21 days' +%Y-%m-%dT%H:%M:%SZ)
-          versions='[.[] | select(.tagName | startswith("v"))]'
-          stable=$(gh release list --exclude-drafts --exclude-pre-releases --limit 30 --json tagName --jq "$versions | .[0].tagName // empty")
-          beta=$(gh release list --exclude-drafts --limit 30 --json tagName --jq "$versions | .[0].tagName // empty")
+          tags=$(gh release list --exclude-drafts --limit 50 --json tagName --jq '.[].tagName')
+          stable=$(printf '%s\n' "$tags" | packaging/release/select-version.sh stable)
+          beta=$(printf '%s\n' "$tags" | packaging/release/select-version.sh beta)
           [ -n "$stable$beta" ] || { echo "no release to point at"; exit 0; }
           point() { [ -z "$2" ] || SM_SIGNING_KEY_FILE="$key" packaging/release/channel.sh "$1" "$2" "$issued" "$valid_until" "$out"; }
           point stable "$stable"

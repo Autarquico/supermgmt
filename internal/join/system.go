@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/config"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
@@ -22,6 +22,8 @@ import (
 
 const (
 	maxAddresses = 16
+	// asUserTimeout bounds one step run as the service user; the Host methods take no context.
+	asUserTimeout = time.Minute
 	// sbinPath is appended to PATH: useradd and usermod live in directories a
 	// minimal environment (sudo, cron) often lacks.
 	sbinPath = ":/usr/local/sbin:/usr/sbin:/sbin"
@@ -33,6 +35,9 @@ type System struct {
 	Root string
 	// Run executes a program; the default runs it with the sbin directories on PATH.
 	Run func(ctx context.Context, name string, args ...string) error
+	// AsUser runs a sh script as the named user with args as $1...; the default
+	// uses runuser, as node.setup does.
+	AsUser func(ctx context.Context, user string, stdin []byte, script string, args ...string) error
 }
 
 var _ Host = System{}
@@ -148,10 +153,14 @@ func (s System) run(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
-// EnsureDir makes path a directory with the given mode and owner. A symlink in
-// its place is refused: everything below the home directory belongs to the
-// dedicated user, who could otherwise redirect root's writes.
+// EnsureDir makes path a directory with the given mode and owner. The home
+// directory itself is root's to check (its parent is root-owned); everything
+// below it belongs to the dedicated user, who could redirect root's writes
+// with a symlink, so those steps run as that user (ADR-0009).
 func (s System) EnsureDir(path string, mode fs.FileMode, owner string) error {
+	if path != templates.HomeDir {
+		return s.asUser(owner, nil, ensureOwnDirScript, s.path(path), fmt.Sprintf("%04o", mode.Perm()))
+	}
 	account, err := s.owner(owner)
 	if err != nil {
 		return err
@@ -174,45 +183,33 @@ func (s System) EnsureDir(path string, mode fs.FileMode, owner string) error {
 	return os.Lchown(real, account.UID, account.GID)
 }
 
-// InstallFile writes data to a fresh sibling file (never through a symlink)
-// and renames it over path.
+// InstallFile has the dedicated user write data to a fresh sibling file and
+// rename it over path: root never touches the user's directories.
 func (s System) InstallFile(path string, data []byte, mode fs.FileMode, owner string) error {
-	account, err := s.owner(owner)
-	if err != nil {
-		return err
-	}
 	real := s.path(path)
-	staged := real + templates.StagingSuffix
-	if err := os.Remove(staged); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if err := writeStaged(staged, data, mode, account); err != nil {
-		_ = os.Remove(staged)
-		return err
-	}
-	if err := os.Rename(staged, real); err != nil {
-		_ = os.Remove(staged)
-		return err
-	}
-	return nil
+	return s.asUser(owner, data, installOwnFileScript, real, real+templates.StagingSuffix, fmt.Sprintf("%04o", mode.Perm()))
 }
 
-func writeStaged(staged string, data []byte, mode fs.FileMode, owner Account) error {
-	f, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode) //nolint:gosec // staged is a fixed node path; O_EXCL|O_NOFOLLOW refuse planted links
-	if err != nil {
-		return err
+// The scripts mirror the setup.own_* templates of node.setup. A symlink swapped
+// in after the check can only redirect the dedicated user's own privileges.
+const (
+	ensureOwnDirScript   = `test ! -L "$1" && install -d -m "$2" -- "$1" && chmod "$2" "$1"`
+	installOwnFileScript = `umask 077; rm -f -- "$2"; if (set -C; cat >"$2") && chmod "$3" "$2" && mv -f -- "$2" "$1"; then :; else rm -f -- "$2"; exit 1; fi`
+)
+
+func (s System) asUser(user string, stdin []byte, script string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), asUserTimeout)
+	defer cancel()
+	if s.AsUser != nil {
+		return s.AsUser(ctx, user, stdin, script, args...)
 	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.Write(data); err != nil {
-		return err
+	cmd := exec.CommandContext(ctx, "runuser", append([]string{"-u", user, "--", "sh", "-c", script, "sh"}, args...)...) //nolint:gosec // script is a constant of this package
+	cmd.Env = append(os.Environ(), "PATH="+os.Getenv("PATH")+sbinPath)
+	cmd.Stdin = bytes.NewReader(stdin)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("as %s: %w: %s", user, err, strings.TrimSpace(string(out)))
 	}
-	if err := f.Chmod(mode); err != nil {
-		return err
-	}
-	if err := f.Chown(owner.UID, owner.GID); err != nil {
-		return err
-	}
-	return f.Sync()
+	return nil
 }
 
 func (s System) owner(name string) (Account, error) {
