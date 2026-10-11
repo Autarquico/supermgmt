@@ -47,9 +47,10 @@ type workflow struct {
 }
 
 type job struct {
-	Environment any    `yaml:"environment"`
-	Permissions any    `yaml:"permissions"`
-	Steps       []step `yaml:"steps"`
+	Environment any               `yaml:"environment"`
+	Permissions any               `yaml:"permissions"`
+	Env         map[string]string `yaml:"env"`
+	Steps       []step            `yaml:"steps"`
 }
 
 type step struct {
@@ -121,6 +122,9 @@ func fileViolations(name, source string) []string {
 		if isRelease && !usesRelease && jobMentionsSecret(j) {
 			report("job %s reads %s without the release environment", jobName, signingSecret)
 		}
+		if isRelease && runsGoreleaser(j) {
+			out = append(out, buildJobViolations(name, jobName, j)...)
+		}
 		for _, s := range j.Steps {
 			out = append(out, stepViolations(name, jobName, s, isRelease)...)
 		}
@@ -181,7 +185,47 @@ func stepViolations(file, jobName string, s step, isRelease bool) []string {
 	return out
 }
 
+// runsGoreleaser reports whether the job executes the release build, which runs third-party code.
+func runsGoreleaser(j job) bool {
+	for _, s := range j.Steps {
+		if strings.HasPrefix(s.Uses, "goreleaser/") || strings.Contains(s.Run, "goreleaser") {
+			return true
+		}
+	}
+	return false
+}
+
+// buildJobViolations keeps everything that could sign or publish away from the job that builds.
+func buildJobViolations(file, jobName string, j job) []string {
+	where := fmt.Sprintf("%s: job %s runs goreleaser", file, jobName)
+	var out []string
+	if environmentName(j.Environment) != "" {
+		out = append(out, where+" and must not use an environment")
+	}
+	if jobMentionsSecret(j) {
+		out = append(out, fmt.Sprintf("%s and must not see %s", where, signingSecret))
+	}
+	if granted, _ := j.Permissions.(map[string]any); j.Permissions == nil || hasWrite(granted) {
+		out = append(out, where+" and must declare read-only permissions")
+	}
+	return out
+}
+
+func hasWrite(granted map[string]any) bool {
+	for _, level := range granted {
+		if level == "write" {
+			return true
+		}
+	}
+	return false
+}
+
 func jobMentionsSecret(j job) bool {
+	for _, value := range j.Env {
+		if strings.Contains(value, signingSecret) {
+			return true
+		}
+	}
 	for _, s := range j.Steps {
 		for _, value := range s.Env {
 			if strings.Contains(value, signingSecret) {
@@ -386,6 +430,47 @@ func TestWorkflowPolicyRejectsBreaches(t *testing.T) {
 			}
 			t.Fatalf("want a violation containing %q, got %q", tt.want, got)
 		})
+	}
+}
+
+func TestWorkflowPolicyKeepsTheSigningKeyAwayFromTheBuild(t *testing.T) {
+	const header = "on: {push: {tags: ['v*']}}\npermissions: {}\njobs:\n  build:\n"
+	const secret = "'${{ secrets." + signingSecret + " }}'"
+	tests := []struct {
+		name string
+		job  string
+		want string
+	}{
+		{"key in a build step", "    permissions: {contents: read}\n    runs-on: x\n    steps:\n      - uses: goreleaser/goreleaser-action@3d3c42e5aac5ba805825da76410c181273ba90b1\n        env: {K: " + secret + "}\n", "must not see " + signingSecret},
+		{"key in the job env", "    permissions: {contents: read}\n    env: {K: " + secret + "}\n    runs-on: x\n    steps:\n      - run: goreleaser release\n", "must not see " + signingSecret},
+		{"build inside the release environment", "    environment: release\n    permissions: {contents: read}\n    runs-on: x\n    steps:\n      - run: goreleaser release\n", "must not use an environment"},
+		{"build with write permissions", "    permissions: {contents: write}\n    runs-on: x\n    steps:\n      - run: goreleaser release\n", "read-only permissions"},
+		{"build without explicit permissions", "    runs-on: x\n    steps:\n      - run: goreleaser release\n", "read-only permissions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := violations(map[string]string{"release.yml": header + tt.job})
+			for _, v := range got {
+				if strings.Contains(v, tt.want) {
+					return
+				}
+			}
+			t.Fatalf("want a violation containing %q, got %q", tt.want, got)
+		})
+	}
+}
+
+func TestReleaseWorkflowSignsOnlyOutsideTheBuildJob(t *testing.T) {
+	var wf workflow
+	if err := yaml.Unmarshal([]byte(repoWorkflows(t)["release.yml"]), &wf); err != nil {
+		t.Fatal(err)
+	}
+	signer := wf.Jobs["sign-publish"]
+	if environmentName(signer.Environment) != "release" || !jobMentionsSecret(signer) || runsGoreleaser(signer) {
+		t.Fatal("sign-publish must be the release-environment job that holds the key and never runs goreleaser")
+	}
+	if builder := wf.Jobs["build"]; !runsGoreleaser(builder) || jobMentionsSecret(builder) {
+		t.Fatal("build must be the job that runs goreleaser, without the key")
 	}
 }
 

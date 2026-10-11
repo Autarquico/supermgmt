@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,13 +92,50 @@ func Suffix() string { return strings.ToLower(rand.Text()[:8]) }
 // resolve each other by name.
 type Network struct{ Name string }
 
-// NewNetwork creates a network removed at the end of the test.
+// NewNetwork creates a network removed at the end of the test. Its subnet is explicit: Docker's
+// default pools collide with routes inside the M1 node fixture, whose inner Docker uses that space,
+// and connecting the fixture to the network would then fail.
 func NewNetwork(t testing.TB) *Network {
 	t.Helper()
 	n := &Network{Name: "sm-e2e-" + Suffix()}
-	MustDocker(t, "network", "create", n.Name)
+	err := createOnFreeSubnet(func(subnet string) (Result, error) {
+		return Docker(context.Background(), "", "network", "create", "--subnet", subnet, n.Name)
+	}, randomSubnet)
+	if err != nil {
+		t.Fatalf("create network %s: %v", n.Name, err)
+	}
 	t.Cleanup(func() { _, _ = Docker(context.Background(), "", "network", "rm", n.Name) })
 	return n
+}
+
+const subnetAttempts = 20
+
+// randomSubnet is a /24 of 10.213.0.0/16, a range neither Docker's pools nor the fixture use.
+func randomSubnet() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(256))
+	if err != nil {
+		panic(err) // crypto/rand does not fail on supported platforms
+	}
+	return fmt.Sprintf("10.213.%d.0/24", n.Int64())
+}
+
+// createOnFreeSubnet retries with a new subnet while Docker reports that the pool overlaps one in use.
+func createOnFreeSubnet(create func(subnet string) (Result, error), pick func() string) error {
+	var last Result
+	for range subnetAttempts {
+		res, err := create(pick())
+		if err != nil {
+			return err
+		}
+		if res.Code == 0 {
+			return nil
+		}
+		last = res
+		if !strings.Contains(res.Output(), "Pool overlaps") {
+			break
+		}
+	}
+	return fmt.Errorf("docker network create exited %d: %s", last.Code, strings.TrimSpace(last.Output()))
 }
 
 // Container is a running container.

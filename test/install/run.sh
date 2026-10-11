@@ -98,6 +98,12 @@ OUT=$("$REL/check.sh" "$W/rel/v1.0.0" "$W/trusted/allowed_signers" 2>&1); RC=$?;
 OUT=$("$REL/check.sh" "$W/rel/v1.0.1" "$W/other/allowed_signers" 2>&1); RC=$?; expect_rc "release-check rejects an unexpected signer" 1
 world; OUT=$(SM_SIGNING_KEY_FILE="$W/trusted/key" "$REL/channel.sh" stable v1.0.0 "$(iso_at -DAY)" "$(iso_at $((40 * DAY)))" "$W/x" 2>&1); RC=$?
 expect_rc "channel signer refuses a window over 30 days" 2
+select_tag() { printf '%s\n' "${@:2}" | "$REL/select-version.sh" "$1" 2>&1; }
+TAGS=(v1.2.0-beta.2 v1.1.0 v1.1.0-beta.1 v1.0.0 not-a-version)
+OUT=$(select_tag stable "${TAGS[@]}"); RC=$?; [ "$OUT" = v1.1.0 ] || RC=1; expect_rc "stable pointer skips newer prereleases" 0
+OUT=$(select_tag beta "${TAGS[@]}"); RC=$?; [ "$OUT" = v1.2.0-beta.2 ] || RC=1; expect_rc "beta pointer takes only prereleases" 0
+OUT=$(select_tag beta v1.0.0 v0.9.0); RC=$?; [ -z "$OUT" ] || RC=1; expect_rc "no prerelease means no beta pointer" 0
+OUT=$(select_tag nightly v1.0.0); RC=$?; expect_rc "selector rejects an unknown channel" 2
 world; tree="$W/tree"; mkdir -p "$tree/scripts"; cp -R "$REPO/packaging" "$REPO/install.sh" "$tree/"; echo '#!/bin/sh' >"$tree/scripts/join.sh"
 mkdir -p "$W/stage"; cp "$W"/rel/v1.0.0/sm_* "$W/stage/"
 OUT=$(SM_SIGNING_KEY_FILE="$W/trusted/key" "$tree/packaging/release/finalize.sh" "$W/stage" v1.0.0 2>&1); RC=$?

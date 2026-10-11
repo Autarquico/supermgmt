@@ -1,8 +1,11 @@
 package join
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -54,8 +57,24 @@ func TestLookupAccountReadsPasswdAndGroup(t *testing.T) {
 	}
 }
 
-func TestEnsureDirCreatesWithTheModeAndRefusesSymlinksAndFiles(t *testing.T) {
+// runScript stands in for runuser: the test process is already the dedicated user.
+func runScript(ctx context.Context, _ string, stdin []byte, script string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", script, "sh"}, args...)...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, out)
+	}
+	return nil
+}
+
+func userSystem(t *testing.T) System {
 	sys := systemRoot(t)
+	sys.AsUser = runScript
+	return sys
+}
+
+func TestEnsureDirCreatesWithTheModeAndRefusesSymlinksAndFiles(t *testing.T) {
+	sys := userSystem(t)
 	ssh := filepath.Join(sys.Root, templates.SSHDir)
 
 	if err := sys.EnsureDir(templates.SSHDir, 0o700, "supermgmt"); err != nil {
@@ -74,8 +93,46 @@ func TestEnsureDirCreatesWithTheModeAndRefusesSymlinksAndFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureDirNeverChmodsThroughASymlinkedDirectory(t *testing.T) {
+	sys := userSystem(t)
+	elsewhere := t.TempDir()
+	if err := os.Chmod(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(sys.Root, templates.SSHDir)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sys.EnsureDir(templates.SSHDir, 0o700, "supermgmt"); err == nil {
+		t.Fatal("a symlinked .ssh must be refused")
+	}
+	if info, _ := os.Stat(elsewhere); info.Mode().Perm() != 0o755 {
+		t.Fatalf("the link target was chmodded to %v", info.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Fatalf("the link target gained %d entries", len(entries))
+	}
+}
+
+func TestEnsureDirOfTheHomeIsRootsAndRefusesALink(t *testing.T) {
+	sys := systemRoot(t) // no AsUser: the home must not need it
+	if err := sys.EnsureDir(templates.HomeDir, 0o750, "supermgmt"); err != nil {
+		t.Fatalf("EnsureDir home: %v", err)
+	}
+	home := filepath.Join(sys.Root, templates.HomeDir)
+	if err := os.Remove(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), home); err != nil {
+		t.Fatal(err)
+	}
+	if err := sys.EnsureDir(templates.HomeDir, 0o750, "supermgmt"); err == nil {
+		t.Fatal("a symlinked home must be refused")
+	}
+}
+
 func TestInstallFileReplacesAtomicallyWithModeAndNeverFollowsSymlinks(t *testing.T) {
-	sys := systemRoot(t)
+	sys := userSystem(t)
 	if err := sys.EnsureDir(templates.SSHDir, 0o700, "supermgmt"); err != nil {
 		t.Fatal(err)
 	}
@@ -105,5 +162,21 @@ func TestInstallFileReplacesAtomicallyWithModeAndNeverFollowsSymlinks(t *testing
 	}
 	if _, err := os.Lstat(target + templates.StagingSuffix); !os.IsNotExist(err) {
 		t.Fatal("the staging file was left behind")
+	}
+}
+
+func TestPrivilegedStepsOnTheUsersTreeGoThroughRunuser(t *testing.T) {
+	var gotUser string
+	sys := systemRoot(t)
+	sys.AsUser = func(_ context.Context, user string, _ []byte, _ string, _ ...string) error {
+		gotUser = user
+		return nil
+	}
+	if err := sys.EnsureDir(templates.SSHDir, 0o700, "supermgmt"); err != nil || gotUser != "supermgmt" {
+		t.Fatalf("EnsureDir ran as %q, err %v; want supermgmt", gotUser, err)
+	}
+	gotUser = ""
+	if err := sys.InstallFile(templates.AuthorizedKeysPath, []byte("k"), 0o600, "supermgmt"); err != nil || gotUser != "supermgmt" {
+		t.Fatalf("InstallFile ran as %q, err %v; want supermgmt", gotUser, err)
 	}
 }

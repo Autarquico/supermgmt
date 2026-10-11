@@ -7,5 +7,4 @@
 //
 //	make e2e-server    remote control, local mode, backup/restore, join, secret-leak scans
 //	make e2e-install   curl|bash install and the tamper matrix; E2E_DIST=dist serves `make snapshot`
-//
 package e2e

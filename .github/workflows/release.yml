@@ -1,7 +1,8 @@
 name: release
 
-# Builds, signs and publishes a release. Runs only for v* tags, in the protected `release`
-# environment (owner as required reviewer). The signing key exists only as that environment's secret.
+# Builds, signs and publishes a release. Runs only for v* tags. The build job runs third-party code and
+# holds no secret and no write permission; only sign-publish, in the protected `release` environment
+# (owner as required reviewer), sees the signing key, and it executes nothing from the build but data.
 on:
   push:
     tags: ["v*"]
@@ -13,22 +14,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     if: github.repository == 'autarquico/supermgmt'
     runs-on: ubuntu-latest
-    environment: release
     timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
+    outputs:
+      dist-digest: ${{ steps.manifest.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: tag must point into main
-        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -40,6 +38,50 @@ jobs:
           distribution: goreleaser
           version: v2.18.2
           args: release --clean
+      - name: record what was built
+        id: manifest
+        run: |
+          cd dist
+          sha256sum sm_*.tar.gz sm_*.tar.gz.spdx.json >SHA256SUMS
+          echo "digest=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/sm_*.tar.gz
+            dist/sm_*.tar.gz.spdx.json
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  sign-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: tag must point into main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: verify the artifact is what the build job recorded
+        env:
+          WANT_DIGEST: ${{ needs.build.outputs.dist-digest }}
+        run: |
+          cd dist
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$WANT_DIGEST" ]
+          sha256sum -c SHA256SUMS
+          [ "$(ls sm_*.tar.gz sm_*.tar.gz.spdx.json | sort)" = "$(cut -c67- SHA256SUMS | sort)" ]
+          rm SHA256SUMS
       - name: sign checksums, install.sh and join.sh
         env:
           SM_RELEASE_SIGNING_KEY: ${{ secrets.SM_RELEASE_SIGNING_KEY }}
