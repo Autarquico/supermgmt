@@ -203,9 +203,8 @@ Steps 2 to 6 are derived from the list above. Only `userdel -r supermgmt` is exe
 
 With the device grant, **Dex echoes the client secret into the verification URL it shows in the browser**, so the secret of the configured client ends up in the browser address bar and history of the person signing in. Observed in the Dex spike (`ghcr.io/dexidp/dex:v2.45.1`); not observed with other providers.
 
-- SuperMgmt has one OIDC client (`auth.oidc.client_id` and `client_secret_ref`) and sends its secret to the device endpoint as a form field because Dex ignores HTTP Basic there. **There is no separate device-flow client key**, so the secret cannot be kept out of that URL today.
-- Recommended: use the loopback flow (`sm login --callback-port N`) and do not use `sm login --device` against Dex unless you accept that exposure. A public client for the device flow (no secret to leak) is the intended remedy, but it needs a new configuration key and a spec change; it is not built.
-- If you must use the device flow with Dex, register a client used by nothing else and treat its secret as exposed to the people who sign in; rotate it if a browser profile is shared.
+- SuperMgmt refuses to start a device login when the provider's verification URL carries the client secret or a `client_secret` parameter (`PROVIDER_ERROR`), so the secret is never handed to an unauthenticated caller. With Dex this means `sm login --device` is refused; use the loopback flow (`sm login --callback-port N`).
+- A public client for the device flow (no secret to leak) would lift this; it needs a new configuration key and a spec change and is not built.
 
 ### Outbound filter **[M2]**
 
