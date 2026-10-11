@@ -201,7 +201,7 @@ auth:
 Dex specifics found while testing:
 
 - A Dex confidential client rejects a loopback redirect with a port it has not registered. Register one fixed redirect (`http://127.0.0.1:5555/callback`, say) and sign in with `sm login --callback-port 5555`.
-- With the device grant, Dex puts the `client_secret` into the verification URL, so SuperMgmt refuses device logins against it; see [security.md](security.md#oidc-and-the-device-flow-client-secret).
+- With the device grant, Dex puts the `client_secret` into the verification URL shown in the browser. See [security.md](security.md#oidc-and-the-device-flow-client-secret) before enabling the device flow with Dex.
 - Register Dex's `/device/callback` for the device flow; use an issuer at the root of the host (an issuer path puts that callback outside it).
 
 ## Backup
