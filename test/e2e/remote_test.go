@@ -21,7 +21,8 @@ import (
 // Given a server in server mode with OIDC, when the laptop's sm logs in and operates, then it works
 // over authenticated HTTPS. The IdP is Dex on a private docker network address, the server runs
 // under systemd in a clean Debian container, once with TLS terminated by `sm server` (direct) and
-// once behind a TLS-terminating proxy container (proxy).
+// once behind a TLS-terminating proxy container (proxy). The first administrator is the Dex user
+// who signs in and presents the bootstrap code (spec 11.5).
 func TestM2_RemoteControlOverHTTPS(t *testing.T) {
 	w := newIdP(t)
 	for _, mode := range []harness.TLSMode{harness.Direct, harness.Proxy} {
@@ -34,12 +35,20 @@ func remoteControl(t *testing.T, w *idp, mode harness.TLSMode) {
 	op := w.startOperated(t, mode)
 	srv := op.srv
 
-	t.Run("a person signed in through the browser flow has no more than their role allows", func(t *testing.T) {
-		laptop := op.person(t)
-		me := w.loginWithBrowser(t, srv, laptop)
-		if me.ActorType != domain.ActorHuman {
-			t.Fatalf("actor type = %s, want human", me.ActorType)
+	t.Run("the person who signed in and presented the bootstrap code is the administrator and operates", func(t *testing.T) {
+		me := whoami(t, srv, op.admin)
+		if me.ActorType != domain.ActorHuman || !strings.Contains(strings.Join(me.Roles, ","), "admin") {
+			t.Fatalf("who am I = %+v, want a human with the admin role", me)
 		}
+		operate(t, srv, op.admin)
+		if again := srv.Sm(ctx, "", "admin", "bootstrap-code", "--config", harness.ServerConfig); again.Code == 0 {
+			t.Fatal("a second bootstrap code was issued although an administrator exists")
+		}
+	})
+
+	t.Run("another person signed in through the browser has no more than their role allows", func(t *testing.T) {
+		laptop := op.person(t)
+		me := w.loginWithBrowser(t, srv, laptop, harness.DexOtherUser)
 		if res := laptop.Run(ctx, "", "backup", "create"); res.Code == 0 {
 			t.Fatalf("a person without a role created a backup: %s", res.Output())
 		}
@@ -50,16 +59,15 @@ func remoteControl(t *testing.T, w *idp, mode harness.TLSMode) {
 	t.Run("the device flow signs in the same person on another machine", func(t *testing.T) {
 		other := op.person(t)
 		me := w.loginWithDeviceCode(t, srv, other)
-		again := w.loginWithBrowser(t, srv, op.person(t))
-		if me.IdentityID != again.IdentityID {
-			t.Fatalf("device login identity %s differs from browser login identity %s", me.IdentityID, again.IdentityID)
+		if want := whoami(t, srv, op.admin).IdentityID; me.IdentityID != want {
+			t.Fatalf("device login identity %s differs from browser login identity %s", me.IdentityID, want)
 		}
 		other.Must(ctx, "", "nodes", "list")
 	})
 
 	t.Run("logging out revokes the session on the server", func(t *testing.T) {
 		laptop := op.person(t)
-		w.loginWithBrowser(t, srv, laptop)
+		w.loginWithBrowser(t, srv, laptop, harness.DexUser)
 		session := laptop.StoredToken("ops")
 		laptop.Must(ctx, "", "logout")
 		if _, err := srv.Typed(session).Me(ctx); err == nil {
@@ -68,8 +76,7 @@ func remoteControl(t *testing.T, w *idp, mode harness.TLSMode) {
 	})
 
 	t.Run("a revoked token ends the event stream", func(t *testing.T) {
-		laptop := op.person(t)
-		w.loginWithBrowser(t, srv, laptop) // the Dex user is an admin since the first subtest
+		laptop := op.admin
 		created := laptop.Must(ctx, "", "tokens", "create", "--name", "stream", "--expires-in", "1d")
 		token := strings.TrimSpace(strings.SplitN(created.Stdout, "\n", 2)[0])
 		var listed wire.Page[wire.Token]
@@ -109,10 +116,8 @@ func remoteControl(t *testing.T, w *idp, mode harness.TLSMode) {
 	})
 
 	t.Run("no credential is stored or logged in plaintext", func(t *testing.T) {
-		laptop := op.person(t)
-		w.loginWithBrowser(t, srv, laptop)
 		harness.AssertNoPlaintext(t, srv.Evidence(ctx), map[string]string{
-			"the IdP client secret": w.dex.ClientSecret, "the bootstrap admin token": op.token, "a user session": laptop.StoredToken("ops"),
+			"the IdP client secret": w.dex.ClientSecret, "the administrator's session": op.admin.StoredToken("ops"),
 		})
 	})
 }

@@ -59,22 +59,26 @@ func ApproveJob(ctx context.Context, t testing.TB, api *client.Client, id domain
 	}
 }
 
-// EnableOIDC makes the IdP the way people sign in: it imports the client secret as admin (a
-// high-risk job that is approved), writes auth.oidc and restarts the service. Before this the
-// server has no IdP configuration, because the secret can only be imported by an administrator and
-// the first administrator needs the bootstrap code (BUG-3: there is no `sm secrets import
-// --offline` to preload it).
-func (s *Server) EnableOIDC(ctx context.Context, admin *Client, adminToken string, d *Dex) {
+// BootstrapAdmin makes the person at c the first administrator of a server without OIDC: the
+// bootstrap code from the admin socket, exchanged with `sm login --bootstrap`. It returns the
+// session the client stored.
+func (s *Server) BootstrapAdmin(ctx context.Context, c *Client, displayName string) string {
 	s.t.Helper()
-	api := s.Typed(adminToken)
-	var imported wire.Direct[wire.SecretVersion]
-	admin.JSON(ctx, d.ClientSecret+"\n", &imported, "secrets", "import", "--name", OIDCSecretName)
-	if imported.Pending == nil {
-		s.t.Fatalf("secrets import was not parked for approval: %+v", imported)
+	c.Must(ctx, s.IssueBootstrapCode(ctx)+"\n", "login", "--bootstrap", "--display-name", displayName)
+	return c.StoredToken("ops")
+}
+
+// EnableOIDC points a server that has started once (so its master key exists) at the IdP: the
+// service is stopped, the client secret is sealed into the database offline (there is no
+// administrator yet to import it), auth.oidc is written and the service starts again.
+func (s *Server) EnableOIDC(ctx context.Context, d *Dex) {
+	s.t.Helper()
+	s.C.MustExec(ctx, "systemctl", "stop", "supermgmt")
+	res := s.C.Exec(ctx, d.ClientSecret+"\n", "runuser", "-u", "supermgmt", "--", ServerBinary, "secrets", "import", "--offline",
+		"--name", OIDCSecretName, "--config", ServerConfig)
+	if res.Code != 0 {
+		s.t.Fatalf("sm secrets import --offline exited %d\n%s", res.Code, res.Output())
 	}
-	job := imported.Pending.Job.ID
-	ApproveJob(ctx, s.t, api, job)
-	WaitJob(ctx, s.t, api, job, domain.JobSucceeded)
 	s.AppendConfig(ctx, fmt.Sprintf(`auth:
     oidc:
         enabled: true
@@ -84,5 +88,6 @@ func (s *Server) EnableOIDC(ctx context.Context, admin *Client, adminToken strin
         allowed_domains:
             - example.com
 `, d.Issuer, d.ClientID, OIDCSecretName))
-	s.Restart(ctx)
+	s.C.MustExec(ctx, "systemctl", "start", "supermgmt")
+	s.WaitReady(ctx)
 }

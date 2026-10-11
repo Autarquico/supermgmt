@@ -93,10 +93,9 @@ func TestM2_CurlBashInstallsServer(t *testing.T) {
 		srv.WaitReady(ctx)
 
 		// A remote client reaches the new server over HTTPS and exchanges the code.
-		token := srv.Bootstrap(ctx, m[1], "installed admin")
 		laptop := harness.NewClient(t)
-		laptop.AddProfile(ctx, "fresh", srv.URL, srv.CAFile)
-		laptop.Must(ctx, token+"\n", "login", "--token-stdin")
+		laptop.AddProfile(ctx, "ops", srv.URL, srv.CAFile)
+		laptop.Must(ctx, m[1]+"\n", "login", "--bootstrap", "--display-name", "installed admin")
 		laptop.Must(ctx, "", "nodes", "list")
 		if again := srv.Sm(ctx, "", "admin", "bootstrap-code", "--config", harness.ServerConfig); again.Code == 0 {
 			t.Fatal("a second bootstrap code was issued although an administrator exists")
@@ -104,9 +103,6 @@ func TestM2_CurlBashInstallsServer(t *testing.T) {
 	})
 
 	t.Run("proxy TLS: installs behind a reverse proxy", func(t *testing.T) {
-		knownBug(t, "BUG-1", "`sm install server --tls proxy` probes http://127.0.0.1:8787/health/ready without X-Forwarded-Proto: "+
-			"the server answers 400 (internal/installer/install.go probe(); internal/api forwarded-proto check), so the installer exits "+
-			"non-zero with \"service did not become ready\" although the service runs. Repro: this test.")
 		srv := harness.NewServerHost(t, w.net, w.ca, harness.ServerOptions{Mode: harness.Proxy, TrustCAs: []*harness.CA{w.ca}})
 		res := w.curlBash(srv.C, w.mirror.BaseURL("good"), map[string]string{"SUPERMGMT_VERSION": w.release.Version},
 			"server", "--tls", "proxy", "--public-url", srv.URL, "--yes")
@@ -338,14 +334,5 @@ func (r *releaseTree) signChecksumsWithAttackerKey(t *testing.T) {
 		if err != nil || res.Code != 0 {
 			t.Fatalf("%s: %v\n%s", argv[0], err, res.Output())
 		}
-	}
-}
-
-// knownBug skips a test written against a defect of the product code that this task may not
-// fix. Set SM_E2E_RUN_KNOWN_BUGS=1 to run it and see it fail.
-func knownBug(t *testing.T, id, description string) {
-	t.Helper()
-	if os.Getenv("SM_E2E_RUN_KNOWN_BUGS") == "" {
-		t.Skipf("%s: %s", id, description)
 	}
 }

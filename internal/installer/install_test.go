@@ -326,3 +326,16 @@ func TestExitCode(t *testing.T) {
 		t.Fatal("ExitCode mapping broken")
 	}
 }
+
+func TestProxyModeProbeStatesThatTLSEndedAtTheProxy(t *testing.T) {
+	w := newWorld()
+	d, _ := w.deps("linux", 0, false)
+	o := serverOpts()
+	o.TLS = config.TLSProxy
+	if err := New(d).Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if w.probe.URL != "http://127.0.0.1:8787/health/ready" || w.probe.ForwardedProto != "https" {
+		t.Fatalf("probe = %+v, want plain HTTP on loopback with X-Forwarded-Proto https", w.probe)
+	}
+}

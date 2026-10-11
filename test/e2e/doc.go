@@ -8,6 +8,4 @@
 //	make e2e-server    remote control, local mode, backup/restore, join, secret-leak scans
 //	make e2e-install   curl|bash install and the tamper matrix; E2E_DIST=dist serves `make snapshot`
 //
-// Each test names the criterion it verifies. Tests written against defects of the product code
-// are skipped with a BUG-n note; SM_E2E_RUN_KNOWN_BUGS=1 runs them.
 package e2e

@@ -37,9 +37,8 @@ func TestM2_BackupRestoreFreshHost(t *testing.T) {
 	a := harness.StartServer(t, net, ca, harness.ServerOptions{Mode: harness.Direct})
 	a.AllowSelfApproval(ctx)
 	adminA := harness.NewClient(t)
-	adminA.AddProfile(ctx, "a", a.URL, a.CAFile)
-	tokenA := a.Bootstrap(ctx, a.IssueBootstrapCode(ctx), "admin of A")
-	adminA.Must(ctx, tokenA+"\n", "login", "--token-stdin")
+	adminA.AddProfile(ctx, "ops", a.URL, a.CAFile)
+	tokenA := a.BootstrapAdmin(ctx, adminA, "admin of A")
 	apiA := a.Typed(tokenA)
 
 	issued, err := apiA.CreateToken(ctx, wire.CreateTokenRequest{Name: "automation", ExpiresAt: harness.Now().Add(30 * 24 * time.Hour)})
@@ -67,7 +66,18 @@ func TestM2_BackupRestoreFreshHost(t *testing.T) {
 	if len(listed.Items) == 0 || len(listed.Items[0].KEKIDs) == 0 {
 		t.Fatalf("the backup does not say which master key it needs: %+v", listed)
 	}
-	archive, kek := listed.Items[0], listed.Items[0].KEKIDs[0]
+	archive := listed.Items[0]
+	var keys wire.Page[wire.MasterKey]
+	adminA.JSON(ctx, "", &keys, "secrets", "keys")
+	var kek domain.ID
+	for _, k := range keys.Items {
+		if k.Active {
+			kek = k.ID
+		}
+	}
+	if kek == "" || kek != archive.KEKIDs[0] {
+		t.Fatalf("the active master key %q is not the one the backup needs (%v)", kek, archive.KEKIDs)
+	}
 
 	// ---- carry the archive and the exported key to the new host ----
 	scratch := t.TempDir()
@@ -141,9 +151,8 @@ func TestM2_BackupRestoreFreshHost(t *testing.T) {
 	})
 
 	adminB := harness.NewClient(t)
-	adminB.AddProfile(ctx, "b", b.URL, b.CAFile)
-	tokenB := b.Bootstrap(ctx, b.IssueBootstrapCode(ctx), "admin of B") // accepted during hold although an admin exists
-	adminB.Must(ctx, tokenB+"\n", "login", "--token-stdin")
+	adminB.AddProfile(ctx, "ops", b.URL, b.CAFile)
+	tokenB := b.BootstrapAdmin(ctx, adminB, "admin of B") // accepted during hold although an admin exists
 	apiB := b.Typed(tokenB)
 
 	t.Run("state is consistent: the instance identity and the secrets came across", func(t *testing.T) {

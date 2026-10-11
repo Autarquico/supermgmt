@@ -28,27 +28,26 @@ func newIdP(t *testing.T) *idp {
 	return &idp{net: net, ca: ca, dex: harness.StartDex(t, net, ca)}
 }
 
-// operator is the first administrator of a server and the clients of the people who use it.
+// operator is a server whose first administrator is the Dex user admin@example.com.
 type operator struct {
 	srv   *harness.Server
-	admin *harness.Client // signed in with the bootstrap API token
-	token string
+	admin *harness.Client // the administrator's laptop
 }
 
-// startOperated starts a server, creates its first administrator through the bootstrap code and
-// turns on OIDC with the Dex of w.
+// startOperated starts a server, points it at the Dex of w and makes the Dex user its first
+// administrator (spec 11.5): sign in with the IdP, then present the bootstrap code.
 func (w *idp) startOperated(t *testing.T, mode harness.TLSMode) *operator {
 	t.Helper()
 	ctx := context.Background()
 	srv := harness.StartServer(t, w.net, w.ca, harness.ServerOptions{Mode: mode, TrustCAs: []*harness.CA{w.ca}})
 	srv.WaitReady(ctx)
-	srv.AllowSelfApproval(ctx)
+	code := srv.IssueBootstrapCode(ctx)
+	srv.EnableOIDC(ctx, w.dex)
 	admin := harness.NewClient(t)
 	admin.AddProfile(ctx, "ops", srv.URL, srv.CAFile)
-	token := srv.Bootstrap(ctx, srv.IssueBootstrapCode(ctx), "operator")
-	admin.Must(ctx, token+"\n", "login", "--token-stdin")
-	srv.EnableOIDC(ctx, admin, token, w.dex)
-	return &operator{srv: srv, admin: admin, token: token}
+	w.loginWithBrowser(t, srv, admin, harness.DexUser)
+	admin.Must(ctx, code+"\n", "login", "--bootstrap")
+	return &operator{srv: srv, admin: admin}
 }
 
 // person is someone with a laptop: a client with a profile for the server.
@@ -66,12 +65,12 @@ var (
 )
 
 // loginWithBrowser runs `sm login --callback-port` and signs in as the Dex user in a browser.
-func (w *idp) loginWithBrowser(t *testing.T, srv *harness.Server, c *harness.Client) wire.Me {
+func (w *idp) loginWithBrowser(t *testing.T, srv *harness.Server, c *harness.Client, user string) wire.Me {
 	t.Helper()
 	ctx := context.Background()
 	p := c.Start(ctx, "", "login", "--no-browser", "--callback-port", fmt.Sprint(w.dex.CallbackPort))
 	authURL := p.WaitLine(t, authURLLine, loginTimeout)[1]
-	status, err := w.dex.NewBrowser().SignIn(ctx, authURL)
+	status, err := w.dex.NewBrowser().As(user).SignIn(ctx, authURL)
 	if err != nil || status != 200 {
 		t.Fatalf("the browser did not reach the loopback callback: %d %v", status, err)
 	}

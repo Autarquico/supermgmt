@@ -127,3 +127,17 @@ func TestDialAddress(t *testing.T) {
 		t.Error("unix listen cannot be probed")
 	}
 }
+
+func TestHealthProbeSendsTheForwardedProto(t *testing.T) {
+	var got atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got.Store(r.Header.Get("X-Forwarded-Proto"))
+	}))
+	defer srv.Close()
+	if err := (httpHealth{}).WaitReady(context.Background(), Probe{URL: srv.URL, ForwardedProto: "https"}, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if got.Load() != "https" {
+		t.Fatalf("X-Forwarded-Proto = %v, want https", got.Load())
+	}
+}

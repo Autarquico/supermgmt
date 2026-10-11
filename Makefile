@@ -86,7 +86,7 @@ e2e: e2e-server e2e-install ## Run the M2 acceptance and security e2e (needs Doc
 
 e2e-server: ## e2e: remote control (direct and proxy TLS, Dex), local mode, backup/restore, join, secret-leak scans
 	go test -tags 'e2e fixtures' -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
-		-run 'TestM2_(RemoteControlOverHTTPS|LocalModeWithoutIdP|BackupRestoreFreshHost|JoinEnrollsFixtureNode|LoginBootstrapWithoutOIDC|BootstrapBindsOIDCIdentity)$$' ./test/e2e/
+		-run 'TestM2_(RemoteControlOverHTTPS|LocalModeWithoutIdP|BackupRestoreFreshHost|JoinEnrollsFixtureNode)$$' ./test/e2e/
 
 e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (exit 5); E2E_DIST=dist serves a `make snapshot` release
 	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \

@@ -265,7 +265,7 @@ func (httpHealth) WaitReady(ctx context.Context, p Probe, timeout time.Duration)
 	}
 	var last error
 	for {
-		if last = getReady(ctx, client, p.URL); last == nil {
+		if last = getReady(ctx, client, p); last == nil {
 			return nil
 		}
 		select {
@@ -289,10 +289,13 @@ func probeClient(p Probe) (*http.Client, error) {
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, nil
 }
 
-func getReady(ctx context.Context, client *http.Client, url string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func getReady(ctx context.Context, client *http.Client, p Probe) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
 	if err != nil {
 		return err
+	}
+	if p.ForwardedProto != "" {
+		req.Header.Set("X-Forwarded-Proto", p.ForwardedProto)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

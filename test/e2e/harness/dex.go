@@ -33,6 +33,8 @@ const (
 	DexUser         = "admin@example.com"
 	DexPassword     = "password"
 	dexPasswordHash = "$2y$10$6g4EvNEgaNOPZMNFkfzPT.jrUA/5Tv2o6f01VUI43t9kgtSGps1wa"
+	// DexOtherUser is a second person with the same password, to test people without a role.
+	DexOtherUser = "viewer@example.com"
 )
 
 // Dex is a running identity provider on the docker network.
@@ -104,7 +106,11 @@ staticPasswords:
     hash: %q
     username: admin
     userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
-`, d.Issuer, d.ClientID, d.ClientSecret, d.CallbackPort, DexUser, dexPasswordHash)
+  - email: %s
+    hash: %q
+    username: viewer
+    userID: "5b0f0c8e-2d5e-4b64-9a43-1f6a1c0c9a11"
+`, d.Issuer, d.ClientID, d.ClientSecret, d.CallbackPort, DexUser, dexPasswordHash, DexOtherUser, dexPasswordHash)
 }
 
 func (d *Dex) waitReady(t testing.TB) {
@@ -129,6 +135,7 @@ func (d *Dex) waitReady(t testing.TB) {
 type Browser struct {
 	client *http.Client
 	dex    *Dex
+	user   string
 }
 
 // NewBrowser returns a browser with its own cookie jar that resolves the IdP name to the
@@ -145,11 +152,14 @@ func (d *Dex) NewBrowser() *Browser {
 			return dialer.DialContext(ctx, network, addr)
 		},
 	}
-	return &Browser{dex: d, client: &http.Client{
+	return &Browser{dex: d, user: DexUser, client: &http.Client{
 		Jar: jar, Transport: transport, Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
 }
+
+// As signs the browser in as another Dex user.
+func (b *Browser) As(user string) *Browser { b.user = user; return b }
 
 // SignIn opens an authorization URL and signs in as the Dex user. A redirect that leaves Dex
 // (the loopback callback of `sm login`) is requested and its status returned.
@@ -208,7 +218,7 @@ func (b *Browser) follow(ctx context.Context, resp *http.Response, current strin
 			}
 		case resp.StatusCode == http.StatusOK && bytes.Contains(body, []byte(`name="login"`)):
 			var err error
-			resp, err = b.do(ctx, http.MethodPost, current, url.Values{"login": {DexUser}, "password": {DexPassword}})
+			resp, err = b.do(ctx, http.MethodPost, current, url.Values{"login": {b.user}, "password": {DexPassword}})
 			if err != nil {
 				return 0, err
 			}

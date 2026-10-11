@@ -58,7 +58,6 @@ func TestM2_LocalModeWithoutIdP(t *testing.T) {
 			t.Fatalf("GET /me with a bearer on the socket = %d, want 401", resp.StatusCode)
 		}
 	})
-
 }
 
 func waitForLocalDaemon(t *testing.T, ctx context.Context, c *harness.Client, configFile string) {

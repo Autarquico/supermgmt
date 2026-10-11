@@ -6,7 +6,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -17,7 +16,7 @@ import (
 // TestM2_JoinEnrollsFixtureNode
 //
 // Criterion J (spec §13, ADR-0022; PLAN §9 row "Join"): an administrator issues a join token over
-// the API with the session from `sm login` (there is no `sm enrollments` command yet), the node
+// `sm enrollments create`, the node
 // runs the signed scripts/join.sh, and the server ends up with a managed node it reaches over SSH as
 // the dedicated `supermgmt` account, using the instance key that join authorized.
 func TestM2_JoinEnrollsFixtureNode(t *testing.T) {
@@ -26,16 +25,10 @@ func TestM2_JoinEnrollsFixtureNode(t *testing.T) {
 	srv := harness.StartServer(t, w.net, w.ca, harness.ServerOptions{Mode: harness.Direct, Aliases: []string{"sm.test"}})
 	admin := harness.NewClient(t)
 	admin.AddProfile(ctx, "ops", srv.URL, srv.CAFile)
-	admin.Must(ctx, srv.Bootstrap(ctx, srv.IssueBootstrapCode(ctx), "operator")+"\n", "login", "--token-stdin")
-	session := admin.StoredToken("ops")
+	session := srv.BootstrapAdmin(ctx, admin, "operator")
 
-	var issued wire.EnrollmentIssued
-	_, err := srv.Raw(ctx, session, "POST", wire.PathEnrollments, wire.EnrollmentRequest{
-		Tags: []string{"fixture"}, MaxNodes: 1, ExpiresAt: harness.Now().Add(time.Hour),
-	}, &issued)
-	if err != nil {
-		t.Fatalf("issue a join token: %v", err)
-	}
+	created := admin.Must(ctx, "", "enrollments", "create", "--tag", "fixture", "--max-nodes", "1", "--expires-in", "1h")
+	joinToken := strings.TrimSpace(created.Stdout)
 
 	if err := fixture.Build(ctx); err != nil {
 		t.Fatal(err)
@@ -49,7 +42,7 @@ func TestM2_JoinEnrollsFixtureNode(t *testing.T) {
 	node.Connect(w.net)
 	node.MustExec(ctx, "sh", "-c", "apt-get update -qq && apt-get install -y -qq --no-install-recommends curl")
 	node.TrustCA(ctx, w.ca.CertPEM)
-	node.WriteFile(ctx, "/root/join-token", []byte(issued.Token), "0600")
+	node.WriteFile(ctx, "/root/join-token", []byte(joinToken), "0600")
 
 	join := node.Env(ctx, "", map[string]string{
 		"SUPERMGMT_RELEASE_BASE_URL": w.mirror.BaseURL("good"), "SUPERMGMT_VERSION": w.release.Version,
