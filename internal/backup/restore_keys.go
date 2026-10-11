@@ -49,6 +49,18 @@ func (stagedSecrets) Get(context.Context, string, int) (secrets.Record, error) {
 
 func (stagedSecrets) PutSettings(context.Context, map[string]string) error { return errStagedReadOnly }
 
+func (stagedSecrets) PutStaged(context.Context, secrets.Record) error { return errStagedReadOnly }
+
+func (stagedSecrets) GetByID(context.Context, domain.ID) (secrets.Record, error) {
+	return secrets.Record{}, errStagedReadOnly
+}
+
+func (stagedSecrets) ActivateStaged(context.Context, domain.ID) (secrets.Record, error) {
+	return secrets.Record{}, errStagedReadOnly
+}
+
+func (stagedSecrets) DeleteStaged(context.Context, domain.ID) error { return errStagedReadOnly }
+
 func (s stagedSecrets) ReferencedKEKs(ctx context.Context) ([]domain.ID, error) {
 	return database.ReferencedKEKIDs(ctx, s.q)
 }

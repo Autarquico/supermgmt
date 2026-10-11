@@ -287,11 +287,14 @@ func TestCompleteEndsTheHoldAuditedAndOpensTheClaimGate(t *testing.T) {
 // what it is covering.
 func TestEveryWriteTransactionIsClassified(t *testing.T) {
 	classified := map[string]string{
-		"commit":                    "the shared write path; guards the hold itself",
-		"Prober.record":             "observation write by the system (discovery), allowed during hold",
-		"SecretsRepo.Put":           "secrets storage under a service that authorizes the caller; covered by the transport guard",
-		"SecretsRepo.PutSettings":   "settings storage under a service that authorizes the caller; covered by the transport guard",
-		"SecretsKeyRepo.UpdateKeys": "key rotation storage under KeyManager; covered by the transport guard",
+		"commit":                     "the shared write path; guards the hold itself",
+		"Prober.record":              "observation write by the system (discovery), allowed during hold",
+		"SecretsRepo.Put":            "secrets storage under a service that authorizes the caller; covered by the transport guard",
+		"SecretsRepo.PutSettings":    "settings storage under a service that authorizes the caller; covered by the transport guard",
+		"SecretsKeyRepo.UpdateKeys":  "key rotation storage under KeyManager; covered by the transport guard",
+		"SecretsRepo.PutStaged":      "staging a secret import under KeyManager; covered by the transport guard",
+		"SecretsRepo.ActivateStaged": "activation by an approved job; jobs are never claimed during hold",
+		"SecretsRepo.DeleteStaged":   "discarding a staged import; cleanup, allowed during hold",
 	}
 	found := map[string]bool{}
 	files, err := filepath.Glob("*.go")
