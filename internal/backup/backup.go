@@ -5,7 +5,7 @@
 // place under a write-ahead journal that every start of the daemon or of the
 // restore command recovers before the database is opened.
 //
-// W0 contract: signatures are frozen; bodies land in M2 tasks T5 and T6.
+// W0 contract: signatures are frozen; bodies landed in M2 tasks T5 and T6.
 package backup
 
 import (
@@ -69,12 +69,12 @@ type RestoreOptions struct {
 // Phase A errors leave every live file untouched; a missing or failing KEK is
 // exit 9 naming the ids.
 func Restore(ctx context.Context, o RestoreOptions) error {
-	panic("not implemented: M2 T6")
+	return restore(ctx, o, env{})
 }
 
 // Recover finishes or discards an interrupted restore from dataDir's journal.
 // The daemon and the restore command call it after taking the database lock
 // and before opening the database.
 func Recover(dataDir string) error {
-	panic("not implemented: M2 T6")
+	return recoverRestore(dataDir, env{})
 }
