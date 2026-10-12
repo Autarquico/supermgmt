@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: XL
 issue: null
-prs: []
+prs: [14]
 related_issues: [3]
 depends_on: [m2-server-auth-release]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-12
 ---
 
 # M3 — Proxmox provider and appliance installer
