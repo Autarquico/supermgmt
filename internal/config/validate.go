@@ -266,6 +266,8 @@ func (v *validator) providers() {
 		}
 		names[p.Name()] = true
 		switch {
+		case p.GitHub != nil:
+			v.githubProvider(*p.GitHub, at)
 		case p.Proxmox != nil:
 			v.proxmox(*p.Proxmox, at)
 		case p.SSH != nil:
