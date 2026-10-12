@@ -48,7 +48,15 @@ type Config struct {
 	// SampleGap is the minimum spacing of the two identical outcome samples
 	// required before an automatic recovery (spec §20.4 step 3); default 30s.
 	SampleGap time.Duration
+
+	// TaskTracked reports whether an operation is tracked by a provider task
+	// whose stop must be proven before its intent may be reconciled or resolved
+	// (ADR-0025). Default: operations prefixed "proxmox.".
+	TaskTracked func(operation string) bool
 }
+
+// DefaultTaskTracked marks Proxmox operations as task-tracked.
+func DefaultTaskTracked(operation string) bool { return strings.HasPrefix(operation, "proxmox.") }
 
 // Store owns all SQL on jobs, operation_intents and resource_locks.
 type Store struct {
@@ -65,6 +73,7 @@ type Store struct {
 
 	reconcileGrace time.Duration
 	sampleGap      time.Duration
+	taskTracked    func(operation string) bool
 
 	restoreHold atomic.Bool
 
@@ -102,6 +111,10 @@ func NewStore(cfg Config) (*Store, error) {
 		sampleGap:      orDefault(cfg.SampleGap, defaultSampleGap),
 		samples:        map[sampleKey]sample{},
 		held:           map[domain.ID]string{},
+	}
+	s.taskTracked = DefaultTaskTracked
+	if cfg.TaskTracked != nil {
+		s.taskTracked = cfg.TaskTracked
 	}
 	return s, nil
 }

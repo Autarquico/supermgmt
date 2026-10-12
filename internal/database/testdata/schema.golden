@@ -319,7 +319,7 @@ CREATE TABLE operation_intents (
     dispatched_at    INTEGER,
     completed_at     INTEGER,
     outcome          TEXT,
-    evidence_json    TEXT,
+    evidence_json    TEXT, external_ref TEXT,
     UNIQUE (marker)
 ) STRICT;
 
