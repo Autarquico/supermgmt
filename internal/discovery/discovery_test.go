@@ -292,7 +292,7 @@ func TestProbeRunsOneSession(t *testing.T) {
 func composeDeployNode(t *testing.T) Snapshot {
 	t.Helper()
 	probe := strings.Replace(linuxProbe, "compose=2.29.1", "compose=5.5.1", 1)
-	probe = strings.Replace(probe, "@@tools\nbtop\ntmux", "@@tools\nbtop\ntmux\ncurl\nbash\ntimeout\nflock\njq", 1)
+	probe = strings.Replace(probe, "@@tools\nbtop\ntmux", "@@tools\nbtop\ntmux\ncurl\nbash\ntimeout\nflock\njq\nss\nsha256sum\nbase64\ndf", 1)
 	s, err := Parse([]byte(probe))
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func composeDeployNode(t *testing.T) Snapshot {
 
 func TestParseDeploymentTools(t *testing.T) {
 	s := composeDeployNode(t)
-	want := Tools{Btop: true, Tmux: true, Curl: true, Bash: true, Timeout: true, Flock: true, Jq: true}
+	want := Tools{Btop: true, Tmux: true, Curl: true, Bash: true, Timeout: true, Flock: true, Jq: true, Ss: true, Sha256sum: true, Base64: true, Df: true}
 	if s.Tools != want {
 		t.Errorf("tools = %+v", s.Tools)
 	}
@@ -325,6 +325,12 @@ func TestComposeDeployCapability(t *testing.T) {
 		{"v-prefixed compose version", func(s *Snapshot) { s.Docker.ComposeVersion = "v5.5.1" }, false, "unsupported compose version v5.5.1"},
 		{"flock missing", func(s *Snapshot) { s.Tools.Flock = false }, false, "flock missing"},
 		{"jq missing", func(s *Snapshot) { s.Tools.Jq = false }, false, "jq missing"},
+		{"bash missing", func(s *Snapshot) { s.Tools.Bash = false }, false, "bash missing"},
+		{"timeout missing", func(s *Snapshot) { s.Tools.Timeout = false }, false, "timeout missing"},
+		{"ss missing", func(s *Snapshot) { s.Tools.Ss = false }, false, "ss missing"},
+		{"sha256sum missing", func(s *Snapshot) { s.Tools.Sha256sum = false }, false, "sha256sum missing"},
+		{"base64 missing", func(s *Snapshot) { s.Tools.Base64 = false }, false, "base64 missing"},
+		{"df missing", func(s *Snapshot) { s.Tools.Df = false }, false, "df missing"},
 		{"local provider", func(*Snapshot) {}, true, "ssh node required"},
 	}
 	for _, tt := range tests {

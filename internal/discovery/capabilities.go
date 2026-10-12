@@ -81,10 +81,30 @@ func composeDeployBlocker(s Snapshot, local bool) string {
 		return "docker access required"
 	case !runtimes.ComposeSupported(s.Docker.ComposeVersion):
 		return "unsupported compose version " + s.Docker.ComposeVersion
-	case !s.Tools.Flock:
-		return "flock missing"
-	case !s.Tools.Jq:
-		return "jq missing"
+	}
+	return missingDeployTool(s.Tools)
+}
+
+// missingDeployTool names the first node tool the deploy templates need
+// (ADR-0030, T8a) that the probe did not find.
+func missingDeployTool(t Tools) string {
+	required := []struct {
+		name  string
+		found bool
+	}{
+		{"flock", t.Flock},
+		{"jq", t.Jq},
+		{"bash", t.Bash},
+		{"timeout", t.Timeout},
+		{"ss", t.Ss},
+		{"sha256sum", t.Sha256sum},
+		{"base64", t.Base64},
+		{"df", t.Df},
+	}
+	for _, r := range required {
+		if !r.found {
+			return r.name + " missing"
+		}
 	}
 	return ""
 }

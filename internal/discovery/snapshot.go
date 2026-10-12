@@ -74,6 +74,7 @@ func (d Docker) Reachable() bool { return d.ServerVersion != "" }
 type Tools struct {
 	Lazydocker, Btop, Tmux         bool
 	Curl, Bash, Timeout, Flock, Jq bool
+	Ss, Sha256sum, Base64, Df      bool
 }
 
 // ProbedAs is the setup state seen from the probing session.
