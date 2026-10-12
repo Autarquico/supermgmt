@@ -17,11 +17,6 @@ func (in *Installer) uninstallAppliance(ctx context.Context, o Options, h provis
 	if in.d.Host.UID != 0 {
 		return fail(ExitPrerequisite, "uninstalling an appliance must run as root on the Proxmox host")
 	}
-	release, err := in.lockInstaller()
-	if err != nil {
-		return err
-	}
-	defer release()
 	a := applianceRemover{in: in, d: in.d, o: o, h: h, rec: rec}
 	if o.PurgeData {
 		return a.purge(ctx)
@@ -108,6 +103,14 @@ func (a *applianceRemover) purge(ctx context.Context) error {
 	}
 	if err := a.confirmPurge(user, roles, st.Exists && owned); err != nil {
 		return err
+	}
+	// The confirmation can take minutes; destroy what was confirmed or nothing.
+	confirmed := st.Exists && owned
+	if st, owned, err = a.in.guestOwnership(ctx, a.rec); err != nil {
+		return err
+	}
+	if confirmed != (st.Exists && owned) {
+		return fail(ExitPrerequisite, "container %d changed while waiting for the confirmation; nothing was destroyed, rerun to see the new state", a.rec.VMID)
 	}
 	if st.Exists && owned {
 		if err := a.destroyGuest(ctx, st); err != nil {

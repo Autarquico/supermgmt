@@ -175,6 +175,10 @@ func TestProxmoxLXC_FailureAtEveryStepUndoesOnlyCreated(t *testing.T) {
 						assertInstalledAfterCommit(t, w, label)
 						continue
 					}
+					if kind := identityCreate(probe.opLog[k-1]); applied && kind != "" {
+						assertKeptAmbiguous(t, w, label, baseline, kind, err)
+						continue
+					}
 					if probe.rollbackStart != 0 && k >= probe.rollbackStart {
 						assertRolledBackLater(t, w, label, baseline)
 						continue
@@ -182,6 +186,44 @@ func TestProxmoxLXC_FailureAtEveryStepUndoesOnlyCreated(t *testing.T) {
 					assertRolledBack(t, w, label, baseline)
 				}
 			})
+		}
+	}
+}
+
+// identityCreate names the kind of Proxmox object an operation creates, or "" for any other.
+func identityCreate(op string) string {
+	for prefix, kind := range map[string]string{"pve.createuser": "user", "pve.createrole": "role", "pve.addtoken": "token"} {
+		if strings.HasPrefix(op, prefix) {
+			return kind
+		}
+	}
+	return ""
+}
+
+// assertKeptAmbiguous: a creation that reported failure while the object exists cannot be told
+// from a collision with somebody else's object, so exactly that object is kept and reported;
+// everything else this install made is rolled back.
+func assertKeptAmbiguous(t *testing.T, w *aw, label string, baseline []string, kind string, runErr error) {
+	t.Helper()
+	left := w.oursLeft()
+	if len(left) != 1 || !strings.HasPrefix(left[0], kind+" ") {
+		t.Errorf("%s: left behind %v, want only the ambiguous %s", label, left, kind)
+	}
+	if runErr == nil || !strings.Contains(runErr.Error(), "NOT fully rolled back") || !strings.Contains(runErr.Error(), "may be somebody else's") {
+		t.Errorf("%s: the failure does not report the kept object: %v", label, runErr)
+	}
+	if missing := subset(baseline, w.foreignState()); len(missing) > 0 {
+		t.Errorf("%s: pre-existing resources changed or removed: %v", label, missing)
+	}
+	if len(w.violations) > 0 || len(w.leaks()) > 0 {
+		t.Errorf("%s: violations %v leaks %v", label, w.violations, w.leaks())
+	}
+	for _, dir := range w.hostPaths("/var/tmp/supermgmt-installer-") {
+		if strings.HasSuffix(dir, "/stage") || strings.HasSuffix(dir, "pve-token") {
+			t.Errorf("%s: host temp left behind: %s", label, dir)
+		}
+		if j, err := openJournal(w, dir); err == nil && (len(j.toUndo()) != 1 || j.toUndo()[0].Phase != phaseAmbiguous) {
+			t.Errorf("%s: journal should list only the ambiguous object: %v", label, j.toUndo())
 		}
 	}
 }

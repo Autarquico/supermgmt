@@ -144,7 +144,7 @@ func TestProxmoxLXC_StepOrderKeepsTheUnitDisabledUntilTheCredentialIsIn(t *testi
 	w := newAW(t)
 	w.mustInstall(t)
 	order := []string{
-		"pve.create", "pve.push /tmp/supermgmt-sm", "ct.exec /tmp/supermgmt-sm install server", "ct.exec /usr/local/bin/sm server init",
+		"pve.create", "ct.exec /usr/bin/mkdir -m 0700 " + stageDir, "pve.push " + stagedBinary, "ct.exec " + stagedBinary + " install server", "ct.exec /usr/local/bin/sm server init",
 		"ct.exec /usr/bin/stat -f", "ct.exec /usr/bin/install -d", "ct.exec /usr/local/bin/sm providers check --offline --tls-only",
 		"pve.createuser", "pve.addtoken", "host.write", "pve.push /run/supermgmt-bootstrap/pve-token",
 		"ct.exec /usr/local/bin/sm secrets import", "ct.exec /usr/bin/tee /etc/supermgmt/config.yaml",

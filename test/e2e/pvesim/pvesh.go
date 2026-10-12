@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-var reNodeNetworkPath = regexp.MustCompile(`^/nodes/([^/]+)/network$`)
+var (
+	reNodeNetworkPath = regexp.MustCompile(`^/nodes/([^/]+)/network$`)
+	reNodeStoragePath = regexp.MustCompile(`^/nodes/([^/]+)/storage$`)
+)
 
 // pveshGlobal are the options every pvesh command takes.
 var pveshGlobal = merge(outputFormat, map[string]check{
@@ -24,8 +27,8 @@ func networkTypeCheck(v string) error {
 		"any_bridge", "any_local_bridge", "include_sdn")(v)
 }
 
-// pvesh is the part of `pvesh get` the installer uses: /cluster/nextid, /nodes/{node}/network and
-// the two discovery paths /version and /nodes.
+// pvesh is the part of `pvesh get` the installer uses: /cluster/nextid, /nodes/{node}/network,
+// /nodes/{node}/storage and the two discovery paths /version and /nodes.
 func (s *Sim) pvesh(_ context.Context, args []string) (string, error) {
 	if len(args) == 0 || args[0] != "get" {
 		return "", die("USAGE: pvesh <get|create|set|delete|ls|usage> <api_path> [OPTIONS]\npvesim: only 'get' is implemented")
@@ -58,6 +61,8 @@ func (s *Sim) pveshPath(path string) (command, bool) {
 		return command{opts: pveshGlobal}, true
 	case reNodeNetworkPath.MatchString(path):
 		return command{opts: merge(pveshGlobal, map[string]check{"type": networkTypeCheck})}, true
+	case reNodeStoragePath.MatchString(path):
+		return command{opts: merge(pveshGlobal, storageOptions)}, true
 	}
 	return command{}, false
 }
@@ -71,11 +76,24 @@ func (s *Sim) pveshGet(path string, p parsed) (any, error) {
 	case "/nodes":
 		return []map[string]any{{"node": s.cfg.Node, "status": "online", "type": "node"}}, nil
 	}
+	if m := reNodeStoragePath.FindStringSubmatch(path); m != nil {
+		if err := s.requireNode(m[1]); err != nil {
+			return nil, err
+		}
+		return s.storages(p), nil
+	}
 	node := reNodeNetworkPath.FindStringSubmatch(path)[1]
-	if node != s.cfg.Node {
-		return nil, die("hostname lookup '%s' failed - failed to get address info for: %s: Name or service not known", node, node)
+	if err := s.requireNode(node); err != nil {
+		return nil, err
 	}
 	return s.networks(p.opts["type"]), nil
+}
+
+func (s *Sim) requireNode(node string) error {
+	if node != s.cfg.Node {
+		return die("hostname lookup '%s' failed - failed to get address info for: %s: Name or service not known", node, node)
+	}
+	return nil
 }
 
 func majorMinor(v string) string {
@@ -135,24 +153,14 @@ func render(data any, p parsed) string {
 	return string(raw) + "\n"
 }
 
-// ---- pvesm ----
+// ---- storage ----
 
-var pvesmCommands = map[string]command{
-	"status": {opts: merge(outputFormat, map[string]check{"content": anyText, "enabled": boolean, "format": boolean, "storage": anyText, "target": anyText})},
-}
+// storageOptions are the filters of GET /nodes/{node}/storage, which `pvesm status` shares.
+var storageOptions = map[string]check{"content": anyText, "enabled": boolean, "format": boolean, "storage": anyText, "target": anyText}
 
-func (s *Sim) pvesm(_ context.Context, args []string) (string, error) {
-	cmd, rest, err := subcommand("pvesm", pvesmCommands, args)
-	if err != nil {
-		return "", err
-	}
-	p, err := cmd.parse(rest)
-	if err != nil {
-		return "", err
-	}
-	if err := p.requireJSON(); err != nil {
-		return "", err
-	}
+// storages is the answer of GET /nodes/{node}/storage. `pvesm status` has no JSON output, so the
+// installer reads this path instead.
+func (s *Sim) storages(p parsed) []map[string]any {
 	var rows []map[string]any
 	for _, st := range s.cfg.Storages {
 		if want := p.opts["content"]; want != "" && !hasAnyContent(st.Content, want) {
@@ -167,7 +175,34 @@ func (s *Sim) pvesm(_ context.Context, args []string) (string, error) {
 			"total": total, "used": 0, "avail": total, "used_fraction": 0,
 		})
 	}
-	return render(rows, p), nil
+	return rows
+}
+
+// ---- pvesm ----
+
+// pvesm status prints a table and takes no --output-format (pvesm.pm in pve-storage).
+var pvesmCommands = map[string]command{"status": {opts: storageOptions}}
+
+func (s *Sim) pvesm(_ context.Context, args []string) (string, error) {
+	cmd, rest, err := subcommand("pvesm", pvesmCommands, args)
+	if err != nil {
+		return "", err
+	}
+	p, err := cmd.parse(rest)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-16s %-8s %-10s %16s %16s %16s %8s\n", "Name", "Type", "Status", "Total", "Used", "Available", "%")
+	for _, row := range s.storages(p) {
+		status := "active"
+		if row["active"] == 0 {
+			status = "disabled"
+		}
+		fmt.Fprintf(&b, "%-16s %-8s %-10s %16d %16v %16d %7.2f%%\n",
+			row["storage"], row["type"], status, row["total"].(int64)>>10, row["used"], row["avail"].(int64)>>10, 0.0)
+	}
+	return b.String(), nil
 }
 
 func hasAnyContent(have, want string) bool {

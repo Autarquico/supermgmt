@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -16,6 +18,7 @@ const (
 	journalDirPrefix = "supermgmt-installer-"
 	journalTmpRoot   = "/var/tmp"
 	journalFile      = "journal.jsonl"
+	stageDirName     = "stage" // the token staging directory inside the journal directory
 )
 
 type journalPhase string
@@ -24,6 +27,9 @@ const (
 	phasePending journalPhase = "pending"
 	phaseDone    journalPhase = "done"
 	phaseUndone  journalPhase = "undone"
+	// phaseAmbiguous marks a creation that failed while the resource turned out to exist: it may
+	// be another party's, so rollback leaves it alone and reports it.
+	phaseAmbiguous journalPhase = "ambiguous"
 )
 
 // Journal resources. Names always carry the install id, except the LXC (its
@@ -55,6 +61,11 @@ type journal struct {
 	dir     string
 	entries []journalEntry // folded: the latest line of each seq, in seq order
 }
+
+// reJournalDir is the only name a journal directory may have.
+var reJournalDir = regexp.MustCompile(`^` + journalDirPrefix + `[0-9a-f]{8}$`)
+
+var knownResources = []string{resJournal, resLXC, resUser, resRole, resACL, resToken, resHostTemp, resBootstrapDir, resTemplate, resCommitted}
 
 func journalDirFor(id string) string { return path.Join(journalTmpRoot, journalDirPrefix+id) }
 
@@ -113,6 +124,9 @@ func openJournal(files Files, dir string) (*journal, error) {
 		j.fold(e)
 		valid.WriteString(line + "\n")
 	}
+	if err := j.validate(); err != nil {
+		return nil, err
+	}
 	if torn {
 		if err := files.WriteFile(j.path(), valid.Bytes(), 0o600, Owner{}); err != nil {
 			return nil, err
@@ -122,6 +136,28 @@ func openJournal(files Files, dir string) (*journal, error) {
 		}
 	}
 	return j, nil
+}
+
+// validate refuses a journal that this installer could not have written: its
+// entries drive deletions, so nothing unexpected is acted upon.
+func (j *journal) validate() error {
+	if len(j.entries) == 0 {
+		return nil // the crash came before the first entry became durable: nothing was created
+	}
+	if j.entries[0].Resource != resJournal || j.entries[0].Name != j.id {
+		return fmt.Errorf("journal %s does not open with its own install id", j.path())
+	}
+	for i, e := range j.entries {
+		switch {
+		case e.Seq != i+1:
+			return fmt.Errorf("journal %s: entry %d is out of sequence", j.path(), e.Seq)
+		case !slices.Contains(knownResources, e.Resource):
+			return fmt.Errorf("journal %s: entry %d names an unknown resource %q", j.path(), e.Seq, e.Resource)
+		case !slices.Contains([]journalPhase{phasePending, phaseDone, phaseUndone, phaseAmbiguous}, e.Phase):
+			return fmt.Errorf("journal %s: entry %d has an unknown phase %q", j.path(), e.Seq, e.Phase)
+		}
+	}
+	return nil
 }
 
 func (j *journal) fold(e journalEntry) {

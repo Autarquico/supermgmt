@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"slices"
 	"strconv"
@@ -81,14 +82,17 @@ func (u undoer) run(ctx context.Context) (rollbackReport, error) {
 }
 
 func (u undoer) undo(ctx context.Context, e journalEntry) (undoResult, error) {
+	if e.Phase == phaseAmbiguous {
+		return kept("it already existed when this install tried to create it, so it may be somebody else's; left untouched"), nil
+	}
 	switch e.Resource {
 	case resLXC:
 		return u.undoGuest(ctx, e)
 	case resUser:
-		return u.undoNamed(e, func() (bool, error) { return u.pve.UserExists(ctx, e.Name) },
+		return u.undoNamed(e, e.Name == userIDFor(u.j.id), func() (bool, error) { return u.pve.UserExists(ctx, e.Name) },
 			func() error { return u.pve.RemoveUser(ctx, e.Name) })
 	case resRole:
-		return u.undoNamed(e, func() (bool, error) { return u.pve.RoleExists(ctx, e.Name) },
+		return u.undoNamed(e, slices.Contains(u.roleNames(), e.Name), func() (bool, error) { return u.pve.RoleExists(ctx, e.Name) },
 			func() error { return u.pve.RemoveRole(ctx, e.Name) })
 	case resToken:
 		return u.undoToken(ctx, e)
@@ -104,12 +108,19 @@ func (u undoer) undo(ctx context.Context, e journalEntry) (undoResult, error) {
 	return kept("unknown resource kind"), nil
 }
 
-// carriesID is the ownership proof for PVE identities: the id is in the name.
-func (u undoer) carriesID(name string) bool { return strings.Contains(name, u.j.id) }
+// The ownership proof for PVE identities is the exact name this install derives from its id:
+// a journal entry naming anything else is never acted on.
+func (u undoer) roleNames() []string { return []string{auditRoleFor(u.j.id), powerRoleFor(u.j.id)} }
 
-func (u undoer) undoNamed(e journalEntry, exists func() (bool, error), remove func() error) (undoResult, error) {
-	if !u.carriesID(e.Name) {
-		return kept("name does not carry install id %s", u.j.id), nil
+func (u undoer) tokenName() string { return userIDFor(u.j.id) + "!" + pveTokenID }
+
+func (u undoer) provenACL(acl ACL) bool {
+	return slices.Contains(u.roleNames(), acl.Role) && (acl.User == userIDFor(u.j.id)) != (acl.Token == u.tokenName())
+}
+
+func (u undoer) undoNamed(e journalEntry, proven bool, exists func() (bool, error), remove func() error) (undoResult, error) {
+	if !proven {
+		return kept("name is not one this install (%s) creates", u.j.id), nil
 	}
 	present, err := exists()
 	if err != nil {
@@ -128,7 +139,7 @@ func (u undoer) undoToken(ctx context.Context, e journalEntry) (undoResult, erro
 	if !ok {
 		return kept("malformed token name"), nil
 	}
-	return u.undoNamed(e, func() (bool, error) { return u.pve.TokenExists(ctx, user, id) },
+	return u.undoNamed(e, e.Name == u.tokenName(), func() (bool, error) { return u.pve.TokenExists(ctx, user, id) },
 		func() error { return u.pve.RemoveToken(ctx, user, id) })
 }
 
@@ -137,15 +148,15 @@ func (u undoer) undoACL(ctx context.Context, e journalEntry) (undoResult, error)
 	if !ok {
 		return kept("malformed ACL name"), nil
 	}
-	return u.undoNamed(e, func() (bool, error) {
+	return u.undoNamed(e, u.provenACL(acl), func() (bool, error) {
 		acls, err := u.pve.ACLs(ctx)
 		return slices.Contains(acls, acl), err
 	}, func() error { return u.pve.RemoveACL(ctx, acl) })
 }
 
 func (u undoer) undoHostTemp(e journalEntry) (undoResult, error) {
-	if !strings.HasPrefix(e.Name, u.j.dir+"/") {
-		return kept("path is outside the journal directory"), nil
+	if e.Name != path.Join(u.j.dir, stageDirName) {
+		return kept("path is not the staging directory of this install"), nil
 	}
 	if err := u.files.RemoveAll(e.Name); err != nil {
 		return undoResult{}, err
@@ -250,7 +261,7 @@ func (p *provision) undoer(j *journal) undoer {
 // together with the outcome. It runs even when the operator interrupted.
 func (p *provision) abort(ctx context.Context, cause error) error {
 	if p.committed {
-		return failWrap(ExitConfiguration, "installed, but cleanup of the install journal did not finish; run the installer again to finish it", cause)
+		return failWrap(ExitConfiguration, "installed (the access information is printed above), but cleanup of the install journal did not finish; run the installer again to finish it", cause)
 	}
 	p.say("install failed: %v\nrolling back what this install created...", cause)
 	rep, err := p.undoer(p.j).run(context.WithoutCancel(ctx))
@@ -314,6 +325,7 @@ func (p *provision) commitInstall() error {
 	if err := p.hit("S16:record"); err != nil {
 		return err
 	}
+	p.printAccess() // shown once, and only the durable record makes it safe to lose the run
 	if err := p.j.commit(); err != nil {
 		return failWrap(ExitConfiguration, "commit the install journal", err)
 	}
@@ -373,7 +385,8 @@ func caCertificatesPEM(chain []byte) ([]byte, error) {
 
 // recoverStale handles journals left by earlier runs, before any new side
 // effect: committed ones are only cleaned up; uncommitted ones are rolled
-// back after confirmation.
+// back after confirmation. /var/tmp is shared, so a journal is acted on only
+// when its name, owner, mode and content are exactly what this installer writes.
 func (p *provision) recoverStale(ctx context.Context) error {
 	names, err := p.host.ListDir(journalTmpRoot)
 	if err != nil {
@@ -383,6 +396,10 @@ func (p *provision) recoverStale(ctx context.Context) error {
 		if !strings.HasPrefix(name, journalDirPrefix) {
 			continue
 		}
+		if !reJournalDir.MatchString(name) {
+			p.say("ignoring %s: not a journal directory of this installer", path.Join(journalTmpRoot, name))
+			continue
+		}
 		if err := p.recoverJournal(ctx, path.Join(journalTmpRoot, name)); err != nil {
 			return err
 		}
@@ -390,46 +407,93 @@ func (p *provision) recoverStale(ctx context.Context) error {
 	return nil
 }
 
+// requirePrivate refuses anything that is not what the installer creates in a
+// shared directory: a real directory or regular file, owned by root, closed to others.
+func (p *provision) requirePrivate(entry string, wantDir bool) error {
+	info, err := p.stat.Lstat(entry)
+	if err != nil {
+		return err
+	}
+	if info.Dir != wantDir || info.Regular == wantDir || info.UID != 0 || info.Mode&0o077 != 0 {
+		return fail(ExitConfiguration, "%s is not a private root-owned %s (owner %d, mode %04o); it may not have been written by this installer: "+
+			"inspect and remove it by hand", entry, map[bool]string{true: "directory", false: "file"}[wantDir], info.UID, info.Mode)
+	}
+	return nil
+}
+
 func (p *provision) recoverJournal(ctx context.Context, dir string) error {
 	f := p.d.Files
-	if !f.Exists(path.Join(dir, journalFile)) {
+	if err := p.requirePrivate(dir, true); err != nil {
+		return err
+	}
+	file := path.Join(dir, journalFile)
+	if err := p.requirePrivate(file, false); errors.Is(err, fs.ErrNotExist) {
 		if err := f.RemoveAll(dir); err != nil { // crashed before the first entry: nothing was created
 			return failWrap(ExitConfiguration, "remove the empty journal "+dir, err)
 		}
 		return nil
+	} else if err != nil {
+		return err
 	}
 	j, err := openJournal(f, dir)
 	if err != nil {
 		return failWrap(ExitConfiguration, "an earlier install left an unreadable journal; recover it by hand", err)
 	}
-	if p.wasCommitted(j) {
+	if len(j.entries) == 0 {
+		return j.remove() // not even the first entry became durable
+	}
+	switch p.commitStateOf(j) {
+	case committed:
 		p.say("finishing cleanup of the completed install %s", j.id)
 		if err := j.remove(); err != nil {
 			return failWrap(ExitConfiguration, "remove the journal "+dir, err)
 		}
 		return nil
+	case commitUnknown:
+		return fail(ExitConfiguration, "an earlier install (%s) left a journal, but its appliance record cannot be read, so whether it completed is unknown; "+
+			"nothing was removed or stopped. Inspect %s and %s", j.id, dir, appliancesDir)
+	case uncommitted:
 	}
 	return p.rollbackStale(ctx, j)
 }
 
-func (p *provision) wasCommitted(j *journal) bool {
+type commitState int
+
+const (
+	uncommitted commitState = iota
+	committed
+	commitUnknown // the evidence is unreadable: never treated as "not committed"
+)
+
+// commitStateOf is three-valued on purpose: a damaged appliance record must
+// not make a working appliance look like an unfinished install.
+func (p *provision) commitStateOf(j *journal) commitState {
 	if j.isCommitted() {
-		return true
+		return committed
 	}
 	lxc, ok := j.first(resLXC)
 	if !ok {
-		return false
+		return uncommitted
 	}
 	vmid, err := strconv.Atoi(lxc.Name)
-	if err != nil {
-		return false
+	if err != nil || validVMID(vmid) != nil {
+		return commitUnknown
 	}
 	raw, err := p.d.Files.ReadFile(recordPath(vmid))
-	if err != nil {
-		return false
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return uncommitted
+	case err != nil:
+		return commitUnknown
 	}
 	var rec applianceRecord
-	return json.Unmarshal(raw, &rec) == nil && rec.InstallID == j.id
+	if json.Unmarshal(raw, &rec) != nil || rec.VMID != vmid || !reInstallID.MatchString(rec.InstallID) {
+		return commitUnknown
+	}
+	if rec.InstallID == j.id {
+		return committed
+	}
+	return uncommitted // the record belongs to another install: the guest proof decides
 }
 
 func (p *provision) rollbackStale(ctx context.Context, j *journal) error {
