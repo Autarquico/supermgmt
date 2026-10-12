@@ -19,8 +19,10 @@ type pveWrap struct {
 	upgradeErr   error
 	uninstallErr error
 	corruptPush  bool
-	upgrades     []execRecord
-	uninstalls   int
+	// loosenStageDir makes the container answer that the staging directory is not root:700.
+	loosenStageDir bool
+	upgrades       []execRecord
+	uninstalls     int
 }
 
 func newPVEWrap(t *testing.T) *pveWrap {
@@ -69,6 +71,8 @@ func (p *pveWrap) Exec(ctx context.Context, vmid int, user string, argv []string
 	case len(argv) > 2 && argv[0] == stagedBinary && argv[1] == "install" && argv[2] == "upgrade":
 		p.upgrades = append(p.upgrades, execRecord{user: user, argv: append([]string{strconv.Itoa(vmid)}, argv...)})
 		return []byte("upgraded inside\n"), p.upgradeErr
+	case p.loosenStageDir && len(argv) == 4 && argv[0] == "/usr/bin/stat" && argv[3] == stageDir:
+		return []byte("supermgmt:777\n"), nil
 	case len(argv) == 3 && argv[0] == "/usr/bin/test" && argv[1] == "-x":
 		if _, ok := p.ct.files[argv[2]]; ok {
 			return nil, nil
@@ -173,11 +177,11 @@ func TestUpgradeAppliance_RefusesWithoutProofOfOwnership(t *testing.T) {
 			if tc.opts != nil {
 				tc.opts(&o)
 			}
-			pushes := p.opIndex("pve.push /tmp/supermgmt-sm")
+			pushes := p.opIndex("pve.push " + stagedBinary)
 			if err := p.run(o, fastHooks(), false); exitCodeOf(t, err) != tc.wantCode {
 				t.Fatalf("err = %v", err)
 			}
-			if len(p.upgrades) != 0 || p.opIndex("pve.push /tmp/supermgmt-sm") != pushes {
+			if len(p.upgrades) != 0 || p.opIndex("pve.push "+stagedBinary) != pushes {
 				t.Error("something was pushed or run although ownership was not proven")
 			}
 		})

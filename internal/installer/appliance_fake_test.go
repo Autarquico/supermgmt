@@ -527,7 +527,7 @@ func (w *aw) Push(_ context.Context, vmid int, src, dst string, owner Owner, mod
 		if g := w.guests[vmid]; g == nil || g.status != "running" {
 			return errors.New("CT is not running")
 		}
-		if dir := path.Dir(dst); dir != "/tmp" && w.ct.dirs[dir] == (ctMeta{}) {
+		if w.ct.dirs[path.Dir(dst)] == (ctMeta{}) {
 			return errors.New("no such directory in the container")
 		}
 		w.ct.files[dst] = append([]byte(nil), data...)
@@ -721,6 +721,12 @@ func (w *aw) execInContainer(user string, argv []string, stdin []byte, sensitive
 		return nil, exitStatus(1)
 	case "/usr/bin/stat":
 		return w.stat(args)
+	case "/usr/bin/mkdir":
+		if _, exists := w.ct.dirs[args[2]]; exists {
+			return nil, exitStatus(1)
+		}
+		w.ct.dirs[args[2]] = ctMeta{owner: "root", mode: strings.TrimLeft(args[1], "0")}
+		return nil, nil
 	case "/usr/bin/id":
 		return []byte("999\n"), nil
 	case "/usr/bin/install":

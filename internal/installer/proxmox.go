@@ -24,7 +24,8 @@ const (
 	appliancesDir       = "/var/lib/supermgmt-installer/appliances"
 	bootstrapDir        = "/run/supermgmt-bootstrap"
 	bootstrapTokenFile  = bootstrapDir + "/pve-token"
-	stagedBinary        = "/tmp/supermgmt-sm"
+	stageDir            = "/var/lib/supermgmt-stage" // root-only and outside /tmp: nobody else can swap what root will run
+	stagedBinary        = stageDir + "/sm"
 	providerName        = "pve"
 	providerSecretName  = "providers/" + providerName + "/token"
 	providerSecretRef   = "secret://" + providerSecretName

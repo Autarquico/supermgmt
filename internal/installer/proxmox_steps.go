@@ -242,17 +242,7 @@ func (p *provision) pushBinary(ctx context.Context) error {
 	if err != nil {
 		return failWrap(ExitConfiguration, "hash the running sm", err)
 	}
-	if err := p.pve.Push(ctx, p.plan.VMID, p.o.Binary, stagedBinary, Owner{User: "root", Group: "root"}, 0o755); err != nil {
-		return failWrap(ExitConfiguration, "push sm into the container", err)
-	}
-	out, err := p.root(ctx, "/usr/bin/sha256sum", stagedBinary)
-	if err != nil {
-		return failWrap(ExitConfiguration, "verify the pushed sm", err)
-	}
-	if got, _, _ := strings.Cut(strings.TrimSpace(string(out)), " "); got != want {
-		return fail(ExitConfiguration, "the pushed sm does not match the running sm (sha256 %s, want %s)", got, want)
-	}
-	return nil
+	return pushStaged(ctx, p.pve, p.plan.VMID, p.o.Binary, want)
 }
 
 // ---- S11, S11b ----
@@ -264,7 +254,7 @@ func (p *provision) installServer(ctx context.Context) error {
 	if err != nil {
 		return failWrap(ExitConfiguration, "install the server inside the container", err)
 	}
-	if _, err := p.root(ctx, "/usr/bin/rm", "-f", stagedBinary); err != nil {
+	if err := unstage(ctx, p.pve, p.plan.VMID); err != nil {
 		return failWrap(ExitConfiguration, "remove the staged binary", err)
 	}
 	pem, err := p.fetchApplianceCA(ctx)

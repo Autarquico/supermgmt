@@ -149,12 +149,10 @@ func (in *Installer) delegateUpgrade(ctx context.Context, o Options, rec applian
 		return failWrap(ExitInvalid, "hash the new sm binary", err)
 	}
 	in.say("upgrading the appliance in container %d (install %s)", rec.VMID, rec.InstallID)
-	if err := in.pushVerified(ctx, rec.VMID, bin, want); err != nil {
+	if err := pushStaged(ctx, d.PVE, rec.VMID, bin, want); err != nil {
 		return err
 	}
-	defer func() {
-		_, _ = d.PVE.Exec(context.WithoutCancel(ctx), rec.VMID, "", []string{"/usr/bin/rm", "-f", stagedBinary}, nil, false)
-	}()
+	defer in.unstageOwned(context.WithoutCancel(ctx), rec)
 	argv := []string{stagedBinary, "install", "upgrade", "--binary", stagedBinary}
 	if o.AllowDowngrade {
 		argv = append(argv, "--allow-downgrade")
@@ -168,8 +166,26 @@ func (in *Installer) delegateUpgrade(ctx context.Context, o Options, rec applian
 	return nil
 }
 
-func (in *Installer) pushVerified(ctx context.Context, vmid int, bin, wantSHA string) error {
-	pve := in.d.PVE
+// pushStaged puts bin in a directory that did not exist a moment ago and that only root can
+// enter, then proves the bytes that arrived: root runs that file next, so nothing but root may be
+// able to replace it between the check and the run. A leftover directory is removed first; the
+// installer lock serializes runs, so a directory that appears between the removal and the
+// creation belongs to somebody else and the creation refuses it.
+func pushStaged(ctx context.Context, pve PVE, vmid int, bin, wantSHA string) error {
+	for _, step := range []struct {
+		what string
+		argv []string
+	}{
+		{"clear an earlier staging directory", []string{"/usr/bin/rm", "-rf", stageDir}},
+		{"create the staging directory", []string{"/usr/bin/mkdir", "-m", "0700", stageDir}},
+	} {
+		if _, err := pve.Exec(ctx, vmid, "", step.argv, nil, false); err != nil {
+			return failWrap(ExitConfiguration, step.what, err)
+		}
+	}
+	if out, err := pve.Exec(ctx, vmid, "", []string{"/usr/bin/stat", "-c", "%U:%a", stageDir}, nil, false); err != nil || strings.TrimSpace(string(out)) != "root:700" {
+		return fail(ExitConfiguration, "%s inside the container is not a private root directory", stageDir)
+	}
 	if err := pve.Push(ctx, vmid, bin, stagedBinary, Owner{User: "root", Group: "root"}, 0o755); err != nil {
 		return failWrap(ExitConfiguration, "push sm into the container", err)
 	}
@@ -181,6 +197,18 @@ func (in *Installer) pushVerified(ctx context.Context, vmid int, bin, wantSHA st
 		return fail(ExitConfiguration, "the pushed sm does not match the new binary (sha256 %s, want %s)", got, wantSHA)
 	}
 	return nil
+}
+
+func unstage(ctx context.Context, pve PVE, vmid int) error {
+	_, err := pve.Exec(ctx, vmid, "", []string{"/usr/bin/rm", "-rf", stageDir}, nil, false)
+	return err
+}
+
+// unstageOwned removes the staging directory, unless the VMID no longer belongs to rec.
+func (in *Installer) unstageOwned(ctx context.Context, rec applianceRecord) {
+	if st, owned, err := in.guestOwnership(ctx, rec); err == nil && st.Exists && owned {
+		_ = unstage(ctx, in.d.PVE, rec.VMID)
+	}
 }
 
 // delegatedFailure keeps the exit code the upgrade inside the container ended with.
