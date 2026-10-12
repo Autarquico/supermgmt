@@ -21,8 +21,9 @@ import (
 var errClaimRejected = errors.New("claim rejected")
 
 type rejection struct {
-	job Job
-	err *smerr.Error
+	job  Job
+	err  *smerr.Error
+	mode ClaimMode
 }
 
 type claimOutcome struct {
@@ -113,18 +114,18 @@ func (s *Store) deferBlocked(ctx context.Context, q database.Querier, ids []doma
 // tryClaim reports blocked=true when locks held by other jobs conflict, so the
 // next candidate should be tried.
 func (s *Store) tryClaim(ctx context.Context, tx *database.Tx, job Job, owner string) (claimed *Claimed, rej *rejection, blocked bool, err error) {
-	if err := s.revalidator.Revalidate(ctx, tx, job); err != nil {
-		rej, err := asRejection(job, err)
+	mode, rej, err := s.revalidateForClaim(ctx, tx, job)
+	if err != nil || rej != nil {
 		return nil, rej, false, err
 	}
 	specs, err := s.planner.PlanLocks(ctx, tx, job)
 	if err != nil {
-		rej, err := asRejection(job, err)
+		_, rej, err := rejectClaim(job, mode, err)
 		return nil, rej, false, err
 	}
 	locks, lockErr := newLockSet(specs)
 	if lockErr != nil {
-		return nil, &rejection{job: job, err: lockErr}, false, nil
+		return nil, &rejection{job: job, err: lockErr, mode: mode}, false, nil
 	}
 	free, err := locks.free(ctx, tx, job.ID)
 	if err != nil || !free {
@@ -145,12 +146,71 @@ func (s *Store) tryClaim(ctx context.Context, tx *database.Tx, job Job, owner st
 			{"error_json = NULL", nil},
 			{"started_at = ?", []any{domain.UnixMillis(now)}},
 		},
-		data: map[string]any{"owner": owner, "locks": locks.len()},
+		data: claimData(owner, locks, mode),
+		mode: mode,
 	})
 	if err != nil {
 		return nil, nil, false, err
 	}
 	return &Claimed{Job: running, Lease: s.leaseOf(running)}, nil, false, nil
+}
+
+func claimData(owner string, locks lockSet, mode ClaimMode) map[string]any {
+	data := map[string]any{"owner": owner, "locks": locks.len()}
+	if mode == ClaimRecovery {
+		data["mode"] = "safety_recovery"
+	}
+	return data
+}
+
+// revalidateForClaim decides the claim mode and revalidates accordingly. A job
+// whose type has no policy is always forward. Under a policy, a recovery
+// record replaces the requester Revalidator with RevalidateRecovery; a forward
+// rejection (never an infrastructure error) may be escalated to recovery
+// inside this transaction, and the claim then proceeds as recovery.
+func (s *Store) revalidateForClaim(ctx context.Context, tx *database.Tx, job Job) (ClaimMode, *rejection, error) {
+	policy := s.policies[job.Type]
+	if policy == nil {
+		return rejectClaim(job, ClaimForward, s.revalidator.Revalidate(ctx, tx, job))
+	}
+	mode, err := policy.ClaimMode(ctx, tx, job)
+	if err != nil {
+		return rejectClaim(job, ClaimForward, err)
+	}
+	if mode == ClaimForward {
+		cause := s.revalidator.Revalidate(ctx, tx, job)
+		if cause == nil {
+			return ClaimForward, nil, nil
+		}
+		rejected, err := asRejection(job, cause)
+		if err != nil {
+			return ClaimForward, nil, err
+		}
+		escalated, err := policy.EscalateToRecovery(ctx, tx, job, cause)
+		if err != nil {
+			return rejectClaim(job, ClaimForward, err)
+		}
+		if !escalated {
+			return ClaimForward, rejected, nil
+		}
+	}
+	return rejectClaim(job, ClaimRecovery, policy.RevalidateRecovery(ctx, tx, job))
+}
+
+// rejectClaim turns err, when not nil, into a rejection. Recovery never waits
+// for approval, so an approval requirement under recovery is an internal error.
+func rejectClaim(job Job, mode ClaimMode, err error) (ClaimMode, *rejection, error) {
+	if err == nil {
+		return mode, nil, nil
+	}
+	rej, err := asRejection(job, err)
+	if rej != nil {
+		rej.mode = mode
+		if mode == ClaimRecovery && rej.err.Code == smerr.CodeApprovalRequired {
+			rej.err = smerr.New(smerr.CodeInternal, "", "safety recovery cannot require approval")
+		}
+	}
+	return mode, rej, err
 }
 
 // asRejection classifies an error from the Revalidator or LockPlanner. A typed
@@ -181,7 +241,7 @@ func isInfrastructure(err error) bool {
 // or queued -> awaiting_approval when only the approval quorum lapsed.
 func (s *Store) applyRejection(ctx context.Context, r rejection) error {
 	failure := FailureOf(r.err)
-	m := move{id: r.job.ID, from: domain.JobQueued, to: domain.JobFailed, actor: systemActor, failure: &failure}
+	m := move{id: r.job.ID, from: domain.JobQueued, to: domain.JobFailed, actor: systemActor, failure: &failure, mode: r.mode}
 	if r.err.Code == smerr.CodeApprovalRequired {
 		m.to, m.failure = domain.JobAwaitingApproval, nil
 		m.data = map[string]any{"reason": string(r.err.Reason)}

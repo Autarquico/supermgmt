@@ -325,7 +325,7 @@ func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intent
 		if !in.Dispatched() {
 			continue
 		}
-		if stored := storedEvidence(in); stored.definite() {
+		if stored := storedEvidence(in); s.admits(job.Type, stored) {
 			confirmed[in.ID] = stored
 			continue
 		}
@@ -333,12 +333,23 @@ func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intent
 			continue
 		}
 		ev, err := src.Collect(ctx, in)
-		if err != nil || !s.confirm(sampleKey{job.ID, in.ID, job.LeaseGeneration}, ev, now) {
+		if err != nil || !s.confirm(sampleKey{job.ID, in.ID, job.LeaseGeneration}, ev, s.admits(job.Type, ev), now) {
 			continue
 		}
 		confirmed[in.ID] = ev
 	}
 	return confirmed
+}
+
+// admits reports whether ev may be acted on. Proof is fixed: without a policy
+// only definite evidence is admitted; with one, any proven evidence the policy
+// admits. A policy can never admit unproven evidence.
+func (s *Store) admits(jobType string, ev Evidence) bool {
+	policy := s.policies[jobType]
+	if policy == nil {
+		return ev.definite()
+	}
+	return ev.Proven() && policy.Admit(ev)
 }
 
 // sampleKey scopes a first sample to one interruption of one intent, so a
@@ -352,14 +363,14 @@ type sampleKey struct {
 // confirm records ev as a sample and reports whether it completes a pair: the
 // same classification and the same canonical fingerprint as the first sample,
 // at least sampleGap later. A different fingerprint (say, a new InvocationID)
-// restarts the pair from this sample. Anything that is not definite, or whose
+// restarts the pair from this sample. Anything not admitted, or whose
 // fingerprint is absent or not valid JSON, resets it: two samples that observed
 // nothing specific must never confirm each other.
-func (s *Store) confirm(key sampleKey, ev Evidence, now time.Time) bool {
+func (s *Store) confirm(key sampleKey, ev Evidence, admitted bool, now time.Time) bool {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	fingerprint, err := canonicalJSON(ev.Fingerprint)
-	if !ev.definite() || err != nil || fingerprint == "" {
+	if !admitted || err != nil || fingerprint == "" {
 		delete(s.samples, key)
 		return false
 	}
@@ -434,9 +445,10 @@ func (s *Store) alreadyReported(job domain.ID, reason string) bool {
 }
 
 type verdict struct {
-	action  ReconcileAction
-	reason  string
-	failure *Failure
+	action   ReconcileAction
+	reason   string
+	failure  *Failure
+	recovery bool // a requeue into safety recovery
 }
 
 func held(reason string) verdict { return verdict{action: ReconcileHeld, reason: reason} }
@@ -496,8 +508,49 @@ func decideNonRetryable(intents []Intent, observed map[domain.ID]Evidence) verdi
 	return verdict{action: ReconcileSucceeded, reason: "every dispatched operation completed"}
 }
 
+// decideFor applies the fixed table, or the job type's policy once every
+// dispatched intent has confirmed, admitted proof.
+func (s *Store) decideFor(ctx context.Context, tx *database.Tx, job Job, intents []Intent, observed map[domain.ID]Evidence) (verdict, error) {
+	policy := s.policies[job.Type]
+	if policy == nil {
+		return decide(job, intents, observed), nil
+	}
+	for _, in := range intents {
+		if ev, ok := observed[in.ID]; in.Dispatched() && (!ok || !ev.Proven()) {
+			return held("no confirmed completion proof for intent " + in.ID.String()), nil
+		}
+	}
+	decided, err := policy.Reconcile(ctx, tx, job, intents, observed)
+	if err != nil {
+		return verdict{}, fmt.Errorf("type policy %s: %w", job.Type, err)
+	}
+	return fromPolicy(decided)
+}
+
+func fromPolicy(v Verdict) (verdict, error) {
+	switch v.Action {
+	case VerdictHeld:
+		return held(v.Reason), nil
+	case VerdictRequeued:
+		return verdict{action: ReconcileRequeued, reason: v.Reason}, nil
+	case VerdictRequeuedRecovery:
+		return verdict{action: ReconcileRequeued, reason: v.Reason, recovery: true}, nil
+	case VerdictSucceeded:
+		return verdict{action: ReconcileSucceeded, reason: v.Reason}, nil
+	case VerdictFailed:
+		if v.Failure == nil {
+			return failed(v.Reason), nil
+		}
+		return verdict{action: ReconcileFailed, reason: v.Reason, failure: v.Failure}, nil
+	}
+	return verdict{}, fmt.Errorf("unknown verdict action %q", v.Action)
+}
+
 func (s *Store) applyVerdict(ctx context.Context, tx *database.Tx, job Job, intents []Intent, observed map[domain.ID]Evidence) (*Resolution, string, error) {
-	v := decide(job, intents, observed)
+	v, err := s.decideFor(ctx, tx, job, intents, observed)
+	if err != nil {
+		return nil, "", err
+	}
 	res := &Resolution{JobID: job.ID, Action: v.action}
 	if v.action == ReconcileHeld {
 		if s.alreadyReported(job.ID, v.reason) {
@@ -510,6 +563,9 @@ func (s *Store) applyVerdict(ctx context.Context, tx *database.Tx, job Job, inte
 	if err := s.completeProven(ctx, tx, job, intents, observed); err != nil {
 		return nil, "", err
 	}
+	if v.recovery {
+		return res, v.reason, s.requeueRecovery(ctx, tx, job, v.reason)
+	}
 	if v.action == ReconcileRequeued {
 		return res, v.reason, s.requeueNow(ctx, tx, job, domain.JobInterrupted, v.reason)
 	}
@@ -517,11 +573,22 @@ func (s *Store) applyVerdict(ctx context.Context, tx *database.Tx, job Job, inte
 	if v.action == ReconcileFailed {
 		to = domain.JobFailed
 	}
-	_, err := s.move(ctx, tx, move{
+	_, err = s.move(ctx, tx, move{
 		id: job.ID, from: domain.JobInterrupted, to: to, actor: systemActor, failure: v.failure,
 		data: map[string]any{"reason": v.reason},
 	})
 	return res, v.reason, err
+}
+
+// requeueRecovery is requeueNow for a job whose policy chose safety recovery.
+func (s *Store) requeueRecovery(ctx context.Context, q database.Querier, job Job, reason string) error {
+	_, err := s.move(ctx, q, move{
+		id: job.ID, from: domain.JobInterrupted, to: domain.JobQueued, actor: systemActor,
+		assign: []assignment{{"scheduled_at = ?", []any{domain.UnixMillis(s.clock.Now())}}},
+		data:   map[string]any{"reason": reason, "mode": "safety_recovery"},
+		mode:   ClaimRecovery,
+	})
+	return err
 }
 
 // completeProven closes dispatched intents the evidence settled: complete
@@ -539,13 +606,23 @@ func (s *Store) completeProven(ctx context.Context, q database.Querier, job Job,
 		if err != nil {
 			return fmt.Errorf("encode evidence: %w", err)
 		}
-		outcome := OutcomeSucceeded
-		if ev.Classification == ClassNotStarted {
-			outcome = OutcomeNotStarted
-		}
+		outcome := outcomeOfEvidence(ev)
 		if err := s.completeIntent(ctx, q, job.ID, in.ID, outcome, raw); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// outcomeOfEvidence is the outcome recorded for a proven intent. Only a policy
+// can admit partial_stable, which took effect without completing.
+func outcomeOfEvidence(ev Evidence) string {
+	switch ev.Classification {
+	case ClassNotStarted:
+		return OutcomeNotStarted
+	case ClassPartialStable:
+		return OutcomeFailed
+	case ClassComplete, ClassUnknown:
+	}
+	return OutcomeSucceeded
 }
