@@ -240,14 +240,13 @@ func parseDocker(lines []string) Docker {
 
 func parseTools(lines []string) Tools {
 	var t Tools
+	flags := map[string]*bool{
+		"lazydocker": &t.Lazydocker, "btop": &t.Btop, "tmux": &t.Tmux,
+		"curl": &t.Curl, "bash": &t.Bash, "timeout": &t.Timeout, "flock": &t.Flock, "jq": &t.Jq,
+	}
 	for _, name := range nonEmptyLines(lines) {
-		switch name {
-		case "lazydocker":
-			t.Lazydocker = true
-		case "btop":
-			t.Btop = true
-		case "tmux":
-			t.Tmux = true
+		if flag, ok := flags[name]; ok {
+			*flag = true
 		}
 	}
 	return t

@@ -52,8 +52,41 @@ func Capabilities(s Snapshot, local bool) []database.NodeCapability {
 		capability("tool.lazydocker", s.Tools.Lazydocker, nil),
 		capability("tool.btop", s.Tools.Btop, nil),
 		capability("tool.tmux", s.Tools.Tmux, nil),
+		capability("health.http", s.Tools.Curl, nil),
+		capability("health.tcp", s.Tools.Bash && s.Tools.Timeout, nil),
 	}
-	return append(caps, mutatingCapabilities(s, local, at)...)
+	caps = append(caps, mutatingCapabilities(s, local, at)...)
+	return append(caps, composeDeployCapability(s, local, at))
+}
+
+// composeDeployCapability reports docker.compose.deploy (ADR-0030): node.setup
+// v2, container access, the supported Compose CLI, and flock and jq. When
+// unavailable, metadata "reason" names the first unmet requirement.
+func composeDeployCapability(s Snapshot, local bool, at time.Time) database.NodeCapability {
+	reason := composeDeployBlocker(s, local)
+	meta := map[string]any{}
+	if reason != "" {
+		meta["reason"] = reason
+	}
+	return database.NodeCapability{Capability: "docker.compose.deploy", Available: reason == "", Metadata: meta, CheckedAt: at}
+}
+
+func composeDeployBlocker(s Snapshot, local bool) string {
+	switch {
+	case local:
+		return "ssh node required"
+	case s.Setup == nil || s.Setup.SetupVersion < 2:
+		return "node.setup version 2 required"
+	case !s.Setup.DockerAccess || !s.Docker.Reachable():
+		return "docker access required"
+	case !runtimes.ComposeSupported(s.Docker.ComposeVersion):
+		return "unsupported compose version " + s.Docker.ComposeVersion
+	case !s.Tools.Flock:
+		return "flock missing"
+	case !s.Tools.Jq:
+		return "jq missing"
+	}
+	return ""
 }
 
 func logsMode(s Snapshot) runtimes.LogsMode {
