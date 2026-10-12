@@ -55,9 +55,19 @@ Environment: `SUPERMGMT_VERSION`, `SUPERMGMT_CHANNEL`, `SUPERMGMT_MODE`, `SUPERM
 
 `install.sh` and `scripts/join.sh` refuse an `ssh-keygen` that cannot pass the self-test and tell you "OpenSSH 8.2 or newer is required" (`install.sh` line 79). SPEC §3.2 and ADR-0019 require 8.2 as well: the self-test signs with a `valid-after` option in `allowed_signers`, which older releases reject.
 
-### The default mode does not work yet
+### The default mode is `auto`
 
-`install.sh` defaults to mode `auto` (SPEC §3.4). In M2, `sm install auto`, `proxmox-lxc`, `upgrade` and `uninstall` all exit 3 with "arrives in milestone M3" (`internal/cli/install.go` lines 16 and 40). Always name the mode: `local`, `server`, `client` or `restore`.
+`install.sh` and `sm install` with no mode run `auto` (SPEC §3.4, `internal/installer/auto.go`):
+
+| Host | Result |
+|---|---|
+| Proxmox VE host (`pveversion` found) | `proxmox-lxc` |
+| macOS, or Linux with `XDG_CURRENT_DESKTOP`, `WAYLAND_DISPLAY` or `DISPLAY` set | `local` |
+| Any other Linux, with a terminal | asks whether to install the server on this host; a yes runs `server` |
+| Any other Linux, no terminal | exit 2: set `SUPERMGMT_MODE` |
+| Any other OS | exit 3 |
+
+Covered by `TestAutoMode` (`internal/installer`). A mode named explicitly (or `SUPERMGMT_MODE`) is never second-guessed.
 
 ## Modes
 
@@ -69,16 +79,21 @@ Run as `install.sh <mode> [flags]` or, with the binary, `sm install <mode> [flag
 | `server` | System user `supermgmt`, `/etc/supermgmt` (0750, root:supermgmt), `/var/lib/supermgmt` (0750), `secrets/keys` (0700), a backups directory, binary in `/usr/local/bin/sm`, the systemd unit of SPEC Appendix A, a generated config, then starts the unit, waits for `/health/ready` and prints a one-time bootstrap code. | Linux with systemd, run as root. |
 | `client` | Binary only, plus an empty profile file (mode 0600) in the config directory. | Linux or macOS. |
 | `restore` | Installs like `server` without starting it, imports a master key export, restores an archive offline, then starts the service in restore hold. Does not print a bootstrap code. | As `server`, plus `--archive` and `--key-export`. |
+| `auto` | Picks one of the above from the host, see [above](#the-default-mode-is-auto). | |
+| `proxmox-lxc` | Creates a dedicated unprivileged LXC on a Proxmox VE host and installs the server in it, see [Proxmox appliance](#proxmox-appliance-proxmox-lxc). | Proxmox VE 9.x, amd64, root. |
+| `upgrade` | Replaces the installed `sm` with the one that is running, with a read-only backup first, see [Upgrade](#upgrade). | An existing install. |
+| `uninstall` | Removes the software; keeps configuration and data unless separately confirmed, see [Uninstall](#uninstall). | An existing install. |
 
 Server and restore flags:
 
 | Flag | Meaning |
 |---|---|
 | `--public-url URL` | Required non-interactively. Must be `https`. The prompt asks for it otherwise. |
-| `--tls proxy` (default) or `--tls direct` | Who terminates TLS, see below. |
+| `--tls proxy` (default), `--tls direct` or `--tls self-signed` | Who terminates TLS, see below. |
 | `--tls-cert FILE`, `--tls-key FILE` | With `--tls direct` only. |
 | `--trusted-proxy IP/CIDR` (repeatable) | With `--tls proxy` only. Default `127.0.0.1/32`. |
-| `--listen ADDR` | Default `127.0.0.1:8787` for proxy, `0.0.0.0:8443` for direct. |
+| `--listen ADDR` | Default `127.0.0.1:8787` for proxy, `0.0.0.0:8443` for direct and self-signed. |
+| `--no-start` | Server only: write and load the unit without enabling or starting it. The appliance installer uses it; the unit is enabled later, after the credential is in place. |
 | `--name NAME` | Instance name, default `supermgmt`. |
 
 Restore adds `--archive FILE` and `--key-export FILE` (the unlock phrase is read from stdin or the terminal, never a flag).
@@ -89,10 +104,12 @@ The config the installer writes holds only `instance` and `server`. OIDC and eve
 
 ### TLS: proxy or direct
 
-There is **no ACME and no certificate generation**. You bring the certificate, or a reverse proxy that has one.
+There is **no ACME**. You bring the certificate, or a reverse proxy that has one, or (since M3) ask for a self-signed one.
 
 - `--tls proxy` (default): the daemon speaks plain HTTP on a loopback or Unix address and a reverse proxy in front terminates TLS. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from a peer inside `trusted_proxies`; a forwarded proto other than `https` is rejected with 400; a connection from loopback gets no special trust. A non-loopback plain-HTTP listener is refused. Keep the default `127.0.0.1/32` only when the proxy runs on the same host.
 - `--tls direct`: the daemon terminates TLS 1.2 or newer with the pair you give it. The installer checks that the pair matches, has not expired and covers the host of `--public-url`. The pair is re-read on `SIGHUP` (a failed reload keeps the old pair).
+
+- `--tls self-signed` (M3): direct TLS with a certificate authority generated on the host (`internal/installer/selfsigned.go`): a CA valid 10 years and a server certificate valid 5 years, valid for the host of `--public-url` (a DNS name or an IP) plus the loopback names, so `--public-url` must be the address clients really use. The CA certificate and its SHA-256 fingerprint are printed; copy the CA to each client and run `sm profile add <name> --url <public URL> --ca-file <ca.pem> --use`. There is no renewal flow: after the leaf expires you reinstall or supply your own pair with `--tls direct`. The proxmox-lxc mode uses this arrangement.
 
 Cloudflare Access/Tunnel is a proxy arrangement: see [cloudflare.md](cloudflare.md).
 
@@ -108,6 +125,149 @@ sm login --bootstrap          # reads the code from the terminal or stdin
 On a server **without OIDC**, `sm login --bootstrap --display-name <name>` creates the first admin; on a terminal the name is prompted for, defaulting to `$USER`.
 
 With OIDC configured, the code is exchanged *after* a normal `sm login` by the identity that is to become admin. OIDC needs its client secret in the secret store first: store it with `sm secrets import --offline` while the service is stopped. See [operations.md](operations.md#enabling-oidc-on-a-fresh-server).
+
+## Proxmox appliance (`proxmox-lxc`)
+
+> **Verification status.** Read against the code and exercised against **fakes**: a fake Proxmox API and fake `pct`/`pveam`/`pvesh`/`pveum` commands that reject unknown flags and endpoints (ADR-0023, [compatibility.md](compatibility.md)). The end-to-end run in a simulated Proxmox host is covered by `TestM3_Appliance*` (CI job `e2e-appliance`). **No run on a real Proxmox VE host has happened.** The real-host checklist is [manual-checks/m3-real-pve.md](manual-checks/m3-real-pve.md); until it passes, "Proxmox auto-LXC install works" (SPEC Appendix E) stays unchecked. Everything on this page about Proxmox behaviour is not verified on real PVE.
+
+Run on the Proxmox host, as root:
+
+```bash
+sudo ./sm install proxmox-lxc           # or: install.sh proxmox-lxc, or install.sh with no mode on a Proxmox host
+```
+
+Refused otherwise (`internal/installer/proxmox.go`): `pveversion` present and reporting **9.x** (8.x and anything else exit 3; PVE 8 reached end of life in 2026-08 per the Proxmox FAQ, see [compatibility.md](compatibility.md)), linux/amd64 (exit 3), root (exit 4), no other installer running (a lock, exit 4).
+
+### Configuration
+
+`sm install proxmox-lxc` has only `--non-interactive` and `--yes`; everything else is an environment variable. Unset means "choose": the installer detects, asks on a terminal, or fails with exit 2 when the choice is ambiguous and there is no terminal.
+
+| Variable | Default / meaning |
+|---|---|
+| `SUPERMGMT_VMID` | First free VMID from 900. A VMID in use is refused and left untouched. |
+| `SUPERMGMT_HOSTNAME` | `supermgmt` |
+| `SUPERMGMT_STORAGE` | Container root storage; must be active and hold `rootdir` content. Asked, or exit 2, when several qualify. |
+| `SUPERMGMT_TEMPLATE_STORAGE` | Where the template lives (`vztmpl` content). Same rule. |
+| `SUPERMGMT_BRIDGE` | `vmbr0` when it exists, otherwise the only bridge, otherwise asked or exit 2. |
+| `SUPERMGMT_NETWORK` | `dhcp` (default) or `static`; static needs `SUPERMGMT_IP` (CIDR) and `SUPERMGMT_GATEWAY`, optionally `SUPERMGMT_DNS` (comma-separated). |
+| `SUPERMGMT_CORES`, `SUPERMGMT_MEMORY`, `SUPERMGMT_SWAP`, `SUPERMGMT_DISK_GIB` | 2 cores, 2048 MiB, 512 MiB swap, 16 GiB |
+| `SUPERMGMT_PVE_POWER` | `0` omits the power role (read-only access). Anything else grants power on/off as well. |
+| `SUPERMGMT_PVE_ENDPOINT` | `https://<host address on the bridge>:8006`. Must be `https://host[:port]`. |
+| `SUPERMGMT_PVE_CA_FILE` | `/etc/pve/pve-root-ca.pem` |
+
+Storage and bridge names are checked against what the host reports, and every value is validated before use (`TestPVE_ArgvValidation`). Proxmox tools run by absolute path with a clean environment, never through a shell.
+
+### The plan
+
+Before any change the installer prints what it decided (PVE version, VMID, hostname, template and whether it will be downloaded, storage, bridge, network, size, the API endpoint and the CA it is verified against, and whether access is read-only or read plus power) and what it will not do: open router ports, install Docker on the host, mount host paths into the container, create a privileged container, delete the template cache or any pre-existing resource. On a terminal it asks to proceed; `--yes` or `SUPERMGMT_YES=1` skips the question, and so does running without a terminal.
+
+### What it does, in order
+
+The order is the failure matrix (`internal/installer/proxmox_steps.go`, ADR-0026).
+
+1. Fix an `install_id` (8 hex digits) and create a write-ahead journal `/var/tmp/supermgmt-installer-<id>/journal.jsonl` (directory 0700, file 0600) before any side effect.
+2. Download the Debian 13 `standard` template with `pveam` if none is on the template storage (highest version wins). **A downloaded template is never rolled back or deleted** (shared cache); it is reported.
+3. `pct create`: unprivileged, `nesting=0,keyctl=0`, no mount points, no raw `lxc.*` keys, start on boot, tag `supermgmt`, description `supermgmt install <id>`. The configuration is read back; any mismatch rolls back.
+4. Start it and wait up to 120 s for an IPv4 address.
+5. Push the **running** `sm` into the container and compare its SHA-256 with the host's copy.
+6. Inside, as root: `sm install server --no-start --tls self-signed --public-url https://<container address>:8443`. The unit is written but **not enabled**.
+7. As the `supermgmt` user: `sm server init`. Every later in-container `sm` command runs as that user, so the database and keys belong to it.
+8. Verify `/run` is tmpfs and the account exists; create `/run/supermgmt-bootstrap` (0700, owned by `supermgmt`).
+9. Put the Proxmox CA in the container and verify, **from inside it**, the certificate chain the endpoint actually serves (`sm providers check --offline --tls-only`). A failure here happens before any token exists and exits 8; the message asks whether port 8006 on the host is reachable from the container.
+10. Create the per-install Proxmox identities (below), then the API token.
+11. Hand the token over: a 0600 file in a 0700 directory on the host, `pct push` to `/run/supermgmt-bootstrap`, owner and mode readback (with a `chown`/`chmod` fallback), delete the host copy, then `sm secrets import --offline --from-file ... --delete-source` as `supermgmt`. The token is never an argument, an environment variable or a log line, and the commands that carry it run in a mode that captures their output (`TestProxmoxLXC_TokenNeverInArgvEnvOutputLogsJournal`).
+12. Append the Proxmox provider (`verify_tls: true`, `ca_file`, `credential_ref: secret://providers/pve/token`, `sync_interval: 30s`) to the container's configuration and run `sm providers check --offline pve`.
+13. `systemctl enable --now supermgmt`, wait up to 120 s for `/health/ready` over the appliance's own CA, then up to 120 s for the admin doctor `providers` check to report `ok` (the first discovery).
+14. Obtain a bootstrap code and **commit**: write `/var/lib/supermgmt-installer/appliances/<vmid>.json`, append `committed` to the journal, remove the journal. Print the address, the CA certificate and fingerprint, and the bootstrap code.
+
+### Per-install identities
+
+Every Proxmox resource carries the install id, so a name collision means "not ours": the installer fails and never adopts it (ADR-0023). Created on the Proxmox side:
+
+| Resource | Name | Privileges and path |
+|---|---|---|
+| User (realm `pve`, no password) | `sm-<id>@pve` | |
+| API token, privilege separation on | `sm-<id>@pve!sm` | |
+| Read role | `SMAudit-<id>` | `VM.Audit, Sys.Audit, Datastore.Audit, Pool.Audit` on `/` |
+| Power role (unless `SUPERMGMT_PVE_POWER=0`) | `SMPower-<id>` | `VM.Audit, VM.PowerMgmt` on `/vms` |
+
+Both roles are granted to the user **and** to the token (with privilege separation the token's rights are the intersection). `SMPower-<id>` repeats `VM.Audit` because Proxmox replaces a role inherited from `/` by the one granted on a deeper path; without it guests would vanish from the inventory. That rule is modelled in the fake and is not verified on real PVE. Nothing for snapshots, backups, console or deletion is granted.
+
+### Using the new server
+
+Save the printed CA certificate to a file on your workstation and run:
+
+```bash
+sm profile add supermgmt --url https://<container address>:8443 --ca-file supermgmt-ca.pem --use
+sm login --bootstrap
+```
+
+The certificate is valid for the address the container had at install time. With DHCP, reserve that lease, or the certificate no longer matches after the address changes (there is no renewal flow, see [TLS](#tls-proxy-or-direct)). Then back up the instance ([operations.md](operations.md#backups)) and keep the key export somewhere safe. Discovery and power actions: [providers.md](providers.md#proxmox).
+
+### Failure, rollback and recovery
+
+If a step fails, the installer rolls back **only what the journal says this run created**, newest first, reading each resource back before removing it: a Proxmox resource is removed only when its name carries the install id, the container only when its description carries it. Anything else is kept and reported.
+
+- Fully rolled back: exit with the code of the original failure and "everything this install created was rolled back".
+- Something could not be undone: exit 7 with the list of kept resources and the journal path.
+- A Proxmox task still holds the container (for example a slow create) after the bounded wait: exit 6, journal kept, "pending recovery".
+- Interrupted (power loss, kill): the next `sm install proxmox-lxc` looks at the journals first. One that was committed (or whose appliance record exists) is only cleaned up; an uncommitted one is rolled back after you confirm. Without a terminal it refuses with exit 7 and names the journal directory, so you can remove the listed resources by hand.
+
+Covered by `TestProxmoxLXC_FailureAtEveryStepUndoesOnlyCreated`, `TestProxmoxLXC_CrashAtEveryJournalBoundary`, `TestProxmoxLXC_CommitBoundaries` and `TestProxmoxLXC_RollbackStillPendingKeepsTheJournalAndExits6` (the crash tests need the `crashpoints` build tag); the end-to-end rollback is `TestM3_Appliance*` (CI job `e2e-appliance`). Not verified on real PVE.
+
+## Upgrade
+
+```bash
+sudo ./sm install upgrade                     # replace the installed sm with this one
+sudo ./sm install upgrade --binary /path/sm   # replace it with another binary
+install.sh upgrade                            # download, verify and install the release
+sudo ./sm install upgrade --allow-downgrade   # deliberately install an older version
+```
+
+`install.sh upgrade` verifies the release exactly like a fresh install and then runs the new `sm install upgrade`, so the binary doing the upgrade is the one being installed. The policy (SPEC §29.3, [ADR-0027](adr/0027-upgrade-and-uninstall.md), `internal/installer/upgrade.go`):
+
+1. Refuse a lower version (exit 2) unless `--allow-downgrade`; a version that cannot be ordered is treated the same way. An unchanged binary ends with "nothing to upgrade".
+2. Check free disk for the staged binary and the backup (exit 4).
+3. Stage `sm.new`, hard-link the live binary as `sm.prev`, and record the phase in `/var/lib/supermgmt/upgrade.json`.
+4. Stop the service and **verify it terminated and the database lock is free**.
+5. Take a **read-only offline backup with the new binary** (`sm backup create --offline`): it opens the database read-only, never migrates and never activates, and the archive's schema version must equal the database's. The archive goes to the configured backups directory.
+6. Replace `sm` by rename (the live path is never missing), start the service and wait up to 60 s for `/health/ready`. The new daemon migrates the database forward.
+
+Each phase (`prepared`, `stopped`, `backed_up`, `swapped`, `started`, `done`) is recorded durably. A rerun after a crash resumes from the recorded phase, or abandons an upgrade whose binary is no longer the one at hand, and never overwrites the known-good binary. `sm.prev` stays after a successful upgrade.
+
+| Where it fails | Result |
+|---|---|
+| After the service stopped but before the swap (the backup fails) | The old service is started again, the state is cleared, exit 9. A refused version, too little disk or a new binary that will not run are caught earlier, before anything stops (exit 2 or 4). |
+| After the swap, schema unchanged | The previous binary is put back and started, exit 9. |
+| After the swap, schema advanced (the migration ran) | The service is left **stopped**, the restore commands are printed, exit 9. Nothing is restored automatically. |
+
+`--allow-downgrade` is recorded in `upgrade.json`; an audit event for it is not written yet. What to do after the third outcome: [operations.md](operations.md#upgrade-and-recovery).
+
+On a Proxmox host with an appliance record, `sm install upgrade` upgrades **the appliance**. It requires both the record (`/var/lib/supermgmt-installer/appliances/<vmid>.json`) and the container's own marks (description with the install id and the `supermgmt` tag), refuses a container without them, pushes the binary, checks its SHA-256 and runs `sm install upgrade` inside, forwarding `--allow-downgrade` and keeping the inner exit code. With several appliances `--vmid` is required. A Proxmox host with no record upgrades its own `sm` like any host.
+
+Covered by `TestUpgrade_*` and `TestUpgradeAppliance_*` (`internal/installer`) and `TestM3_Upgrade*` (CI job `e2e-upgrade`, which upgrades from the M2 build at commit e6d5577 and kills the run at each phase). Real-host runs: not verified.
+
+## Uninstall
+
+```bash
+sudo ./sm install uninstall                   # remove the software, keep configuration, data and backups
+sudo ./sm install uninstall --purge-data      # also delete them, after a typed confirmation
+```
+
+Uninstall (SPEC §29.4) stops the service, verifies it terminated, disables it, removes the unit, `sm` and the `sm.prev`/`sm.new` leftovers, and **keeps configuration, data and backups**. Deleting them is a separate decision:
+
+- On a terminal, `--purge-data` asks you to type `delete my data`.
+- Without a terminal, deleting needs `--purge-data` **and** `SUPERMGMT_YES=1` (the code also accepts `--yes` for the second); `--yes` without `--purge-data` deletes nothing.
+- System directories (`/`, `/etc`, `/var`, `/usr`, ...) and the home directory are refused whatever the configuration says. The service account `supermgmt` is left in place.
+- A server install deletes the data and configuration directories; a local install deletes the data directory and `config.yaml` but keeps client profiles.
+- `--purge-data` also works after an earlier plain uninstall, to remove what was left.
+
+On a Proxmox host with an appliance record (same ownership proof as upgrade, `--vmid` when there are several):
+
+- The default runs `sm install uninstall` **inside** the container and stops the container. The container, its data, the appliance record and the Proxmox identities stay.
+- `--purge-data` destroys the container (only if it carries the install id) and removes **this install's** Proxmox user, token, roles and ACLs, then the record. It asks you to type the VMID; without a terminal it needs `--vmid <id>`, `--purge-data` and `SUPERMGMT_YES=1` (or `--yes`). A record naming any identity other than the ones derived from its own install id is refused, and other appliances' identities are untouched (`TestUninstallAppliance_PurgeLeavesTheOtherApplianceAndForeignIdentitiesAlone`). The template stays.
+
+Covered by `TestUninstall_*`, `TestUninstallAppliance_*` and `TestM3_Uninstall*` (CI job `e2e-upgrade`). Not verified on real PVE.
 
 ## Joining a node (`sm join`)
 
@@ -138,14 +298,14 @@ Whether `join.sh` was exercised against a real signed release: not verified (no 
 | Code | Meaning | Raised by |
 |---|---|---|
 | 0 | success | |
-| 2 | invalid arguments or configuration | `install.sh`, `sm install` |
-| 3 | unsupported platform, or a mode that arrives in M3 | both |
-| 4 | prerequisite failure (not root, a missing command, an ambiguous existing install, `ssh-keygen` too old) | both |
+| 2 | invalid arguments or configuration (also: an ambiguous storage or bridge without a terminal, a refused downgrade, `auto` with nowhere to ask) | `install.sh`, `sm install` |
+| 3 | unsupported platform (`proxmox-lxc` needs Proxmox VE 9.x on linux/amd64; an unsupported OS) | both |
+| 4 | prerequisite failure (not root, a missing command, an ambiguous existing install, another installer running, not enough disk, `ssh-keygen` too old) | both |
 | 5 | download, checksum or signature failure | `install.sh` only |
-| 6 | resource creation failure (user, directories) | `sm install` |
-| 7 | installation or configuration failure (files, unit, service start) | `sm install` |
-| 8 | connectivity failure (the service did not become ready within 60s) | `sm install` |
-| 9 | restore failure (a failing `sm secrets import-key` or `sm backup restore` step keeps its own 2 or 4) | `sm install restore` |
+| 6 | resource creation failure (user, directories, container); on `proxmox-lxc` also "rollback pending: a Proxmox task still holds the container" | `sm install` |
+| 7 | installation or configuration failure (files, unit, service start); on `proxmox-lxc` also "not fully rolled back, kept for manual recovery" | `sm install` |
+| 8 | connectivity failure (the service did not become ready within 60s; on `proxmox-lxc` the container network, readiness or first discovery within 120s, or a Proxmox API that fails the provider check from the container) | `sm install` |
+| 9 | restore failure (a failing `sm secrets import-key` or `sm backup restore` step keeps its own 2 or 4); also a failed, aborted or reverted upgrade | `sm install restore`, `sm install upgrade` |
 | 10 | cancelled by the user | `sm install` |
 
 Sources: SPEC §3.7, `internal/installer/errors.go`, the header of `install.sh`.

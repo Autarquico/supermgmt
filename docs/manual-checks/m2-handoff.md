@@ -31,7 +31,7 @@ On a **clean Debian or Ubuntu VM** with systemd, as root (this also covers the V
 4. OpenSSH: on a host with `ssh-keygen` older than 8.2 (for example Debian 10), run `install.sh`. Expected: exit 4 with the "OpenSSH 8.2 or newer" message, before any download.
 5. `--tls direct` with a real certificate for the host. Expected: starts; `kill -HUP $(pidof sm)` after replacing the certificate picks up the new one without restart.
 6. Reboot the VM. Expected: the service comes back; `sm doctor` (as root) is healthy.
-7. Run the default mode: `bash install.sh` with no mode. Expected today: exit 3, "arrives in milestone M3".
+7. Run the default mode: `bash install.sh` with no mode, on a headless VM. Expected since M3: `auto` finds no desktop and no Proxmox host, asks on a terminal whether to install the server (yes runs `server`), and without a terminal exits 2 asking for `SUPERMGMT_MODE`.
 
 ## 2. First sign-in without OIDC (suspected defect)
 
