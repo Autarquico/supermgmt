@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -27,27 +27,32 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/installer"
+	"github.com/autarquico/supermgmt/internal/netguard"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"github.com/autarquico/supermgmt/internal/secrets"
 )
 
-const checkTimeout = 30 * time.Second
+const (
+	checkTimeout = 30 * time.Second
+	// tlsProbeMaxBody caps what the TLS probe reads of the endpoint's answer.
+	tlsProbeMaxBody = 64 << 10
+)
 
 // newProvidersCmd is `sm providers` (ADR-0024).
 func newProvidersCmd(env []string) *cobra.Command {
-	return newProvidersCmdWith(env, nil)
+	return newProvidersCmdWith(env, nil, nil)
 }
 
 // newProvidersCmdWith builds `sm providers` with extra options for the PVE
-// client; tests use them to reach a fake cluster.
-func newProvidersCmdWith(env []string, clientOptions []proxmox.Option) *cobra.Command {
+// client and for the guarded TLS probe; tests use them to reach a fake cluster.
+func newProvidersCmdWith(env []string, clientOptions []proxmox.Option, guard []netguard.Option) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "providers",
 		Short: "List, inspect, refresh and check providers",
 		Args:  noArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newProvidersListCmd(env), newProvidersGetCmd(env), newProvidersRefreshCmd(env), newProvidersCheckCmd(env, clientOptions))
+	cmd.AddCommand(newProvidersListCmd(env), newProvidersGetCmd(env), newProvidersRefreshCmd(env), newProvidersCheckCmd(env, clientOptions, guard))
 	return cmd
 }
 
@@ -174,7 +179,7 @@ type checkFlags struct {
 	endpoint, caFile string
 }
 
-func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option) *cobra.Command {
+func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option, guard []netguard.Option) *cobra.Command {
 	var f checkFlags
 	cmd := &cobra.Command{
 		Use:   "check --offline (<name> | --tls-only --endpoint URL --ca-file FILE)",
@@ -182,7 +187,7 @@ func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option) *cobra.C
 		Long: "With a provider name, read the provider from the configuration file and its API token from the secret\n" +
 			"store, then connect to the cluster and read its nodes, guests and storages. The service must be stopped.\n\n" +
 			"With --tls-only, connect to the endpoint and verify the certificate it serves against the CA file for the\n" +
-			"endpoint's host name; nothing is sent. The installer runs it before any token exists.\n\n" +
+			"endpoint's host name. The connection goes through the same outbound filter as the provider client. The installer runs it before any token exists.\n\n" +
 			"Exit status: 0 when the check passes, 8 when it fails.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -191,7 +196,7 @@ func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option) *cobra.C
 			}
 			var report providerCheck
 			if f.tlsOnly {
-				report = checkServedTLS(cmd.Context(), f.endpoint, f.caFile)
+				report = checkServedTLS(cmd.Context(), f.endpoint, f.caFile, guard)
 			} else {
 				var err error
 				if report, err = checkProviderOffline(cmd, env, args[0], clientOptions); err != nil {
@@ -316,12 +321,11 @@ func tokenOf(ctx context.Context, s *offlineSession, ref string) (audit.Secret, 
 		return "", errors.New("there is no initialized database: run sm server init first")
 	}
 	readable := readableSecrets{ReadOnlySecrets: database.ReadOnlySecrets{Q: s.db.Querier()}}
-	ids := domain.UUIDv7Generator{}
-	keys, err := secrets.OpenFileKeys(ctx, s.keysDir, readable, ids)
+	keys, err := secrets.OpenFileKeysReadOnly(ctx, s.keysDir, readable)
 	if err != nil {
 		return "", err
 	}
-	return secrets.NewStore(keys, readable, ids, domain.SystemClock{}).Get(ctx, secrets.Ref{Name: name})
+	return secrets.NewStore(keys, readable, domain.UUIDv7Generator{}, domain.SystemClock{}).Get(ctx, secrets.Ref{Name: name})
 }
 
 // readableSecrets is the read-only secrets repository that can also read
@@ -398,10 +402,11 @@ func explainProbeFailure(err error, endpoint string) string {
 
 // ---- the served certificate -------------------------------------------------------
 
-// checkServedTLS connects to the endpoint and verifies the chain it serves
-// against the CA file, for the endpoint's own host name. Nothing is sent after
-// the handshake.
-func checkServedTLS(ctx context.Context, endpoint, caFile string) providerCheck {
+// checkServedTLS asks the endpoint for its root page through the outbound
+// filter and verifies the chain it serves against the CA file, for the
+// endpoint's own host name. Only the handshake matters: any HTTP answer, even
+// an error status, proves the certificate.
+func checkServedTLS(ctx context.Context, endpoint, caFile string, guard []netguard.Option) providerCheck {
 	report := providerCheck{Endpoint: endpoint}
 	host, address, err := splitEndpoint(endpoint)
 	if err != nil {
@@ -415,17 +420,22 @@ func checkServedTLS(ctx context.Context, endpoint, caFile string) providerCheck 
 	}
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	dialer := tls.Dialer{
-		NetDialer: &net.Dialer{},
-		Config:    &tls.Config{RootCAs: pool, ServerName: host, MinVersion: tls.VersionTLS12},
-	}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
+	client := netguard.NewClient(netguard.Allow{AllowAllPrivate: true}, nil, checkTimeout, tlsProbeMaxBody,
+		append([]netguard.Option{netguard.WithRootCAs(pool)}, guard...)...)
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, "https://"+address+"/", http.NoBody)
 	if err != nil {
+		report.Problem = err.Error()
+		return report
+	}
+	response, err := client.Do(request) //nolint:bodyclose // closed below when there is a response
+	if response != nil {
+		defer func() { _ = response.Body.Close() }()
+	}
+	if response == nil || response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
 		report.Problem = fmt.Sprintf("the certificate served by %s is not trusted for %s with %s: %v", address, host, caFile, err)
 		return report
 	}
-	defer func() { _ = conn.Close() }()
-	leaf := conn.(*tls.Conn).ConnectionState().PeerCertificates[0]
+	leaf := response.TLS.PeerCertificates[0]
 	sum := sha256.Sum256(leaf.Raw)
 	report.CertificateSHA256 = hex.EncodeToString(sum[:])
 	report.CertificateExpiry = leaf.NotAfter.UTC().Format(time.RFC3339)

@@ -220,3 +220,21 @@ func TestOfflineBackupNeverCreatesAMasterKey(t *testing.T) {
 		t.Errorf("the offline backup created keys: %v", files)
 	}
 }
+
+func TestOfflineBackupNeverCreatesTheKeysDirectory(t *testing.T) {
+	s := newSandbox(t)
+	s.migratedDatabase(t)
+	dir := keysDirOf(t, s)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	r := createOffline(s)
+
+	if r.code == 0 {
+		t.Fatalf("a backup without keys succeeded: %q", r.stdout)
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the offline backup created the keys directory: %v", err)
+	}
+}
