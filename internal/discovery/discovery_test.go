@@ -288,3 +288,84 @@ func TestProbeRunsOneSession(t *testing.T) {
 		t.Errorf("snapshot = %+v, sessions = %d, err = %v", s, ex.rans, err)
 	}
 }
+
+func composeDeployNode(t *testing.T) Snapshot {
+	t.Helper()
+	probe := strings.Replace(linuxProbe, "compose=2.29.1", "compose=5.5.1", 1)
+	probe = strings.Replace(probe, "@@tools\nbtop\ntmux", "@@tools\nbtop\ntmux\ncurl\nbash\ntimeout\nflock\njq\nss\nsha256sum\nbase64\ndf", 1)
+	s, err := Parse([]byte(probe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Setup = &runtimes.SetupMeta{SetupVersion: 2, DockerAccess: true}
+	return s
+}
+
+func TestParseDeploymentTools(t *testing.T) {
+	s := composeDeployNode(t)
+	want := Tools{Btop: true, Tmux: true, Curl: true, Bash: true, Timeout: true, Flock: true, Jq: true, Ss: true, Sha256sum: true, Base64: true, Df: true}
+	if s.Tools != want {
+		t.Errorf("tools = %+v", s.Tools)
+	}
+}
+
+func TestComposeDeployCapability(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*Snapshot)
+		local      bool
+		wantReason string
+	}{
+		{"all requirements met", func(*Snapshot) {}, false, ""},
+		{"no setup recorded", func(s *Snapshot) { s.Setup = nil }, false, "node.setup version 2 required"},
+		{"v1 node", func(s *Snapshot) { s.Setup.SetupVersion = 1 }, false, "node.setup version 2 required"},
+		{"no docker access", func(s *Snapshot) { s.Setup.DockerAccess = false }, false, "docker access required"},
+		{"daemon unreachable", func(s *Snapshot) { s.Docker.ServerVersion = "" }, false, "docker access required"},
+		{"wrong compose version", func(s *Snapshot) { s.Docker.ComposeVersion = "2.29.1" }, false, "unsupported compose version 2.29.1"},
+		{"v-prefixed compose version", func(s *Snapshot) { s.Docker.ComposeVersion = "v5.5.1" }, false, "unsupported compose version v5.5.1"},
+		{"flock missing", func(s *Snapshot) { s.Tools.Flock = false }, false, "flock missing"},
+		{"jq missing", func(s *Snapshot) { s.Tools.Jq = false }, false, "jq missing"},
+		{"bash missing", func(s *Snapshot) { s.Tools.Bash = false }, false, "bash missing"},
+		{"timeout missing", func(s *Snapshot) { s.Tools.Timeout = false }, false, "timeout missing"},
+		{"ss missing", func(s *Snapshot) { s.Tools.Ss = false }, false, "ss missing"},
+		{"sha256sum missing", func(s *Snapshot) { s.Tools.Sha256sum = false }, false, "sha256sum missing"},
+		{"base64 missing", func(s *Snapshot) { s.Tools.Base64 = false }, false, "base64 missing"},
+		{"df missing", func(s *Snapshot) { s.Tools.Df = false }, false, "df missing"},
+		{"local provider", func(*Snapshot) {}, true, "ssh node required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := composeDeployNode(t)
+			tt.mutate(&s)
+			c, ok := byName(Capabilities(s, tt.local))["docker.compose.deploy"]
+			if !ok {
+				t.Fatal("docker.compose.deploy is not reported")
+			}
+			reason, _ := c.Metadata["reason"].(string)
+			if c.Available != (tt.wantReason == "") || reason != tt.wantReason {
+				t.Errorf("available = %v, reason = %q, want reason %q", c.Available, reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestHealthCapabilitiesFollowTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		tools     Tools
+		http, tcp bool
+	}{
+		{"none", Tools{}, false, false},
+		{"curl only", Tools{Curl: true}, true, false},
+		{"bash without timeout", Tools{Bash: true}, false, false},
+		{"bash and timeout", Tools{Bash: true, Timeout: true}, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := byName(Capabilities(Snapshot{Tools: tt.tools}, false))
+			if caps["health.http"].Available != tt.http || caps["health.tcp"].Available != tt.tcp {
+				t.Errorf("http = %v, tcp = %v", caps["health.http"].Available, caps["health.tcp"].Available)
+			}
+		})
+	}
+}
