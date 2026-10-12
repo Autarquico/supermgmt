@@ -76,6 +76,18 @@ const (
 	// Enrollment (ADR-0022).
 	PathEnrollments = Prefix + "/enrollments"
 	PathEnroll      = Prefix + "/enroll"
+
+	// Apps and deployments (ADR-0011, ADR-0028).
+	PathApps                 = Prefix + "/apps"
+	PathApp                  = Prefix + "/apps/{id}"
+	PathAppTargets           = Prefix + "/apps/{id}/targets"
+	PathAppTarget            = Prefix + "/app-targets/{id}"
+	PathProviderRepositories = Prefix + "/providers/{id}/repositories"
+	PathDeployments          = Prefix + "/deployments"
+	PathDeployment           = Prefix + "/deployments/{id}"
+	PathDeploymentRollback   = Prefix + "/deployments/{id}/rollback"
+	PathDeploymentCancel     = Prefix + "/deployments/{id}/cancel"
+	PathGitHubWebhook        = Prefix + "/github/webhook"
 )
 
 // Admin-socket routes (spec §23.1): exactly these four, outside /api/v1 and
