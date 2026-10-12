@@ -9,9 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/netguard"
@@ -26,6 +29,8 @@ const (
 	shutdownTimeoutS = 240 // below DeadlineShutdown and DeadlineReboot
 	maxMessageBytes  = 300
 )
+
+var aclPathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./-]*$`)
 
 // Option adjusts a client built by New.
 type Option func(*settings)
@@ -147,6 +152,17 @@ func (c *client) Permissions(ctx context.Context) (Perms, error) {
 	return decodePerms(data)
 }
 
+func (c *client) PathPermissions(ctx context.Context, path string) (Privileges, error) {
+	if !aclPathPattern.MatchString(path) {
+		return nil, fmt.Errorf("proxmox: invalid ACL path %q", path)
+	}
+	data, err := c.get(ctx, "/access/permissions", url.Values{"path": {path}})
+	if err != nil {
+		return nil, err
+	}
+	return decodePathPrivileges(path, data)
+}
+
 func (c *client) Task(ctx context.Context, u UPID) (TaskStatus, error) {
 	parsed, err := ParseUPID(u.Raw)
 	if err != nil {
@@ -156,7 +172,9 @@ func (c *client) Task(ctx context.Context, u UPID) (TaskStatus, error) {
 	if err != nil {
 		return TaskStatus{}, err
 	}
-	return decodeTaskStatus(parsed, data)
+	status, err := decodeTaskStatus(parsed, data)
+	status.ExitStatus = c.sanitize(status.ExitStatus)
+	return status, err
 }
 
 // Tasks lists a node's tasks, reading every page.
@@ -177,6 +195,9 @@ func (c *client) Tasks(ctx context.Context, node string, f TaskFilter) ([]TaskSt
 		if err != nil {
 			return nil, err
 		}
+		for i := range tasks {
+			tasks[i].ExitStatus = c.sanitize(tasks[i].ExitStatus)
+		}
 		all = append(all, tasks...)
 		start += rows
 		if rows == 0 || (env.Total > 0 && start >= env.Total.int()) {
@@ -186,7 +207,9 @@ func (c *client) Tasks(ctx context.Context, node string, f TaskFilter) ([]TaskSt
 }
 
 func taskQuery(f TaskFilter, start int) url.Values {
-	q := url.Values{"start": {strconv.Itoa(start)}, "limit": {strconv.Itoa(taskPageSize)}}
+	// source=all: by default PVE lists only archived (finished) tasks, which
+	// would hide the one that is still running.
+	q := url.Values{"start": {strconv.Itoa(start)}, "limit": {strconv.Itoa(taskPageSize)}, "source": {"all"}}
 	if f.VMID > 0 {
 		q.Set("vmid", strconv.Itoa(f.VMID))
 	}
@@ -194,7 +217,11 @@ func taskQuery(f TaskFilter, start int) url.Values {
 		q.Set("typefilter", f.TypeName)
 	}
 	if f.User != "" {
-		q.Set("userfilter", f.User)
+		// PVE matches userfilter against the user of a task without its token
+		// id, so a token's tasks are asked for by user and matched on the full
+		// id locally (Correlate).
+		user, _, _ := strings.Cut(f.User, "!")
+		q.Set("userfilter", user)
 	}
 	if !f.Since.IsZero() {
 		q.Set("since", strconv.FormatInt(f.Since.Unix(), 10))
@@ -242,7 +269,25 @@ func (c *client) Power(ctx context.Context, g GuestRef, verb string) (UPID, Powe
 	if err != nil {
 		return UPID{}, PowerUncertain, err
 	}
+	if err := c.checkTaskOf(u, g, verb); err != nil {
+		return UPID{}, PowerUncertain, err
+	}
 	return u, PowerAccepted, nil
+}
+
+// checkTaskOf refuses a UPID that cannot be the task of the request just sent:
+// the request may have been accepted all the same, so the outcome is
+// uncertain and correlation, not this answer, decides.
+func (c *client) checkTaskOf(u UPID, g GuestRef, verb string) error {
+	taskType, err := TaskType(g.Type, verb)
+	if err != nil {
+		return err
+	}
+	user, _, _ := strings.Cut(c.token, "=")
+	if u.Node != g.Node || u.Type != taskType || u.ID != strconv.Itoa(g.VMID) || u.User != user {
+		return errors.New("proxmox: the task id in the power answer is not the task of this request")
+	}
+	return nil
 }
 
 func parseUPIDAnswer(body []byte) (UPID, error) {
@@ -331,16 +376,43 @@ func (c *client) apiError(status int, body []byte) error {
 	e := &APIError{Status: status}
 	if parsed, ok := parsePVEError(body); ok {
 		e.HasBody = true
-		e.Message = c.redact(truncate(strings.TrimSpace(parsed.Message), maxMessageBytes))
+		e.Message = c.sanitize(parsed.Message)
 	}
 	return e
+}
+
+// sanitize makes text from PVE safe to keep and show: control sequences go,
+// then the token, and only then is it shortened (a cut through the middle of
+// the token would otherwise leave a prefix of it in the text).
+func (c *client) sanitize(s string) string {
+	return truncate(c.redact(plainLine(s)), maxMessageBytes)
+}
+
+// terminalEscape matches ANSI escape sequences (CSI, OSC and two-byte forms).
+var terminalEscape = regexp.MustCompile(`\x1b(\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)?|.?)`)
+
+// plainLine is s as one line of printable text: escape sequences are removed,
+// every other control character becomes a space, and runs of spaces collapse.
+func plainLine(s string) string {
+	s = terminalEscape.ReplaceAllString(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 // redact removes the whole token value and, separately, its secret part.

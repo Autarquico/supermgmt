@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -330,10 +329,12 @@ func requireSyncable(p domain.Provider) error {
 	return nil
 }
 
-// clusterRead is one successful read of a cluster.
+// clusterRead is one successful read of a cluster: what it reports, and what
+// the token may do on the ACL paths the sync decides on (each asked of PVE
+// for that exact path, never inferred from the paths PVE lists).
 type clusterRead struct {
 	inventory proxmox.Inventory
-	perms     proxmox.Perms
+	access    map[string]proxmox.Privileges
 	readAt    time.Time
 }
 
@@ -346,11 +347,64 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the cluster: %w", err)
 	}
-	perms, err := client.Permissions(ctx)
+	known, err := database.ListNodes(ctx, s.cfg.DB.Reader())
+	if err != nil {
+		return clusterRead{}, err
+	}
+	access, err := readAccess(ctx, client, aclPathsToJudge(p, inventory, known))
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the token's permissions: %w", err)
 	}
-	return clusterRead{inventory: inventory, perms: perms, readAt: s.cfg.Clock.Now()}, nil
+	return clusterRead{inventory: inventory, access: access, readAt: s.cfg.Clock.Now()}, nil
+}
+
+// aclPathsToJudge are the paths whose privileges the sync acts on: the
+// guests it may advertise power for, and where an object of an earlier sync
+// that this read did not report would be.
+func aclPathsToJudge(p domain.Provider, inventory proxmox.Inventory, known []domain.Node) []string {
+	seen := map[string]bool{}
+	var paths []string
+	add := func(path string) {
+		if path != "" && !seen[path] {
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	for _, g := range inventory.Guests {
+		if !g.Template {
+			add(guestACLPath(g.Ref.VMID))
+		}
+	}
+	reported := reportedNatives(inventory)
+	for _, n := range known {
+		if n.ProviderID == p.ID && isDiscoveredKind(n.Kind) && !reported[n.NativeID] {
+			add(visibilityPath(n))
+		}
+	}
+	return paths
+}
+
+func reportedNatives(inventory proxmox.Inventory) map[string]bool {
+	out := map[string]bool{}
+	for _, n := range inventory.Nodes {
+		out[clusterNodeSpec(n).native] = true
+	}
+	for _, g := range inventory.Guests {
+		out[guestSpec(g).native] = true
+	}
+	return out
+}
+
+func readAccess(ctx context.Context, client proxmox.Client, paths []string) (map[string]proxmox.Privileges, error) {
+	access := make(map[string]proxmox.Privileges, len(paths))
+	for _, path := range paths {
+		privs, err := client.PathPermissions(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		access[path] = privs
+	}
+	return access, nil
 }
 
 // clientFor builds the provider's client, reusing the last one while the
@@ -395,9 +449,26 @@ func clientKey(endpoint string, ca []byte, token audit.Secret) string {
 
 // ---- recording ---------------------------------------------------------------
 
+// fence refuses a write made from a read of the provider as it was at the start
+// of the sync when the provider has since been removed from the configuration
+// or reconfigured: a sync in flight must not undo either.
+func (s *ProxmoxSync) fence(ctx context.Context, q database.Querier, read domain.Provider) error {
+	now, err := database.GetProvider(ctx, q, read.ID)
+	if err != nil {
+		return err
+	}
+	if now.Status == ProviderStatusRemoved || now.SpecRevision != read.SpecRevision {
+		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("provider %q changed while it was being synced", read.Name))
+	}
+	return nil
+}
+
 func (s *ProxmoxSync) recordFailure(ctx context.Context, p domain.Provider, cause error) error {
 	message := limitText(textsafe.Line(cause.Error()), syncErrorLimit)
 	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := s.fence(ctx, tx, p); err != nil {
+			return err
+		}
 		if err := database.SetProviderStatus(ctx, tx, p.ID, ProviderStatusError, nil); err != nil {
 			return err
 		}
@@ -454,6 +525,9 @@ func LatestSyncReport(ctx context.Context, q database.Querier, provider domain.I
 // status first, so a reader never sees fresh objects under a stale status.
 func (s *ProxmoxSync) apply(ctx context.Context, p domain.Provider, c clusterRead) error {
 	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := s.fence(ctx, tx, p); err != nil {
+			return err
+		}
 		tree, err := s.newTreeSync(ctx, tx, p, c)
 		if err != nil {
 			return err
@@ -542,7 +616,7 @@ type objectSpec struct {
 	metadata           map[string]any
 	status             string
 	metrics            wire.Metrics
-	powerPaths         []string // where a privilege grants power over the guest; nil for cluster nodes
+	powerPath          string // the ACL path that grants power over the guest; empty for cluster nodes
 }
 
 func clusterNodeSpec(n proxmox.ClusterNode) objectSpec {
@@ -578,22 +652,26 @@ func guestSpec(g proxmox.Guest) objectSpec {
 			CPUPercent: g.CPU * 100, MemoryUsedBytes: g.Mem, MemoryTotalBytes: g.MaxMem,
 			DiskUsedBytes: g.Disk, DiskTotalBytes: g.MaxDisk, UptimeSeconds: g.Uptime,
 		},
-		powerPaths: guestPaths("/vms/"+vmid, g.Pool),
+		powerPath: guestACLPath(g.Ref.VMID),
 	}
 }
 
-// guestPaths are the ACL paths that can grant a privilege over a guest: the
-// guest itself and the pool it belongs to.
-func guestPaths(guest, pool string) []string {
-	if pool == "" {
-		return []string{guest}
+// guestACLPath is the ACL path of a guest. PVE resolves the guest's pool and
+// the paths above it when asked about this one, so nothing else is consulted.
+func guestACLPath(vmid int) string { return "/vms/" + strconv.Itoa(vmid) }
+
+// visibilityPath is the ACL path on which the audit privilege decides whether
+// the token could see n.
+func visibilityPath(n domain.Node) string {
+	if n.Kind == proxmox.KindNode {
+		name, _ := n.Metadata["pve_node"].(string)
+		return "/nodes/" + name
 	}
-	return []string{guest, "/pool/" + pool}
+	vmid, _ := n.Metadata["vmid"].(float64) // metadata comes back from JSON
+	return guestACLPath(int(vmid))
 }
 
-func (t *treeSync) grants(priv string, paths ...string) bool {
-	return slices.ContainsFunc(paths, func(path string) bool { return t.cluster.perms.Has(path, priv) })
-}
+func (t *treeSync) grants(priv, path string) bool { return t.cluster.access[path].Has(priv) }
 
 // present stores an object the cluster reported.
 func (t *treeSync) present(o objectSpec) error {
@@ -618,11 +696,11 @@ func (t *treeSync) present(o objectSpec) error {
 // advertisePower keeps proxmox.vm.power in step with the token's privilege.
 // Templates cannot be powered. Cluster nodes have no such capability.
 func (t *treeSync) advertisePower(node domain.ID, o objectSpec) error {
-	if o.powerPaths == nil {
+	if o.powerPath == "" {
 		return nil
 	}
 	template, _ := o.metadata["template"].(bool)
-	available := !template && t.grants(privPowerMgmt, o.powerPaths...)
+	available := !template && t.grants(privPowerMgmt, o.powerPath)
 	return t.setPower(node, available)
 }
 
@@ -632,38 +710,31 @@ func (t *treeSync) setPower(node domain.ID, available bool) error {
 	})
 }
 
+// metadataIncarnation is the node metadata key that names one life of a guest:
+// discovery assigns it when it first sees the guest and again whenever the
+// guest comes back after the cluster stopped reporting it, because a VMID that
+// was freed can be given to another guest.
+const metadataIncarnation = "incarnation"
+
 // upsert creates the object as a discovered node or brings the existing row up
-// to date. A rename is a change of the policy target, so it bumps spec_revision;
-// a move to another PVE node only rewrites the observed metadata.
+// to date. A rename or a new incarnation changes what a plan was made for, so
+// either bumps spec_revision; a move to another PVE node only rewrites the
+// observed metadata.
 func (t *treeSync) upsert(o objectSpec) (domain.Node, error) {
-	now := t.cluster.readAt
 	current, found := t.existing[o.native]
 	if !found {
-		created, err := database.CreateNode(t.ctx, t.q, domain.Node{
-			ID: t.cfg.IDs.NewID(), ProviderID: t.provider.ID, NativeID: o.native, Name: o.name, Kind: o.kind,
-			ManagementState: domain.ManagementDiscovered, Reachability: domain.ReachabilityUnknown,
-			Tags: []string{}, Metadata: o.metadata, CreatedAt: now, UpdatedAt: now,
-		})
-		if err != nil {
-			return domain.Node{}, err
-		}
-		t.existing[o.native] = created
-		return created, t.emit(t.ctx, t.q, systemActor, actionNodeAdd, nodeRef(created.ID), domain.ResultSucceeded,
-			map[string]any{"name": o.name, "kind": o.kind, "origin": "discovery", "provider": t.provider.Name})
+		return t.create(o)
 	}
-	if current.Name != o.name {
-		renamed := current
-		renamed.Name, renamed.UpdatedAt = o.name, now
-		stored, err := database.UpdateNodeSpec(t.ctx, t.q, renamed, current.SpecRevision)
+	incarnation, reborn := t.incarnationOf(current, o)
+	if incarnation != "" {
+		o.metadata[metadataIncarnation] = incarnation
+	}
+	if fields := changedByDiscovery(current, o, reborn); len(fields) > 0 {
+		stored, err := t.reviseSpec(current, o, fields)
 		if err != nil {
 			return domain.Node{}, err
 		}
 		current.Name, current.SpecRevision = stored.Name, stored.SpecRevision
-		err = t.emit(t.ctx, t.q, systemActor, actionNodeUpdate, nodeRef(current.ID), domain.ResultSucceeded,
-			map[string]any{"fields": []string{"name"}, "spec_revision": stored.SpecRevision, "origin": "discovery"})
-		if err != nil {
-			return domain.Node{}, err
-		}
 	}
 	if !sameJSON(current.Metadata, o.metadata) {
 		if err := database.SetNodeMetadata(t.ctx, t.q, current.ID, o.metadata); err != nil {
@@ -673,6 +744,64 @@ func (t *treeSync) upsert(o objectSpec) (domain.Node, error) {
 	}
 	t.existing[o.native] = current
 	return current, nil
+}
+
+func (t *treeSync) create(o objectSpec) (domain.Node, error) {
+	now := t.cluster.readAt
+	if o.powerPath != "" {
+		o.metadata[metadataIncarnation] = t.cfg.IDs.NewID().String()
+	}
+	created, err := database.CreateNode(t.ctx, t.q, domain.Node{
+		ID: t.cfg.IDs.NewID(), ProviderID: t.provider.ID, NativeID: o.native, Name: o.name, Kind: o.kind,
+		ManagementState: domain.ManagementDiscovered, Reachability: domain.ReachabilityUnknown,
+		Tags: []string{}, Metadata: o.metadata, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return domain.Node{}, err
+	}
+	t.existing[o.native] = created
+	return created, t.emit(t.ctx, t.q, systemActor, actionNodeAdd, nodeRef(created.ID), domain.ResultSucceeded,
+		map[string]any{"name": o.name, "kind": o.kind, "origin": "discovery", "provider": t.provider.Name})
+}
+
+// incarnationOf is the incarnation the guest has after this read, and whether
+// it is a new one because the guest was gone from the previous read. Rows
+// written before incarnations existed get theirs without a new revision.
+func (t *treeSync) incarnationOf(current domain.Node, o objectSpec) (id string, reborn bool) {
+	if o.powerPath == "" {
+		return "", false
+	}
+	id, _ = current.Metadata[metadataIncarnation].(string)
+	switch presence := t.presenceOf(current.ID); {
+	case id == "":
+		return t.cfg.IDs.NewID().String(), false
+	case presence != "" && presence != PresencePresent:
+		return t.cfg.IDs.NewID().String(), true
+	}
+	return id, false
+}
+
+func changedByDiscovery(current domain.Node, o objectSpec, reborn bool) []string {
+	var fields []string
+	if current.Name != o.name {
+		fields = append(fields, "name")
+	}
+	if reborn {
+		fields = append(fields, metadataIncarnation)
+	}
+	return fields
+}
+
+func (t *treeSync) reviseSpec(current domain.Node, o objectSpec, fields []string) (domain.Node, error) {
+	next := current
+	next.Name, next.UpdatedAt = o.name, t.cluster.readAt
+	stored, err := database.UpdateNodeSpec(t.ctx, t.q, next, current.SpecRevision)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	err = t.emit(t.ctx, t.q, systemActor, actionNodeUpdate, nodeRef(current.ID), domain.ResultSucceeded,
+		map[string]any{"fields": fields, "spec_revision": stored.SpecRevision, "origin": "discovery"})
+	return stored, err
 }
 
 func sameJSON(a, b any) bool {
@@ -708,12 +837,9 @@ func isDiscoveredKind(kind string) bool {
 // audit privilege on its path (ADR-0024).
 func (t *treeSync) visibleToToken(n domain.Node) bool {
 	if n.Kind == proxmox.KindNode {
-		name, _ := n.Metadata["pve_node"].(string)
-		return t.grants(privSysAudit, "/nodes/"+name)
+		return t.grants(privSysAudit, visibilityPath(n))
 	}
-	vmid, _ := n.Metadata["vmid"].(float64) // metadata comes back from JSON
-	pool, _ := n.Metadata["pool"].(string)
-	return t.grants(privVMAudit, guestPaths("/vms/"+strconv.Itoa(int(vmid)), pool)...)
+	return t.grants(privVMAudit, visibilityPath(n))
 }
 
 func (t *treeSync) markMissing(n domain.Node, presence string) error {

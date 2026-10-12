@@ -43,6 +43,15 @@ func SetProviderStatus(ctx context.Context, q Querier, id domain.ID, status stri
 		status, nullMillis(syncedAt), id)
 }
 
+// MarkProviderRemoved records that a provider left the configuration: it sets
+// the observed status and bumps spec_revision, so every plan that took the
+// provider as an input is stale from now on.
+func MarkProviderRemoved(ctx context.Context, q Querier, id domain.ID, status string) error {
+	return updateOne(ctx, q, "provider", `
+		UPDATE providers SET status = ?, spec_revision = spec_revision + 1 WHERE id = ?`,
+		status, id)
+}
+
 // SetNodeMetadata replaces the observed metadata of a node. It never changes
 // spec_revision.
 func SetNodeMetadata(ctx context.Context, q Querier, id domain.ID, metadata map[string]any) error {

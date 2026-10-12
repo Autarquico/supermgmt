@@ -357,9 +357,32 @@ func (s *StaticReconciler) proxmoxProvider(ctx context.Context, q database.Queri
 		map[string]any{"name": p.Name, "spec_revision": stored.SpecRevision, "origin": string(domain.ProviderStatic)})
 }
 
+// revokeGuestPower withdraws proxmox.vm.power from every guest of a provider
+// that is no longer configured: nothing may be powered through a token the
+// operator removed. The guests themselves stay.
+func (s *StaticReconciler) revokeGuestPower(ctx context.Context, q database.Querier, p domain.Provider) error {
+	nodes, err := database.ListNodes(ctx, q)
+	if err != nil {
+		return err
+	}
+	for _, n := range nodes {
+		if n.ProviderID != p.ID || (n.Kind != proxmox.KindQEMU && n.Kind != proxmox.KindLXC) {
+			continue
+		}
+		err := database.SetNodeCapability(ctx, q, n.ID, database.NodeCapability{
+			Capability: CapabilityVMPower, Available: false, CheckedAt: s.cfg.Clock.Now(),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // stopRemovedProxmox marks every static Proxmox provider that left the file as
-// removed, which stops its sync. Its nodes and observations stay: removing a
-// provider never deletes what it discovered (spec §29.4).
+// removed, which stops its sync, stales the plans that used it and withdraws
+// power over its guests. Its nodes and observations stay: removing a provider
+// never deletes what it discovered (spec §29.4).
 func (s *StaticReconciler) stopRemovedProxmox(ctx context.Context, q database.Querier, wanted map[string]bool) error {
 	providers, err := database.ListProviders(ctx, q)
 	if err != nil {
@@ -369,7 +392,10 @@ func (s *StaticReconciler) stopRemovedProxmox(ctx context.Context, q database.Qu
 		if p.Origin != domain.ProviderStatic || p.Type != proxmox.ProviderType || wanted[p.Name] || p.Status == ProviderStatusRemoved {
 			continue
 		}
-		if err := database.SetProviderStatus(ctx, q, p.ID, ProviderStatusRemoved, nil); err != nil {
+		if err := database.MarkProviderRemoved(ctx, q, p.ID, ProviderStatusRemoved); err != nil {
+			return err
+		}
+		if err := s.revokeGuestPower(ctx, q, p); err != nil {
 			return err
 		}
 		err := s.emit(ctx, q, systemActor, eventProviderRemove, providerRef(p.ID), domain.ResultSucceeded,

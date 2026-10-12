@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -250,7 +251,12 @@ func TestPowerStartRecordsTheIntentThenTheTaskAndSucceeds(t *testing.T) {
 	}
 	var pre powerPreState
 	mustf(t, json.Unmarshal(in.PreState, &pre), "decode pre-state")
-	if want := (powerPreState{Type: "lxc", VMID: 200, PVENode: "pve2", TokenUser: pveTokenID, Status: "stopped"}); pre != want {
+	if pre.Baseline == nil || len(pre.Baseline) != 0 {
+		t.Errorf("baseline = %#v, want an empty one: no earlier start task of that guest", pre.Baseline)
+	}
+	pre.Baseline = nil
+	want := powerPreState{Type: "lxc", VMID: 200, PVENode: "pve2", TokenUser: pveTokenID, Status: "stopped", Incarnation: incarnationOfNode(r.guest("lxc/200"))}
+	if !reflect.DeepEqual(pre, want) || want.Incarnation == "" {
 		t.Errorf("pre-state = %+v, want %+v", pre, want)
 	}
 	ev, fp := evidenceOf(t, in)
@@ -374,17 +380,22 @@ func TestReconcileProxmoxCorrelationNoneHoldsTheJob(t *testing.T) {
 	}
 }
 
-func TestReconcileProxmoxCorrelationManyHoldsTheJob(t *testing.T) {
-	r := newPowerRig(t, pvefake.WithManualTasks())
+func (r *powerRig) startFromAnotherClient(t *testing.T) {
+	t.Helper()
 	other, err := proxmox.New(r.fake.Endpoint(), r.fake.CAPEM(), audit.Secret(r.tokenValue(t)),
 		proxmox.WithNetguardOptions(netguard.WithTestDialer(r.fake.Dial)))
 	mustf(t, err, "second client")
 	_, outcome, err := other.Power(context.Background(), proxmox.GuestRef{Node: "pve2", Type: proxmox.GuestLXC, VMID: 200}, "start")
 	if outcome != proxmox.PowerAccepted {
-		t.Fatalf("seed task = %v, %v", outcome, err)
+		t.Fatalf("second start = %v, %v", outcome, err)
 	}
+}
+
+func TestReconcileProxmoxCorrelationManyHoldsTheJob(t *testing.T) {
+	r := newPowerRig(t, pvefake.WithManualTasks())
 	r.fake.Inject(pvefake.Rule{Method: "POST", PathSuffix: "/status/start", Fault: pvefake.DropAfter()})
 	job, _ := r.run("lxc/200", "start")
+	r.startFromAnotherClient(t) // after the dispatch: a second, identical task
 	for _, tk := range r.fake.Tasks() {
 		r.fake.FinishTask(tk.UPID, "OK")
 	}
@@ -393,6 +404,43 @@ func TestReconcileProxmoxCorrelationManyHoldsTheJob(t *testing.T) {
 
 	if r.state(job) != domain.JobInterrupted {
 		t.Errorf("job = %s: two matching tasks cannot be told apart, the job is held", r.state(job))
+	}
+}
+
+// SEC-11: an identical task that existed before the dispatch is not this
+// dispatch's task, even when the POST's answer was lost and the window holds both.
+func TestReconcileProxmoxIgnoresAnIdenticalTaskFromBeforeTheDispatch(t *testing.T) {
+	r := newPowerRig(t, pvefake.WithManualTasks())
+	r.startFromAnotherClient(t) // earlier task, same guest, type and token
+	earlier := r.fake.Tasks()[0].UPID
+	r.fake.Inject(pvefake.Rule{Method: "POST", PathSuffix: "/status/start", Fault: pvefake.DropBefore()})
+	job, _ := r.run("lxc/200", "start") // never reached PVE
+	r.fake.FinishTask(earlier, "OK")
+
+	r.reconcileTwice()
+
+	if r.state(job) != domain.JobInterrupted {
+		t.Errorf("job = %s: the only task in the window predates the dispatch, so nothing proves it started", r.state(job))
+	}
+	if in := r.intent(job); in.ExternalRef != "" {
+		t.Errorf("intent adopted %s", in.ExternalRef)
+	}
+}
+
+func TestReconcileProxmoxWithoutABaselineCannotRuleOutAnEarlierTask(t *testing.T) {
+	r := newPowerRig(t)
+	r.fake.Inject(pvefake.Rule{Method: "POST", PathSuffix: "/status/start", Fault: pvefake.DropAfter()})
+	job, _ := r.run("lxc/200", "start")
+	in := r.intent(job)
+	var pre map[string]any
+	mustf(t, json.Unmarshal(in.PreState, &pre), "decode pre-state")
+	delete(pre, "baseline") // an intent written before baselines existed
+	legacy, err := json.Marshal(pre)
+	mustf(t, err, "encode")
+	in.PreState = legacy
+
+	if _, err := r.evidence.proxmox.Collect(context.Background(), in); err == nil {
+		t.Error("Collect must refuse to correlate without a baseline")
 	}
 }
 
@@ -465,20 +513,19 @@ func TestPowerDefiniteRejectionFailsTheJobAndSettlesTheIntent(t *testing.T) {
 	}
 }
 
-func TestPowerOnAGuestThatMigratedSinceDiscoveryIsADefiniteRejection(t *testing.T) {
+func TestPowerFollowsAGuestThatMigratedSinceDiscovery(t *testing.T) {
 	r := newPowerRig(t)
 	r.fake.MigrateGuest(100, "pve2") // discovery still says pve1
 
 	job, err := r.run("qemu/100", "stop")
 
-	if job.State != domain.JobFailed || errors.Is(err, jobs.ErrOutcomeUnknown) {
-		t.Fatalf("job = %s, err %v; want failed: PVE answered that the guest is not on that node", job.State, err)
+	if job.State != domain.JobSucceeded || err != nil {
+		t.Fatalf("job = %s, err %v; want succeeded: the guest is addressed where the cluster says it is", job.State, err)
 	}
-	if in := r.intent(job); in.Outcome != jobs.OutcomeFailed || in.State != jobs.IntentCompleted {
-		t.Errorf("intent = %+v, want completed/failed", in)
-	}
-	if got := r.fake.GuestStatus(100); got != "running" {
-		t.Errorf("guest = %s, want untouched", got)
+	var pre powerPreState
+	mustf(t, json.Unmarshal(r.intent(job).PreState, &pre), "decode pre-state")
+	if pre.PVENode != "pve2" || r.fake.GuestStatus(100) != "stopped" {
+		t.Errorf("pre-state node %q, guest %q; want pve2 and stopped", pre.PVENode, r.fake.GuestStatus(100))
 	}
 }
 

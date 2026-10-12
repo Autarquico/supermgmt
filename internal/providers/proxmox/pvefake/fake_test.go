@@ -285,10 +285,60 @@ func TestTaskListIsNewestFirstPaginatedAndFiltered(t *testing.T) {
 	if other := p.do(t, "GET", "/nodes/pve2/tasks", nil).body["data"].([]any); len(other) != 0 {
 		t.Errorf("tasks of another node leaked: %d", len(other))
 	}
-	if sub := p.do(t, "GET", "/nodes/pve1/tasks?userfilter=admin", nil).body["data"].([]any); len(sub) != 50 {
-		t.Errorf("userfilter is a substring match in PVE, got %d rows on page 1", len(sub))
+	if sub := p.do(t, "GET", "/nodes/pve1/tasks?userfilter=root@pam", nil).body["data"].([]any); len(sub) != 50 {
+		t.Errorf("userfilter by user must match its token's tasks, got %d rows on page 1", len(sub))
+	}
+	for _, filter := range []string{"admin", "root@pam!admin", "root@pam!other"} {
+		if sub := p.do(t, "GET", "/nodes/pve1/tasks?userfilter="+url.QueryEscape(filter), nil).body["data"].([]any); len(sub) != 0 {
+			t.Errorf("userfilter %q matched %d rows: PVE compares the user, not a token id or a part of it", filter, len(sub))
+		}
 	}
 	_ = f
+}
+
+func TestTaskListHoldsRunningTasksOnlyForSourceActiveOrAll(t *testing.T) {
+	_, p := cluster(t, WithManualTasks())
+	p.do(t, "POST", "/nodes/pve1/qemu/100/status/stop", nil)
+	count := func(source string) int {
+		path := "/nodes/pve1/tasks"
+		if source != "" {
+			path += "?source=" + source
+		}
+		return len(p.do(t, "GET", path, nil).body["data"].([]any))
+	}
+	for source, want := range map[string]int{"": 0, "archive": 0, "active": 1, "all": 1} {
+		if got := count(source); got != want {
+			t.Errorf("source %q lists %d running tasks, want %d", source, got, want)
+		}
+	}
+	if got := p.do(t, "GET", "/nodes/pve1/tasks?source=other", nil); got.status != http.StatusBadRequest {
+		t.Errorf("an unknown source: status = %d, want 400", got.status)
+	}
+}
+
+func TestPathPermissionsIncludePoolAndKeepNonPropagatingGrants(t *testing.T) {
+	f, _ := cluster(t)
+	f.AddGuest(Guest{Node: "pve1", Type: "qemu", VMID: 300, Name: "pooled", Pool: "prod"})
+	f.SetRole("Power", "VM.PowerMgmt")
+	tok := f.AddToken("u@pve", "t", false)
+	f.Grant("u@pve", "/pool/prod", "Power", true)
+	f.Grant("u@pve", "/vms/100", "Power", false)
+	p := newProbe(t, f, tok)
+
+	at := func(path string) map[string]any {
+		data := p.do(t, "GET", "/access/permissions?path="+path, nil).body["data"].(map[string]any)
+		privs, _ := data[path].(map[string]any)
+		return privs
+	}
+	if privs := at("/vms/300"); privs["VM.PowerMgmt"] != float64(1) {
+		t.Errorf("a pool member holds the pool's grant, got %v", privs)
+	}
+	if privs := at("/vms/100"); privs["VM.PowerMgmt"] != float64(0) {
+		t.Errorf("a non-propagating grant on the path is listed with flag 0, got %v", privs)
+	}
+	if privs := at("/vms/200"); len(privs) != 0 {
+		t.Errorf("a path with no privileges lists none, got %v", privs)
+	}
 }
 
 func TestTaskVisibilityWithoutSysAudit(t *testing.T) {

@@ -107,30 +107,24 @@ type Inventory struct {
 	Storages []Storage
 }
 
-// Perms is GET /access/permissions for the token: path -> privilege -> granted.
-type Perms map[string]map[string]bool
+// Grant is one privilege on one ACL path as PVE reports it. A privilege that
+// is listed is effective on that path whether or not it also propagates to
+// the paths below it.
+type Grant struct{ Propagate bool }
 
-// Has reports whether priv is effective on path. PVE lists the effective set
-// per path, and a deeper entry replaces what a parent grants, so the nearest
-// listed ancestor ("/vms/101", then "/vms", then "/") decides alone.
-func (p Perms) Has(path, priv string) bool {
-	for {
-		if privs, listed := p[path]; listed {
-			return privs[priv]
-		}
-		if path == "/" || path == "" {
-			return false
-		}
-		i := len(path) - 1
-		for i > 0 && path[i] != '/' {
-			i--
-		}
-		path = path[:i]
-		if path == "" {
-			path = "/"
-		}
-	}
+// Privileges are the privileges effective on one ACL path.
+type Privileges map[string]Grant
+
+// Has reports whether priv is effective on the path these privileges describe.
+func (p Privileges) Has(priv string) bool {
+	_, ok := p[priv]
+	return ok
 }
+
+// Perms is GET /access/permissions for the token: path -> privileges. PVE
+// lists only the paths that carry an ACL entry, so absence proves nothing;
+// ask PathPermissions about the exact path a decision depends on.
+type Perms map[string]Privileges
 
 // UPID is a decoded PVE task id:
 // UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
@@ -183,6 +177,8 @@ type Want struct {
 	User  string
 	From  time.Time
 	Until time.Time
+	// Known are tasks that existed before the dispatch: never this one's.
+	Known []string
 }
 
 // CorrelationResult is the number of candidate tasks that matched exactly.
@@ -200,6 +196,9 @@ type Client interface {
 	Version(ctx context.Context) (Version, error)
 	Resources(ctx context.Context) (Inventory, error)
 	Permissions(ctx context.Context) (Perms, error)
+	// PathPermissions asks PVE for the privileges effective for the token on
+	// exactly path (pool membership and inheritance included).
+	PathPermissions(ctx context.Context, path string) (Privileges, error)
 	Power(ctx context.Context, g GuestRef, verb string) (UPID, PowerOutcome, error)
 	Task(ctx context.Context, u UPID) (TaskStatus, error)
 	Tasks(ctx context.Context, node string, f TaskFilter) ([]TaskStatus, error)
