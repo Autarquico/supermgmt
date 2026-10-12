@@ -110,12 +110,13 @@ type Inventory struct {
 // Perms is GET /access/permissions for the token: path -> privilege -> granted.
 type Perms map[string]map[string]bool
 
-// Has reports whether priv is granted on path or inherited from a parent
-// path ("/vms/101" inherits "/vms" and "/").
+// Has reports whether priv is effective on path. PVE lists the effective set
+// per path, and a deeper entry replaces what a parent grants, so the nearest
+// listed ancestor ("/vms/101", then "/vms", then "/") decides alone.
 func (p Perms) Has(path, priv string) bool {
 	for {
-		if p[path][priv] {
-			return true
+		if privs, listed := p[path]; listed {
+			return privs[priv]
 		}
 		if path == "/" || path == "" {
 			return false

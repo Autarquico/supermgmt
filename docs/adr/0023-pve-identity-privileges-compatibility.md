@@ -18,12 +18,12 @@ Every appliance install draws an `install_id` (8 random hex digits) before any s
 | user (realm `pve`, no password) | `sm-<id>@pve` |
 | API token, `--privsep 1` | `sm-<id>@pve!sm` |
 | read role | `SMAudit-<id>` = `VM.Audit, Sys.Audit, Datastore.Audit, Pool.Audit` |
-| power role | `SMPower-<id>` = `VM.PowerMgmt` |
+| power role | `SMPower-<id>` = `VM.Audit, VM.PowerMgmt` (PVE: a deeper ACL replaces an inherited one, so the role granted on `/vms` must keep `VM.Audit` or guests vanish from `/cluster/resources`) |
 | ACLs | `SMAudit-<id>` on `/`, `SMPower-<id>` on `/vms`; each granted to the user **and** the token (privsep is the intersection) |
 
 - A create that collides with an existing name fails; the installer never adopts a resource it did not create.
 - Rollback and uninstall remove exactly these names. No shared user, role or ACL is ever created, modified or deleted.
-- `SUPERMGMT_PVE_POWER=0` omits `SMPower-<id>` and its ACLs. Nothing for snapshots, backups or console is granted in M3, and nothing destructive.
+- `SUPERMGMT_PVE_POWER=0` omits `SMPower-<id>` and its ACLs; guests then inherit `SMAudit-<id>` from `/`. Nothing for snapshots, backups or console is granted in M3, and nothing destructive.
 - The token secret is stored as `secret://providers/<name>/token` with the value `<user>!<tokenid>=<secret>`, sent as `Authorization: PVEAPIToken=<value>`.
 
 ### Capabilities
