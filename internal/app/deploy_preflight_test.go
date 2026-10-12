@@ -40,6 +40,7 @@ func newPreflightFixture(t *testing.T) *preflightFixture {
 	node := newFakeNode(t)
 	node.reply("compose.docker_root", preflightDocker+"\n")
 	node.reply("compose.project_containers", "")
+	node.reply("compose.project_resources", "")
 	node.reply("compose.listeners", "")
 	node.exit("compose.image_inspect", 1)
 	node.reply("compose.image_size", fmt.Sprintf("%d\n", preflightSize))
@@ -247,13 +248,87 @@ func TestPreflight_ForeignPort(t *testing.T) {
 			}
 		})
 	}
-	t.Run("udp ports are not judged by tcp listeners", func(t *testing.T) {
+}
+
+func TestPreflight_UDPPorts(t *testing.T) {
+	published := []compose.HostPort{{Service: "dns", Addr: netip.MustParseAddr("127.0.0.1"), Port: 5353, Proto: "udp"}}
+	own := preflightOwner.String()
+	tests := []struct {
+		name      string
+		listeners string
+		owned     string
+		wantBusy  bool
+	}{
+		{"a tcp listener does not hold the udp port", "LISTEN 0 4096 0.0.0.0:5353 0.0.0.0:*\n", "", false},
+		{"a udp socket on the address holds it", "UNCONN 0 0 127.0.0.1:5353 0.0.0.0:*\n", "", true},
+		{"a udp wildcard holds it", "UNCONN 0 0 *:5353 *:*\n", "", true},
+		{"a udp socket elsewhere does not", "UNCONN 0 0 10.0.0.5:5353 0.0.0.0:*\n", "", false},
+		{"the project's own udp binding passes", "UNCONN 0 0 127.0.0.1:5353 0.0.0.0:*\n", preflightUDPContainerJSON(own, "5353"), false},
+		{"a tcp binding of the project does not own the udp port", "UNCONN 0 0 127.0.0.1:5353 0.0.0.0:*\n", preflightContainerJSON(own, "5353"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newPreflightFixture(t)
+			f.input.HostPorts = published
+			f.node.reply("compose.listeners", tt.listeners)
+			f.node.reply("compose.project_containers", tt.owned)
+			err := f.run()
+			if tt.wantBusy {
+				wantPreflightCause(t, err, causePreflightPortInUse)
+			} else if err != nil {
+				t.Fatalf("runPreflight: %v", err)
+			}
+		})
+	}
+}
+
+func preflightUDPContainerJSON(owner, hostPort string) string {
+	return fmt.Sprintf(`[{"Config":{"Labels":{"dev.supermgmt.owner":%q}},"HostConfig":{"PortBindings":{"53/udp":[{"HostPort":%q}]}}}]`, owner, hostPort)
+}
+
+func preflightResourceLine(kind, name, owner string) string {
+	labels := `{"com.docker.compose.project":"shop"`
+	if owner != "" {
+		labels += fmt.Sprintf(`,"dev.supermgmt.owner":%q`, owner)
+	}
+	return fmt.Sprintf("%s {\"Name\":%q,\"Labels\":%s}}\n", kind, name, labels)
+}
+
+func TestPreflight_VolumesAndNetworksMustBeOwned(t *testing.T) {
+	own := preflightOwner.String()
+	other := "22222222-2222-4222-8222-222222222222"
+	tests := []struct {
+		name      string
+		resources string
+		wantRefus bool
+	}{
+		{"own volume and network pass", preflightResourceLine("volume", "shop_data", own) + preflightResourceLine("network", "shop_default", own), false},
+		{"foreign volume", preflightResourceLine("volume", "shop_data", other), true},
+		{"unlabelled volume", preflightResourceLine("volume", "shop_data", ""), true},
+		{"foreign network", preflightResourceLine("volume", "shop_data", own) + preflightResourceLine("network", "shop_default", other), true},
+		{"unlabelled network", preflightResourceLine("network", "shop_default", ""), true},
+		{"project-prefixed name without any labels", `volume {"Name":"shop_cache","Labels":null}` + "\n", true},
+		{"unrelated name matched by the substring filter", `volume {"Name":"myshop_x","Labels":null}` + "\n", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newPreflightFixture(t)
+			f.node.reply("compose.project_resources", tt.resources)
+			err := f.run()
+			if tt.wantRefus {
+				wantError(t, err, smerr.CodeConflict, smerr.ReasonProjectNotOwned)
+				if n := f.node.count("compose.image_size"); n != 0 {
+					t.Errorf("preflight went on after the ownership refusal")
+				}
+			} else if err != nil {
+				t.Fatalf("runPreflight: %v", err)
+			}
+		})
+	}
+	t.Run("unreadable output fails closed", func(t *testing.T) {
 		f := newPreflightFixture(t)
-		f.input.HostPorts = []compose.HostPort{{Service: "dns", Addr: netip.MustParseAddr("127.0.0.1"), Port: 8080, Proto: "udp"}}
-		f.node.reply("compose.listeners", "LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:*\n")
-		if err := f.run(); err != nil {
-			t.Fatalf("runPreflight: %v", err)
-		}
+		f.node.reply("compose.project_resources", "volume {not json\n")
+		wantPreflightCause(t, f.run(), causePreflightUnreadable)
 	})
 }
 
@@ -298,7 +373,7 @@ func TestPreflight_ComposeDeployCapabilityMissing(t *testing.T) {
 
 func TestPreflight_NodeErrorsAreNotPasses(t *testing.T) {
 	down := errors.New("connection reset")
-	for _, name := range []string{"compose.project_containers", "compose.docker_root", "compose.image_inspect", "compose.image_size", "compose.disk_free"} {
+	for _, name := range []string{"compose.project_containers", "compose.project_resources", "compose.docker_root", "compose.image_inspect", "compose.image_size", "compose.disk_free"} {
 		t.Run(name, func(t *testing.T) {
 			f := newPreflightFixture(t)
 			f.node.down(name, down)

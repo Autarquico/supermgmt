@@ -67,6 +67,9 @@ func runPreflight(ctx context.Context, ex transport.Executor, in preflightInput)
 	if err := preflightOwnership(containers, in.Owner); err != nil {
 		return err
 	}
+	if err := preflightResourceOwnership(ctx, ex, in.Project, in.Owner); err != nil {
+		return err
+	}
 	if err := preflightPorts(ctx, ex, in.HostPorts, containers); err != nil {
 		return err
 	}
@@ -164,9 +167,43 @@ func preflightOwnership(containers []preflightContainer, owner domain.ID) error 
 	return nil
 }
 
-// preflightPorts refuses a host port some other process listens on. A port the
-// project's own containers publish is owned and passes, because compose up
-// recreates them.
+// preflightResource is a volume or network as `docker volume|network inspect`
+// reports it.
+type preflightResource struct {
+	Name   string            `json:"Name"`
+	Labels map[string]string `json:"Labels"`
+}
+
+// preflightResourceOwnership refuses a volume or network that bears the
+// project's names without this target's owner label (spec §20.5, ADR-0029).
+func preflightResourceOwnership(ctx context.Context, ex transport.Executor, project string, owner domain.ID) error {
+	out, err := preflightRead(ctx, ex, "compose.project_resources", map[string]string{"project": project})
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		_, payload, ok := strings.Cut(line, " ")
+		var r preflightResource
+		if !ok || json.Unmarshal([]byte(payload), &r) != nil {
+			return preflightFailed(causePreflightUnreadable, "the project's volumes and networks could not be read")
+		}
+		if preflightBearsProjectName(r, project) && r.Labels[compose.LabelOwner] != owner.String() {
+			return smerr.FromReason(smerr.ReasonProjectNotOwned, "the project name is in use by resources this app target does not own")
+		}
+	}
+	return nil
+}
+
+func preflightBearsProjectName(r preflightResource, project string) bool {
+	return r.Labels["com.docker.compose.project"] == project || strings.HasPrefix(r.Name, project+"_")
+}
+
+// preflightPorts refuses a host port (TCP or UDP) some other process holds. A
+// port the project's own containers publish is owned and passes, because
+// compose up recreates them.
 func preflightPorts(ctx context.Context, ex transport.Executor, ports []compose.HostPort, containers []preflightContainer) error {
 	if len(ports) == 0 {
 		return nil
@@ -178,10 +215,7 @@ func preflightPorts(ctx context.Context, ex transport.Executor, ports []compose.
 	listeners := parsePreflightListeners(string(out))
 	owned := preflightOwnedPorts(containers)
 	for _, p := range ports {
-		if p.Proto != "" && p.Proto != "tcp" {
-			continue // ss -ltn lists TCP listeners only
-		}
-		if !owned[p.Port] && preflightListenerHolds(listeners, p) {
+		if !owned[preflightPortKey(p.Proto, p.Port)] && preflightListenerHolds(listeners, p) {
 			return preflightFailed(causePreflightPortInUse, "host port %d on %s is held by another process", p.Port, p.Addr)
 		}
 	}
@@ -192,10 +226,18 @@ type preflightListener struct {
 	addr     netip.Addr // invalid for a wildcard
 	wildcard bool
 	port     uint16
+	proto    string // tcp | udp
 }
 
-// parsePreflightListeners reads `ss -H -ltn`: the fourth column is the local address
-// as 127.0.0.1:80, [::1]:80, *:80 or [::]:80. Lines it cannot read are skipped.
+// preflightPortKey names a host port of one protocol; an empty protocol is TCP.
+func preflightPortKey(proto string, port uint16) string {
+	return preflightProto(proto) + "/" + strconv.Itoa(int(port))
+}
+
+// parsePreflightListeners reads `ss -H -ltn` followed by `ss -H -lun`: the first
+// column is the state (UNCONN marks a UDP socket) and the fourth the local
+// address as 127.0.0.1:80, [::1]:80, *:80 or [::]:80. Lines it cannot read are
+// skipped.
 func parsePreflightListeners(out string) []preflightListener {
 	var ls []preflightListener
 	for _, line := range strings.Split(out, "\n") {
@@ -212,7 +254,10 @@ func parsePreflightListeners(out string) []preflightListener {
 		if i := strings.IndexByte(host, '%'); i >= 0 {
 			host = host[:i]
 		}
-		l := preflightListener{port: uint16(port)}
+		l := preflightListener{port: uint16(port), proto: "tcp"}
+		if fields[0] == "UNCONN" {
+			l.proto = "udp"
+		}
 		addr, err := netip.ParseAddr(host)
 		switch {
 		case host == "*" || (err == nil && addr.IsUnspecified()):
@@ -239,17 +284,27 @@ func preflightCutLastColon(s string) (before, after string, ok bool) {
 // the same address, or a wildcard (conservatively, of either family).
 func preflightListenerHolds(ls []preflightListener, p compose.HostPort) bool {
 	return slices.ContainsFunc(ls, func(l preflightListener) bool {
-		return l.port == p.Port && (l.wildcard || l.addr == p.Addr || p.Addr.IsUnspecified())
+		return l.port == p.Port && l.proto == preflightProto(p.Proto) && (l.wildcard || l.addr == p.Addr || p.Addr.IsUnspecified())
 	})
 }
 
-func preflightOwnedPorts(containers []preflightContainer) map[uint16]bool {
-	owned := map[uint16]bool{}
+func preflightProto(proto string) string {
+	if proto == "" {
+		return "tcp"
+	}
+	return proto
+}
+
+// preflightOwnedPorts keys the host ports of the project's containers by
+// protocol; PortBindings keys read "<container port>/<proto>".
+func preflightOwnedPorts(containers []preflightContainer) map[string]bool {
+	owned := map[string]bool{}
 	for _, c := range containers {
-		for _, bindings := range c.HostConfig.PortBindings {
+		for key, bindings := range c.HostConfig.PortBindings {
+			_, proto, _ := strings.Cut(key, "/")
 			for _, b := range bindings {
 				if port, err := strconv.ParseUint(b.HostPort, 10, 16); err == nil {
-					owned[uint16(port)] = true
+					owned[preflightPortKey(proto, uint16(port))] = true
 				}
 			}
 		}
