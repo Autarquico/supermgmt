@@ -323,7 +323,7 @@ func TestUnknownModeIsInvalid(t *testing.T) {
 
 // The M3 modes are frozen in W0 and exit 3 until their tasks fill them.
 func TestM3ModesAreUnsupportedUntilImplemented(t *testing.T) {
-	for _, mode := range []Mode{ModeAuto, ModeProxmoxLXC, ModeUpgrade, ModeUninstall} {
+	for _, mode := range []Mode{ModeProxmoxLXC, ModeUpgrade, ModeUninstall} {
 		w := newWorld()
 		d, _ := w.deps("linux", 0, false)
 		if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: mode})); got != ExitUnsupported {
