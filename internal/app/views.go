@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
@@ -11,6 +12,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/textsafe"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
@@ -56,6 +58,7 @@ type lookups struct {
 	envs      map[domain.ID]domain.Environment
 	metrics   map[domain.ID]database.Observation
 	system    map[domain.ID]database.Observation
+	proxmox   map[domain.ID]database.Observation
 }
 
 func (v viewer) lookups(ctx context.Context, q database.Querier) (lookups, error) {
@@ -78,6 +81,9 @@ func (v viewer) lookups(ctx context.Context, q database.Querier) (lookups, error
 		return lookups{}, err
 	}
 	if l.system, err = database.LatestObservations(ctx, q, domain.ResourceNode, observationSystem); err != nil {
+		return lookups{}, err
+	}
+	if l.proxmox, err = database.LatestObservations(ctx, q, domain.ResourceNode, proxmox.ObservationStatus); err != nil {
 		return lookups{}, err
 	}
 	return l, nil
@@ -125,7 +131,34 @@ func (v viewer) node(ctx context.Context, q database.Querier, l lookups, n domai
 	if setup := setupFrom(caps); setup != nil {
 		out.Setup = setupView(*setup)
 	}
+	out.Proxmox = proxmoxView(n, l.proxmox[n.ID])
 	return out, nil
+}
+
+// proxmoxView is the Proxmox side of a node: identity from the discovered
+// metadata, power state and presence from the latest proxmox.status
+// observation. Nil for a node Proxmox did not discover.
+func proxmoxView(n domain.Node, status database.Observation) *wire.ProxmoxGuest {
+	if !strings.HasPrefix(n.Kind, proxmox.OperationPrefix) {
+		return nil
+	}
+	guest := &wire.ProxmoxGuest{Type: metadataString(n.Metadata, "type"), PVENode: metadataString(n.Metadata, "pve_node"), Status: "unknown"}
+	if vmid, ok := n.Metadata["vmid"].(float64); ok { // metadata comes back from JSON
+		guest.VMID = int(vmid)
+	}
+	guest.Template, _ = n.Metadata["template"].(bool)
+	var observed ProxmoxStatus
+	if status.Value != nil && decodeObservation(status, &observed) == nil {
+		guest.Status = observed.Status
+		guest.Absent = observed.Presence == PresenceAbsent
+		guest.Inaccessible = observed.Presence == PresenceInaccessible
+	}
+	return guest
+}
+
+func metadataString(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
 }
 
 func (v viewer) endpoint(n domain.Node) wire.Endpoint {
@@ -242,6 +275,16 @@ func ProviderView(p domain.Provider) wire.Provider {
 		ID: p.ID, Type: p.Type, Name: p.Name, Origin: p.Origin, Status: p.Status,
 		SpecRevision: p.SpecRevision, LastSyncAt: p.LastSyncAt,
 	}
+}
+
+// ProviderViewIn is ProviderView plus why the latest sync failed, read from
+// the provider's latest proxmox.sync observation.
+func ProviderViewIn(ctx context.Context, q database.Querier, p domain.Provider) wire.Provider {
+	view := ProviderView(p)
+	if report, ok := LatestSyncReport(ctx, q, p.ID); ok && !report.OK {
+		view.LastError = limitText(textsafe.Line(report.Error), lastErrorLimit)
+	}
+	return view
 }
 
 // ---- services --------------------------------------------------------------

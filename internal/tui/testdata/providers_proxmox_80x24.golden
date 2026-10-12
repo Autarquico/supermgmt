@@ -1,0 +1,24 @@
+┌ SuperMgmt · Providers ───────── 10 nodes · 3 online · 1 warning · 1 approval ┐
+│ NAME                  TYPE        ORIGIN    STATUS    LAST SYNC              │
+│ local                 local       api       ready     never                  │
+│ pve                   proxmox     static    ok        10-10 11:59:00         │
+│ pve-lab               proxmox     static    error     10-10 11:59:00         │
+│   ! cluster is on fire                                                       │
+│ ssh                   ssh         static    ready     10-10 11:59:00         │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ r refresh  esc back  / command  ? help  q quit                               │
+└──────────────────────────────────────────────────────────────────────────────┘

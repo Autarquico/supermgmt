@@ -104,6 +104,7 @@ func (f *fakeAPI) runCtx(ctx context.Context, stdin string, args ...string) resu
 	root.PersistentFlags().Bool("json", false, "")
 	root.PersistentFlags().String("log-level", "info", "")
 	root.AddCommand(clientCommands(f.Env)...) //nolint:contextcheck // finish() deliberately ends sessions on a fresh context
+	root.AddCommand(newProvidersCmd(f.Env))   //nolint:contextcheck // as above
 
 	var out, errOut bytes.Buffer
 	root.SetIn(strings.NewReader(stdin))

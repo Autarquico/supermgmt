@@ -1,0 +1,10 @@
+lab
+├─ old-box  ssh  unreachable (stale)  managed
+└─ web-1    ssh  reachable            managed
+pve
+├─ pve1      node      online   discovered
+│  ├─ web    qemu/100  running  discovered
+│  └─ base   qemu/300  stopped  discovered  [template]
+└─ pve2      node      online   discovered
+   ├─ db     lxc/200   unknown  discovered  [absent]
+   └─ cache  lxc/210   unknown  discovered  [inaccessible]

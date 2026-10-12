@@ -417,12 +417,20 @@ func (m *Model) loadNodes() tea.Cmd {
 		},
 		func(m *Model, page wire.Page[wire.Node]) {
 			nodes := slices.Clone(page.Items)
-			slices.SortStableFunc(nodes, func(a, b wire.Node) int {
-				return strings.Compare(a.Provider+"\x00"+a.Name, b.Provider+"\x00"+b.Name)
-			})
+			slices.SortStableFunc(nodes, func(a, b wire.Node) int { return strings.Compare(treeKey(a), treeKey(b)) })
 			m.nodeCur = keepCursor(m.nodes, m.nodeCur, nodes, func(n wire.Node) string { return string(n.ID) })
 			m.nodes = nodes
 		})
+}
+
+// treeKey orders nodes the way the Resources tree shows them: by provider,
+// then by name; under a Proxmox provider a cluster node comes first and its
+// guests follow it in VMID order.
+func treeKey(n wire.Node) string {
+	if g := n.Proxmox; g != nil {
+		return fmt.Sprintf("%s\x00%s\x00%010d\x00%s", n.Provider, g.PVENode, g.VMID, n.Name)
+	}
+	return n.Provider + "\x00" + n.Name
 }
 
 func (m *Model) loadNode() tea.Cmd {
