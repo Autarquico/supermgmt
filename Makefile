@@ -91,7 +91,7 @@ e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (ex
 	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
 		-run 'TestM2_(CurlBashInstallsServer|TamperedReleaseFailsWithExit5|ReviewFirstDetectsModifiedScripts)$$' ./test/e2e/
 
-e2e-appliance: ## e2e: simulated Proxmox host (pvesim shims, fake API) and the appliance acceptance tests
+e2e-appliance: ## e2e: appliance on a simulated Proxmox host (pvesim); on arm64 set SM_E2E_PVE_HOST_PLATFORM=linux/amd64
 	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Appliance' ./test/e2e/...
 
 e2e-upgrade: ## e2e: upgrade from the M2 release (commit e6d5577; needs the full history), failure boundaries, uninstall

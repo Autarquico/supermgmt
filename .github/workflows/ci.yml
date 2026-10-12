@@ -271,7 +271,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Proxmox appliance install and acceptance (skeleton; the tests arrive later)
+      - name: Proxmox appliance on a simulated host (install, discovery, login, power, rollback, upgrade, uninstall)
         run: make e2e-appliance
 
   e2e-upgrade:

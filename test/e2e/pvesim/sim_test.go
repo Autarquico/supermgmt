@@ -426,3 +426,28 @@ func TestFailingRuntimeFailsTheCommandAndLeavesNoGuest(t *testing.T) {
 		t.Errorf("a failed create reached the fake API: %v", r.api.guests)
 	}
 }
+
+func TestInjectedFaultsFailMatchingRunsBeforeOrAfterTheWork(t *testing.T) {
+	r := newRig()
+	r.mustRun(t, "pveam", "download", "local", debian)
+	r.sim.Inject(Fault{Tool: "pct", Contains: "create 900", After: true, Stderr: "boom"})
+	res := r.run("pct", createArgs("900")...)
+	if res.Code != 255 || !strings.Contains(string(res.Stderr), "boom") {
+		t.Fatalf("exit %d: %s", res.Code, res.Stderr)
+	}
+	if got := r.mustRun(t, "pct", "list"); !strings.Contains(got, "900") {
+		t.Errorf("an After fault must leave the work done:\n%s", got)
+	}
+
+	r.sim.Inject(Fault{Tool: "pct", Contains: "start 900"})
+	if res := r.run("pct", "start", "900"); res.Code != 255 {
+		t.Fatalf("exit %d", res.Code)
+	}
+	if got := r.mustRun(t, "pct", "status", "900"); !strings.Contains(got, "stopped") {
+		t.Errorf("a fault without After must not run the command:\n%s", got)
+	}
+	r.mustRun(t, "pct", "start", "900") // the fault was spent
+	if calls := r.sim.Calls(); len(calls) == 0 || !strings.HasPrefix(calls[0], "pveam download") {
+		t.Errorf("calls %v", calls)
+	}
+}

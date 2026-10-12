@@ -273,6 +273,7 @@ func (s *Sim) addToken(ctx context.Context, p parsed) (string, error) {
 		return "", die("pvesim: create the token in the fake API: %v", err)
 	}
 	u.tokens[id] = privsep
+	s.noteSecret(user, id, secret)
 	reply := map[string]any{"full-tokenid": user + "!" + id, "info": map[string]string{"privsep": map[bool]string{true: "1", false: "0"}[privsep]}, "value": secret}
 	return render(reply, p), nil
 }
