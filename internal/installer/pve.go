@@ -24,7 +24,6 @@ const (
 	pctTool        = "/usr/sbin/pct"
 	pveamTool      = "/usr/sbin/pveam"
 	pveumTool      = "/usr/sbin/pveum"
-	pvesmTool      = "/usr/sbin/pvesm"
 	pveshTool      = "/usr/bin/pvesh"
 	hostnameTool   = "/usr/bin/hostname"
 	runuserTool    = "/usr/sbin/runuser"
@@ -198,14 +197,19 @@ func (p execPVE) NextID(ctx context.Context, from int) (int, error) {
 	return 0, fmt.Errorf("no free VMID in %d-%d", from, from+maxNextIDs-1)
 }
 
+// Storages reads GET /nodes/<node>/storage: `pvesm status` has no JSON output.
 func (p execPVE) Storages(ctx context.Context) ([]PVEStorage, error) {
+	node, err := p.nodeName(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var rows []struct {
 		Storage string          `json:"storage"`
 		Type    string          `json:"type"`
 		Content string          `json:"content"`
 		Active  json.RawMessage `json:"active"`
 	}
-	if err := p.json(ctx, &rows, pvesmTool, "status"); err != nil {
+	if err := p.json(ctx, &rows, pveshTool, "get", "/nodes/"+node+"/storage"); err != nil {
 		return nil, err
 	}
 	out := make([]PVEStorage, 0, len(rows))
@@ -223,13 +227,18 @@ type networkRow struct {
 	Address string `json:"address"`
 }
 
-func (p execPVE) bridgeRows(ctx context.Context) ([]networkRow, error) {
+func (p execPVE) nodeName(ctx context.Context) (string, error) {
 	node, err := p.text(ctx, hostnameTool, "-s")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	node = strings.TrimSpace(node)
-	if err := validName("node", node); err != nil {
+	return node, validName("node", node)
+}
+
+func (p execPVE) bridgeRows(ctx context.Context) ([]networkRow, error) {
+	node, err := p.nodeName(ctx)
+	if err != nil {
 		return nil, err
 	}
 	var rows []networkRow

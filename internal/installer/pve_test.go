@@ -187,6 +187,9 @@ func TestPVE_CreateArgvIsTheFrozenShape(t *testing.T) {
 func TestPVE_Parsers(t *testing.T) {
 	p, r := newRecordedPVE()
 	r.answer = func(c Command) ([]byte, error) {
+		if c.Args[3] == "/usr/bin/hostname" {
+			return []byte("pve\n"), nil
+		}
 		switch c.Args[4] {
 		case "list":
 			if c.Args[3] == "/usr/sbin/pct" {
@@ -194,7 +197,7 @@ func TestPVE_Parsers(t *testing.T) {
 			}
 		case "config":
 			return []byte("arch: amd64\ndescription: supermgmt install ab12cd34\nfeatures: nesting=0,keyctl=0\nlock: create\nmp0: /a,mp=/b\nlxc.cgroup2.x: 1\ntags: supermgmt\nunprivileged: 1\n"), nil
-		case "status":
+		case "get":
 			return []byte(`[{"storage":"local","type":"dir","content":"vztmpl,iso","active":1},{"storage":"off","type":"dir","content":"rootdir","active":0}]`), nil
 		}
 		return nil, nil
@@ -213,6 +216,10 @@ func TestPVE_Parsers(t *testing.T) {
 		t.Errorf("config = %+v", cfg)
 	}
 	stores, _ := p.Storages(bg)
+	last := r.cmds[len(r.cmds)-1]
+	if got := strings.Join(last.Args[3:], " "); got != "/usr/bin/pvesh get /nodes/pve/storage --output-format json" {
+		t.Errorf("storages ran %q; pvesm status has no JSON output", got)
+	}
 	if len(stores) != 2 || !stores[0].Active || stores[1].Active || stores[0].Content[0] != "vztmpl" {
 		t.Errorf("storages = %+v", stores)
 	}

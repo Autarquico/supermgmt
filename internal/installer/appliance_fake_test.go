@@ -41,6 +41,11 @@ type aw struct {
 	dirs   map[string]bool
 	locked bool
 
+	// entries overrides what Lstat reports for a path (owner, mode, symlink); by default the
+	// installer's own files are root-owned and private.
+	entries    map[string]EntryInfo
+	unreadable map[string]bool // paths whose ReadFile fails with something other than not-exist
+
 	// PVE
 	version    string
 	storages   []PVEStorage
@@ -60,6 +65,7 @@ type aw struct {
 
 	// scenario switches
 	collide        map[string]bool // user, auditrole, powerrole, token
+	raceCreate     map[string]bool // user, role, token: another party creates it first and our create fails
 	raceAtCreate   bool
 	createShape    func(*fakeGuest) // makes the created guest differ from the plan
 	lockDelay      int              // State polls a failed create keeps the guest locked
@@ -124,7 +130,7 @@ func newAW(t *testing.T) *aw {
 	t.Helper()
 	ca := testCAPEM(t)
 	w := &aw{
-		t: t, files: map[string][]byte{"/usr/local/src/sm": []byte("the sm binary"), defaultPVECAFile: ca},
+		t: t, entries: map[string]EntryInfo{}, files: map[string][]byte{"/usr/local/src/sm": []byte("the sm binary"), defaultPVECAFile: ca},
 		dirs: map[string]bool{"/": true, "/var/tmp": true, "/var/lib": true}, version: "9.0.3",
 		storages: []PVEStorage{
 			{ID: "local-lvm", Type: "lvmthin", Content: []string{"rootdir", "images"}, Active: true},
@@ -212,9 +218,25 @@ func (w *aw) Exists(p string) bool {
 	return f || w.dirs[p]
 }
 
+func (w *aw) Lstat(p string) (EntryInfo, error) {
+	if info, ok := w.entries[p]; ok {
+		return info, nil
+	}
+	switch _, isFile := w.files[p]; {
+	case w.dirs[p]:
+		return EntryInfo{Dir: true, Mode: 0o700}, nil
+	case isFile:
+		return EntryInfo{Regular: true, Mode: 0o600}, nil
+	}
+	return EntryInfo{}, fs.ErrNotExist
+}
+
 func (w *aw) ReadFile(p string) ([]byte, error) {
 	if err := w.read("host.read " + p); err != nil {
 		return nil, err
+	}
+	if w.unreadable[p] {
+		return nil, fs.ErrPermission
 	}
 	if b, ok := w.files[p]; ok {
 		return append([]byte(nil), b...), nil
@@ -530,6 +552,9 @@ func (w *aw) UserExists(_ context.Context, user string) (bool, error) {
 
 func (w *aw) CreateUser(_ context.Context, user, _ string) error {
 	return w.mutate("pve.createuser", func() error {
+		if w.raceCreate["user"] {
+			w.users[user] = "foreign"
+		}
 		if w.users[user] != "" {
 			return errors.New("user exists")
 		}
@@ -562,6 +587,9 @@ func (w *aw) RoleExists(_ context.Context, role string) (bool, error) {
 
 func (w *aw) CreateRole(_ context.Context, role string, privs []string) error {
 	return w.mutate("pve.createrole "+role+" "+strings.Join(privs, ","), func() error {
+		if w.raceCreate["role"] && w.roles[role] == "" {
+			w.roles[role] = "foreign"
+		}
 		if w.roles[role] != "" {
 			return errors.New("role exists")
 		}
@@ -624,6 +652,10 @@ func (w *aw) AddToken(_ context.Context, user, id string) (audit.Secret, error) 
 	err := w.mutate("pve.addtoken", func() error {
 		if w.users[user] == "" {
 			return errors.New("no such user")
+		}
+		if w.raceCreate["token"] {
+			w.tokens[user+"!"+id] = "foreign"
+			return errors.New("token exists")
 		}
 		w.tokens[user+"!"+id] = "ours"
 		secret = audit.Secret(w.secret)

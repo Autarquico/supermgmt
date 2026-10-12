@@ -82,6 +82,19 @@ func (osFiles) Exists(path string) bool {
 	return err == nil
 }
 
+// Lstat describes path itself: a symlink is reported as neither a directory nor a regular file.
+func (osFiles) Lstat(path string) (EntryInfo, error) {
+	info, err := os.Lstat(filepath.Clean(path))
+	if err != nil {
+		return EntryInfo{}, err
+	}
+	uid := -1
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		uid = int(st.Uid)
+	}
+	return EntryInfo{Dir: info.IsDir(), Regular: info.Mode().IsRegular(), UID: uid, Mode: info.Mode().Perm()}, nil
+}
+
 func (osFiles) ReadFile(path string) ([]byte, error) { return os.ReadFile(filepath.Clean(path)) }
 
 func (osFiles) RemoveAll(path string) error { return os.RemoveAll(path) }

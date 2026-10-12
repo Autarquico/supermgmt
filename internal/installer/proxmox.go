@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/netip"
 	"net/url"
@@ -47,6 +48,20 @@ type applianceHost interface {
 	Lock(path string) (release func(), err error)
 	// ListDir lists the entry names of dir; a missing directory is empty.
 	ListDir(dir string) ([]string, error)
+}
+
+// EntryInfo is what Lstat says about a path without following a final symlink.
+type EntryInfo struct {
+	Dir     bool
+	Regular bool
+	UID     int
+	Mode    fs.FileMode // permission bits only
+}
+
+// entryStatter lets the installer judge who owns what it finds in a shared
+// directory before it trusts or deletes it.
+type entryStatter interface {
+	Lstat(path string) (EntryInfo, error)
 }
 
 // bridgeAddresser tells the host's own address on a bridge, which is where the
@@ -125,6 +140,7 @@ type provision struct {
 	h    provisionHooks
 	pve  PVE
 	host applianceHost
+	stat entryStatter
 	plan appliancePlan
 
 	id string
@@ -178,7 +194,11 @@ func (in *Installer) newProvision(o Options, h provisionHooks) (*provision, erro
 	if !ok {
 		return nil, fail(ExitPrerequisite, "this host cannot take the installer lock")
 	}
-	return &provision{in: in, d: d, o: o, h: h, pve: d.PVE, host: host}, nil
+	stat, ok := d.Files.(entryStatter)
+	if !ok {
+		return nil, fail(ExitPrerequisite, "this host cannot inspect file ownership")
+	}
+	return &provision{in: in, d: d, o: o, h: h, pve: d.PVE, host: host, stat: stat}, nil
 }
 
 func (p *provision) say(format string, args ...any) { p.in.say(format, args...) }

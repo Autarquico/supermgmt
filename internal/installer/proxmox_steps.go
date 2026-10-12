@@ -47,6 +47,9 @@ func (p *provision) execute(ctx context.Context) error {
 	if p.j, err = createJournal(p.d.Files, id); err != nil {
 		return failWrap(ExitCreation, "create the install journal", err)
 	}
+	if err := p.requirePrivate(p.j.dir, true); err != nil {
+		return err // nothing was created yet, and the directory is not ours to clean up
+	}
 	if err := p.hit("journal:created"); err != nil {
 		return err
 	}
@@ -69,7 +72,7 @@ func (p *provision) create(step, resource, name string, do func() error) (int, e
 		return 0, err
 	}
 	if err := do(); err != nil {
-		return 0, err
+		return seq, err
 	}
 	if err := p.hit(step + ":applied"); err != nil {
 		return 0, err
@@ -78,6 +81,26 @@ func (p *provision) create(step, resource, name string, do func() error) (int, e
 		return 0, failWrap(ExitCreation, "write the install journal", err)
 	}
 	return seq, p.hit(step + ":recorded")
+}
+
+// createNew creates a Proxmox object that must not exist yet. When the creation fails and the
+// object is there afterwards, it may have been made by somebody else in the meantime (or by this
+// call, whose failure was only reported): that cannot be told apart, so the entry is marked
+// ambiguous and rollback leaves the object alone.
+func (p *provision) createNew(step, resource, name string, exists func() (bool, error), build func() error) error {
+	if present, err := exists(); err != nil || present {
+		return refuseAdopt(resource, name, err)
+	}
+	seq, err := p.create(step, resource, name, build)
+	if err == nil || isCrash(err) || seq == 0 {
+		return err
+	}
+	if present, lookupErr := exists(); present || lookupErr != nil {
+		if markErr := p.j.mark(seq, phaseAmbiguous); markErr != nil {
+			return errors.Join(err, markErr)
+		}
+	}
+	return err
 }
 
 func (p *provision) exec(ctx context.Context, user string, sensitive bool, stdin io.Reader, argv ...string) ([]byte, error) {
@@ -371,19 +394,15 @@ func (p *provision) grants() []roleGrant {
 
 func (p *provision) createIdentities(ctx context.Context) error {
 	user := userIDFor(p.id)
-	if exists, err := p.pve.UserExists(ctx, user); err != nil || exists {
-		return refuseAdopt("user", user, err)
-	}
-	if _, err := p.create("S12a", resUser, user, func() error {
-		return p.pve.CreateUser(ctx, user, ownershipMark(p.id))
-	}); err != nil {
+	if err := p.createNew("S12a", resUser, user,
+		func() (bool, error) { return p.pve.UserExists(ctx, user) },
+		func() error { return p.pve.CreateUser(ctx, user, ownershipMark(p.id)) }); err != nil {
 		return stepError(ExitCreation, "create the Proxmox user", err)
 	}
 	for _, g := range p.grants() {
-		if exists, err := p.pve.RoleExists(ctx, g.role); err != nil || exists {
-			return refuseAdopt("role", g.role, err)
-		}
-		if _, err := p.create("S12b", resRole, g.role, func() error { return p.pve.CreateRole(ctx, g.role, g.privileges) }); err != nil {
+		if err := p.createNew("S12b", resRole, g.role,
+			func() (bool, error) { return p.pve.RoleExists(ctx, g.role) },
+			func() error { return p.pve.CreateRole(ctx, g.role, g.privileges) }); err != nil {
 			return stepError(ExitCreation, "create the Proxmox role", err)
 		}
 	}
@@ -435,15 +454,14 @@ func parseACLName(name string) (ACL, bool) {
 // tmpfs through a short-lived host file, import it offline, and leave no copy.
 func (p *provision) transferToken(ctx context.Context) error {
 	user := userIDFor(p.id)
-	if exists, err := p.pve.TokenExists(ctx, user, pveTokenID); err != nil || exists {
-		return refuseAdopt("token", user+"!"+pveTokenID, err)
-	}
 	defer func() { p.tokenSecret = "" }()
-	if _, err := p.create("S12d", resToken, user+"!"+pveTokenID, func() error {
-		secret, err := p.pve.AddToken(ctx, user, pveTokenID)
-		p.tokenSecret = user + "!" + pveTokenID + "=" + secret.Reveal()
-		return err
-	}); err != nil {
+	if err := p.createNew("S12d", resToken, user+"!"+pveTokenID,
+		func() (bool, error) { return p.pve.TokenExists(ctx, user, pveTokenID) },
+		func() error {
+			secret, err := p.pve.AddToken(ctx, user, pveTokenID)
+			p.tokenSecret = user + "!" + pveTokenID + "=" + secret.Reveal()
+			return err
+		}); err != nil {
 		return stepError(ExitCreation, "create the Proxmox token", err)
 	}
 	for _, g := range p.grants() {
@@ -467,7 +485,7 @@ func (p *provision) transferToken(ctx context.Context) error {
 // stageTokenFile writes the secret to a file in a fresh 0700 directory under
 // the journal directory (itself 0700 and new). The path is journaled first.
 func (p *provision) stageTokenFile(_ context.Context) (stage stagedToken, err error) {
-	dir := path.Join(p.j.dir, "stage")
+	dir := path.Join(p.j.dir, stageDirName)
 	if p.d.Files.Exists(dir) {
 		return stagedToken{}, fail(ExitCreation, "%s already exists", dir)
 	}
@@ -635,11 +653,7 @@ func (p *provision) issueBootstrapCode(ctx context.Context) error {
 // ---- S16 ----
 
 func (p *provision) commitAndReport(_ context.Context) error {
-	if err := p.commitInstall(); err != nil {
-		return err
-	}
-	p.printAccess()
-	return nil
+	return p.commitInstall()
 }
 
 func caFingerprint(pemBytes []byte) string {

@@ -404,11 +404,30 @@ func TestPveversionPrintsTheManagerVersion(t *testing.T) {
 	}
 }
 
-func TestPvesmStatusFiltersByContent(t *testing.T) {
+func TestNodeStorageFiltersByContent(t *testing.T) {
 	r := newRig()
-	out := r.mustRun(t, "pvesm", "status", "--content", "rootdir", "--output-format", "json")
+	out := r.mustRun(t, "pvesh", "get", "/nodes/pve/storage", "--content", "rootdir", "--output-format", "json")
 	if !strings.Contains(out, `"storage":"local-lvm"`) || strings.Contains(out, `"storage":"local"`) {
-		t.Errorf("pvesm status --content rootdir:\n%s", out)
+		t.Errorf("GET /nodes/pve/storage --content rootdir:\n%s", out)
+	}
+}
+
+func TestNodeStorageRefusesAnotherNode(t *testing.T) {
+	r := newRig()
+	if res := r.run("pvesh", "get", "/nodes/other/storage", "--output-format", "json"); res.Code != 255 {
+		t.Errorf("exit %d, want 255", res.Code)
+	}
+}
+
+// The real pvesm has no JSON output: it prints a table and rejects --output-format.
+func TestPvesmStatusHasNoJSONOutput(t *testing.T) {
+	r := newRig()
+	if res := r.run("pvesm", "status", "--output-format", "json"); res.Code != 255 || !strings.Contains(strings.ToLower(string(res.Stderr)), "unknown option") {
+		t.Errorf("pvesm status --output-format json: exit %d, stderr %q; want 255 and unknown option", res.Code, res.Stderr)
+	}
+	table := r.mustRun(t, "pvesm", "status")
+	if !strings.HasPrefix(table, "Name") || !strings.Contains(table, "local-lvm") {
+		t.Errorf("pvesm status:\n%s", table)
 	}
 }
 
