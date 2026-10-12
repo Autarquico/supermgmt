@@ -32,12 +32,16 @@ help: ## List targets
 build: ## Build dist/sm
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/sm ./cmd/sm
 
+# The PTY suite measures terminal timing; it runs alone in test-pty, never
+# beside the rest of the suite where load makes its deadlines flaky.
+UNIT_PKGS = $(shell go list ./... | grep -v /test/integration/pty)
+
 test: ## Run unit tests
-	$(IF_GO) go test -count=1 -shuffle=on ./...
+	$(IF_GO) go test -count=1 -shuffle=on $(UNIT_PKGS)
 	$(IF_GO) go test -count=1 -tags crashpoints ./internal/backup/... ./internal/installer/...
 
 test-race: ## Run unit tests with the race detector
-	$(IF_GO) go test -race -count=1 -shuffle=on ./...
+	$(IF_GO) go test -race -count=1 -shuffle=on $(UNIT_PKGS)
 
 test-pty: ## Run the PTY handoff-restoration tests (ubuntu and macOS CI)
 	@if [ -d test/integration/pty ]; then go test -race -count=1 -shuffle=on -v ./test/integration/pty/...; \
