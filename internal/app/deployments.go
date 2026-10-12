@@ -270,15 +270,17 @@ func (d *Deployments) insertProvisional(ctx context.Context, tx *database.Tx, by
 // bearer resolver writes (internal/auth/github.go): the §18 claims under their
 // GitHub names.
 type oidcStoredClaims struct {
-	RepositoryID   int64  `json:"repository_id"`
-	WorkflowRef    string `json:"workflow_ref"`
-	JobWorkflowRef string `json:"job_workflow_ref"`
-	SHA            string `json:"sha"`
-	Ref            string `json:"ref"`
-	EventName      string `json:"event_name"`
-	Environment    string `json:"environment"`
-	RunID          int64  `json:"run_id"`
-	RunAttempt     int64  `json:"run_attempt"`
+	RepositoryID      int64  `json:"repository_id"`
+	RepositoryOwnerID int64  `json:"repository_owner_id"`
+	Repository        string `json:"repository"`
+	WorkflowRef       string `json:"workflow_ref"`
+	JobWorkflowRef    string `json:"job_workflow_ref"`
+	SHA               string `json:"sha"`
+	Ref               string `json:"ref"`
+	EventName         string `json:"event_name"`
+	Environment       string `json:"environment"`
+	RunID             int64  `json:"run_id"`
+	RunAttempt        int64  `json:"run_attempt"`
 }
 
 // requireEntitled lets a GitHub Actions token deploy only the commit its
@@ -305,22 +307,18 @@ func requireEntitled(ctx context.Context, q database.Querier, by Caller, scope d
 		return fmt.Errorf("stored oidc claims are unreadable: %w", err)
 	}
 	ciPolicy := githubCIPolicy(*scope.spec.CI)
-	if err := github.MatchClaims(claims.verified(ciPolicy), ciPolicy, commitSHA, github.EnvRequirement{}); err != nil {
+	if err := github.MatchClaims(claims.verified(), ciPolicy, commitSHA, github.EnvRequirement{}); err != nil {
 		return denied("the token's claims do not entitle this deployment", err)
 	}
 	return nil
 }
 
-// verified rebuilds the claims MatchClaims judges. The repository name comes
-// from workflow_ref (<owner>/<repo>/<path>@<ref>) and is blank, so the match
-// fails, when workflow_ref does not have that shape. The owner id is not
-// stored with the credential: the resolver already bound the token to the
-// repository id and workflow of the app's automation identity, so the policy's
-// own owner id stands in for it.
-func (c oidcStoredClaims) verified(p github.CIPolicy) github.Claims {
-	repository, _ := strings.CutSuffix(c.WorkflowRef, "/"+p.DeployWorkflow+"@"+c.Ref)
+// verified rebuilds the claims MatchClaims judges, owner id and repository
+// name included: the policy's owner id is the repository's github_owner_id
+// (spec §18), so a token from another account cannot match.
+func (c oidcStoredClaims) verified() github.Claims {
 	return github.Claims{
-		RepositoryID: c.RepositoryID, RepositoryOwnerID: p.OwnerID, Repository: repository,
+		RepositoryID: c.RepositoryID, RepositoryOwnerID: c.RepositoryOwnerID, Repository: c.Repository,
 		Ref: c.Ref, SHA: c.SHA, EventName: c.EventName, WorkflowRef: c.WorkflowRef,
 		JobWorkflowRef: c.JobWorkflowRef, Environment: c.Environment, RunID: c.RunID, RunAttempt: c.RunAttempt,
 	}

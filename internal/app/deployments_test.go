@@ -108,7 +108,7 @@ func (f *depFixture) count() int {
 // token whose stored claims are the defaults below, changed by mutate.
 func (f *depFixture) oidcCaller(jti string, mutate ...func(*string)) Caller {
 	f.t.Helper()
-	claims := `{"repository_id":4242,"workflow_ref":"` + depWorkflowRef + `","sha":"` + depCommit +
+	claims := `{"repository_id":4242,"repository_owner_id":77,"repository":"acme/web","workflow_ref":"` + depWorkflowRef + `","sha":"` + depCommit +
 		`","ref":"refs/heads/main","event_name":"push","run_id":9,"run_attempt":1}`
 	for _, m := range mutate {
 		m(&claims)
@@ -290,6 +290,8 @@ func TestDeploymentsCreate_AnActionsTokenCannotDeployWhatItWasNotIssuedFor(t *te
 		{"another branch", func(c *string) { *c = strings.ReplaceAll(*c, "refs/heads/main", "refs/heads/dev") }},
 		{"a pull request event", func(c *string) { *c = strings.Replace(*c, `"push"`, `"pull_request"`, 1) }},
 		{"another repository", func(c *string) { *c = strings.Replace(*c, `"repository_id":4242`, `"repository_id":1`, 1) }},
+		{"another account", func(c *string) { *c = strings.Replace(*c, `"repository_owner_id":77`, `"repository_owner_id":78`, 1) }},
+		{"another repository name", func(c *string) { *c = strings.Replace(*c, `"repository":"acme/web"`, `"repository":"acme/api"`, 1) }},
 		{"another workflow", func(c *string) { *c = strings.Replace(*c, "deploy.yml", "other.yml", 1) }},
 		{"a reusable workflow the policy does not name", func(c *string) {
 			*c = strings.Replace(*c, `"run_id"`, `"job_workflow_ref":"acme/shared/.github/workflows/d.yml@main","run_id"`, 1)
