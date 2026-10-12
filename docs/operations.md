@@ -2,7 +2,7 @@
 
 How to run a SuperMgmt server (`instance.mode: server`) after it is installed: backups and restores, master keys, approvals of secret operations, and recovery access. Sources: SPEC §10, §11.5, §29, [ADR-0020](adr/0020-backup-format-and-offline-restore.md), [ADR-0021](adr/0021-key-and-identity-management.md), and the code under `internal/backup`, `internal/secrets`, `internal/app`, `internal/cli`.
 
-> **Verification status.** The commands below were read against the implementation. The end-to-end acceptance suite (task T13: install from a signed release in a Debian systemd container, crash-injected restore on a fresh host, Dex login) was **not part of the code this page was written against**; where a flow depends on it the text says "not verified". Nothing here has run on a real VM or a real identity provider other than the Dex test setup.
+> **Verification status.** The M2 flows below are exercised end to end in Docker by the e2e suites (`make e2e-server`, `make e2e-install`: install from a signed release in a Debian systemd container, restore on a fresh host, Dex login). Nothing here has run on a real VM or a real identity provider other than Dex. The M3 appliance, upgrade and uninstall flows run against a simulated Proxmox host (`make e2e-appliance`, `make e2e-upgrade`) and are not verified on real PVE.
 
 Run `sm` commands that talk to the service from a machine with a signed-in profile (`sm login`); run `sm admin`, the online `sm doctor` and the offline commands on the server as root or the service user `supermgmt`.
 
