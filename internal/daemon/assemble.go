@@ -59,24 +59,18 @@ func (s *system) close() error {
 	return s.db.Close()
 }
 
-// assemble performs the startup of ADR-0020 after the locks: it finishes or
-// discards an interrupted restore (before the database is opened, because the
-// restore may have replaced the files), opens and migrates the database,
-// loads the restore hold (an unreadable hold refuses the start), makes the
-// instance row, opens the key files, ensures the instance SSH identity,
-// activates the static configuration and the identities of the mode, and
-// wires the services.
+// assemble performs the startup of ADR-0020 after the locks: Prepare (restore
+// recovery, database, instance row, key files), then the instance SSH
+// identity, the static configuration and the identities of the mode, and the
+// wiring of the services.
 func assemble(ctx context.Context, o Options) (*system, error) {
-	if err := recoverRestore(o.Config); err != nil {
-		return nil, err
-	}
-	db, err := openDatabase(ctx, o.Config, o.Clock)
+	prepared, err := Prepare(ctx, o)
 	if err != nil {
 		return nil, err
 	}
-	sys, err := wireUp(ctx, o, db)
+	sys, err := wireUp(ctx, o, prepared)
 	if err != nil {
-		_ = db.Close()
+		_ = prepared.Close()
 		return nil, err
 	}
 	return sys, nil
@@ -145,16 +139,10 @@ func openSecrets(ctx context.Context, cfg *config.Config, db *database.DB, clock
 	}, nil
 }
 
-func wireUp(ctx context.Context, o Options, db *database.DB) (*system, error) {
-	cfg, clock, ids := o.Config, o.Clock, o.IDs
-	if err := ensureInstance(ctx, db, cfg, clock, ids); err != nil {
-		return nil, fmt.Errorf("create the instance row: %w", err)
-	}
+func wireUp(ctx context.Context, o Options, prepared *Prepared) (*system, error) {
+	cfg, clock := o.Config, o.Clock
+	db, kit := prepared.db, prepared.kit
 	appCfg, policyBytes, err := appConfig(db, o)
-	if err != nil {
-		return nil, err
-	}
-	kit, err := openSecrets(ctx, cfg, db, clock, ids)
 	if err != nil {
 		return nil, err
 	}

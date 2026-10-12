@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,13 +12,14 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/daemon"
+	"github.com/autarquico/supermgmt/internal/database"
 )
 
 // newServerCmd is `sm server`: the control plane in server mode (spec §2.2),
 // the ExecStart of the systemd unit (Appendix A). It serves HTTPS and the admin
 // socket until it is stopped, and re-reads the TLS certificate pair on SIGHUP.
 func newServerCmd(env []string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run the SuperMgmt server (the systemd service)",
 		Args:  noArgs,
@@ -36,6 +39,44 @@ func newServerCmd(env []string) *cobra.Command {
 				Config: cfg, ConfigFile: file, Log: daemonLogger(cmd, level), Reload: reload,
 			})
 			return daemonExit(cmd, err)
+		},
+	}
+	cmd.AddCommand(newServerInitCmd(env))
+	return cmd
+}
+
+// newServerInitCmd is `sm server init`: the offline preparation of a server
+// that has never started (ADR-0026 S11b). It does what the service does first,
+// as the user who runs it, so the database and the keys belong to that user.
+func newServerInitCmd(env []string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "init",
+		Short: "Create the database and the master key of a server that is not running",
+		Long: "Create or update the database and create the first master key, with the service stopped. Run it as the\n" +
+			"service user so the files belong to it. It is safe to repeat: an initialized server is left as it is.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			configFlag, _ := cmd.Flags().GetString("config")
+			file := configPath(configFlag, env)
+			cfg, err := loadServerConfig(file, env)
+			if err != nil {
+				return err
+			}
+			lock, err := database.AcquireDatabaseLock(cfg.Storage.SQLite.Path)
+			if err != nil {
+				return fmt.Errorf("%w (stop the service first)", err)
+			}
+			defer func() { _ = lock.Release() }()
+			prepared, err := daemon.Prepare(cmd.Context(), daemon.Options{Config: cfg, ConfigFile: file})
+			if err != nil {
+				return err
+			}
+			defer func() { _ = prepared.Close() }()
+			report := map[string]any{"database": cfg.Storage.SQLite.Path, "keys_dir": cfg.Security.KeysDir, "kek_id": prepared.ActiveKEK()}
+			return emit(cmd, report, func(w io.Writer) error {
+				_, err := fmt.Fprintf(w, "server initialized: database %s, master key %s\n", cfg.Storage.SQLite.Path, prepared.ActiveKEK())
+				return err
+			})
 		},
 	}
 }

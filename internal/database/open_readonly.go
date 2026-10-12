@@ -66,6 +66,15 @@ func (r *ReadOnly) HasSchema(ctx context.Context) (bool, error) {
 	return has, err
 }
 
+// SnapshotTo copies the whole database into a new file at path and returns what
+// the copy holds, like (*DB).SnapshotTo but without opening the source for
+// writing: nothing is migrated, no -wal or -shm appears next to the source, and
+// the copy keeps the schema version of the source (spec 29.3, ADR-0027).
+func (r *ReadOnly) SnapshotTo(ctx context.Context, path string) (Snapshot, error) {
+	// The copy only reads through the reader pool, which is all a DB needs here.
+	return (&DB{reader: r.pool}).SnapshotTo(ctx, path)
+}
+
 // Close closes the database.
 func (r *ReadOnly) Close() error { return r.pool.Close() }
 
