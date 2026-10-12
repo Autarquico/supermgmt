@@ -13,11 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/netguard"
-	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
 const (
@@ -385,7 +385,23 @@ func (c *client) apiError(status int, body []byte) error {
 // then the token, and only then is it shortened (a cut through the middle of
 // the token would otherwise leave a prefix of it in the text).
 func (c *client) sanitize(s string) string {
-	return truncate(c.redact(textsafe.Line(strings.TrimSpace(s))), maxMessageBytes)
+	return truncate(c.redact(plainLine(s)), maxMessageBytes)
+}
+
+// terminalEscape matches ANSI escape sequences (CSI, OSC and two-byte forms).
+var terminalEscape = regexp.MustCompile(`\x1b(\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)?|.?)`)
+
+// plainLine is s as one line of printable text: escape sequences are removed,
+// every other control character becomes a space, and runs of spaces collapse.
+func plainLine(s string) string {
+	s = terminalEscape.ReplaceAllString(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func truncate(s string, n int) string {

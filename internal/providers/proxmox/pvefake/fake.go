@@ -221,6 +221,17 @@ func (f *Fake) MigrateGuest(vmid int, node string) {
 	f.guests[vmid].Node = node
 }
 
+// SetPool moves a guest to a pool ("" takes it out of any pool).
+func (f *Fake) SetPool(vmid int, pool string) {
+	f.t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.guests[vmid] == nil {
+		f.t.Fatalf("pvefake: no guest %d", vmid)
+	}
+	f.guests[vmid].Pool = pool
+}
+
 // RemoveGuest deletes a guest.
 func (f *Fake) RemoveGuest(vmid int) {
 	f.mu.Lock()

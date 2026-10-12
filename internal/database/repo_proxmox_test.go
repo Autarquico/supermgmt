@@ -46,6 +46,21 @@ func TestSetProviderStatusKeepsTheLastSyncUnlessGivenOneAndNeverTouchesTheRevisi
 	})
 }
 
+func TestMarkProviderRemovedSetsTheStatusAndInvalidatesPlansOfTheProvider(t *testing.T) {
+	f := newFixture(t)
+	f.tx(func(ctx context.Context, q Querier) {
+		p := f.provider(ctx, q, "pve")
+
+		noErr(t, MarkProviderRemoved(ctx, q, p.ID, "removed"))
+
+		got := must(GetProvider(ctx, q, p.ID))
+		if got.Status != "removed" || got.SpecRevision != p.SpecRevision+1 {
+			t.Errorf("provider = %+v, want status removed and revision %d", got, p.SpecRevision+1)
+		}
+		wantError(t, MarkProviderRemoved(ctx, q, f.ids.NewID(), "removed"), smerr.CodeNotFound, "")
+	})
+}
+
 func TestSetNodeMetadataReplacesTheObservedMetadataWithoutBumpingTheRevision(t *testing.T) {
 	f := newFixture(t)
 	f.tx(func(ctx context.Context, q Querier) {

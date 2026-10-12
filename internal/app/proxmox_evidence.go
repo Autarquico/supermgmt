@@ -42,11 +42,16 @@ func powerVerbOf(operation string) (string, error) {
 
 // powerPreState is the intent's pre_state: what the dispatch acted on.
 type powerPreState struct {
-	Type      string `json:"type"`
-	VMID      int    `json:"vmid"`
-	PVENode   string `json:"pve_node"`
-	TokenUser string `json:"token_user"`
-	Status    string `json:"status"`
+	Type        string `json:"type"`
+	VMID        int    `json:"vmid"`
+	PVENode     string `json:"pve_node"`
+	TokenUser   string `json:"token_user"`
+	Status      string `json:"status"`
+	Incarnation string `json:"incarnation,omitempty"`
+	// Baseline are the tasks of this guest, type and user that existed when the
+	// dispatch was about to be sent: none of them is its task. A nil baseline
+	// (an intent from before baselines) cannot rule anything out.
+	Baseline []string `json:"baseline"`
 }
 
 // taskFingerprint is the frozen fingerprint of task-stop evidence (ADR-0025):
@@ -176,6 +181,9 @@ func (e *ProxmoxEvidence) correlate(ctx context.Context, client proxmox.Client, 
 	if err != nil {
 		return proxmox.UPID{}, fmt.Errorf("list the cluster nodes: %w", err)
 	}
+	if pre.Baseline == nil {
+		return proxmox.UPID{}, fmt.Errorf("intent %s recorded no baseline of earlier %s tasks on guest %d: one of them cannot be ruled out", intent.ID, taskType, pre.VMID)
+	}
 	filter := proxmox.TaskFilter{VMID: pre.VMID, TypeName: taskType, User: pre.TokenUser, Since: from, Until: until}
 	var candidates []proxmox.TaskStatus
 	for _, n := range cluster.Nodes {
@@ -185,7 +193,8 @@ func (e *ProxmoxEvidence) correlate(ctx context.Context, client proxmox.Client, 
 		}
 		candidates = append(candidates, tasks...)
 	}
-	upid, found := proxmox.Correlate(candidates, proxmox.Want{Type: taskType, VMID: pre.VMID, User: pre.TokenUser, From: from, Until: until})
+	want := proxmox.Want{Type: taskType, VMID: pre.VMID, User: pre.TokenUser, From: from, Until: until, Known: pre.Baseline}
+	upid, found := proxmox.Correlate(candidates, want)
 	switch found {
 	case proxmox.CorrelatedOne:
 		return upid, nil
