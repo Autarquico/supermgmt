@@ -19,10 +19,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/audit"
+	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/installer"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"github.com/autarquico/supermgmt/internal/secrets"
@@ -40,11 +43,116 @@ func newProvidersCmd(env []string) *cobra.Command {
 func newProvidersCmdWith(env []string, clientOptions []proxmox.Option) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "providers",
-		Short: "Check providers",
+		Short: "List, inspect, refresh and check providers",
 		Args:  noArgs,
+		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newProvidersCheckCmd(env, clientOptions))
+	cmd.AddCommand(newProvidersListCmd(env), newProvidersGetCmd(env), newProvidersRefreshCmd(env), newProvidersCheckCmd(env, clientOptions))
 	return cmd
+}
+
+func newProvidersListCmd(env []string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List providers with their sync status",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			api, err := newClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			page, err := api.ListProviders(cmd.Context(), wire.PageQuery{})
+			if err != nil {
+				return err
+			}
+			return emit(cmd, page, func(w io.Writer) error { return writeProviders(w, page.Items) })
+		},
+	}
+}
+
+func writeProviders(w io.Writer, providers []wire.Provider) error {
+	rows := make([][]string, len(providers))
+	for i, p := range providers {
+		rows[i] = []string{string(p.ID), p.Name, p.Type, string(p.Origin), p.Status, formatTimePtr(p.LastSyncAt), orDash(p.LastError)}
+	}
+	return table(w, []string{"ID", "NAME", "TYPE", "ORIGIN", "STATUS", "LAST SYNC", "LAST ERROR"}, rows)
+}
+
+func newProvidersGetCmd(env []string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <provider>",
+		Short: "Show one provider (id or name)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			api, err := newClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			provider, err := resolveProvider(cmd.Context(), api, args[0])
+			if err != nil {
+				return err
+			}
+			return emit(cmd, provider, func(w io.Writer) error { return writeProvider(w, provider) })
+		},
+	}
+}
+
+func writeProvider(w io.Writer, p wire.Provider) error {
+	return fields(w, [][2]string{
+		{"id", string(p.ID)},
+		{"name", p.Name},
+		{"type", p.Type},
+		{"origin", string(p.Origin)},
+		{"status", p.Status},
+		{"last sync", formatTimePtr(p.LastSyncAt)},
+		{"last error", orDash(p.LastError)},
+		{"spec revision", fmt.Sprint(p.SpecRevision)},
+	})
+}
+
+func newProvidersRefreshCmd(env []string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "refresh <provider>",
+		Short: "Discover a provider now instead of at the next sync",
+		Long: "Run a discovery of the provider now and show how it ended. Nothing is changed on the cluster: only what\n" +
+			"SuperMgmt knows about it. Exit status: 0 when the sync worked, 8 when the cluster could not be read.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			api, err := newClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			provider, err := resolveProvider(cmd.Context(), api, args[0])
+			if err != nil {
+				return err
+			}
+			refreshed, err := api.RefreshProvider(cmd.Context(), provider.ID)
+			if err != nil {
+				return err
+			}
+			if err := emit(cmd, refreshed, func(w io.Writer) error { return writeProvider(w, refreshed) }); err != nil {
+				return err
+			}
+			if refreshed.Status != "ok" {
+				return &childExitError{code: installer.ExitConnectivity}
+			}
+			return nil
+		},
+	}
+}
+
+// resolveProvider accepts a provider id or an exact provider name.
+func resolveProvider(ctx context.Context, api *client.Client, ref string) (wire.Provider, error) {
+	page, err := api.ListProviders(ctx, wire.PageQuery{})
+	if err != nil {
+		return wire.Provider{}, err
+	}
+	for _, p := range page.Items {
+		if string(p.ID) == ref || p.Name == ref {
+			return p, nil
+		}
+	}
+	return wire.Provider{}, smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("no provider %q", ref))
 }
 
 // providerCheck is what `sm providers check` reports.

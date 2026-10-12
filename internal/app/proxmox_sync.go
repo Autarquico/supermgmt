@@ -768,7 +768,7 @@ func (s *ProxmoxSync) Refresh(ctx context.Context, by Caller, id domain.ID) (wir
 		return wire.Provider{}, err
 	}
 	p, err = database.GetProvider(ctx, s.cfg.DB.Reader(), id)
-	return ProviderView(p), err
+	return ProviderViewIn(ctx, s.cfg.DB.Reader(), p), err
 }
 
 func (s *ProxmoxSync) allowRead(ctx context.Context, actor domain.Actor, p domain.Provider) error {

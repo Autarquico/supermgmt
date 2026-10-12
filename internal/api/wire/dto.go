@@ -45,6 +45,7 @@ type Provider struct {
 	Status       string                `json:"status"`
 	SpecRevision int64                 `json:"spec_revision"`
 	LastSyncAt   *time.Time            `json:"last_sync_at"`
+	LastError    string                `json:"last_error"` // why the latest sync failed; empty when it did not
 }
 
 // CreateProviderRequest is POST /providers. M1 accepts only type "local",

@@ -486,7 +486,7 @@ func (i *Inventory) ListProviders(ctx context.Context, by Caller) ([]wire.Provid
 	for _, p := range providers {
 		target := policy.Target{Ref: domain.ResourceRef{Type: domain.ResourceProvider, ID: p.ID}, Attrs: policy.Attributes{Provider: p.Name}}
 		if i.authorize(policy.Request{Actor: actor, Action: "provider.read", Targets: []policy.Target{target}}).Decision == policy.DecisionAllow {
-			out = append(out, ProviderView(p))
+			out = append(out, ProviderViewIn(ctx, q, p))
 		}
 	}
 	return out, nil

@@ -1125,7 +1125,7 @@ components:
         fingerprint_sha256: {type: string}
     Provider:
       type: object
-      required: [id, type, name, origin, status, spec_revision, last_sync_at]
+      required: [id, type, name, origin, status, spec_revision, last_sync_at, last_error]
       properties:
         id: {$ref: '#/components/schemas/ID'}
         type: {type: string}
@@ -1134,6 +1134,7 @@ components:
         status: {type: string}
         spec_revision: {type: integer, format: int64}
         last_sync_at: {type: [string, 'null'], format: date-time}
+        last_error: {type: string, description: Why the latest sync failed; empty when it did not.}
     CreateProviderRequest:
       type: object
       required: [type]
