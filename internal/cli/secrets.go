@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -104,7 +105,15 @@ func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string
 	if name == secrets.SSHIdentityName {
 		return usageErrorf("secret %s is the instance SSH identity: it is never imported", name)
 	}
-	value, err := secretValue(cmd, fromFile)
+	var source secretFile
+	var value string
+	var err error
+	if fromFile != "" {
+		source, err = readSecretFile(fromFile)
+		value = source.value
+	} else {
+		value, err = secretValue(cmd, "")
+	}
 	if err != nil {
 		return err
 	}
@@ -123,7 +132,7 @@ func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string
 		return err
 	}
 	if deleteSource {
-		if err := os.Remove(fromFile); err != nil {
+		if err := source.remove(); err != nil {
 			return fmt.Errorf("stored %s version %d but could not delete %s: %w", ref.Name, ref.Version, fromFile, err)
 		}
 	}
@@ -166,20 +175,74 @@ func secretValue(cmd *cobra.Command, fromFile string) (string, error) {
 	if fromFile == "" {
 		return readSecret(cmd, secretInput{prompt: "Secret value: ", whole: true, limit: maxSecretValueBytes})
 	}
-	info, err := os.Stat(fromFile)
+	source, err := readSecretFile(fromFile)
+	return source.value, err
+}
+
+// secretFile is a --from-file source that was opened without following links
+// and judged through the open descriptor, so the file that was checked is the
+// file that was read.
+type secretFile struct {
+	path   string
+	opened fs.FileInfo
+	value  string
+}
+
+func readSecretFile(path string) (secretFile, error) {
+	// O_NONBLOCK keeps a FIFO from hanging the open before it can be refused.
+	f, err := os.OpenFile(filepath.Clean(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	switch {
+	case errors.Is(err, syscall.ELOOP):
+		return secretFile{}, usageErrorf("%s is a symbolic link: name the file itself", path)
 	case err != nil:
-		return "", usageErrorf("cannot read %s: %v", fromFile, err)
-	case !info.Mode().IsRegular():
-		return "", usageErrorf("%s is not a regular file", fromFile)
-	case info.Mode().Perm()&0o077 != 0:
-		return "", usageErrorf("%s is readable by others (mode %04o): chmod 600 it first", fromFile, info.Mode().Perm())
+		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
 	}
-	data, err := os.ReadFile(filepath.Clean(fromFile))
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil {
-		return "", usageErrorf("cannot read %s: %v", fromFile, err)
+		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
 	}
-	return checkSecret(trimFinalNewline(string(data)), maxSecretValueBytes)
+	if err := checkSecretFile(path, info, os.Geteuid()); err != nil {
+		return secretFile{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxSecretValueBytes+3))
+	if err != nil {
+		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
+	}
+	value, err := checkSecret(trimFinalNewline(string(data)), maxSecretValueBytes)
+	return secretFile{path: path, opened: info, value: value}, err
+}
+
+func checkSecretFile(path string, info fs.FileInfo, euid int) error {
+	switch {
+	case !info.Mode().IsRegular():
+		return usageErrorf("%s is not a regular file", path)
+	case info.Mode().Perm()&0o077 != 0:
+		return usageErrorf("%s is readable by others (mode %04o): chmod 600 it first", path, info.Mode().Perm())
+	case fileOwner(info) != euid:
+		return usageErrorf("%s is not owned by you (uid %d)", path, euid)
+	}
+	return nil
+}
+
+func fileOwner(info fs.FileInfo) int {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return int(stat.Uid)
+	}
+	return -1
+}
+
+// remove unlinks the file only while its directory entry still names the file
+// that was read: a path swapped for another file or a link is left alone.
+func (s secretFile) remove() error {
+	current, err := os.Lstat(s.path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(s.opened, current) {
+		return errors.New("the path no longer names the file that was read")
+	}
+	return os.Remove(s.path)
 }
 
 func trimFinalNewline(s string) string {

@@ -12,8 +12,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,19 +87,9 @@ func (ca testCA) serve(t *testing.T, serial int64, dns []string, ips ...net.IP) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = l.Close() })
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				_ = conn.(*tls.Conn).HandshakeContext(context.Background())
-				_ = conn.Close()
-			}()
-		}
-	}()
+	srv := &http.Server{Handler: http.NotFoundHandler(), ReadHeaderTimeout: 5 * time.Second}
+	t.Cleanup(func() { _ = srv.Close() })
+	go func() { _ = srv.Serve(l) }()
 	_, port, _ = net.SplitHostPort(l.Addr().String())
 	return port, der
 }
@@ -113,8 +105,20 @@ func providersCheck(env []string, args ...string) result {
 	return execRoot(env, "", args, newProvidersCmd(env))
 }
 
-func tlsOnly(args ...string) result {
-	return providersCheck([]string{"HOME=" + os.TempDir()}, append([]string{"providers", "check", "--offline", "--tls-only", "--json"}, args...)...)
+// pveAddress is the private address the tests give the endpoint; dialTo makes
+// it reach the local TLS server, after the outbound filter has judged it.
+const pveAddress = "10.9.8.7"
+
+func dialTo(port string) netguard.Option {
+	return netguard.WithTestDialer(func(network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).Dial(network, net.JoinHostPort("127.0.0.1", port))
+	})
+}
+
+func tlsOnly(guard []netguard.Option, args ...string) result {
+	env := []string{"HOME=" + os.TempDir()}
+	full := append([]string{"providers", "check", "--offline", "--tls-only", "--json"}, args...)
+	return execRoot(env, "", full, newProvidersCmdWith(env, nil, guard))
 }
 
 type checkJSON struct {
@@ -140,9 +144,9 @@ func decodeCheck(t *testing.T, r result) checkJSON {
 
 func TestTLSOnlyCheckAcceptsTheChainTheEndpointServesForItsHost(t *testing.T) {
 	ca := newTestCA(t, "pve-root")
-	port, leaf := ca.serve(t, 2, []string{"pve.test"}, net.ParseIP("127.0.0.1"))
+	port, leaf := ca.serve(t, 2, []string{"pve.test"}, net.ParseIP(pveAddress))
 
-	r := tlsOnly("--endpoint", "https://127.0.0.1:"+port, "--ca-file", writeCA(t, ca))
+	r := tlsOnly([]netguard.Option{dialTo(port)}, "--endpoint", "https://"+pveAddress+":8006", "--ca-file", writeCA(t, ca))
 
 	report := decodeCheck(t, r)
 	sum := sha256.Sum256(leaf)
@@ -153,21 +157,21 @@ func TestTLSOnlyCheckAcceptsTheChainTheEndpointServesForItsHost(t *testing.T) {
 
 func TestTLSOnlyCheckRefusesACertificateThatDoesNotCoverTheChosenHostName(t *testing.T) {
 	ca := newTestCA(t, "pve-root")
-	port, _ := ca.serve(t, 2, []string{"pve.test"}, net.ParseIP("127.0.0.1"))
+	port, _ := ca.serve(t, 2, []string{"pve.test"}, net.ParseIP(pveAddress))
 
-	r := tlsOnly("--endpoint", "https://localhost:"+port, "--ca-file", writeCA(t, ca))
+	r := tlsOnly([]netguard.Option{dialTo(port)}, "--endpoint", "https://10.9.8.8:8006", "--ca-file", writeCA(t, ca))
 
 	report := decodeCheck(t, r)
-	if r.code != 8 || report.OK || !strings.Contains(report.Problem, "localhost") || !strings.Contains(report.Problem, "not trusted") {
+	if r.code != 8 || report.OK || !strings.Contains(report.Problem, "10.9.8.8") || !strings.Contains(report.Problem, "not trusted") {
 		t.Errorf("exit %d, report %+v", r.code, report)
 	}
 }
 
 func TestTLSOnlyCheckRefusesARotatedCertificateTheCADidNotSign(t *testing.T) {
 	trusted, rotated := newTestCA(t, "pve-root"), newTestCA(t, "pve-root-2")
-	port, _ := rotated.serve(t, 3, nil, net.ParseIP("127.0.0.1"))
+	port, _ := rotated.serve(t, 3, nil, net.ParseIP(pveAddress))
 
-	r := tlsOnly("--endpoint", "https://127.0.0.1:"+port, "--ca-file", writeCA(t, trusted))
+	r := tlsOnly([]netguard.Option{dialTo(port)}, "--endpoint", "https://"+pveAddress+":8006", "--ca-file", writeCA(t, trusted))
 
 	report := decodeCheck(t, r)
 	if r.code != 8 || report.OK || !strings.Contains(report.Problem, "unknown authority") {
@@ -184,10 +188,30 @@ func TestTLSOnlyCheckFailsOnAnEndpointNobodyListensOn(t *testing.T) {
 	_, port, _ := net.SplitHostPort(l.Addr().String())
 	_ = l.Close()
 
-	r := tlsOnly("--endpoint", "https://127.0.0.1:"+port, "--ca-file", writeCA(t, ca))
+	r := tlsOnly([]netguard.Option{dialTo(port)}, "--endpoint", "https://"+pveAddress+":8006", "--ca-file", writeCA(t, ca))
 
 	if r.code != 8 || decodeCheck(t, r).OK {
 		t.Errorf("exit %d, stdout %q", r.code, r.stdout)
+	}
+}
+
+func TestTLSOnlyCheckGoesThroughTheOutboundFilter(t *testing.T) {
+	ca := newTestCA(t, "pve-root")
+	port, _ := ca.serve(t, 2, nil, net.ParseIP("127.0.0.1"), net.ParseIP("169.254.169.254"))
+	cases := map[string]string{
+		"loopback":            "https://127.0.0.1:" + port,
+		"cloud metadata":      "https://169.254.169.254:" + port,
+		"unspecified address": "https://0.0.0.0:" + port,
+	}
+	for name, endpoint := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := tlsOnly(nil, "--endpoint", endpoint, "--ca-file", writeCA(t, ca))
+
+			report := decodeCheck(t, r)
+			if r.code != 8 || report.OK || report.CertificateSHA256 != "" || !strings.Contains(report.Problem, "destination refused") {
+				t.Errorf("exit %d, report %+v", r.code, report)
+			}
+		})
 	}
 }
 
@@ -263,9 +287,26 @@ func (b *pveBox) importToken(t *testing.T, value string) {
 func (b *pveBox) check(args ...string) result {
 	args = append([]string{"providers", "check", "--offline"}, args...)
 	args = append(args, "--config", b.configFile, "--json")
-	r := execRoot(b.env, "", args, newProvidersCmdWith(b.env, b.options))
+	r := execRoot(b.env, "", args, newProvidersCmdWith(b.env, b.options, nil))
 	r.stdout, r.stderr = b.normalize(r.stdout), b.normalize(r.stderr)
 	return r
+}
+
+func TestProvidersCheckNeverCreatesTheKeysDirectory(t *testing.T) {
+	b := newPVEBox(t)
+	dir := keysDirOf(t, b.sandbox)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	r := b.check("pve")
+
+	if r.code == 0 {
+		t.Fatalf("a check without keys succeeded: %q", r.stdout)
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the check created the keys directory: %v", err)
+	}
 }
 
 func TestProvidersCheckReadsTheClusterWithTheStoredTokenAndNeverPrintsIt(t *testing.T) {

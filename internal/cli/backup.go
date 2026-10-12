@@ -80,9 +80,9 @@ func createBackupOffline(cmd *cobra.Command, env []string) error {
 	if repo == nil {
 		return usageErrorf("there is no initialized database at %s to back up", session.dbPath)
 	}
-	// The keys are only read: a database without an active key cannot be backed up here,
-	// because the read-only repository refuses to create one.
-	keys, err := secrets.OpenFileKeys(cmd.Context(), session.keysDir, repo, domain.UUIDv7Generator{})
+	// The keys are only read: an instance without keys cannot be backed up here,
+	// and the loader never creates a keys directory or a first key.
+	keys, err := secrets.OpenFileKeysReadOnly(cmd.Context(), session.keysDir, repo)
 	if err != nil {
 		return err
 	}
