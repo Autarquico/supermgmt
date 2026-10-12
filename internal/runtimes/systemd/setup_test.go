@@ -134,7 +134,7 @@ func TestSetupProvisionsANewNodeAsRoot(t *testing.T) {
 			t.Errorf("setup.%s ran %d times", w, node.count("setup."+w))
 		}
 	}
-	if node.count("setup.dir") != 1 || node.count("setup.own_dir") != 2 {
+	if node.count("setup.dir") != 1 || node.count("setup.own_dir") != 3 {
 		t.Errorf("root dirs = %d, own dirs = %d; only the home directory is set by root", node.count("setup.dir"), node.count("setup.own_dir"))
 	}
 	if got := node.files[templates.AuthorizedKeysPath]; got != "restrict "+testKey+" supermgmt@inst-1\n" {

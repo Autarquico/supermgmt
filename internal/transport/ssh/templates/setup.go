@@ -69,7 +69,7 @@ const rootPath = `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" `
 var (
 	rootDirectories = []string{HomeDir, BrokerDir, BrokerConfigDir}
 	rootFiles       = []string{SudoersPath, TmpfilesPath, BrokerPath, BrokerUnitsPath}
-	ownDirectories  = []string{MarkerDir, SSHDir}
+	ownDirectories  = []string{MarkerDir, SSHDir, BackupDir}
 	ownFiles        = []string{AuthorizedKeysPath}
 	setupGroups     = []string{"systemd-journal", "adm", "docker"}
 	modeRE          = regexp.MustCompile(`^0[0-7]{3}$`)

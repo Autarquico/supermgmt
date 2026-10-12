@@ -238,7 +238,7 @@ func (s stepper) ensureDirectories(ctx context.Context, user string) error {
 	if err := s.ensureDir(ctx, "0750", user, user, templates.HomeDir); err != nil {
 		return err
 	}
-	for _, d := range []struct{ mode, path string }{{"0700", templates.MarkerDir}, {"0700", templates.SSHDir}} {
+	for _, d := range []struct{ mode, path string }{{"0700", templates.MarkerDir}, {"0700", templates.SSHDir}, {"0700", templates.BackupDir}} {
 		if err := s.do(ctx, "setup.own_dir", map[string]string{"user": user, "mode": d.mode, "path": d.path}, nil); err != nil {
 			return err
 		}
