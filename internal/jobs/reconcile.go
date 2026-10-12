@@ -312,6 +312,13 @@ type sample struct {
 // Every other dispatched intent needs fresh evidence: proven, classified, and
 // confirmed by two identical samples at least sampleGap apart, collected no
 // later than deadline_at + evidenceWindow.
+// pastEvidenceWindow bounds how long the reconciler keeps asking for evidence.
+// A provider task stays provable after its deadline, so a task-tracked intent
+// is observed until it is settled and never left to a human by time alone.
+func (s *Store) pastEvidenceWindow(in Intent, now time.Time) bool {
+	return !s.taskTracked(in.Operation) && now.After(in.DeadlineAt.Add(evidenceWindow))
+}
+
 func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intents []Intent, now time.Time) map[domain.ID]Evidence {
 	confirmed := map[domain.ID]Evidence{}
 	for _, in := range intents {
@@ -322,7 +329,7 @@ func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intent
 			confirmed[in.ID] = stored
 			continue
 		}
-		if src == nil || now.After(in.DeadlineAt.Add(evidenceWindow)) {
+		if src == nil || s.pastEvidenceWindow(in, now) {
 			continue
 		}
 		ev, err := src.Collect(ctx, in)

@@ -373,3 +373,20 @@ func TestTaskTrackedRuleIsConfigurable(t *testing.T) {
 	_, err = e.resolve(resolveRequest(job, ResolveFailed))
 	wantCode(t, err, smerr.CodeConflict)
 }
+
+func TestATaskThatStopsLongAfterTheDeadlineIsStillReconciled(t *testing.T) {
+	e := newEnv(t)
+	job, intent := interruptedTracked(e)
+	src := &evidenceStub{byIntent: map[domain.ID]Evidence{intent.ID: pveStop(ClassComplete, "stopped", "OK")}}
+	e.clock.Advance(time.Hour)
+	if _, err := e.store.Reconcile(context.Background(), src); err != nil {
+		t.Fatalf("first sample: %v", err)
+	}
+	e.clock.Advance(sampleGap)
+
+	got, err := e.store.Reconcile(context.Background(), src)
+
+	if err != nil || len(got) != 1 || got[0].Action != ReconcileSucceeded || e.state(job.ID) != domain.JobSucceeded {
+		t.Fatalf("an hour past the deadline: Reconcile = %v, %v, state %s; want succeeded", got, err, e.state(job.ID))
+	}
+}
