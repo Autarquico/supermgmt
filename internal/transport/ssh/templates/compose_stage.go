@@ -237,6 +237,23 @@ printf '%s\n' "$file"
 `, "@DIR@", Quote(dir))
 }
 
+// projectResourcesScript prints one line per volume and network that carries
+// the project's Compose label or whose name starts with "<project>_":
+// "<kind> <inspect JSON>". The caller judges ownership from the labels.
+const projectResourcesScript = `set -euo pipefail
+p=$1
+list() { { docker "$1" ls -q --no-trunc --filter "label=com.docker.compose.project=$p"; docker "$1" ls -q --no-trunc --filter "name=${p}_"; } | sort -u; }
+for kind in volume network; do
+  ids=$(list "$kind")
+  [ -z "$ids" ] || docker "$kind" inspect --format "$kind @JSON@" $ids
+done
+`
+
+func projectResourcesBody() string {
+	script := strings.ReplaceAll(projectResourcesScript, "@JSON@", `$(printf '\173\173json .\175\175')`)
+	return shellScript("bash", script, "project")
+}
+
 const (
 	stageDeadline       = time.Minute
 	pullDeadline        = 15 * time.Minute
@@ -267,8 +284,13 @@ var composeStageTemplates = []Template{
 		Body: `ids=$(docker ps -aq --no-trunc --filter label=com.docker.compose.project={{project}}) && { [ -z "$ids" ] || docker inspect --type container $ids; }`,
 	},
 	{
-		Name: "compose.listeners", MaxBytes: 1 << 20, MaxLines: 20000,
-		Body: "ss -H -ltn",
+		Name: "compose.project_resources", Params: []Param{paramProject}, MaxBytes: 8 << 20,
+		Body: projectResourcesBody(),
+	},
+	{
+		// TCP listeners show state LISTEN, UDP sockets UNCONN.
+		Name: "compose.listeners", MaxBytes: 1 << 20, MaxLines: 40000,
+		Body: "ss -H -ltn && ss -H -lun",
 	},
 	{
 		Name: "compose.pull", Params: []Param{paramImage}, Mutating: true, Deadline: pullDeadline,

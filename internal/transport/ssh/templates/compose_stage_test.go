@@ -520,7 +520,7 @@ func TestStageTemplatesRenderTheirGoldenLines(t *testing.T) {
 		"compose.disk_free":          {map[string]string{"path": "/srv/supermgmt"}, "df -PB1 '/srv/supermgmt'"},
 		"compose.docker_root":        {nil, `docker info --format "$(printf '\173\173.DockerRootDir\175\175')"`},
 		"compose.image_inspect":      {map[string]string{"image": image}, "docker image inspect '" + image + "'"},
-		"compose.listeners":          {nil, "ss -H -ltn"},
+		"compose.listeners":          {nil, "ss -H -ltn && ss -H -lun"},
 		"compose.project_containers": {map[string]string{"project": "sm-shop-prod"}, `ids=$(docker ps -aq --no-trunc --filter label=com.docker.compose.project='sm-shop-prod') && { [ -z "$ids" ] || docker inspect --type container $ids; }`},
 	}
 	for name, tc := range reads {
@@ -554,5 +554,57 @@ func TestMaterializeKeepsSecretsOffTheCommandLineAndFlagsThemSensitive(t *testin
 	}
 	if strings.Contains(c.Line, "flock") {
 		t.Error("materialize runs in a fresh directory and takes no project lock")
+	}
+}
+
+func projectResources(t *testing.T, dockerBody string) scriptResult {
+	t.Helper()
+	requireTools(t, "bash")
+	return script{
+		interpreter: "bash", text: strings.ReplaceAll(projectResourcesScript, "@JSON@", "JSON"),
+		pathShims: map[string]string{"docker": dockerBody}, args: []string{"sm-shop-prod"},
+	}.run(t)
+}
+
+func TestProjectResourcesListsLabelledAndPrefixedVolumesAndNetworks(t *testing.T) {
+	docker := `case "$1 $2" in
+"volume ls") case "$*" in
+  *label=com.docker.compose.project=sm-shop-prod*) echo sm-shop-prod_data; echo custom-name;;
+  *name=sm-shop-prod_*) echo sm-shop-prod_data; echo sm-shop-prod_cache;;
+  esac;;
+"network ls") case "$*" in *name=sm-shop-prod_*) echo net1;; esac;;
+*" inspect") kind=$1; shift 2; echo "$kind inspected: $*";;
+esac`
+	res := projectResources(t, docker)
+	if res.err != nil {
+		t.Fatalf("%v %s", res.err, res.stderr)
+	}
+	want := "volume inspected: --format volume JSON custom-name sm-shop-prod_cache sm-shop-prod_data\n" +
+		"network inspected: --format network JSON net1\n"
+	if res.stdout != want {
+		t.Errorf("stdout =\n%s\nwant\n%s", res.stdout, want)
+	}
+}
+
+func TestProjectResourcesPrintsNothingWhenThereAreNone(t *testing.T) {
+	res := projectResources(t, `exit 0`)
+	if res.err != nil || res.stdout != "" {
+		t.Errorf("stdout = %q, err = %v", res.stdout, res.err)
+	}
+}
+
+func TestProjectResourcesFailsWhenDockerFails(t *testing.T) {
+	if res := projectResources(t, `echo boom >&2; exit 1`); res.err == nil {
+		t.Errorf("succeeded with %q", res.stdout)
+	}
+}
+
+func TestProjectResourcesRendersWithoutLiteralBracesAndRefusesBadProjects(t *testing.T) {
+	c, err := Render("compose.project_resources", map[string]string{"project": "sm-shop-prod"})
+	if err != nil || c.Mutating || !strings.Contains(c.Line, `\173\173json .\175\175`) || !strings.HasSuffix(c.Line, " bash 'sm-shop-prod'") {
+		t.Errorf("line = %q (%v)", c.Line, err)
+	}
+	if _, err := Render("compose.project_resources", map[string]string{"project": "x; rm -rf /"}); err == nil {
+		t.Error("an invalid project name rendered")
 	}
 }
