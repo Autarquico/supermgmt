@@ -32,7 +32,8 @@ const (
 	PathJobCancel  = Prefix + "/jobs/{id}/cancel"
 	PathJobResolve = Prefix + "/jobs/{id}/resolve"
 
-	PathProviders = Prefix + "/providers"
+	PathProviders       = Prefix + "/providers"
+	PathProviderRefresh = Prefix + "/providers/{id}/refresh"
 
 	PathNodes           = Prefix + "/nodes"
 	PathNodesSSH        = Prefix + "/nodes/ssh"

@@ -38,6 +38,9 @@ type harnessOptions struct {
 	uid    *uint32
 	cached Residency
 	keys   app.Keys // nil leaves key management unwired
+	// proxmox builds the Proxmox discovery service from the harness's app
+	// configuration; nil leaves it unwired.
+	proxmox func(app.Config) *app.ProxmoxSync
 }
 
 func newHarness(t *testing.T, opts ...func(*harnessOptions)) *harness {
@@ -138,10 +141,14 @@ func (h *harness) build(cfg app.Config, o harnessOptions) *Server {
 		return secrets.Identity{Ref: secrets.Ref{Name: "ssh/default", Version: 1}, AuthorizedKey: "ssh-ed25519 AAAA", FingerprintSHA256: "SHA256:x"}, nil
 	})
 	must(h.t, err)
+	var discovery *app.ProxmoxSync
+	if o.proxmox != nil {
+		discovery = o.proxmox(cfg)
+	}
 	server, err := New(Options{
 		Services: Services{
 			Plans: plans, Approvals: approvals, Governance: governance, Services: actions,
-			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys, Keys: o.keys,
+			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys, Keys: o.keys, Proxmox: discovery,
 		},
 		IDs: cfg.IDs, Identity: h.caller, Residency: o.cached,
 	})
