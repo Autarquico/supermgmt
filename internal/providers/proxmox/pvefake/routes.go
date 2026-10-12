@@ -133,19 +133,11 @@ func (f *Fake) getPermissions(w http.ResponseWriter, c *call) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	all := f.permissions(c.tokenID)
 	if path := c.r.URL.Query().Get("path"); path != "" {
-		one := map[string]map[string]int{}
-		privs := map[string]int{}
-		for p := range f.effective(c.tokenID, path) {
-			privs[p] = 1
-		}
-		if len(privs) > 0 {
-			one[path] = privs
-		}
-		all = one
+		writeData(w, f.permissionsAt(c.tokenID, path))
+		return
 	}
-	writeData(w, all)
+	writeData(w, f.permissions(c.tokenID))
 }
 
 func (f *Fake) knownNode(w http.ResponseWriter, name string) bool {
@@ -159,7 +151,7 @@ func (f *Fake) knownNode(w http.ResponseWriter, name string) bool {
 func (f *Fake) listTasks(w http.ResponseWriter, c *call) {
 	schema := map[string]paramCheck{
 		"start": isInt, "limit": isInt, "vmid": isInt, "since": isInt, "until": isInt,
-		"typefilter": anyText, "userfilter": anyText,
+		"typefilter": anyText, "userfilter": anyText, "source": oneOf("archive", "active", "all"),
 	}
 	q := c.r.URL.Query()
 	if !checkParams(w, q, schema) {
@@ -174,7 +166,7 @@ func (f *Fake) listTasks(w http.ResponseWriter, c *call) {
 	seeAll := f.allowed(c.tokenID, "/nodes/"+node, "Sys.Audit")
 	var matched []*task
 	for i := len(f.tasks) - 1; i >= 0; i-- { // newest first
-		if tk := f.tasks[i]; tk.node == node && (seeAll || tk.user == c.tokenID) && taskMatches(tk, q) {
+		if tk := f.tasks[i]; tk.node == node && (seeAll || tk.user == c.tokenID) && taskMatches(tk, q) && listsSource(tk, q.Get("source")) {
 			matched = append(matched, tk)
 		}
 	}
@@ -203,17 +195,36 @@ func atoiDefault(s string, def int) int {
 	return def
 }
 
+// listsSource: like PVE, a list holds only archived (finished) tasks unless
+// source asks for the active ones as well.
+func listsSource(tk *task, source string) bool {
+	switch source {
+	case "all":
+		return true
+	case "active":
+		return tk.running
+	}
+	return !tk.running
+}
+
 func taskMatches(tk *task, q url.Values) bool {
 	switch {
 	case q.Has("vmid") && tk.id != q.Get("vmid"):
 	case q.Has("typefilter") && tk.typ != q.Get("typefilter"):
-	case q.Has("userfilter") && !strings.Contains(tk.user, q.Get("userfilter")): // PVE: substring
+	case q.Has("userfilter") && taskUser(tk) != q.Get("userfilter"):
 	case q.Has("since") && tk.start.Unix() < int64(atoiDefault(q.Get("since"), 0)):
 	case q.Has("until") && tk.start.Unix() > int64(atoiDefault(q.Get("until"), 0)):
 	default:
 		return true
 	}
 	return false
+}
+
+// taskUser is the user a task is filtered by: PVE compares userfilter with the
+// user of the task, never with a token id (PVE/API2/Tasks.pm).
+func taskUser(tk *task) string {
+	user, _, _ := strings.Cut(tk.user, "!")
+	return user
 }
 
 func (f *Fake) taskStatus(w http.ResponseWriter, c *call) {

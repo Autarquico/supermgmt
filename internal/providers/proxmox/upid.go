@@ -60,11 +60,14 @@ func CorrelationWindow(dispatchedAt time.Time, httpTimeout time.Duration) (from,
 
 // Correlate finds the one task a dispatch without a recorded UPID started:
 // the type, guest id and user must match exactly (no substrings) and the start
-// time must lie inside the window. A task listed twice counts once. Zero or
+// time must lie inside the window. A task listed twice counts once, and one in want.Known never counts. Zero or
 // several matches return CorrelatedNone or CorrelatedMany and a zero UPID.
 func Correlate(tasks []TaskStatus, want Want) (UPID, CorrelationResult) {
 	id := strconv.Itoa(want.VMID)
 	seen := map[string]bool{}
+	for _, known := range want.Known {
+		seen[known] = true
+	}
 	var found []UPID
 	for _, t := range tasks {
 		u := t.UPID

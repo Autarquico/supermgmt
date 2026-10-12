@@ -102,10 +102,9 @@ func splitList(s string) []string {
 	return strings.Split(s, ",")
 }
 
-// decodePerms reads path -> privilege -> propagate flag. Only a privilege
-// that propagates counts as granted, because Perms.Has lets every grant
-// descend to child paths; reading a non-propagating one as granted would
-// over-report. Under-reporting is the safe direction.
+// decodePerms reads path -> privilege -> propagate flag. A privilege listed
+// with flag 0 is effective on its own path and just does not descend, so it is
+// kept; only Propagate tells the two apart.
 func decodePerms(data []byte) (Perms, error) {
 	var raw map[string]map[string]number
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -113,14 +112,25 @@ func decodePerms(data []byte) (Perms, error) {
 	}
 	perms := make(Perms, len(raw))
 	for path, privs := range raw {
-		perms[path] = make(map[string]bool, len(privs))
+		perms[path] = make(Privileges, len(privs))
 		for priv, propagate := range privs {
-			if propagate.flag() {
-				perms[path][priv] = true
-			}
+			perms[path][priv] = Grant{Propagate: propagate.flag()}
 		}
 	}
 	return perms, nil
+}
+
+// decodePathPrivileges reads the answer to a query for one path: the entry of
+// that path, empty when PVE lists none (the token holds nothing there).
+func decodePathPrivileges(path string, data []byte) (Privileges, error) {
+	perms, err := decodePerms(data)
+	if err != nil {
+		return nil, err
+	}
+	if privs := perms[path]; privs != nil {
+		return privs, nil
+	}
+	return Privileges{}, nil
 }
 
 type taskWire struct {

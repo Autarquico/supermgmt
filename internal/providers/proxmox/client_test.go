@@ -125,8 +125,63 @@ func TestPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !perms.Has("/vms/100", "VM.PowerMgmt") || perms.Has("/vms/200", "VM.PowerMgmt") || !perms.Has("/vms/200", "VM.Audit") {
+	if !perms["/vms/100"].Has("VM.PowerMgmt") || perms["/vms/200"].Has("VM.PowerMgmt") || !perms["/"].Has("VM.Audit") {
 		t.Errorf("perms = %v", perms)
+	}
+}
+
+// SEC-14: a grant that does not propagate is effective on its own path.
+func TestNonPropagatingGrantIsKeptAsEffectiveOnItsOwnPath(t *testing.T) {
+	e := newEnv(t)
+	e.fake.SetRole("Power", "VM.PowerMgmt")
+	tok := e.fake.AddToken("sm@pve", "t", false)
+	e.fake.Grant("sm@pve", "/vms/100", "Power", false)
+	c := newClient(t, e.fake, tok)
+
+	perms, err := c.Permissions(context.Background())
+	if err != nil || !perms["/vms/100"].Has("VM.PowerMgmt") || perms["/vms/100"]["VM.PowerMgmt"].Propagate {
+		t.Errorf("Permissions = %v, %v; want VM.PowerMgmt on /vms/100 without propagation", perms, err)
+	}
+	privs, err := c.PathPermissions(context.Background(), "/vms/100")
+	if err != nil || !privs.Has("VM.PowerMgmt") {
+		t.Errorf("PathPermissions(/vms/100) = %v, %v", privs, err)
+	}
+}
+
+// SEC-13: the exact path is asked, so a path the sparse list omits is neither
+// guessed from a parent nor from an old pool.
+func TestPathPermissionsAreEffectivePrivilegesOfTheExactPath(t *testing.T) {
+	e := newEnv(t)
+	e.fake.SetRole("Power", "VM.PowerMgmt")
+	e.fake.SetRole("Audit", "VM.Audit")
+	tok := e.fake.AddToken("sm@pve", "t", false)
+	e.fake.Grant("sm@pve", "/vms", "Power", true)
+	e.fake.Grant("sm@pve", "/vms/200", "NoAccess", true)
+	e.fake.Grant("sm@pve", "/pool/prod", "Audit", true)
+	c := newClient(t, e.fake, tok)
+
+	tests := []struct {
+		path, priv string
+		want       bool
+	}{
+		{"/vms/100", "VM.Audit", true},      // the pool of guest 100 grants it
+		{"/vms/100", "VM.PowerMgmt", false}, // the pool level replaces /vms
+		{"/vms/200", "VM.PowerMgmt", false}, // NoAccess on the guest
+		{"/vms/999", "VM.PowerMgmt", true},  // inherited from /vms
+		{"/nodes/pve1", "Sys.Audit", false},
+	}
+	for _, tt := range tests {
+		privs, err := c.PathPermissions(context.Background(), tt.path)
+		if err != nil || privs.Has(tt.priv) != tt.want {
+			t.Errorf("PathPermissions(%s).Has(%s) = %v (%v), want %v", tt.path, tt.priv, privs.Has(tt.priv), err, tt.want)
+		}
+	}
+	last := e.fake.Requests()[len(e.fake.Requests())-1]
+	if last.Query.Get("path") != "/nodes/pve1" {
+		t.Errorf("last query = %v, want path=/nodes/pve1", last.Query)
+	}
+	if _, err := c.PathPermissions(context.Background(), "vms/100?x=1"); err == nil {
+		t.Error("an invalid ACL path must be refused before any request")
 	}
 }
 
@@ -284,7 +339,7 @@ func TestTasksReadsEveryPageAndFiltersServerSide(t *testing.T) {
 		t.Fatalf("filtered = %d, %v; want 130", len(filtered), err)
 	}
 	last := e.fake.Requests()[len(e.fake.Requests())-1].Query
-	for key, want := range map[string]string{"vmid": "100", "typefilter": "qmstop", "userfilter": "root@pam!admin", "since": "1800000000", "until": "1900000000"} {
+	for key, want := range map[string]string{"vmid": "100", "typefilter": "qmstop", "userfilter": "root@pam", "source": "all", "since": "1800000000", "until": "1900000000"} {
 		if last.Get(key) != want {
 			t.Errorf("query %s = %q, want %q", key, last.Get(key), want)
 		}
