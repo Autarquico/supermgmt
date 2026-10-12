@@ -91,11 +91,11 @@ e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (ex
 	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
 		-run 'TestM2_(CurlBashInstallsServer|TamperedReleaseFailsWithExit5|ReviewFirstDetectsModifiedScripts)$$' ./test/e2e/
 
-e2e-appliance: ## e2e: Proxmox appliance install and acceptance (passes vacuously until TestM3_Appliance* exists)
+e2e-appliance: ## e2e: simulated Proxmox host (pvesim shims, fake API) and the appliance acceptance tests
 	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Appliance' ./test/e2e/...
 
-e2e-upgrade: ## e2e: upgrade, rollback and uninstall (passes vacuously until TestM3_Upgrade* exists)
-	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Upgrade' ./test/e2e/...
+e2e-upgrade: ## e2e: upgrade from the M2 release (commit e6d5577; needs the full history), failure boundaries, uninstall
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_(Upgrade|Uninstall)' ./test/e2e/
 
 snapshot: ## Build a snapshot release into dist/ signed with a throwaway key (needs goreleaser v2 and syft)
 	packaging/release/snapshot.sh
