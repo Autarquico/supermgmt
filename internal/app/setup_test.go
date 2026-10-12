@@ -133,11 +133,11 @@ func TestSetupProvisionsVerifiesAndOnlyThenRecordsTheCapability(t *testing.T) {
 		t.Fatal("node.setup capability not recorded")
 	}
 	want := runtimes.SetupMeta{
-		SetupVersion: 1, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup,
+		SetupVersion: 2, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup, DeployRoot: "/srv/supermgmt",
 		KeyRef: "secret://ssh/default", KeyVersion: 1, KeyFingerprint: "SHA256:identity",
 	}
 	if meta.SetupVersion != want.SetupVersion || meta.SystemctlPath != want.SystemctlPath || meta.LogsMode != want.LogsMode ||
-		meta.KeyRef != want.KeyRef || meta.KeyVersion != 1 || meta.KeyFingerprint != want.KeyFingerprint || meta.DockerAccess {
+		meta.KeyRef != want.KeyRef || meta.KeyVersion != 1 || meta.KeyFingerprint != want.KeyFingerprint || meta.DockerAccess || meta.DeployRoot != want.DeployRoot {
 		t.Errorf("metadata = %+v, want %+v", meta, want)
 	}
 	admin := s.dialer.as("admin")
@@ -158,6 +158,97 @@ func TestSetupProvisionsVerifiesAndOnlyThenRecordsTheCapability(t *testing.T) {
 	}
 	if len(s.events("node.setup.completed")) != 1 {
 		t.Error("completion was not audited")
+	}
+}
+
+func TestSetupV2CreatesDeployRootAndRequiresJQ(t *testing.T) {
+	t.Run("deploy_root is created through sudo", func(t *testing.T) {
+		s := newSetting(t)
+		s.setupPlan(defaultSetup())
+
+		mustf(t, s.run(), "setup")
+
+		admin := s.dialer.as("admin")
+		if admin.count("setup.deploy_root.sudo") != 1 || admin.count("setup.deploy_root") != 0 || admin.count("setup.jq_path") != 1 {
+			t.Errorf("admin ran %v", admin.ran())
+		}
+	})
+	t.Run("a node without jq is refused before anything changes", func(t *testing.T) {
+		s := newSetting(t)
+		s.dialer.as("admin").exit("setup.jq_path", 1)
+		s.setupPlan(defaultSetup())
+
+		err := s.run()
+
+		wantError(t, err, smerr.CodeCapabilityUnavailable, "")
+		if !strings.Contains(err.Error(), "jq is required") {
+			t.Errorf("error = %v", err)
+		}
+		if got := s.dialer.as("admin").count("setup.user_add.sudo"); got != 0 {
+			t.Errorf("%d privileged steps ran on a node without jq", got)
+		}
+		if _, ok := s.setupCapability(); ok {
+			t.Error("capability recorded for a node without jq")
+		}
+	})
+	t.Run("a deploy_root that cannot be created fails the setup", func(t *testing.T) {
+		s := newSetting(t)
+		s.dialer.as("admin").exit("setup.deploy_root.sudo", 1)
+		s.setupPlan(defaultSetup())
+
+		wantError(t, s.run(), smerr.CodeCapabilityUnavailable, "")
+		if _, ok := s.setupCapability(); ok {
+			t.Error("capability recorded although deploy_root is missing")
+		}
+		if ends := s.events("node.setup.privileged_session"); len(ends) != 2 || ends[1].Result != domain.ResultFailed {
+			t.Errorf("the failed session must be closed in the audit trail: %+v", ends)
+		}
+	})
+}
+
+func TestRerunningSetupUpgradesAVersion1Node(t *testing.T) {
+	s := newSetting(t)
+	v1 := runtimes.SetupMeta{SetupVersion: 1, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup, KeyRef: "secret://ssh/default", KeyVersion: 1}
+	capability, err := setupCapability(v1, s.clock.Now())
+	mustf(t, err, "setupCapability")
+	s.inTx(func(ctx context.Context, tx *database.Tx) error {
+		return database.SetNodeCapability(ctx, tx, s.node.ID, capability)
+	})
+	s.setupPlan(defaultSetup())
+
+	mustf(t, s.run(), "setup")
+
+	meta, ok := s.setupCapability()
+	if !ok || meta.SetupVersion != 2 || meta.DeployRoot != "/srv/supermgmt" {
+		t.Errorf("metadata = %+v, want setup_version 2 with the default deploy_root", meta)
+	}
+}
+
+func TestDeployRootOfTheSetupParameters(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]any
+		want   string
+		bad    bool
+	}{
+		{"absent means the default", map[string]any{}, "/srv/supermgmt", false},
+		{"explicit", map[string]any{"deploy_root": "/opt/deploy"}, "/opt/deploy", false},
+		{"relative", map[string]any{"deploy_root": "opt/deploy"}, "", true},
+		{"not clean", map[string]any{"deploy_root": "/opt/../etc"}, "", true},
+		{"empty", map[string]any{"deploy_root": ""}, "", true},
+		{"not a string", map[string]any{"deploy_root": 7}, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deployRootOf(tt.params)
+			if tt.bad {
+				wantError(t, err, smerr.CodeInvalidArgument, "")
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("deployRootOf = %q, %v; want %q", got, err, tt.want)
+			}
+		})
 	}
 }
 

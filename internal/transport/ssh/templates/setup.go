@@ -1,7 +1,9 @@
 package templates
 
 import (
+	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -19,6 +21,33 @@ const (
 	BrokerConfigDir    = "/etc/supermgmt"
 	BrokerUnitsPath    = BrokerConfigDir + "/allowed-units"
 )
+
+// DefaultDeployRoot is where deployments live unless the plan says otherwise
+// (ADR-0030).
+const DefaultDeployRoot = "/srv/supermgmt"
+
+const maxDeployRootLength = 200
+
+var deployRootRE = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// ValidateDeployRoot accepts an absolute, clean path outside the dedicated
+// user's home, below which root never acts (ADR-0009 d), and not the
+// filesystem root.
+func ValidateDeployRoot(p string) error {
+	switch {
+	case p == "" || len(p) > maxDeployRootLength:
+		return fmt.Errorf("deploy_root must be 1 to %d characters", maxDeployRootLength)
+	case !deployRootRE.MatchString(p):
+		return errors.New("deploy_root may contain only letters, digits and . _ / -")
+	case !path.IsAbs(p) || path.Clean(p) != p:
+		return errors.New("deploy_root must be an absolute, clean path")
+	case p == "/":
+		return errors.New("deploy_root must not be the filesystem root")
+	case p == HomeDir || strings.HasPrefix(p, HomeDir+"/"):
+		return fmt.Errorf("deploy_root must be outside %s", HomeDir)
+	}
+	return nil
+}
 
 // StagingSuffix names the temporary file a setup file is written to before it
 // is validated and moved over its destination. sudo and tmpfiles ignore names
@@ -79,6 +108,7 @@ var (
 	paramOwnStaged = Param{Name: "path", Validate: oneOf("staging file", staged(ownFiles))}
 	paramOwnFrom   = Param{Name: "from", Validate: oneOf("staging file", staged(ownFiles))}
 	paramOwnTo     = Param{Name: "to", Validate: oneOf("destination", ownFiles)}
+	paramDeployDir = Param{Name: "path", Validate: ValidateDeployRoot}
 	paramPlatGroup = Param{Name: "group", Validate: oneOf("group", setupGroups)}
 )
 
@@ -103,6 +133,12 @@ var privilegedSteps = []privilegedStep{
 		"setup.dir",
 		"@ROOT@test ! -L {{path}} && @ROOT@install -d -m {{mode}} -o {{owner}} -g {{group}} {{path}}",
 		[]Param{paramMode, paramOwner, paramOwnGroup, paramDir},
+	},
+	{
+		// deploy_root (ADR-0030): root-owned, 0755, never through a symlink.
+		"setup.deploy_root",
+		"@ROOT@test ! -L {{path}} && @ROOT@install -d -m 0755 -o root -g root {{path}}",
+		[]Param{paramDeployDir},
 	},
 	{
 		"setup.own_dir",
@@ -138,6 +174,7 @@ var setupReads = []Template{
 	{Name: "setup.group_entry", Params: []Param{paramPlatGroup}, Body: "getent group {{group}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.user_groups", Params: []Param{paramUser}, Body: "id -nG {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.user_primary_group", Params: []Param{paramUser}, Body: "id -gn {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
+	{Name: "setup.jq_path", Body: "command -v jq", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.systemctl_path", Body: "command -v systemctl", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.verify_groups", Body: "id -nG", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.verify_id", Body: "id -un", MaxBytes: 1 << 10, MaxLines: 2},
