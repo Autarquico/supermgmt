@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/audit"
@@ -191,6 +193,22 @@ func validateImport(r wire.ImportSecretRequest) error {
 		return smerr.New(smerr.CodeInvalidArgument, "", "secret value is empty")
 	case len(r.Value) > MaxImportedSecretBytes:
 		return smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("secret value exceeds %d bytes", MaxImportedSecretBytes))
+	}
+	return validateAppSecretValue(r)
+}
+
+// appSecretPrefix is where the secrets an app may reference live (ADR-0010).
+const appSecretPrefix = "apps/"
+
+// validateAppSecretValue applies the env-file rule to the secrets apps use:
+// each is written as one NAME=value line, so a NUL, CR or LF would break the
+// line, and invalid UTF-8 has no byte-exact reading in Compose (ADR-0010).
+func validateAppSecretValue(r wire.ImportSecretRequest) error {
+	if !strings.HasPrefix(r.Name, appSecretPrefix) {
+		return nil
+	}
+	if strings.ContainsAny(r.Value, "\x00\r\n") || !utf8.ValidString(r.Value) {
+		return smerr.New(smerr.CodeInvalidArgument, "", "an app secret cannot contain NUL, CR or LF, and must be valid UTF-8")
 	}
 	return nil
 }
