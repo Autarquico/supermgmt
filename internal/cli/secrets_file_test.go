@@ -63,6 +63,7 @@ func TestSecretFileIsNotRemovedOnceItsPathNamesAnotherFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(source.close)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +83,7 @@ func TestSecretFileIsRemovedWhileItsPathStillNamesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(source.close)
 
 	if err := source.remove(); err != nil {
 		t.Fatal(err)

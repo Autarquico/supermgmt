@@ -111,6 +111,7 @@ func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string
 	if fromFile != "" {
 		source, err = readSecretFile(fromFile)
 		value = source.value
+		defer source.close()
 	} else {
 		value, err = secretValue(cmd, "")
 	}
@@ -176,16 +177,25 @@ func secretValue(cmd *cobra.Command, fromFile string) (string, error) {
 		return readSecret(cmd, secretInput{prompt: "Secret value: ", whole: true, limit: maxSecretValueBytes})
 	}
 	source, err := readSecretFile(fromFile)
+	source.close()
 	return source.value, err
 }
 
 // secretFile is a --from-file source that was opened without following links
 // and judged through the open descriptor, so the file that was checked is the
-// file that was read.
+// file that was read. The descriptor stays open until close, so the inode
+// cannot be freed and handed to a file swapped in at the same path.
 type secretFile struct {
 	path   string
+	file   *os.File
 	opened fs.FileInfo
 	value  string
+}
+
+func (s secretFile) close() {
+	if s.file != nil {
+		_ = s.file.Close()
+	}
 }
 
 func readSecretFile(path string) (secretFile, error) {
@@ -197,20 +207,26 @@ func readSecretFile(path string) (secretFile, error) {
 	case err != nil:
 		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	fail := func(err error) (secretFile, error) {
+		_ = f.Close()
+		return secretFile{}, err
+	}
 	info, err := f.Stat()
 	if err != nil {
-		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
+		return fail(usageErrorf("cannot read %s: %v", path, err))
 	}
 	if err := checkSecretFile(path, info, os.Geteuid()); err != nil {
-		return secretFile{}, err
+		return fail(err)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxSecretValueBytes+3))
 	if err != nil {
-		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
+		return fail(usageErrorf("cannot read %s: %v", path, err))
 	}
 	value, err := checkSecret(trimFinalNewline(string(data)), maxSecretValueBytes)
-	return secretFile{path: path, opened: info, value: value}, err
+	if err != nil {
+		return fail(err)
+	}
+	return secretFile{path: path, file: f, opened: info, value: value}, nil
 }
 
 func checkSecretFile(path string, info fs.FileInfo, euid int) error {
