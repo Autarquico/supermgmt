@@ -6,7 +6,7 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](ROADMAP.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) and M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) are implemented on the integration branch and await release-level review. There is no MCP endpoint and no Proxmox support yet. No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
+> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) and M3 (Proxmox discovery and power actions, the Proxmox appliance installer, upgrade and uninstall) are implemented on the integration branch and await release-level review. **Proxmox was verified against fakes only: nothing has run on a real Proxmox VE host** ([checklist](docs/manual-checks/m3-real-pve.md)). There is no MCP endpoint. No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
 
 SuperMgmt is a local-first, terminal-first control plane for developers. Connect Linux machines, Proxmox, Docker, systemd, GitHub repositories and deployments in one place; manage them from a fast TUI/CLI, or expose the same policy-controlled operations to AI agents through MCP.
 
@@ -24,7 +24,7 @@ _No screenshot yet._
 - **Local-first.** `sm` runs on a laptop with no server dependency (implemented, M1; SPEC §1.4).
 - **Agentless-first.** Linux nodes are managed over SSH. Nothing of SuperMgmt runs on them: only a dedicated user, its files and a sudoers drop-in (implemented, M1).
 - **MCP-native, not MCP-controlled.** AI agents use the same policy and audit core as humans and get no privileged bypass (planned, M5; the policy core exists since M0).
-- **Provider-independent.** Proxmox is a first-class integration, never a core dependency (planned, M3).
+- **Provider-independent.** Proxmox is a first-class integration, never a core dependency (implemented in M3 against fakes; not run on a real host).
 
 ## Architecture
 
@@ -47,7 +47,7 @@ The target architecture (SPEC §2, §6). One daemon owns state; every other surf
      (agentless)  VE API      systemd       API          optional)
 ```
 
-What exists today (M0 to M2): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer. Not present: Proxmox, GitHub, deployments, MCP. Details: [docs/architecture.md](docs/architecture.md).
+What exists today (M0 to M3): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer, and (M3) Proxmox discovery of nodes, VMs, containers and storages, power actions as non-retryable jobs correlated by Proxmox task id, the `proxmox-lxc` appliance installer with a rollback journal, and upgrade and uninstall. Not present: GitHub, deployments, MCP. Details: [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
@@ -86,12 +86,15 @@ Installer and server mode (M2). **Unreleased: the installer's trust root is a pl
 curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | bash -s -- server --public-url https://mgmt.example.com
 ```
 
-Still planned:
+Proxmox, upgrade and uninstall (M3). **Implemented and tested against fakes (the appliance end to end by `TestM3_Appliance*`, CI job `e2e-appliance`); not run on a real Proxmox VE host.** On a Proxmox VE 9.x host, as root:
 
-| Step | Command | Available from |
-|---|---|---|
-| Installer default mode `auto`, `upgrade`, `uninstall` | `install.sh` with no mode | M3 (today these exit 3) |
-| Proxmox host: automatic unprivileged LXC | `proxmox-lxc` | M3 |
+```bash
+sudo sm install proxmox-lxc          # or install.sh with no mode on a Proxmox host (auto)
+sudo sm install upgrade              # replace the installed sm, with a read-only backup first
+sudo sm install uninstall            # remove the software, keep configuration and data
+```
+
+What each does, its configuration and its failure behaviour: [docs/installation.md](docs/installation.md#proxmox-appliance-proxmox-lxc). Discovery, privileges and power actions: [docs/providers.md](docs/providers.md#proxmox). Recovery: [docs/operations.md](docs/operations.md#upgrade-and-recovery).
 
 Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doctor` without `--offline` asks a running server over its admin socket (run it as root or the service user); on a local install use `--offline`.
 
@@ -133,14 +136,21 @@ Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doc
 | Resident-daemon user unit (`sm install local --resident`) | Implemented (M2); not run under real launchd or user systemd | §2.1.1 |
 | SSH CA trust, per-node keys | Not scheduled | §10 |
 | Providers and Settings screens in the TUI | Not built (still planned) | §22 |
-| `install.sh` modes `auto`, `upgrade`, `uninstall`, `proxmox-lxc` | Planned (M3); exit 3 today | §3.4 |
-
-M2 was verified in CI with unit and integration tests, fakes and an in-process test identity provider, and install tamper tests under a test signing key. Dex was exercised by hand in a spike (code flow, device grant) on a developer machine; the Docker-based end-to-end suite (Dex login, install in a Debian systemd container, crash-injected restore) was not part of the code this documentation was written against and is not claimed. Not verified: a real Debian VM (the criterion is amended to a systemd container; a VM run is deferred), the production signing key and provenance, a real Cloudflare account, any identity provider other than Dex, and the real macOS keychain. The steps for those are in [docs/manual-checks/m2-handoff.md](docs/manual-checks/m2-handoff.md).
-| Proxmox discovery, appliance installer, power actions | Planned (M3) | §3.5, §15 |
+| Proxmox discovery: cluster nodes, VMs and containers with configured CPU, RAM, disk and metrics, storages; guests gone or out of the token's sight kept as `absent` or `inaccessible`; on-demand refresh | Implemented (M3); fake-verified only, real host DEFERRED | §15, ADR-0024 |
+| Proxmox power actions (`start`, `shutdown`, `reboot`, `stop`) as non-retryable jobs with persisted task ids and task-based recovery; `stop` needs approval | Implemented (M3); fake-verified only, real host DEFERRED | §15.4, §20.4, ADR-0025 |
+| Per-install Proxmox identities and least-privilege roles; Proxmox TLS verified (`verify_tls` must be true, private CA via `ca_file`) | Implemented (M3); fake-verified only, real host DEFERRED | §15.2, ADR-0023 |
+| `sm install proxmox-lxc`: unprivileged LXC, self-signed appliance TLS, token transfer, rollback journal with crash recovery | Implemented (M3); fake-verified (`TestM3_Appliance*`, job `e2e-appliance`), real host DEFERRED | §3.5, ADR-0026 |
+| `install.sh` mode `auto` (Proxmox host, desktop, or server prompt) | Implemented (M3) | §3.4 |
+| `sm install upgrade` (read-only backup, phase state, automatic revert only when the schema did not move) and `sm install uninstall` (data kept unless separately confirmed; per-appliance purge) | Implemented (M3); `TestM3_Upgrade*` and `TestM3_Uninstall*` (job `e2e-upgrade`); no real-host run | §29.3, §29.4, ADR-0027 |
+| Proxmox snapshots, backups, console, task-history listings; `POST /providers`; promoting discovered guests to managed | Not built (M4 or later) | §15.1 |
 | GitHub connector, apps, deployments, Applications, Deployments and Wizard screens, rollback | Planned (M4) | §18-§21 |
 | MCP server (read tools, plan submission) | Planned (M5) | §24 |
 | Metrics endpoint, automated node teardown | Planned (not scheduled) | §33 |
 | Fuzzing, security scans, packaging, E2E on all modes | Planned (M6) | §31, §36 |
+
+M3 compatibility matrix ([docs/compatibility.md](docs/compatibility.md)): every Proxmox behaviour the code relies on is "fake-verified" and "not verified" on a real host. The row "Proxmox auto-LXC install works" of SPEC Appendix E stays unchecked until [docs/manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md) passes. Supported: Proxmox VE 9.x on amd64 only.
+
+M2 was verified in CI with unit and integration tests, fakes and an in-process test identity provider, and install tamper tests under a test signing key. Dex was exercised by hand in a spike (code flow, device grant) on a developer machine; the Docker-based end-to-end suite (Dex login, install in a Debian systemd container, crash-injected restore) was not part of the code this documentation was written against and is not claimed. Not verified: a real Debian VM (the criterion is amended to a systemd container; a VM run is deferred), the production signing key and provenance, a real Cloudflare account, any identity provider other than Dex, and the real macOS keychain. The steps for those are in [docs/manual-checks/m2-handoff.md](docs/manual-checks/m2-handoff.md).
 
 ## Security model
 
@@ -165,7 +175,7 @@ Summary only; see [SECURITY.md](SECURITY.md) and [docs/security.md](docs/securit
 | Released binaries | None yet. The pipeline exists (M2); no signed tag has been built and the release key does not exist |
 | Managed nodes: generic Linux over SSH | Implemented (M1). Verified in CI on Debian only; other distributions are an untested assumption |
 | systemd and Docker discovery, service actions | Implemented (M1) |
-| Proxmox VE | Planned (M3) |
+| Proxmox VE | Implemented (M3) for 9.x on amd64 only, against fakes; real host DEFERRED ([docs/compatibility.md](docs/compatibility.md)). 8.x is unsupported (upstream end of life 2026-08) |
 | Docker Compose deployments | Planned (M4) |
 | GitHub | Planned (M4) |
 | MCP clients | Planned (M5) |
@@ -206,11 +216,11 @@ make integration-fixtures  # Docker node fixtures (needs a local Docker daemon)
 make cross-build   # linux/darwin x amd64/arm64, CGO disabled
 ```
 
-`make api-check`, `make snapshot`, `make release-check` and `make install-test` run the OpenAPI drift check, a signed snapshot release with a throwaway key, its verification and the `install.sh` tamper matrix. `make e2e` is still a placeholder. See [CONTRIBUTING.md](CONTRIBUTING.md).
+`make api-check`, `make snapshot`, `make release-check` and `make install-test` run the OpenAPI drift check, a signed snapshot release with a throwaway key, its verification and the `install.sh` tamper matrix. The Docker end-to-end suites are `make e2e-server`, `make e2e-install` (both in `make e2e`), `make e2e-appliance` (simulated Proxmox host) and `make e2e-upgrade` (upgrade from the M2 build, failure boundaries, uninstall); they need Docker and a full git history. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
-M0 core, M1 local daemon, SSH and TUI, and M2 server and releases (all implemented, pending release-level review), then M3 Proxmox, M4 deployments, M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
+M0 core, M1 local daemon, SSH and TUI, M2 server and releases, and M3 Proxmox and the appliance installer (all implemented, pending release-level review; M3 pending a real-host run), then M4 deployments, M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing and security
 

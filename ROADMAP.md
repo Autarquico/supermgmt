@@ -1,8 +1,20 @@
 # Roadmap
 
-Status as of 2026-10-11. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
+Status as of 2026-10-12. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
 
 Statuses: **in progress**, **implemented** (merged, pending release-level review), **planned**.
+
+### M3 accepted scope and honest deferrals
+
+Built: Proxmox VE 9.x discovery (cluster nodes, VMs, containers, configured CPU/RAM/disk, metrics, storages; `absent` versus `inaccessible`; on-demand refresh), power actions (`start`, `shutdown`, `reboot`, `stop`) as non-retryable jobs with persisted task ids and recovery by task correlation, per-install Proxmox identities and least-privilege roles, verified Proxmox TLS, `sm install proxmox-lxc` with a rollback journal and crash recovery, `auto` mode, `sm install upgrade` (read-only offline backup, phase state, revert only when the schema did not move) and `sm install uninstall` (data kept unless separately confirmed), CLI and TUI for providers, the node tree and power. Not in M3, or not verified:
+
+- **No real Proxmox host was used.** Every Proxmox interaction is verified against fakes built from the documentation; each assumption is a row of [docs/compatibility.md](docs/compatibility.md) and an item of [docs/manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md). "Proxmox auto-LXC install works" (SPEC Appendix E) stays **unchecked**. Unconfirmed: the task list `total` and paging, the status of a running task, which verbs and guest types accept `timeout`, `/access/permissions` value semantics (0-valued and non-propagating grants, deeper-ACL replacement), the text of the error for a migrated guest, `pct list` columns, `pvesm`/`pvesh` JSON, `pct push` uid mapping, `runuser` and `pct exec` exit codes in the Debian 13 template, the template name `pveam` offers, and a full install, upgrade and uninstall on PVE 9.
+- Proxmox VE 8.x and arm64 hosts are unsupported (PVE 8 reached upstream end of life in 2026-08).
+- Deferred to M4 or later (Q10): snapshot, backup and console handlers and task-history listings, `POST /api/v1/providers`, promotion of discovered guests to managed.
+- The appliance certificate is self-signed with no renewal (CA 10 years, leaf 5 years) and names the address the container had at install time; there is no certificate expiry check in `sm doctor`.
+- `--allow-downgrade` is recorded in the upgrade state but not in the audit log; `sm doctor --offline --json` has no stable schema-version field (the upgrade reads it from the check text).
+- A guest renamed in Proxmox bumps its `spec_revision`, so pending plans for it go stale.
+- The end-to-end suites (`TestM3_Appliance*`, `TestM3_Upgrade*`, `TestM3_Uninstall*`, CI jobs `e2e-appliance` and `e2e-upgrade`) run in Docker with a simulated Proxmox host; the upgrade fixture is the M2 build at commit e6d5577, so the job needs the full history.
 
 ### M2 accepted scope and honest deferrals
 
@@ -13,7 +25,7 @@ Built: server mode over HTTPS (TLS direct or behind a proxy, no ACME), sessions,
 - Identity providers: Dex only, exercised by hand. Dex puts the client secret in the device-flow verification URL; a dedicated public device client needs a new configuration key and spec change.
 - Cloudflare: a guide only, never run against a real account. No edge assertion is consumed.
 - macOS keychain and Linux `secret-tool` credential stores: unit-tested with fakes, manual checks pending.
-- `install.sh` modes `auto`, `upgrade`, `uninstall`, `proxmox-lxc`: M3 (exit 3 now). `sm secrets import --offline` and the orphan-key report in `sm doctor` are not built.
+- `install.sh` modes `auto`, `upgrade`, `uninstall`, `proxmox-lxc`: built in M3 (see below). The orphan-key report in `sm doctor` is not built.
 - SSH CA trust and per-node keys: not scheduled. Providers and Settings TUI screens: not built.
 - The installer requires OpenSSH 8.2 or newer; the spec says 8.1.
 - A defect candidate: `sm login --bootstrap` on a server without OIDC sends no display name, which the server requires (`internal/cli/login.go`, `internal/app/auth.go`). Not verified end to end.
@@ -42,7 +54,7 @@ M1 TUI screens: Dashboard, Resources tree, Node detail, Service list and detail,
 | M0 Repository and core | Go module, strict config, audit and redaction, SQLite and migrations, domain model, action catalog and policy engine, canonical plans and approvals, durable job engine, offline CLI (`version`, `completion`, `config validate`, `doctor --offline`), CI | **Implemented** on `feat/m0-core`: domain, errors, config, audit, database, plans, policy, application services, job engine and the four offline commands, with integration and spec-example tests. Pending final review. |
 | M1 Local daemon, SSH, TUI alpha | `sm daemon` with Unix socket API, typed client, local provider, agentless SSH nodes with `node.setup`, systemd and Docker discovery and logs, policy-gated service actions, TUI | **Implemented** on `feat/m1-local-ssh-tui`: pending the manual terminal checklist ([docs/manual-checks/m1-handoff.md](docs/manual-checks/m1-handoff.md)) and release-level review. Accepted scope and deferrals below. |
 | M2 Server, client, auth, release pipeline | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, GoReleaser with checksums, signatures, SBOM and provenance, `install.sh`, backup and restore, join | **Implemented** on `feat/m2-server-auth-release`: pending the manual checks in [docs/manual-checks/m2-handoff.md](docs/manual-checks/m2-handoff.md), the production release key and release-level review. Accepted scope and deferrals above. |
-| M3 Proxmox provider and appliance installer | Proxmox discovery, `sm install proxmox-lxc` with rollback journal, restricted credentials, power actions, upgrade and uninstall | Planned |
+| M3 Proxmox provider and appliance installer | Proxmox discovery, `sm install proxmox-lxc` with rollback journal, restricted credentials, power actions, upgrade and uninstall | **Implemented** on `feat/m3-proxmox-installer` against fakes: pending the real-Proxmox run in [docs/manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md) and release-level review. Accepted scope and deferrals above. |
 | M4 Apps, GitHub, deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | Planned |
 | M5 MCP | MCP client registration, stdio bridge, remote MCP as OAuth protected resource, read tools, plan submission, optional write tools off by default | Planned |
 | M6 Hardening and release | Packaging, fuzz and race tests, security scans, compatibility matrix, beta migration tests, E2E across all modes | Planned |
@@ -72,7 +84,7 @@ These cannot be completed by code alone and block specific milestones:
 
 | Item | Needed before | Owner |
 |---|---|---|
-| Real-Proxmox acceptance run on a supported PVE host | M3 acceptance, V1 | Maintainer |
+| Real-Proxmox acceptance run on a supported PVE 9.x host, following [manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md); fills the real-host column of [compatibility.md](docs/compatibility.md) | M3 acceptance, V1 | Maintainer |
 | Release signing key generated, stored in the protected `release` environment (owner as required reviewer), public key embedded in `install.sh` and `scripts/join.sh`, fingerprint published out-of-band | First signed release (M2) | Maintainer |
 | M2 manual checks: macOS keychain, Linux `secret-tool`, real OIDC provider, real reverse proxy, real VM install | M2 sign-off | Maintainer |
 | Decision on a separate public client for the OIDC device flow (Dex leaks the client secret) | Production use of the device flow | Maintainer |

@@ -2,7 +2,7 @@
 
 SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox: M3, GitHub and deployments: M4, MCP: M5.
+> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox providers (M3) are read by the daemon; GitHub and deployments: M4, MCP: M5.
 
 ## File location
 
@@ -27,6 +27,7 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 - `ssh.*` timeouts and pool limits: `connect_timeout`, `command_timeout`, `keepalive_interval`, `max_dials_in_flight`, `max_connections`, `max_sessions_per_connection`, `idle_connection_ttl`
 - `refresh.*`, `jobs.*`, `server.shutdown_timeout`
 - `environments` and SSH `providers`, applied when the daemon starts
+- Proxmox `providers` (M3), applied when the daemon starts and then synced every `sync_interval`; see [providers.md](providers.md#proxmox)
 
 ### Server (M2), read by `sm server`
 
@@ -45,7 +46,6 @@ Reading was checked by searching the code for each key; a key not listed has no 
 - `ssh.host_key_policy` (must be `strict`) and `ssh.logs_mode`: the log mode of a node comes from the `logs_mode` parameter of its `node.setup` plan.
 - `ui.theme`, `server.public_url` (only the installer and the default of `github.oidc_audience` use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
 - `health.*`, `github.*`, `mcp.*`
-- Proxmox providers (M3)
 
 ## How a value is resolved
 
@@ -239,7 +239,7 @@ providers:
     environment: production
 ```
 
-An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. Proxmox providers are validated but ignored until M3.
+An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`, M3) is applied the same way and then synced; its keys, `verify_tls: true` (required) and `ca_file` are described in [providers.md](providers.md#proxmox).
 
 ## Policy
 

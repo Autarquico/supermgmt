@@ -231,12 +231,26 @@ With the device grant, **Dex echoes the client secret into the verification URL 
 
 `sm login` stores the session or API token in the macOS keychain (through `security -i` with the token on stdin), the Secret Service (`secret-tool store`, token on stdin), or a mode-0600 file when neither exists. A token is never an argument or an environment variable, and tokens are checked against the alphabet SuperMgmt issues before they reach the OS tools. Unit-tested with fakes; the real keychain and `secret-tool` are manual checks. Whether `security -i` on current macOS keeps a token on stdin out of the process list is also a manual check.
 
+## Proxmox and the appliance installer **[M3]**
+
+Verified against fakes only; the real-host checks are in [manual-checks/m3-real-pve.md](manual-checks/m3-real-pve.md).
+
+- **Per-install identities** ([ADR-0023](adr/0023-pve-identity-privileges-compatibility.md)): the installer creates a Proxmox user, token and roles whose names carry a random install id, grants the token only audit privileges (and, unless `SUPERMGMT_PVE_POWER=0`, `VM.PowerMgmt` on `/vms`), and never adopts, changes or deletes a resource it did not create. Nothing for snapshots, backups, console or deletion is granted. Anyone who can read the provider's token from the secret store can power guests on that cluster; the token is sealed under the instance master key like any secret.
+- **Token transfer**: created on the host, staged in a 0600 file in a 0700 directory, pushed to a tmpfs inside the container (verified to be tmpfs, with the service account present, before the token exists), imported offline and deleted at both ends. It is never in an argument, an environment variable, stdout, stderr, the journal or a log; those commands run in a capture mode that returns sanitized errors.
+- **Proxmox TLS**: `verify_tls` must be `true` (a `false` is a configuration error). The CA is `/etc/pve/pve-root-ca.pem` or `SUPERMGMT_PVE_CA_FILE`, and the chain the endpoint actually serves is verified from inside the container before any token exists.
+- **Container shape**: unprivileged, no nesting or keyctl, no mounts, no raw `lxc.*` keys, read back after creation. A privileged container is never created.
+- **Host commands**: Proxmox tools run by absolute path, with a clean environment, never through a shell; storage, bridge, hostname, VMID and paths are validated first.
+- **Appliance TLS**: a self-signed CA generated in the container; clients pin it with `--ca-file`. No renewal flow (CA 10 years, leaf 5 years).
+- **Power actions** are jobs that are never retried; `stop` is high risk and needs approval. A power request that may have reached Proxmox is settled from the task it created, never by sending it again ([providers.md](providers.md#interrupted-power-jobs-and-task-correlation)).
+- **Upgrade and uninstall** keep the previous binary and never delete data without a separate typed confirmation; the pre-upgrade archive is unencrypted like every backup.
+
+Not verified on a real Proxmox host: the privilege model, the permission propagation rules, the task API shapes and the installer's host commands.
+
 ## Planned controls
 
 Not implemented; listed so nothing is mistaken for shipped.
 
 - SSH CA trust and per-node keys (not scheduled)
-- Upgrade and uninstall flows (M3)
 - Outbound request filter for health URLs and the closed-schema Compose pipeline (M4)
 - Webhook signature and replay protection (M4)
 - MCP registration, tokens, OAuth protected-resource layer and security tests (M5)

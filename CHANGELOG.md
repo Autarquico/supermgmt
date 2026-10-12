@@ -6,7 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Milestones M0 (repository and core), M1 (local daemon, SSH, TUI) and M2 (server, auth, releases). Pre-alpha: nothing is released.
+Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases) and M3 (Proxmox and the appliance installer). Pre-alpha: nothing is released.
+
+### Added in M3
+
+- Proxmox VE provider (`internal/providers/proxmox`): HTTPS API client with a pinned CA (`ca_file`; `verify_tls: false` is a configuration error), UPID parsing, task listing and correlation. Supported: Proxmox VE 9.x, amd64 (ADR-0023).
+- Discovery (ADR-0024): cluster nodes, VMs and containers as discovered nodes with configured CPU/RAM/disk and metrics, storages as provider observations, `absent` versus `inaccessible` from the token's effective permissions, capability `proxmox.vm.power` per guest. `POST /api/v1/providers/{id}/refresh` (`provider.read`, rate limited), `sm providers list|get|refresh|check`, `sm nodes list --tree`, doctor `providers` check, TUI tree and `refresh proxmox`.
+- Power actions (ADR-0025): `sm nodes power <node> start|shutdown|reboot|stop [--wait]` and the TUI palette. Non-retryable jobs; exactly one POST per request; task id persisted before polling; interrupted jobs are settled by task correlation across the cluster, and a task-tracked job is quiescent only on stored proof that its task stopped (`job.resolve --assume-quiescent` is the audited override). `stop` is high risk. Migration `000004` (`operation_intents.external_ref`).
+- Per-install Proxmox identities: user `sm-<id>@pve`, token with privilege separation, roles `SMAudit-<id>` and `SMPower-<id>` (`SUPERMGMT_PVE_POWER=0` omits the latter).
+- `sm install proxmox-lxc` (ADR-0026): unprivileged LXC, self-signed appliance TLS (`sm install server --tls self-signed --no-start`, `sm server init`), the Proxmox chain verified from inside the container before any token exists, token transfer through tmpfs and `sm secrets import --offline --from-file --delete-source`, write-ahead journal with commit protocol and crash recovery, variables `SUPERMGMT_VMID|HOSTNAME|STORAGE|TEMPLATE_STORAGE|BRIDGE|NETWORK|IP|GATEWAY|DNS|CORES|MEMORY|SWAP|DISK_GIB|PVE_POWER|PVE_ENDPOINT|PVE_CA_FILE`. Installer mode `auto`.
+- `sm install upgrade` and `sm install uninstall` (ADR-0027): stop-verified read-only offline backup (`sm backup create --offline`), phase state, `sm.prev`, revert only when the schema did not move, `--allow-downgrade`; uninstall keeps data unless `--purge-data` plus a separate confirmation; on a Proxmox host both act on the appliance after record and tag proof (`--vmid`), and a purge removes that install's Proxmox identities only.
+- Test infrastructure: `pvefake`, the `pvesim` command shims, `make e2e-appliance` and `make e2e-upgrade`, compatibility matrix `docs/compatibility.md`.
+- Documentation: Proxmox, upgrade, uninstall and `auto` in `docs/installation.md`, `docs/providers.md`, `docs/operations.md`, `docs/security.md`, and the deferred real-host checklist `docs/manual-checks/m3-real-pve.md`.
+
+### Changed in M3
+
+- Installer modes `auto`, `proxmox-lxc`, `upgrade` and `uninstall` no longer exit 3; exit codes 6 to 9 gained the meanings in `docs/installation.md#exit-codes`.
+- A Proxmox provider in the configuration file is no longer ignored. A guest renamed in Proxmox bumps its `spec_revision`, so pending plans for it go stale.
+
+### Known limits in M3
+
+- **No real Proxmox VE host was used.** Everything Proxmox is verified against fakes built from the documentation; the real-host run (`docs/manual-checks/m3-real-pve.md`) is deferred and "Proxmox auto-LXC install works" stays unchecked.
+- Proxmox VE 8.x (upstream end of life 2026-08) and arm64 hosts are unsupported.
+- Not built: snapshot, backup and console handlers and task-history listings, `POST /api/v1/providers`, promoting discovered guests to managed.
+- The appliance certificate is self-signed and not renewed; it names the container address at install time. `--allow-downgrade` is not yet an audit event.
 
 ### Added in M2
 
