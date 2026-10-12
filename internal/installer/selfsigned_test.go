@@ -139,7 +139,7 @@ func TestSelfSignedInstallPrintsTheCAForLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{tlsDir + "ca.pem", fp, strings.TrimSpace(string(w.files[tlsDir+"ca.pem"])), "sm login --ca-file"} {
+	for _, want := range []string{tlsDir + "ca.pem", fp, strings.TrimSpace(string(w.files[tlsDir+"ca.pem"])), "sm profile add <name> --url <public URL> --ca-file <ca.pem> --use"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

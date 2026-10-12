@@ -271,7 +271,7 @@ Steps:
 13. Store credential encrypted in SuperMgmt secret store.
 14. Register Proxmox endpoint using the host/cluster API address reachable from LXC.
 15. Run an offline connectivity test, enable and start the service, and wait for readiness and the first discovery.
-16. Print access instructions (the CA certificate and its fingerprint, the bootstrap code, `sm login --ca-file`) and backup recommendation.
+16. Print access instructions (the CA certificate and its fingerprint, the bootstrap code, `sm profile add --ca-file` then `sm login`) and backup recommendation.
 
 Steps 1–16 are executed by `sm install proxmox-lxc` (Go), invoking `pct`, `pveam`, `pvesh` and `pveum` through fixed argument vectors (never shell strings). Every PVE CLI interaction is behind an interface with a fake used in tests.
 

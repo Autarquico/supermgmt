@@ -239,6 +239,6 @@ func (in *Installer) printCA(l layout) error {
 	if err != nil {
 		return failWrap(ExitConfiguration, "fingerprint CA certificate", err)
 	}
-	in.say("CA certificate: %s\nSHA-256 fingerprint: %s\nCopy the CA to each client and run `sm login --ca-file <ca.pem>`.\n%s", f.CACert, fp, strings.TrimSpace(string(pemData)))
+	in.say("CA certificate: %s\nSHA-256 fingerprint: %s\nCopy the CA to each client, then run `sm profile add <name> --url <public URL> --ca-file <ca.pem> --use` and `sm login`.\n%s", f.CACert, fp, strings.TrimSpace(string(pemData)))
 	return nil
 }
