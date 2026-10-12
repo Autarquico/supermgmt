@@ -316,8 +316,19 @@ func TestExistingServiceUserIsReused(t *testing.T) {
 func TestUnknownModeIsInvalid(t *testing.T) {
 	w := newWorld()
 	d, _ := w.deps("linux", 0, false)
-	if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: "upgrade"})); got != ExitInvalid {
+	if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: "bogus"})); got != ExitInvalid {
 		t.Fatalf("exit %d", got)
+	}
+}
+
+// The M3 modes are frozen in W0 and exit 3 until their tasks fill them.
+func TestM3ModesAreUnsupportedUntilImplemented(t *testing.T) {
+	for _, mode := range []Mode{ModeAuto, ModeProxmoxLXC, ModeUpgrade, ModeUninstall} {
+		w := newWorld()
+		d, _ := w.deps("linux", 0, false)
+		if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: mode})); got != ExitUnsupported {
+			t.Errorf("%s: exit %d", mode, got)
+		}
 	}
 }
 

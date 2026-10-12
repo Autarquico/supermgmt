@@ -1121,7 +1121,7 @@ components:
         type: {type: string, enum: [local]}
     Node:
       type: object
-      required: [id, name, kind, provider_id, provider, origin, environment, management_state, reachability, endpoint, credential_ref, admin_credential_ref, os, arch, tags, capabilities, addresses, connection, metrics, setup, stale, spec_revision, last_seen_at, updated_at]
+      required: [id, name, kind, provider_id, provider, origin, environment, management_state, reachability, endpoint, credential_ref, admin_credential_ref, os, arch, tags, capabilities, addresses, connection, metrics, setup, proxmox, stale, spec_revision, last_seen_at, updated_at]
       properties:
         id: {$ref: '#/components/schemas/ID'}
         name: {type: string}
@@ -1143,10 +1143,23 @@ components:
         connection: {$ref: '#/components/schemas/Connection'}
         metrics: {oneOf: [{$ref: '#/components/schemas/Metrics'}, {type: 'null'}]}
         setup: {oneOf: [{$ref: '#/components/schemas/Setup'}, {type: 'null'}]}
+        proxmox: {oneOf: [{$ref: '#/components/schemas/ProxmoxGuest'}, {type: 'null'}]}
         stale: {type: boolean}
         spec_revision: {type: integer, format: int64}
         last_seen_at: {type: [string, 'null'], format: date-time}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
+    ProxmoxGuest:
+      type: object
+      description: The Proxmox view of a node (ADR-0024); for a cluster member vmid is 0 and type is "node".
+      required: [pve_node, vmid, type, status, template, inaccessible, absent]
+      properties:
+        pve_node: {type: string}
+        vmid: {type: integer}
+        type: {type: string, enum: [node, qemu, lxc]}
+        status: {type: string}
+        template: {type: boolean}
+        inaccessible: {type: boolean}
+        absent: {type: boolean}
     Endpoint:
       type: object
       required: [host, port, user, admin_user, host_public_key, host_key_fingerprint_sha256]

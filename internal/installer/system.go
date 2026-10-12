@@ -36,7 +36,7 @@ func SystemDeps(out io.Writer, prompts io.Reader, env []string) Deps {
 	runner := execRunner{stderr: os.Stderr}
 	d := Deps{
 		Host: Host{
-			GOOS: runtime.GOOS, UID: os.Geteuid(), Home: values["HOME"], Env: values,
+			GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, UID: os.Geteuid(), Home: values["HOME"], Env: values,
 			HasSystemd: dirExists("/run/systemd/system"),
 		},
 		Files:    osFiles{},

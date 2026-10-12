@@ -30,8 +30,16 @@ func (in *Installer) Run(ctx context.Context, o Options) error {
 		return in.runLocal(ctx, o)
 	case ModeClient:
 		return in.runClient(o)
+	case ModeAuto:
+		return in.runAuto(ctx, o)
+	case ModeProxmoxLXC:
+		return in.runProxmoxLXC(ctx, o)
+	case ModeUpgrade:
+		return in.runUpgrade(ctx, o)
+	case ModeUninstall:
+		return in.runUninstall(ctx, o)
 	default:
-		return fail(ExitInvalid, "unsupported install mode %q (local, server, client or restore)", o.Mode)
+		return fail(ExitInvalid, "unsupported install mode %q", o.Mode)
 	}
 }
 

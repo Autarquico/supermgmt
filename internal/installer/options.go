@@ -18,10 +18,14 @@ import (
 type Mode string
 
 const (
-	ModeLocal   Mode = "local"
-	ModeServer  Mode = "server"
-	ModeClient  Mode = "client"
-	ModeRestore Mode = "restore"
+	ModeLocal      Mode = "local"
+	ModeServer     Mode = "server"
+	ModeClient     Mode = "client"
+	ModeRestore    Mode = "restore"
+	ModeAuto       Mode = "auto"
+	ModeProxmoxLXC Mode = "proxmox-lxc"
+	ModeUpgrade    Mode = "upgrade"
+	ModeUninstall  Mode = "uninstall"
 )
 
 // Fixed names of the server installation (spec §8.1, Appendix A).
@@ -56,6 +60,43 @@ type Options struct {
 	ConfigDir      string // SUPERMGMT_CONFIG_DIR
 	DataDir        string // SUPERMGMT_DATA_DIR
 	Stdin          io.Reader
+
+	// Server mode (ADR-0026): NoStart writes and loads the unit without
+	// enabling or starting it; SelfSigned (with TLS direct) generates a CA and
+	// a server certificate instead of taking CertFile/KeyFile.
+	NoStart    bool
+	SelfSigned bool
+
+	Appliance Appliance // proxmox-lxc
+
+	// Upgrade and uninstall (ADR-0027). VMID selects an appliance on a
+	// Proxmox host (0: the only one).
+	UpgradeBinary  string
+	AllowDowngrade bool
+	PurgeData      bool
+	VMID           int
+}
+
+// Appliance is the proxmox-lxc input (spec §2.3, §3.5, §3.6). Zero values mean
+// "choose": the installer detects, or asks, or (non-interactive) fails on an
+// ambiguous choice. Nothing here is a secret.
+type Appliance struct {
+	VMID            int    // SUPERMGMT_VMID; 0 = first free from 900
+	Hostname        string // SUPERMGMT_HOSTNAME; default supermgmt
+	Storage         string // SUPERMGMT_STORAGE (rootdir)
+	TemplateStorage string // SUPERMGMT_TEMPLATE_STORAGE (vztmpl)
+	Bridge          string // SUPERMGMT_BRIDGE; default vmbr0 when present
+	Network         string // SUPERMGMT_NETWORK: dhcp | static
+	IP              string // SUPERMGMT_IP (CIDR) for static
+	Gateway         string // SUPERMGMT_GATEWAY for static
+	DNS             string // SUPERMGMT_DNS (comma-separated) for static
+	Cores           int    // SUPERMGMT_CORES; default 2
+	MemoryMiB       int    // SUPERMGMT_MEMORY; default 2048
+	SwapMiB         int    // SUPERMGMT_SWAP; default 512
+	DiskGiB         int    // SUPERMGMT_DISK_GIB; default 16
+	Power           bool   // SUPERMGMT_PVE_POWER != "0": grant the power role
+	PVEEndpoint     string // SUPERMGMT_PVE_ENDPOINT; default the detected host address
+	PVECAFile       string // SUPERMGMT_PVE_CA_FILE; default /etc/pve/pve-root-ca.pem
 }
 
 // layout holds every path the installer touches for one run.

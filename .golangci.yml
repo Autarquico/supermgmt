@@ -126,6 +126,27 @@ linters:
               desc: the installer runs `sm` subcommands for offline database work (ADR-0019, ADR-0020)
             - pkg: github.com/autarquico/supermgmt/internal/app
               desc: the installer runs `sm` subcommands for offline database work (ADR-0019, ADR-0020)
+        proxmox-provider-is-thin:
+          files:
+            - "**/internal/providers/proxmox/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/autarquico/supermgmt/internal/providers/proxmox
+            - github.com/autarquico/supermgmt/internal/netguard
+            - github.com/autarquico/supermgmt/internal/config
+            - github.com/autarquico/supermgmt/internal/domain
+            - github.com/autarquico/supermgmt/internal/errors
+            - github.com/autarquico/supermgmt/internal/audit
+        pve-fake-stays-in-tests:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/providers/proxmox/pvefake/**"
+            - "!**/test/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/providers/proxmox/pvefake
+              desc: the fake PVE API is for tests only (ADR-0023)
         oidc-libraries-stay-in-auth-oidc:
           files:
             - "**/*.go"

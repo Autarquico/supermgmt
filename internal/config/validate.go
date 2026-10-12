@@ -274,9 +274,20 @@ func (v *validator) providers() {
 	}
 }
 
+// proxmox checks a Proxmox provider (spec §8.3, ADR-0024): an https origin,
+// verified TLS (a private CA goes in ca_file), a secret:// token reference.
 func (v *validator) proxmox(p ProxmoxProvider, at func(string) string) {
-	if p.Endpoint == "" {
+	switch {
+	case p.Endpoint == "":
 		v.add(at("endpoint"), "required")
+	case !httpsOrigin(p.Endpoint):
+		v.add(at("endpoint"), "must be an https URL with only a host and port, e.g. https://pve.lan:8006, got %q", p.Endpoint)
+	}
+	if !p.VerifyTLS {
+		v.add(at("verify_tls"), "must be true; trust a private CA with ca_file instead")
+	}
+	if p.CAFile != "" && !path.IsAbs(p.CAFile) {
+		v.add(at("ca_file"), "must be an absolute path, got %q", p.CAFile)
 	}
 	if p.CredentialRef == "" {
 		v.add(at("credential_ref"), "required")
