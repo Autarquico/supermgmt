@@ -22,6 +22,8 @@ const (
 type neutralized struct {
 	undispatchedFailed int64
 	interrupted        int64
+	deploymentsFailed  int64
+	deploymentsHeld    int64
 	approvalsDeleted   int64
 	locksDeleted       int64
 	credentialsRevoked int64
@@ -38,6 +40,9 @@ func neutralize(ctx context.Context, db *database.DB, clock domain.Clock, ids do
 		now := clock.Now()
 		counts, err := neutralizeJobs(ctx, tx, now)
 		if err != nil {
+			return err
+		}
+		if err := neutralizeDeployments(ctx, tx, now, &counts); err != nil {
 			return err
 		}
 		if err := neutralizeAccess(ctx, tx, now, &counts); err != nil {
@@ -98,6 +103,38 @@ func neutralizeJobs(ctx context.Context, tx *database.Tx, now time.Time) (neutra
 	return counts, nil
 }
 
+// neutralizeDeployments mirrors neutralizeJobs onto deployment rows (ADR-0029),
+// after it, so the job states are already final. A provisional deployment holds
+// no job and never reached a node; so does one whose job failed undispatched.
+// A deployment whose job is interrupted becomes interrupted and keeps its
+// recovery record: reconciliation decides what happened on the node.
+func neutralizeDeployments(ctx context.Context, tx *database.Tx, now time.Time, counts *neutralized) error {
+	nowMs := now.UnixMilli()
+	code := smerr.CodeFor(smerr.ReasonRestoredUndispatched)
+	failed, err := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', state_code = ?, state_reason = ?,
+		finished_at = ?, updated_at = ?
+		WHERE state IN ('created', 'waiting_ci')
+		   OR (state NOT IN ('succeeded', 'failed', 'rolled_back', 'rollback_failed', 'cancelled', 'interrupted')
+		       AND job_id IN (SELECT id FROM jobs WHERE state = 'failed'))`,
+		string(code), string(smerr.ReasonRestoredUndispatched), nowMs, nowMs)
+	if err != nil {
+		return fmt.Errorf("neutralize deployments: %w", err)
+	}
+	held, err := tx.ExecContext(ctx, `UPDATE deployments SET state = 'interrupted', updated_at = ?
+		WHERE state NOT IN ('succeeded', 'failed', 'rolled_back', 'rollback_failed', 'cancelled', 'interrupted')
+		  AND job_id IN (SELECT id FROM jobs WHERE state = 'interrupted')`, nowMs)
+	if err != nil {
+		return fmt.Errorf("neutralize deployments: %w", err)
+	}
+	if counts.deploymentsFailed, err = failed.RowsAffected(); err != nil {
+		return fmt.Errorf("neutralize deployments: %w", err)
+	}
+	if counts.deploymentsHeld, err = held.RowsAffected(); err != nil {
+		return fmt.Errorf("neutralize deployments: %w", err)
+	}
+	return nil
+}
+
 func neutralizeAccess(ctx context.Context, tx *database.Tx, now time.Time, counts *neutralized) error {
 	var err error
 	if counts.credentialsRevoked, err = database.RevokeAllCredentials(ctx, tx, now); err != nil {
@@ -127,6 +164,8 @@ func emitRestored(ctx context.Context, tx *database.Tx, clock domain.Clock, ids 
 			"restore_hold":             true,
 			"jobs_failed_undispatched": c.undispatchedFailed,
 			"jobs_interrupted":         c.interrupted,
+			"deployments_failed":       c.deploymentsFailed,
+			"deployments_interrupted":  c.deploymentsHeld,
 			"approvals_deleted":        c.approvalsDeleted,
 			"locks_deleted":            c.locksDeleted,
 			"credentials_revoked":      c.credentialsRevoked,
