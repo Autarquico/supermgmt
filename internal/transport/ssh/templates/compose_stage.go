@@ -44,18 +44,6 @@ func ValidateCleanPath(s string) error {
 	return nil
 }
 
-// ValidateDeployRoot accepts a node.setup deploy_root: a clean absolute path
-// other than "/" (ADR-0030).
-func ValidateDeployRoot(s string) error {
-	if err := ValidateCleanPath(s); err != nil {
-		return err
-	}
-	if s == "/" {
-		return fmt.Errorf("the filesystem root is not a deploy root")
-	}
-	return nil
-}
-
 // ValidateBackupPath accepts the artifact path a postgres-dump prints: a
 // .dump file directly inside BackupDir.
 func ValidateBackupPath(s string) error {
