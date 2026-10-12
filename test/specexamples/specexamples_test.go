@@ -131,7 +131,7 @@ func TestConfigExamplesValidate_SpecEnvironmentExample(t *testing.T) {
 }
 
 func TestConfigExamplesValidate_SpecProviderExamples(t *testing.T) {
-	for i, block := range exactlyBlocks(t, "8.3", 3) {
+	for i, block := range exactlyBlocks(t, "8.3", 4) {
 		if err := loadConfig(t, providerConfig(block)); err != nil {
 			t.Errorf("§8.3 example %d does not validate: %v\n%s", i+1, err, block)
 		}
@@ -199,7 +199,7 @@ func TestUnknownFieldInjectedIntoAnExampleFailsWithItsYAMLPath(t *testing.T) {
 		assertErrorMentions(t, loadConfig(t, injected), "instance.bogus_field")
 	})
 	t.Run("config_provider_list_item", func(t *testing.T) {
-		block := exactlyBlocks(t, "8.3", 3)[0]
+		block := exactlyBlocks(t, "8.3", 4)[0]
 		assertErrorMentions(t, loadConfig(t, providerConfig(block+"bogus_field: 1\n")), "providers[0].bogus_field")
 	})
 	t.Run("policy_rule", func(t *testing.T) {
