@@ -140,6 +140,64 @@ func TestRootNeverReceivesPathsBelowTheServiceUsersHome(t *testing.T) {
 	}
 }
 
+func TestValidateDeployRoot(t *testing.T) {
+	tests := []struct {
+		path string
+		ok   bool
+	}{
+		{DefaultDeployRoot, true},
+		{"/opt/apps-1/deploy.d", true},
+		{"", false},
+		{"/", false},
+		{"srv/supermgmt", false},
+		{"/srv/supermgmt/", false},
+		{"/srv//supermgmt", false},
+		{"/srv/../etc", false},
+		{"/srv/./x", false},
+		{HomeDir, false},
+		{HomeDir + "/deploy", false},
+		{HomeDir + "-other", true},
+		{"/srv/a b", false},
+		{"/srv/$(id)", false},
+		{"/srv/a;b", false},
+		{"/srv/a\nb", false},
+		{"/srv/" + strings.Repeat("a", 200), false},
+	}
+	for _, tt := range tests {
+		if err := ValidateDeployRoot(tt.path); (err == nil) != tt.ok {
+			t.Errorf("ValidateDeployRoot(%q) = %v, want ok=%v", tt.path, err, tt.ok)
+		}
+	}
+}
+
+func TestDeployRootStepCreatesARootOwnedDirectoryOnlyForValidPaths(t *testing.T) {
+	args := map[string]string{"path": DefaultDeployRoot}
+	root, err := RenderSetup("setup.deploy_root", args, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "test ! -L '/srv/supermgmt' && " + rootPath + "install -d -m 0755 -o root -g root '/srv/supermgmt'"
+	if !strings.HasSuffix(root.Line, want) {
+		t.Errorf("root variant = %q", root.Line)
+	}
+	viaSudo, err := RenderSetup("setup.deploy_root.sudo", args, nil)
+	if err != nil || !strings.Contains(viaSudo.Line, "sudo -n install -d -m 0755 -o root -g root '/srv/supermgmt'") {
+		t.Errorf("sudo variant = %q, %v", viaSudo.Line, err)
+	}
+	for _, bad := range []string{"relative", "/srv/x;id", HomeDir + "/d", "/"} {
+		if _, err := RenderSetup("setup.deploy_root", map[string]string{"path": bad}, nil); err == nil {
+			t.Errorf("deploy_root accepted %q", bad)
+		}
+	}
+}
+
+func TestJQPathIsAnUnprivilegedRead(t *testing.T) {
+	c, err := Render("setup.jq_path", nil)
+	if err != nil || c.Line != "command -v jq" {
+		t.Errorf("jq_path = %q, %v", c.Line, err)
+	}
+}
+
 func TestOwnStepsRunAsTheDedicatedUser(t *testing.T) {
 	dir := map[string]string{"user": "supermgmt", "mode": "0700", "path": SSHDir}
 	root, err := RenderSetup("setup.own_dir", dir, nil)

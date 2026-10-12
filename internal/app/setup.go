@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
@@ -84,7 +86,15 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	req, err := setupRequestOf(job)
+	params, err := setupParamsOf(job)
+	if err != nil {
+		return err
+	}
+	req, err := parseSetupRequest(params)
+	if err != nil {
+		return err
+	}
+	deployRoot, err := deployRootOf(params)
 	if err != nil {
 		return err
 	}
@@ -92,31 +102,51 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	outcome, err := h.provision(ctx, lease, job, node, req, id)
+	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id)
 	if err != nil {
 		return err
 	}
 	if err := h.verify(ctx, node, req, id, outcome); err != nil {
 		return err
 	}
-	if err := h.record(ctx, lease, job, node, req, id, outcome); err != nil {
+	if err := h.record(ctx, lease, job, node, req, deployRoot, id, outcome); err != nil {
 		return err
 	}
 	_ = h.prober.Probe(ctx, node.ID, ProbeFull, nil) // best effort: the refresher repeats it
 	return nil
 }
 
-func setupRequestOf(job jobs.Job) (setupRequest, error) {
+func setupParamsOf(job jobs.Job) (map[string]any, error) {
 	var params map[string]any
 	if err := json.Unmarshal(job.Payload, &params); err != nil {
-		return setupRequest{}, smerr.Wrap(err, smerr.CodeInternal, "", "node.setup job has an unreadable payload")
+		return nil, smerr.Wrap(err, smerr.CodeInternal, "", "node.setup job has an unreadable payload")
 	}
-	return parseSetupRequest(params)
+	return params, nil
+}
+
+// deployRootParam is the node.setup plan parameter that names deploy_root (ADR-0030).
+const deployRootParam = "deploy_root"
+
+// deployRootOf reads deploy_root from the plan parameters: the default when
+// absent, an INVALID_ARGUMENT unless absolute and clean.
+func deployRootOf(params map[string]any) (string, error) {
+	raw, present := params[deployRootParam]
+	if !present {
+		return templates.DefaultDeployRoot, nil
+	}
+	root, ok := raw.(string)
+	if !ok {
+		return "", smerr.New(smerr.CodeInvalidArgument, "", deployRootParam+" must be a string")
+	}
+	if err := templates.ValidateDeployRoot(root); err != nil {
+		return "", smerr.New(smerr.CodeInvalidArgument, "", err.Error())
+	}
+	return root, nil
 }
 
 // provision runs the ensure steps as admin_user, bracketed by the audit events
 // of the privileged session.
-func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, id secrets.Identity) (systemd.SetupOutcome, error) {
+func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) (systemd.SetupOutcome, error) {
 	if isLocal(node) {
 		return systemd.SetupOutcome{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "the local provider cannot be set up")
 	}
@@ -132,11 +162,17 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	if err := h.requireBootstrap(ctx, admin, asRoot); err != nil {
 		return systemd.SetupOutcome{}, err
 	}
+	if err := requireJQ(ctx, admin); err != nil {
+		return systemd.SetupOutcome{}, err
+	}
 	h.sessionEvent(ctx, lease, job, node, "start", asRoot, nil)
 	outcome, err := systemd.Setup(ctx, admin, systemd.SetupParams{
 		User: node.Endpoint.User, InstanceID: instance.ID.String(), AuthorizedKey: id.AuthorizedKey,
 		Grants: req.Grants, LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, AdminIsRoot: asRoot,
 	})
+	if err == nil {
+		err = ensureDeployRoot(ctx, admin, deployRoot, asRoot)
+	}
 	h.sessionEvent(context.WithoutCancel(ctx), lease, job, node, "end", asRoot, err)
 	return outcome, err
 }
@@ -153,6 +189,44 @@ func (h setupHandler) requireBootstrap(ctx context.Context, admin transport.Exec
 	}
 	if !snapshot.PasswordlessSudo {
 		return smerr.New(smerr.CodeCapabilityUnavailable, "", bootstrapRequirement)
+	}
+	return nil
+}
+
+// requireJQ refuses a node without jq before anything changes: the
+// resolved-environment check of deployments needs it (ADR-0010, ADR-0030).
+func requireJQ(ctx context.Context, ex transport.Executor) error {
+	c, err := templates.Render("setup.jq_path", nil)
+	if err != nil {
+		return err
+	}
+	res, err := ex.Run(ctx, c)
+	if err != nil {
+		return err
+	}
+	if res.ExitStatus != 0 {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "jq is required on the node for deployments; install it and run setup again")
+	}
+	return nil
+}
+
+// ensureDeployRoot creates deploy_root, root-owned 0755; it converges when the
+// directory already exists (ADR-0030).
+func ensureDeployRoot(ctx context.Context, ex transport.Executor, deployRoot string, asRoot bool) error {
+	name := "setup.deploy_root"
+	if !asRoot {
+		name += templates.SudoVariantSuffix
+	}
+	c, err := templates.RenderSetup(name, map[string]string{"path": deployRoot}, nil)
+	if err != nil {
+		return err
+	}
+	res, err := ex.Run(ctx, c)
+	if err != nil {
+		return fmt.Errorf("create deploy_root: %w", err)
+	}
+	if res.ExitStatus != 0 {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "cannot create deploy_root "+deployRoot+" (exit "+strconv.Itoa(res.ExitStatus)+")")
 	}
 	return nil
 }
@@ -242,10 +316,10 @@ func identityRef(id secrets.Identity) string { return "secret://" + id.Ref.Name 
 
 // record writes the node.setup capability, fenced: a worker that lost its
 // lease writes nothing.
-func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, id secrets.Identity, outcome systemd.SetupOutcome) error {
+func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) error {
 	meta := runtimes.SetupMeta{
 		SetupVersion: runtimes.SetupVersion, SystemctlPath: outcome.SystemctlPath, Units: req.Grants,
-		LogsMode: req.LogsMode, DockerAccess: req.DockerAccess,
+		LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, DeployRoot: deployRoot,
 		KeyRef: identityRef(id), KeyVersion: id.Ref.Version, KeyFingerprint: id.FingerprintSHA256,
 	}
 	capability, err := setupCapability(meta, h.cfg.Clock.Now())
@@ -265,7 +339,7 @@ func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job
 		}
 		return h.emit(ctx, tx, actor, eventSetupCompleted, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
 			"key_fingerprint": id.FingerprintSHA256, "docker_access": req.DockerAccess,
-			"logs_mode": string(req.LogsMode), "units": len(req.Grants),
+			"logs_mode": string(req.LogsMode), "units": len(req.Grants), "deploy_root": deployRoot,
 		})
 	})
 }
