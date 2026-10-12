@@ -331,6 +331,7 @@ func (b *builder) coreServices() error {
 func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
+		Proxmox: b.proxmox,
 	})
 	if err != nil {
 		return nil, err
@@ -342,7 +343,11 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 
 func (b *builder) background(handlers map[string]jobs.Handler) (background, error) {
 	cfg, log := b.cfg, b.o.Log
-	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil)
+	pveEvidence, err := app.NewProxmoxEvidence(b.app, b.proxmox, 0)
+	if err != nil {
+		return background{}, err
+	}
+	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil, app.WithProxmoxEvidence(pveEvidence))
 	if err != nil {
 		return background{}, err
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -23,12 +24,21 @@ type EvidenceRouter struct {
 	core
 	conn     Connector
 	adapters Adapters
+	proxmox  *ProxmoxEvidence
 }
 
 var _ jobs.EvidenceSource = (*EvidenceRouter)(nil)
 
+// EvidenceOption adds an evidence source to the router.
+type EvidenceOption func(*EvidenceRouter)
+
+// WithProxmoxEvidence routes the intents of Proxmox operations to p.
+func WithProxmoxEvidence(p *ProxmoxEvidence) EvidenceOption {
+	return func(r *EvidenceRouter) { r.proxmox = p }
+}
+
 // NewEvidenceRouter validates cfg. A nil adapters means DefaultAdapters.
-func NewEvidenceRouter(cfg Config, conn Connector, adapters Adapters) (*EvidenceRouter, error) {
+func NewEvidenceRouter(cfg Config, conn Connector, adapters Adapters, opts ...EvidenceOption) (*EvidenceRouter, error) {
 	c, err := newCore(cfg)
 	if err != nil {
 		return nil, err
@@ -36,11 +46,21 @@ func NewEvidenceRouter(cfg Config, conn Connector, adapters Adapters) (*Evidence
 	if adapters == nil {
 		adapters = DefaultAdapters()
 	}
-	return &EvidenceRouter{core: c, conn: conn, adapters: adapters}, nil
+	r := &EvidenceRouter{core: c, conn: conn, adapters: adapters}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r, nil
 }
 
 // Collect gathers evidence for one dispatched intent.
 func (r *EvidenceRouter) Collect(ctx context.Context, intent jobs.Intent) (jobs.Evidence, error) {
+	if strings.HasPrefix(intent.Operation, proxmox.OperationPrefix) {
+		if r.proxmox == nil {
+			return jobs.Evidence{}, fmt.Errorf("no Proxmox evidence source for intent %s (%s)", intent.ID, intent.Operation)
+		}
+		return r.proxmox.Collect(ctx, intent)
+	}
 	if intent.TargetType != string(domain.ResourceService) || intent.DispatchedAt == nil {
 		return jobs.Evidence{}, fmt.Errorf("no evidence source for intent %s (%s on %s)", intent.ID, intent.Operation, intent.TargetType)
 	}

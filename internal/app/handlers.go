@@ -2,9 +2,11 @@ package app
 
 import (
 	"errors"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/policy"
 )
 
 // HandlersOptions are the collaborators of the job handlers.
@@ -16,6 +18,13 @@ type HandlersOptions struct {
 	Prober    *Prober
 	Identity  SSHIdentity
 	Settle    Settle
+
+	// Proxmox enables the proxmox.vm.power job; without it the type has no
+	// handler. ProxmoxHTTPTimeout must equal the proxmox.WithHTTPTimeout the
+	// sync's clients use (zero means 30s, the client default): the correlation
+	// window of an uncertain dispatch depends on it.
+	Proxmox            *ProxmoxSync
+	ProxmoxHTTPTimeout time.Duration
 }
 
 // Handlers are the executors of the job types M1 adds.
@@ -24,6 +33,7 @@ type Handlers struct {
 	setup  setupHandler
 	action actionHandler
 	apply  applyHandler
+	power  *proxmoxPowerHandler // nil unless Proxmox is configured
 }
 
 // NewHandlers validates the options.
@@ -45,12 +55,19 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	if o.Adapters == nil {
 		o.Adapters = DefaultAdapters()
 	}
-	return &Handlers{
+	h := &Handlers{
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
 		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
 		apply:  applyHandler{inv: o.Inventory},
-	}, nil
+	}
+	if o.Proxmox != nil {
+		h.power = &proxmoxPowerHandler{
+			core: c, store: o.Store, sync: o.Proxmox, settle: o.Settle.withDefaults(),
+			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, defaultProxmoxHTTPTimeout),
+		}
+	}
+	return h, nil
 }
 
 // Map is the handler table for jobs.EngineConfig.Handlers, keyed by job type.
@@ -62,6 +79,9 @@ func (h *Handlers) Map() map[string]jobs.Handler {
 	}
 	for _, verb := range domain.AllServiceVerbs() {
 		table[verb.Action()] = h.action
+	}
+	if h.power != nil {
+		table[policy.ActionProxmoxVMPower] = h.power
 	}
 	return table
 }
