@@ -25,7 +25,7 @@ func (osFiles) FreeBytes(dir string) (uint64, error) {
 	if err := syscall.Statfs(filepath.Clean(dir), &st); err != nil {
 		return 0, err
 	}
-	return uint64(st.Bavail) * uint64(st.Bsize), nil
+	return uint64(st.Bavail) * uint64(st.Bsize), nil //nolint:gosec,unconvert,nolintlint // Bsize is a positive block size; signed on linux, unsigned on darwin
 }
 
 func (osFiles) FileSize(path string) (int64, error) {

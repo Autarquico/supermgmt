@@ -498,8 +498,15 @@ func TestProxmoxSyncRunSyncsEveryIntervalAndStopsWithItsContext(t *testing.T) {
 	if reads := c.fake.Count("GET", "/cluster/resources"); reads != 1 {
 		t.Errorf("%d reads before the interval passed, want 1", reads)
 	}
-	c.clock.Advance(31 * time.Second)
-	waitFor(t, "the sync after the interval", func() bool { return c.fake.Count("GET", "/cluster/resources") == 2 })
+	// The first sync may still be recording its finish time when the clock
+	// moves, so keep moving it past one interval until the next sync runs.
+	waitFor(t, "the sync after the interval", func() bool {
+		if c.fake.Count("GET", "/cluster/resources") >= 2 {
+			return true
+		}
+		c.clock.Advance(31 * time.Second)
+		return false
+	})
 
 	stop()
 	select {
