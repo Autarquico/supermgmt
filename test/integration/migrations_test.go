@@ -117,8 +117,8 @@ func TestMigrationsM2ToM3KeepsIntents(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 4 {
-		t.Errorf("schema version = %d, want 4", v)
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 5 {
+		t.Errorf("schema version = %d, want 5", v)
 	}
 	if got := count(t, db, `SELECT COUNT(*) FROM operation_intents WHERE id = '`+m2IntentID+`' AND external_ref IS NULL AND dispatched_at = 1500`); got != 1 {
 		t.Errorf("existing intent lost or given an external ref by the migration")
@@ -133,9 +133,61 @@ func TestMigrationsM2ToM3KeepsIntents(t *testing.T) {
 	assertIntegrity(t, db)
 }
 
+// TestMigrationsM3ToM4KeepsData builds a database as an M3 binary left it
+// (migrations 000001-000004) with data, then migrates it with the current
+// binary: the M3 rows survive and the M4 tables are empty and usable.
+func TestMigrationsM3ToM4KeepsData(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "sm.db"), database.Options{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	seed(t, db, m3Migrations, m1Seed+m2Intent)
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 4 {
+		t.Fatalf("seeded schema version = %d, want 4", v)
+	}
+
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 5 {
+		t.Errorf("schema version = %d, want 5", v)
+	}
+	for table, want := range map[string]int{
+		"instances": 1, "identities": 2, "providers": 1, "nodes": 1, "jobs": 1, "secrets": 1,
+		"operation_intents": 1,
+	} {
+		if got := count(t, db, `SELECT COUNT(*) FROM `+table); got != want {
+			t.Errorf("%s rows after migration = %d, want %d", table, got, want)
+		}
+	}
+	for _, table := range []string{
+		"repositories", "apps", "app_targets", "artifacts", "artifact_checks", "github_oidc_credentials",
+		"deployments", "deployment_steps", "health_checks", "webhook_deliveries", "execution_snapshots",
+	} {
+		if got := count(t, db, `SELECT COUNT(*) FROM `+table); got != 0 {
+			t.Errorf("new table %s has %d rows, want 0", table, got)
+		}
+	}
+	assertIntegrity(t, db)
+
+	err = db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		return database.PutExecutionSnapshot(ctx, tx, database.ExecutionSnapshot{
+			Hash: database.ExecutionSnapshotHash([]byte("m")), Kind: database.SnapshotManifest, Content: []byte("m"),
+			CreatedAt: time.UnixMilli(2000),
+		})
+	})
+	if err != nil {
+		t.Errorf("snapshot on a migrated database: %v", err)
+	}
+}
+
 var (
 	m1Migrations = []string{"000001_initial.up.sql", "000002_m1.up.sql"}
 	m2Migrations = append(append([]string{}, m1Migrations...), "000003_m2.up.sql")
+	m3Migrations = append(append([]string{}, m2Migrations...), "000004_m3.up.sql")
 )
 
 const m2IntentID = "01970000-0000-7000-8000-000000000080"
