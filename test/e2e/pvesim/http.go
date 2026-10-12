@@ -53,6 +53,17 @@ type GrantRequest struct {
 	Propagate bool   `json:"propagate"`
 }
 
+// InjectRequest is a fault for the fake API (pvefake.Rule): kind is respond, drop_before,
+// drop_after or hang.
+type InjectRequest struct {
+	Method     string `json:"method"`
+	PathSuffix string `json:"path_suffix"`
+	Times      int    `json:"times"`
+	Kind       string `json:"kind"`
+	Code       int    `json:"code"`
+	Body       string `json:"body"`
+}
+
 type RoleRequest struct {
 	Name       string   `json:"name"`
 	Privileges []string `json:"privileges"`
@@ -123,6 +134,11 @@ func (c *AdminClient) Grant(ctx context.Context, subject, path, role string, pro
 
 func (c *AdminClient) Revoke(ctx context.Context, subject, path, role string) error {
 	return c.call(ctx, http.MethodPost, "/revoke", GrantRequest{Subject: subject, Path: path, Role: role}, nil)
+}
+
+// Inject registers a fault in the fake API.
+func (c *AdminClient) Inject(ctx context.Context, r InjectRequest) error {
+	return c.call(ctx, http.MethodPost, "/inject", r, nil)
 }
 
 // CA is the PEM of the CA that signed the fake API's certificate.

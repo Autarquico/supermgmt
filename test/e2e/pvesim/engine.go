@@ -16,15 +16,16 @@ type DockerEngine struct {
 	Image   string
 	Network string
 	Label   string
+	// AfterStart are commands run in a guest right after it booted: a hook for hosts that need a
+	// workaround (the e2e suite uses it for emulated amd64 binaries).
+	AfterStart [][]string
 }
 
 const systemdAttempts = 120 // one second apart
 
 func (d DockerEngine) docker(ctx context.Context, stdin []byte, args ...string) (ExecResult, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // the docker CLI with arguments built by the harness
-	if len(stdin) > 0 {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
+	cmd.Stdin = bytes.NewReader(stdin)                 // always a pipe, never a terminal: the tools run without one
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
@@ -72,7 +73,7 @@ func (d DockerEngine) Start(ctx context.Context, name string) error {
 			return err
 		}
 		if state := strings.TrimSpace(string(res.Stdout)); state == "running" || state == "degraded" {
-			return nil
+			return d.afterStart(ctx, name)
 		}
 		select {
 		case <-ctx.Done():
@@ -81,6 +82,15 @@ func (d DockerEngine) Start(ctx context.Context, name string) error {
 		}
 	}
 	return fmt.Errorf("systemd of %s did not settle", name)
+}
+
+func (d DockerEngine) afterStart(ctx context.Context, name string) error {
+	for _, argv := range d.AfterStart {
+		if err := d.must(ctx, append([]string{"exec", name}, argv...)...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Stop halts the container (systemd receives its clean-shutdown signal).
@@ -95,11 +105,7 @@ func (d DockerEngine) Remove(ctx context.Context, name string) error {
 
 // Exec runs argv as root in the container, never through a shell.
 func (d DockerEngine) Exec(ctx context.Context, name string, argv []string, stdin []byte) (ExecResult, error) {
-	args := []string{"exec"}
-	if len(stdin) > 0 {
-		args = append(args, "-i")
-	}
-	return d.docker(ctx, stdin, append(append(args, name), argv...)...)
+	return d.docker(ctx, stdin, append([]string{"exec", "-i", name}, argv...)...)
 }
 
 // RemoveLabelled deletes every guest container left behind with Label.

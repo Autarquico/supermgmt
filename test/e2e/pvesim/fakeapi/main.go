@@ -112,11 +112,33 @@ func adminHandler(fake *pvefake.Fake, node string) http.Handler {
 		fake.Grant(g.Subject, g.Path, g.Role, g.Propagate)
 		return nil, nil
 	}))
+	mux.HandleFunc("POST /inject", decode(func(r pvesim.InjectRequest) (any, error) {
+		fault, err := faultOf(r)
+		if err != nil {
+			return nil, err
+		}
+		fake.Inject(pvefake.Rule{Method: r.Method, PathSuffix: r.PathSuffix, Times: r.Times, Fault: fault})
+		return nil, nil
+	}))
 	mux.HandleFunc("POST /revoke", decode(func(g pvesim.GrantRequest) (any, error) {
 		fake.Revoke(g.Subject, g.Path, g.Role)
 		return nil, nil
 	}))
 	return mux
+}
+
+func faultOf(r pvesim.InjectRequest) (pvefake.Fault, error) {
+	switch r.Kind {
+	case "respond":
+		return pvefake.Respond(r.Code, r.Body), nil
+	case "drop_before":
+		return pvefake.DropBefore(), nil
+	case "drop_after":
+		return pvefake.DropAfter(), nil
+	case "hang":
+		return pvefake.Hang(), nil
+	}
+	return pvefake.Fault{}, fmt.Errorf("unknown fault kind %q", r.Kind)
 }
 
 // decode adapts a typed handler to HTTP: JSON in, JSON out.

@@ -22,6 +22,11 @@ type Sim struct {
 	users     map[string]*pveUser
 	roles     map[string]*pveRole
 	acls      []pveACL
+
+	fmu     sync.Mutex // guards faults, calls and secrets
+	faults  []*Fault
+	calls   []string
+	secrets []string
 }
 
 // New builds a Sim. host is the name of the container the shims run in.
@@ -38,6 +43,18 @@ func New(cfg Topology, eng Engine, api API, host string) *Sim {
 
 // Run executes one tool run.
 func (s *Sim) Run(ctx context.Context, req Request) Response {
+	fault := s.record(req)
+	if fault != nil && !fault.After {
+		return fault.response()
+	}
+	res := s.run(ctx, req)
+	if fault != nil {
+		return fault.response()
+	}
+	return res
+}
+
+func (s *Sim) run(ctx context.Context, req Request) Response {
 	var run func(context.Context, []string, []byte) Response
 	switch req.Tool {
 	case "pct":

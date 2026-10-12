@@ -46,9 +46,46 @@ type pveOptions struct {
 	Topology func(*pvesim.Topology)
 }
 
+// The appliance installer supports linux/amd64 only. On an arm64 machine run the suite with
+// SM_E2E_PVE_HOST_PLATFORM=linux/amd64: the PVE host container (where the installer runs, plain
+// processes only) is then an emulated amd64 container and the guests stay native, running the
+// amd64 sm the installer pushes through the emulation of user binaries. Where Docker is amd64
+// (CI) nothing needs setting.
+func pveHostPlatform() string { return os.Getenv("SM_E2E_PVE_HOST_PLATFORM") }
+
+// hostArch is the architecture of the binaries that run on the PVE host container.
+func hostArch(t testing.TB) string {
+	t.Helper()
+	if pveHostPlatform() == "linux/amd64" {
+		return "amd64"
+	}
+	return harness.DockerArch(t)
+}
+
+// hostImage is the Debian image of the PVE host container.
+func hostImage(t testing.TB) string {
+	t.Helper()
+	if pveHostPlatform() == "" {
+		return harness.Image(t)
+	}
+	tag := harness.HostImage + "-" + strings.ReplaceAll(pveHostPlatform(), "/", "-")
+	if _, err := m3Once("host-image-"+tag, func() (string, error) {
+		res, err := harness.Docker(context.Background(), "", "build", "--quiet", "--platform", pveHostPlatform(), "--tag", tag,
+			filepath.Join(harness.RepoRoot(), "test", "e2e", "image"))
+		return tag, commandFailure("build "+tag, res, err)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return tag
+}
+
+// buildTool builds a Go tool for the containers (keys starting with "host-": for the PVE host's).
 func buildTool(t *testing.T, key, pkg string) string {
 	t.Helper()
 	arch := harness.DockerArch(t)
+	if strings.HasPrefix(key, "host-") {
+		arch = hostArch(t)
+	}
 	path, err := m3Once(key, func() (string, error) {
 		out := filepath.Join(harness.WorkDir(), key+"-"+arch)
 		env := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
@@ -75,6 +112,11 @@ func startPVEWorld(t *testing.T, opts pveOptions) *pveWorld {
 	t.Cleanup(func() { _, _ = harness.Docker(ctx, "", "network", "rm", w.Network) })
 
 	engine := pvesim.DockerEngine{Image: harness.Image(t), Network: w.Network, Label: pveSweepKV}
+	if pveHostPlatform() != "" {
+		// Rosetta cannot run a service with MemoryDenyWriteExecute: relax it for the emulated sm.
+		engine.AfterStart = [][]string{{"sh", "-c", "mkdir -p /etc/systemd/system/supermgmt.service.d && " +
+			"printf '[Service]\\nMemoryDenyWriteExecute=no\\n' > /etc/systemd/system/supermgmt.service.d/emulation.conf"}}
+	}
 	t.Cleanup(func() { engine.RemoveLabelled(ctx) })
 
 	w.startAPI()
@@ -110,8 +152,12 @@ func (w *pveWorld) startAPI() {
 func (w *pveWorld) startHost(engine pvesim.DockerEngine) {
 	t, ctx := w.t, context.Background()
 	name := "sm-e2e-pvehost-" + harness.Suffix()
-	harness.MustDocker(t, "create", "--name", name, "--privileged", "--cgroupns=host", "--tmpfs", "/run", "--tmpfs", "/run/lock",
-		"--network", w.Network, "--hostname", w.Topology.Node, "--add-host", "host.docker.internal:host-gateway", harness.Image(t))
+	create := []string{"create", "--name", name}
+	if pveHostPlatform() != "" {
+		create = append(create, "--platform", pveHostPlatform())
+	}
+	harness.MustDocker(t, append(create, "--privileged", "--cgroupns=host", "--tmpfs", "/run", "--tmpfs", "/run/lock",
+		"--network", w.Network, "--hostname", w.Topology.Node, "--add-host", "host.docker.internal:host-gateway", hostImage(t))...)
 	t.Cleanup(func() { _, _ = harness.Docker(ctx, "", "rm", "--force", "--volumes", name) })
 	w.Host = harness.Adopt(t, name)
 	harness.MustDocker(t, "start", name)
@@ -122,7 +168,7 @@ func (w *pveWorld) startHost(engine pvesim.DockerEngine) {
 	url := w.serveSim(token)
 
 	c := w.Host
-	shim := buildTool(t, "pvesim-shim", "./test/e2e/pvesim/shim")
+	shim := buildTool(t, "host-pvesim-shim", "./test/e2e/pvesim/shim")
 	c.MustExec(ctx, "mkdir", "-p", "/usr/local/lib/pvesim", "/etc/pvesim", "/etc/pve")
 	c.CopyRoot(ctx, shim, "/usr/local/lib/pvesim/shim")
 	c.MustExec(ctx, "chmod", "0755", "/usr/local/lib/pvesim/shim")
