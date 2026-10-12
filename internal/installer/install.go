@@ -64,13 +64,36 @@ func (in *Installer) runServer(ctx context.Context, o Options) error {
 	if err := in.installServerFiles(ctx, o, l, s); err != nil {
 		return err
 	}
+	if o.NoStart {
+		return in.reportLoaded(o, l)
+	}
 	if err := in.startAndWait(ctx, l); err != nil {
 		return err
 	}
-	return in.printBootstrap(ctx, l)
+	if err := in.printBootstrap(ctx, l); err != nil {
+		return err
+	}
+	return in.printCAIfSelfSigned(o, l)
+}
+
+// reportLoaded ends a --no-start install: the unit is known but disabled, and
+// the caller (the appliance installer) enables it once setup is complete.
+func (in *Installer) reportLoaded(o Options, l layout) error {
+	in.say("installed; %s is loaded but not enabled or started", UnitName)
+	return in.printCAIfSelfSigned(o, l)
+}
+
+func (in *Installer) printCAIfSelfSigned(o Options, l layout) error {
+	if !o.SelfSigned {
+		return nil
+	}
+	return in.printCA(l)
 }
 
 func (in *Installer) runRestore(ctx context.Context, o Options) error {
+	if o.NoStart {
+		return fail(ExitInvalid, "--no-start applies only to install server")
+	}
 	if o.Archive == "" || o.KeyExport == "" {
 		return fail(ExitInvalid, "restore requires --archive and --key-export")
 	}
@@ -107,7 +130,7 @@ func (in *Installer) prepareServer(o Options) (layout, serverSettings, error) {
 	if err != nil {
 		return l, serverSettings{}, err
 	}
-	s, err := resolveServer(o, in.d.Files, in.d.Clock.Now())
+	s, err := in.resolveSettings(o, l)
 	if err != nil {
 		return l, s, err
 	}
@@ -119,6 +142,13 @@ func (in *Installer) prepareServer(o Options) (layout, serverSettings, error) {
 	}
 	in.say("plan: %s; tls=%s listen=%s public_url=%s", describe(l), s.TLS, s.Listen, s.PublicURL)
 	return l, s, in.confirmPlan(o)
+}
+
+func (in *Installer) resolveSettings(o Options, l layout) (serverSettings, error) {
+	if o.SelfSigned {
+		return resolveSelfSigned(o, l)
+	}
+	return resolveServer(o, in.d.Files, in.d.Clock.Now())
 }
 
 func (in *Installer) requireSystemdRoot() error {
@@ -226,6 +256,11 @@ func (in *Installer) installServerFiles(ctx context.Context, o Options, l layout
 	if err := in.d.Files.CopyFile(o.Binary, l.Binary, 0o755, Owner{}); err != nil {
 		return failWrap(ExitConfiguration, "install binary", err)
 	}
+	if o.SelfSigned {
+		if err := in.ensureSelfSigned(l, s); err != nil {
+			return err
+		}
+	}
 	if err := in.writeServerConfig(l, s); err != nil {
 		return err
 	}
@@ -233,8 +268,18 @@ func (in *Installer) installServerFiles(ctx context.Context, o Options, l layout
 	if err := in.d.Files.WriteFile(unit.Path, renderServerUnit(l), 0o644, Owner{}); err != nil {
 		return failWrap(ExitConfiguration, "write systemd unit", err)
 	}
-	if err := in.d.Services.Register(ctx, unit); err != nil {
-		return failWrap(ExitConfiguration, "register systemd unit", err)
+	return in.registerServerUnit(ctx, o, unit)
+}
+
+// registerServerUnit enables the unit, or with --no-start only loads it so it
+// stays disabled until the appliance installer finishes credential import.
+func (in *Installer) registerServerUnit(ctx context.Context, o Options, unit Unit) error {
+	register, verb := in.d.Services.Register, "register"
+	if o.NoStart {
+		register, verb = in.d.Services.Load, "load"
+	}
+	if err := register(ctx, unit); err != nil {
+		return failWrap(ExitConfiguration, verb+" systemd unit", err)
 	}
 	return nil
 }
@@ -321,15 +366,29 @@ func (in *Installer) probe(l layout) (Probe, error) {
 	if srv.TLS.Mode == config.TLSProxy {
 		return Probe{URL: "http://" + hostport + "/health/ready", ForwardedProto: "https"}, nil
 	}
-	pem, err := in.d.Files.ReadFile(srv.TLS.CertFile)
+	pem, err := in.trustAnchor(srv.TLS.CertFile)
 	if err != nil {
-		return Probe{}, failWrap(ExitConfiguration, "read certificate", err)
+		return Probe{}, err
 	}
 	host, err := publicHost(srv.PublicURL)
 	if err != nil {
 		return Probe{}, failWrap(ExitConfiguration, "public URL", err)
 	}
 	return Probe{URL: "https://" + hostport + "/health/ready", ServerName: host, RootPEM: pem}, nil
+}
+
+// trustAnchor is the CA beside the certificate when a self-signed install put
+// one there, else the certificate itself.
+func (in *Installer) trustAnchor(certFile string) ([]byte, error) {
+	path := certFile
+	if ca := filepath.Join(filepath.Dir(certFile), caFileName); in.d.Files.Exists(ca) {
+		path = ca
+	}
+	pem, err := in.d.Files.ReadFile(path)
+	if err != nil {
+		return nil, failWrap(ExitConfiguration, "read certificate", err)
+	}
+	return pem, nil
 }
 
 // dialAddress turns a listen address into one the installer can dial locally.
