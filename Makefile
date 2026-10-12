@@ -10,7 +10,6 @@ LDFLAGS := -s -w \
 GOVULNCHECK_VERSION := v1.8.0
 ACTIONLINT_VERSION := v1.7.7
 VACUUM_VERSION := v0.30.6
-VACUUM_VERSION := v0.30.6
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 E2E_DIST ?=
 E2E_TIMEOUT ?= 40m
@@ -25,7 +24,7 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
-	integration-fixtures cross-build api-check e2e e2e-server e2e-install snapshot release-check install-test
+	integration-fixtures cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade snapshot release-check install-test
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -91,6 +90,12 @@ e2e-server: ## e2e: remote control (direct and proxy TLS, Dex), local mode, back
 e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (exit 5); E2E_DIST=dist serves a `make snapshot` release
 	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
 		-run 'TestM2_(CurlBashInstallsServer|TamperedReleaseFailsWithExit5|ReviewFirstDetectsModifiedScripts)$$' ./test/e2e/
+
+e2e-appliance: ## e2e: Proxmox appliance install and acceptance (passes vacuously until TestM3_Appliance* exists)
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Appliance' ./test/e2e/...
+
+e2e-upgrade: ## e2e: upgrade, rollback and uninstall (passes vacuously until TestM3_Upgrade* exists)
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Upgrade' ./test/e2e/...
 
 snapshot: ## Build a snapshot release into dist/ signed with a throwaway key (needs goreleaser v2 and syft)
 	packaging/release/snapshot.sh
