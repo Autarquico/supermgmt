@@ -35,6 +35,7 @@ const (
 type background struct {
 	engine    *jobs.Engine
 	refresher *app.Refresher
+	proxmox   *app.ProxmoxSync
 	sweeper   *app.Sweeper
 	backups   *backupSchedule // nil when no schedule is configured
 	authSweep *authSweep
@@ -191,6 +192,7 @@ type builder struct {
 	conn      app.Connector
 	focus     *app.Focus
 	prober    *app.Prober
+	proxmox   *app.ProxmoxSync
 }
 
 // openGate builds the job store and loads the restore hold into it: from here
@@ -313,7 +315,15 @@ func (b *builder) coreServices() error {
 	}); err != nil {
 		return err
 	}
-	b.prober, err = app.NewProber(b.app, b.conn, nil)
+	if b.prober, err = app.NewProber(b.app, b.conn, nil); err != nil {
+		return err
+	}
+	b.proxmox, err = app.NewProxmoxSync(b.app, app.ProxmoxSyncOptions{
+		Token: app.SecretToken(b.kit.store),
+		OnError: func(provider domain.ID, err error) {
+			b.o.Log.Warn("proxmox sync", slog.String("provider", provider.String()), slog.Any("error", err))
+		},
+	})
 	return err
 }
 
@@ -363,7 +373,7 @@ func (b *builder) background(handlers map[string]jobs.Handler) (background, erro
 	if err != nil {
 		return background{}, err
 	}
-	return background{engine: engine, refresher: refresher, sweeper: sweeper, backups: schedule, authSweep: b.authSweep()}, nil
+	return background{engine: engine, refresher: refresher, proxmox: b.proxmox, sweeper: sweeper, backups: schedule, authSweep: b.authSweep()}, nil
 }
 
 func (b *builder) apiServices() (api.Services, error) {
@@ -393,7 +403,7 @@ func (b *builder) apiServices() (api.Services, error) {
 	}
 	return api.Services{
 		Plans: b.plans, Approvals: approvals, Governance: governance, Services: actions,
-		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys,
+		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
 	}, nil
 }

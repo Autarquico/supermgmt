@@ -360,6 +360,26 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfProvider'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/providers/{id}/refresh:
+    post:
+      operationId: refreshProvider
+      summary: Run Proxmox discovery now and return the provider as the sync left it.
+      description: >-
+        The same discovery the provider runs every sync interval (action `provider.read`; it writes observations
+        and discovered nodes only). Concurrent refreshes of one provider share a single run. A cluster that cannot
+        be read is not an error of this call: the provider's `status` is `error`. Rate-limited per caller and
+        provider; over the limit the answer is 429 with `Retry-After`. Takes no `Idempotency-Key`.
+      tags: [providers]
+      x-supermgmt-route: action:provider.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The provider after the sync.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Provider'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes:
     get:
       operationId: listNodes

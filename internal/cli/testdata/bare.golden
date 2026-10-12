@@ -23,6 +23,7 @@ Available Commands:
   logout      Sign out: revoke the session on the server and forget the stored credential
   nodes       List, add, inspect and probe nodes
   profile     Manage the servers sm talks to
+  providers   Check providers
   secrets     Import secrets and manage the master keys
   server      Run the SuperMgmt server (the systemd service)
   services    List services, read their logs and start, stop or restart them
