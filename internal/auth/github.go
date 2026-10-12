@@ -128,20 +128,23 @@ func (r GitHubResolver) record(ctx context.Context, identity domain.ID, c github
 // storedClaims is the claims_json of github_oidc_credentials: the §18 claims a
 // finalization binds to, under their GitHub names.
 type storedClaims struct {
-	RepositoryID   int64  `json:"repository_id"`
-	WorkflowRef    string `json:"workflow_ref"`
-	JobWorkflowRef string `json:"job_workflow_ref,omitempty"`
-	SHA            string `json:"sha"`
-	Ref            string `json:"ref"`
-	EventName      string `json:"event_name"`
-	Environment    string `json:"environment,omitempty"`
-	RunID          int64  `json:"run_id"`
-	RunAttempt     int64  `json:"run_attempt"`
+	RepositoryID      int64  `json:"repository_id"`
+	RepositoryOwnerID int64  `json:"repository_owner_id"`
+	Repository        string `json:"repository"`
+	WorkflowRef       string `json:"workflow_ref"`
+	JobWorkflowRef    string `json:"job_workflow_ref,omitempty"`
+	SHA               string `json:"sha"`
+	Ref               string `json:"ref"`
+	EventName         string `json:"event_name"`
+	Environment       string `json:"environment,omitempty"`
+	RunID             int64  `json:"run_id"`
+	RunAttempt        int64  `json:"run_attempt"`
 }
 
 func storedClaimsOf(c github.Claims) storedClaims {
 	return storedClaims{
-		RepositoryID: c.RepositoryID, WorkflowRef: c.WorkflowRef, JobWorkflowRef: c.JobWorkflowRef, SHA: c.SHA,
+		RepositoryID: c.RepositoryID, RepositoryOwnerID: c.RepositoryOwnerID, Repository: c.Repository,
+		WorkflowRef: c.WorkflowRef, JobWorkflowRef: c.JobWorkflowRef, SHA: c.SHA,
 		Ref: c.Ref, EventName: c.EventName, Environment: c.Environment, RunID: c.RunID, RunAttempt: c.RunAttempt,
 	}
 }

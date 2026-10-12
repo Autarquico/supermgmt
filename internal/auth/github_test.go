@@ -17,6 +17,7 @@ import (
 
 const (
 	ghRepoID    = int64(123)
+	ghOwnerID   = int64(55)
 	ghWorkflow  = ".github/workflows/deploy.yml"
 	ghIssuer    = github.ActionsIssuer
 	ghJWTShaped = "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJ4In0.c2ln"
@@ -38,7 +39,7 @@ func ghClaims(w *world) github.Claims {
 	return github.Claims{
 		Issuer: ghIssuer, Subject: "repo:acme/shop:ref:refs/heads/main", JTI: "jti-1",
 		IssuedAt: w.clock.Now(), ExpiresAt: w.clock.Now().Add(5 * time.Minute),
-		RepositoryID: ghRepoID, Repository: "acme/shop", Ref: "refs/heads/main", SHA: "abc123", EventName: "push",
+		RepositoryID: ghRepoID, RepositoryOwnerID: ghOwnerID, Repository: "acme/shop", Ref: "refs/heads/main", SHA: "abc123", EventName: "push",
 		WorkflowRef: "acme/shop/" + ghWorkflow + "@refs/heads/main", Environment: "production", RunID: 555, RunAttempt: 2,
 	}
 }
@@ -98,7 +99,7 @@ func TestGitHubResolverStoresTheClaimsButNeverTheToken(t *testing.T) {
 	var got map[string]any
 	must(t, json.Unmarshal(row.ClaimsJSON, &got), "claims_json")
 	want := map[string]any{
-		"repository_id": float64(ghRepoID), "workflow_ref": "acme/shop/" + ghWorkflow + "@refs/heads/main", "sha": "abc123",
+		"repository_id": float64(ghRepoID), "repository_owner_id": float64(ghOwnerID), "repository": "acme/shop", "workflow_ref": "acme/shop/" + ghWorkflow + "@refs/heads/main", "sha": "abc123",
 		"ref": "refs/heads/main", "event_name": "push", "environment": "production", "run_id": float64(555), "run_attempt": float64(2),
 	}
 	for k, v := range want {
