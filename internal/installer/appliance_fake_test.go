@@ -1000,7 +1000,7 @@ func testCAPEM(t *testing.T) []byte {
 	}
 	tpl := &x509.Certificate{
 		SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "test CA"}, IsCA: true, BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign, NotBefore: testNow.Add(-time.Hour), NotAfter: testNow.Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageCertSign, NotBefore: testNow.Add(-time.Hour), NotAfter: realTLSValidity,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
 	if err != nil {
