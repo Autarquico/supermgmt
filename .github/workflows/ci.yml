@@ -260,3 +260,29 @@ jobs:
         run: make snapshot
       - name: curl|bash install on a clean Debian host from that snapshot, tamper matrix
         run: make e2e-install E2E_DIST=dist
+
+  e2e-appliance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Proxmox appliance install and acceptance (skeleton; the tests arrive later)
+        run: make e2e-appliance
+
+  e2e-upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: upgrade, rollback and uninstall (skeleton; the tests arrive later)
+        run: make e2e-upgrade
