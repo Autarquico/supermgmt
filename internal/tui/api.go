@@ -17,6 +17,9 @@ type API interface {
 	Me(ctx context.Context) (wire.Me, error)
 
 	ListProviders(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Provider], error)
+	// RefreshProvider runs a discovery now and answers with the provider as
+	// the sync left it.
+	RefreshProvider(ctx context.Context, id domain.ID) (wire.Provider, error)
 
 	ListNodes(ctx context.Context, q wire.NodeQuery) (wire.Page[wire.Node], error)
 	// GetNode with focus refreshes the node's focus lease, so the daemon

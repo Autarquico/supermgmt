@@ -2,9 +2,17 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"os"
+	"os/signal"
+	"slices"
 	"strings"
+	"syscall"
+	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,17 +30,20 @@ func newNodesCmd(env []string) *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(newNodesListCmd(env), newNodesGetCmd(env), newNodesAddCmd(env), newNodesRemoveCmd(env), newNodesProbeCmd(env),
-		newNodesSetupCmd(env), newNodesRepinCmd(env))
+		newNodesSetupCmd(env), newNodesRepinCmd(env), newNodesPowerCmd(env))
 	return cmd
 }
 
 func newNodesListCmd(env []string) *cobra.Command {
 	var q wire.NodeQuery
 	var reachability string
+	var tree bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List nodes with their latest known state",
-		Args:  noArgs,
+		Long: "List nodes with their latest known state. With --tree, show every node grouped by provider and, for\n" +
+			"Proxmox, each cluster node with its VMs and containers; the filters apply and paging is followed.",
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if reachability != "" {
 				r, err := domain.ParseReachability(reachability)
@@ -44,6 +55,9 @@ func newNodesListCmd(env []string) *cobra.Command {
 			api, err := newClient(cmd, env)
 			if err != nil {
 				return err
+			}
+			if tree {
+				return listNodeTree(cmd, api, q)
 			}
 			page, err := api.ListNodes(cmd.Context(), q)
 			if err != nil {
@@ -57,6 +71,7 @@ func newNodesListCmd(env []string) *cobra.Command {
 	cmd.Flags().StringVar(&q.Environment, "environment", "", "only nodes in this environment")
 	cmd.Flags().StringVar(&q.Tag, "tag", "", "only nodes with this tag")
 	cmd.Flags().StringVar(&reachability, "reachability", "", "only nodes with this reachability")
+	cmd.Flags().BoolVar(&tree, "tree", false, "group nodes by provider; Proxmox guests under their cluster node")
 	return cmd
 }
 
@@ -305,22 +320,15 @@ func resolveNode(ctx context.Context, api *client.Client, ref string) (domain.ID
 	if id, err := domain.ParseID(ref); err == nil {
 		return id, nil
 	}
+	all, err := allNodes(ctx, api, wire.NodeQuery{})
+	if err != nil {
+		return "", err
+	}
 	var match []wire.Node
-	q := wire.NodeQuery{PageQuery: wire.PageQuery{Limit: wire.MaxLimit}}
-	for {
-		page, err := api.ListNodes(ctx, q)
-		if err != nil {
-			return "", err
+	for _, n := range all {
+		if n.Name == ref {
+			match = append(match, n)
 		}
-		for _, n := range page.Items {
-			if n.Name == ref {
-				match = append(match, n)
-			}
-		}
-		if page.NextCursor == "" {
-			break
-		}
-		q.Cursor = page.NextCursor
 	}
 	switch len(match) {
 	case 0:
@@ -329,4 +337,308 @@ func resolveNode(ctx context.Context, api *client.Client, ref string) (domain.ID
 		return match[0].ID, nil
 	}
 	return "", smerr.New(smerr.CodeConflict, smerr.ReasonAmbiguousTarget, fmt.Sprintf("%d nodes are named %q; use the id", len(match), ref))
+}
+
+// allNodes follows the cursor until every node matching q has been read.
+func allNodes(ctx context.Context, api *client.Client, q wire.NodeQuery) ([]wire.Node, error) {
+	q.Limit = wire.MaxLimit
+	var all []wire.Node
+	for {
+		page, err := api.ListNodes(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page.Items...)
+		if page.NextCursor == "" {
+			return all, nil
+		}
+		q.Cursor = page.NextCursor
+	}
+}
+
+// ---- tree ------------------------------------------------------------------
+
+func listNodeTree(cmd *cobra.Command, api *client.Client, q wire.NodeQuery) error {
+	q.Cursor = ""
+	nodes, err := allNodes(cmd.Context(), api, q)
+	if err != nil {
+		return err
+	}
+	return emit(cmd, wire.Page[wire.Node]{Items: nodes}, func(w io.Writer) error { return writeNodeTree(w, nodes) })
+}
+
+// writeNodeTree groups nodes by provider. Under a Proxmox provider each
+// cluster node holds the guests that run on it; every other node stands alone.
+// Rows are NAME, TYPE, STATE, MANAGEMENT and marks.
+func writeNodeTree(w io.Writer, nodes []wire.Node) error {
+	byProvider := map[string][]wire.Node{}
+	for _, n := range nodes {
+		byProvider[n.Provider] = append(byProvider[n.Provider], n)
+	}
+	var lines []string
+	for _, provider := range slices.Sorted(maps.Keys(byProvider)) {
+		lines = append(lines, provider)
+		lines = append(lines, providerTree(byProvider[provider])...)
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, line := range lines {
+		_, _ = fmt.Fprintln(tw, line)
+	}
+	return tw.Flush()
+}
+
+func providerTree(nodes []wire.Node) []string {
+	clusterNodes := map[string][]wire.Node{} // by PVE node name
+	var standalone []wire.Node
+	for _, n := range nodes {
+		if n.Proxmox == nil {
+			standalone = append(standalone, n)
+			continue
+		}
+		clusterNodes[n.Proxmox.PVENode] = append(clusterNodes[n.Proxmox.PVENode], n)
+	}
+	var branches [][]string
+	for _, pveNode := range slices.Sorted(maps.Keys(clusterNodes)) {
+		branches = append(branches, clusterBranch(pveNode, clusterNodes[pveNode]))
+	}
+	slices.SortFunc(standalone, func(a, b wire.Node) int { return strings.Compare(a.Name, b.Name) })
+	for _, n := range standalone {
+		branches = append(branches, []string{treeRow(n.Name, n.Kind, string(n.Reachability)+staleSuffix(n.Stale), string(n.ManagementState), "")})
+	}
+	var lines []string
+	for i, branch := range branches {
+		last := i == len(branches)-1
+		for j, line := range branch {
+			lines = append(lines, branchPrefix(j == 0, last)+line)
+		}
+	}
+	return lines
+}
+
+const proxmoxNodeType = "node"
+
+// clusterBranch is a cluster node row followed by its guests, VMID order.
+func clusterBranch(pveNode string, members []wire.Node) []string {
+	var head *wire.Node
+	var guests []wire.Node
+	for _, n := range members {
+		if n.Proxmox.Type == proxmoxNodeType {
+			head = &n
+		} else {
+			guests = append(guests, n)
+		}
+	}
+	slices.SortFunc(guests, func(a, b wire.Node) int { return a.Proxmox.VMID - b.Proxmox.VMID })
+	lines := []string{treeRow(pveNode, proxmoxNodeType, "unknown", "-", "[node not listed]")}
+	if head != nil {
+		lines = []string{proxmoxRow(head.Name, *head)}
+	}
+	for i, g := range guests {
+		lines = append(lines, guestPrefix(i == len(guests)-1)+proxmoxRow(g.Name, g))
+	}
+	return lines
+}
+
+// branchPrefix draws the provider-level connector, or the bar that continues
+// it down the lines of a branch.
+func branchPrefix(first, last bool) string {
+	switch {
+	case first && last:
+		return "\u2514\u2500 "
+	case first:
+		return "\u251c\u2500 "
+	case last:
+		return "   "
+	}
+	return "\u2502  "
+}
+
+func guestPrefix(last bool) string {
+	if last {
+		return "\u2514\u2500 "
+	}
+	return "\u251c\u2500 "
+}
+
+func proxmoxRow(name string, n wire.Node) string {
+	g := n.Proxmox
+	kind := g.Type
+	if g.VMID != 0 {
+		kind = fmt.Sprintf("%s/%d", g.Type, g.VMID)
+	}
+	var marks []string
+	if g.Template {
+		marks = append(marks, "[template]")
+	}
+	if g.Absent {
+		marks = append(marks, "[absent]")
+	}
+	if g.Inaccessible {
+		marks = append(marks, "[inaccessible]")
+	}
+	return treeRow(name, kind, g.Status, string(n.ManagementState), strings.Join(marks, " "))
+}
+
+func treeRow(name, kind, state, management, marks string) string {
+	cells := []string{name, kind, state, management, marks}
+	return strings.TrimRight(strings.Join(cells, "\t"), "\t")
+}
+
+// ---- power -----------------------------------------------------------------
+
+const (
+	actionProxmoxVMPower = "proxmox.vm.power"
+	jobPollInterval      = 500 * time.Millisecond
+)
+
+var powerVerbs = []string{"start", "shutdown", "reboot", "stop"}
+
+func newNodesPowerCmd(env []string) *cobra.Command {
+	var assumeYes, wait bool
+	cmd := &cobra.Command{
+		Use:   "power <node> <start|shutdown|reboot|stop>",
+		Short: "Power a Proxmox VM or container (a job; stop needs approval)",
+		Long: "Plan the power action, show what policy says, and submit it once you confirm.\n\n" +
+			"start boots the guest, shutdown asks its OS to stop, reboot restarts it. stop cuts the power at once\n" +
+			"without a clean shutdown: it is high risk and waits for approval where policy asks for it.\n\n" +
+			"With --wait, stay until the job ends (a job waiting for approval keeps you waiting): exit status 0 when\n" +
+			"it succeeded.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			verb := args[1]
+			if !slices.Contains(powerVerbs, verb) {
+				return usageErrorf("unknown power action %q: want %s", verb, strings.Join(powerVerbs, ", "))
+			}
+			api, err := newClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			id, err := resolveNode(cmd.Context(), api, args[0])
+			if err != nil {
+				return err
+			}
+			node, err := api.GetNode(cmd.Context(), id, false)
+			if err != nil {
+				return err
+			}
+			if err := checkPowerTarget(node); err != nil {
+				return err
+			}
+			return submitPower(cmd, api, node, verb, assumeYes, wait)
+		},
+	}
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "do not ask for confirmation")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait until the job ends")
+	return cmd
+}
+
+// checkPowerTarget refuses early what the daemon would refuse later: only a
+// guest that is there can be powered.
+func checkPowerTarget(n wire.Node) error {
+	switch g := n.Proxmox; {
+	case g == nil || g.Type == proxmoxNodeType:
+		return usageErrorf("%s is not a Proxmox VM or container", n.Name)
+	case g.Template:
+		return usageErrorf("%s is a template and cannot be powered", n.Name)
+	case g.Absent:
+		return usageErrorf("%s is gone from Proxmox (absent)", n.Name)
+	case g.Inaccessible:
+		return usageErrorf("%s is inaccessible: the token lost the privilege to see it", n.Name)
+	}
+	return nil
+}
+
+func submitPower(cmd *cobra.Command, api *client.Client, node wire.Node, verb string, assumeYes, wait bool) error {
+	plan, err := api.CreatePlan(cmd.Context(), wire.CreatePlanRequest{
+		Action:     actionProxmoxVMPower,
+		Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: node.ID}},
+		Parameters: map[string]any{"verb": verb},
+	})
+	if err != nil {
+		return err
+	}
+	if err := describePlan(cmd, fmt.Sprintf("%s %s", verb, node.Name), plan); err != nil {
+		return err
+	}
+	describePowerRisk(cmd, plan, verb)
+	if err := confirm(cmd, "Submit this plan?", assumeYes); err != nil {
+		return err
+	}
+	submission, err := api.SubmitPlan(cmd.Context(), plan.PlanID, plan.PlanHash)
+	if err != nil {
+		return err
+	}
+	if submission.Policy.ApprovalRequired {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "to approve: sm jobs approve %s --plan-hash %s\n", submission.Job.ID, plan.PlanHash)
+	}
+	if !wait {
+		return submissionOutput(cmd, submission)
+	}
+	return waitForJob(cmd, api, submission.Job.ID)
+}
+
+// describePowerRisk shows the risk class the plan carries, and what a hard
+// stop does to the guest.
+func describePowerRisk(cmd *cobra.Command, plan wire.CreatedPlan, verb string) {
+	var doc struct {
+		Risk domain.RiskClass `json:"risk"`
+	}
+	_ = json.Unmarshal(plan.Plan, &doc)
+	errOut := cmd.ErrOrStderr()
+	_, _ = fmt.Fprintf(errOut, "risk: %s\n", orDash(string(doc.Risk)))
+	if verb == "stop" {
+		_, _ = fmt.Fprintln(errOut, "stop cuts the guest's power without a clean shutdown; use shutdown to let its OS stop first")
+	}
+}
+
+// waitForJob polls the job until it ends and reports how. Interrupted ends the
+// wait too: only a person can settle it (`sm jobs resolve`).
+func waitForJob(cmd *cobra.Command, api *client.Client, id domain.ID) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() { _ = api.HoldPresence(ctx) }()
+
+	ticker := time.NewTicker(jobPollInterval)
+	defer ticker.Stop()
+	var shown domain.JobState
+	for {
+		detail, err := api.GetJob(ctx, id)
+		if err != nil {
+			if ctx.Err() != nil {
+				return usageErrorf("stopped waiting: the job continues, see `sm jobs get %s`", id)
+			}
+			return err
+		}
+		if state := detail.Job.State; state != shown {
+			shown = state
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "job %s is %s\n", id, state)
+		}
+		if detail.Job.State.Terminal() || detail.Job.State == domain.JobInterrupted {
+			return finishWait(cmd, detail)
+		}
+		select {
+		case <-ctx.Done():
+		case <-ticker.C:
+		}
+	}
+}
+
+func finishWait(cmd *cobra.Command, detail wire.JobDetail) error {
+	job := detail.Job
+	err := emit(cmd, detail, func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "job %s (%s) %s\n", job.ID, job.Type, job.State)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	switch {
+	case job.State == domain.JobSucceeded:
+		return nil
+	case job.State == domain.JobInterrupted:
+		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("job %s was interrupted and its outcome is unknown: see `sm jobs get %s`, then `sm jobs resolve`", job.ID, job.ID))
+	case job.Error != nil:
+		return smerr.New(job.Error.Code, job.Error.Reason, job.Error.Message)
+	}
+	return smerr.New(smerr.CodeInternal, "", fmt.Sprintf("job %s %s", job.ID, job.State))
 }

@@ -37,6 +37,7 @@ var unkeyedWrites = map[string]bool{
 	"DELETE " + wire.PathToken:         true,
 	"POST " + wire.PathOIDCStart:       true,
 	"POST " + wire.PathOIDCDevice:      true,
+	"POST " + wire.PathProviderRefresh: true,
 }
 
 func TestEveryRouteMapsToExactlyOneCatalogActionOrExemption(t *testing.T) {
@@ -67,7 +68,7 @@ func TestTheLocalSocketServesTheContract(t *testing.T) {
 		"GET " + wire.PathHealthLive, "GET " + wire.PathHealthReady, "GET " + wire.PathMe, "GET " + wire.PathPresence,
 		"GET " + wire.PathSSHKey, "POST " + wire.PathPlans, "GET " + wire.PathPlan, "POST " + wire.PathPlanSubmit, "GET " + wire.PathApprovals,
 		"GET " + wire.PathJobs, "GET " + wire.PathJob, "POST " + wire.PathJobApprove, "POST " + wire.PathJobReject,
-		"POST " + wire.PathJobCancel, "POST " + wire.PathJobResolve, "GET " + wire.PathProviders, "POST " + wire.PathProviders,
+		"POST " + wire.PathJobCancel, "POST " + wire.PathJobResolve, "GET " + wire.PathProviders, "POST " + wire.PathProviders, "POST " + wire.PathProviderRefresh,
 		"GET " + wire.PathNodes, "GET " + wire.PathNode, "POST " + wire.PathNodesSSHHostKey, "POST " + wire.PathNodesSSH,
 		"PATCH " + wire.PathNode, "DELETE " + wire.PathNode, "POST " + wire.PathNodeProbe, "GET " + wire.PathNodeServices,
 		"GET " + wire.PathNodeConnectInfo, "POST " + wire.PathNodeSessions, "POST " + wire.PathNodeSessionEnd,

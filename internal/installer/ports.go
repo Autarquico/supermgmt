@@ -21,6 +21,16 @@ type Files interface {
 	WriteFile(path string, data []byte, mode fs.FileMode, owner Owner) error
 	CopyFile(src, dst string, mode fs.FileMode, owner Owner) error
 	RemoveAll(path string) error
+	// AppendSync appends line to path (created 0600 if absent) and fsyncs the file.
+	AppendSync(path string, line []byte) error
+	// SyncDir fsyncs a directory, making creations and renames inside it durable.
+	SyncDir(dir string) error
+	// Rename replaces newPath with oldPath atomically (same file system).
+	Rename(oldPath, newPath string) error
+	// Link creates newPath as a hard link to oldPath.
+	Link(oldPath, newPath string) error
+	// Hash returns the lowercase hex SHA-256 of a file's contents.
+	Hash(path string) (string, error)
 }
 
 // Accounts manages the service user.
@@ -32,20 +42,31 @@ type Accounts interface {
 // Unit is a service definition on disk.
 type Unit struct{ Name, Path string }
 
-// ServiceManager registers and starts a unit (systemd system or user scope,
-// or a launchd agent).
+// ServiceManager manages a unit (systemd system or user scope, or a launchd
+// agent). Register makes the manager load and enable the unit; Load only makes
+// it known, not enabled (`sm install server --no-start`, ADR-0026).
 type ServiceManager interface {
 	Register(ctx context.Context, unit Unit) error
+	Load(ctx context.Context, unit Unit) error
 	Start(ctx context.Context, unit Unit) error
+	Stop(ctx context.Context, unit Unit) error
+	Disable(ctx context.Context, unit Unit) error
+	// WaitStopped returns once the unit is inactive and its main process is
+	// gone, or an error after timeout (ADR-0027).
+	WaitStopped(ctx context.Context, unit Unit, timeout time.Duration) error
 }
 
 // Command is one subprocess. User, when set, is the account it runs as.
 // Stdin is passed through untouched, so a passphrase prompt reaches the terminal.
+// Sensitive commands carry a secret on their output: stdout and stderr are
+// captured in memory, never streamed, and a failure is reported without them
+// (ADR-0026).
 type Command struct {
-	Name  string
-	Args  []string
-	User  string
-	Stdin io.Reader
+	Name      string
+	Args      []string
+	User      string
+	Stdin     io.Reader
+	Sensitive bool
 }
 
 // Runner runs subprocesses and returns their stdout. A non-zero exit is an *ExitStatus.
@@ -87,6 +108,7 @@ type Prompter interface {
 // Host is what the installer knows about the machine without side effects.
 type Host struct {
 	GOOS       string
+	GOARCH     string
 	UID        int
 	Home       string
 	Env        map[string]string
@@ -102,6 +124,7 @@ type Deps struct {
 	UserServices ServiceManager
 	Runner       Runner
 	Health       Health
+	PVE          PVE      // the Proxmox host tools; nil when not on a Proxmox host
 	Prompter     Prompter // nil when no terminal is attached
 	Clock        domain.Clock
 	Out          io.Writer

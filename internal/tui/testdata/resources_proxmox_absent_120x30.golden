@@ -1,0 +1,30 @@
+┌ SuperMgmt · Resources ───────────────────────────────────────────────── 10 nodes · 3 online · 1 warning · 1 approval ┐
+│ RESOURCES                      │ DETAIL                                                                              │
+│                                │                                                                                     │
+│ ▼ local                        │ ◌ db absent · gone from Proxmox                                                     │
+│    ● laptop                    │ environment                                                                         │
+│ ▼ pve                          │ provider      pve · proxmox.lxc                                                     │
+│    ● pve1                      │ proxmox       lxc/200 on pve2                                                       │
+│      ● web                     │ management    discovered                                                            │
+│      ○ base [template]         │ metrics       CPU 12%   RAM 50%   DISK 30%                                          │
+│    ● pve2                      │ capabilities  none yet                                                              │
+│    ▸ ◌ db [absent]             │                                                                                     │
+│      ◌ cache [inaccessible]    │                                                                                     │
+│ ▼ ssh                          │                                                                                     │
+│    ● db-1                      │                                                                                     │
+│    ○ lab-1 [stale]             │                                                                                     │
+│    ● web-1                     │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+│                                │                                                                                     │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                                                      │
+│ j/k move  enter detail  v services  s ssh  d docker  / command  ? help  q quit                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

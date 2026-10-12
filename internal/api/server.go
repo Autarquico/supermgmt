@@ -70,6 +70,8 @@ type Services struct {
 	Inventory  *app.Inventory
 	Sessions   *app.Sessions
 	SSHKeys    *SSHKeys
+	// Proxmox is optional: without it the refresh route answers CAPABILITY_UNAVAILABLE.
+	Proxmox *app.ProxmoxSync
 
 	Auth        app.Auth
 	Keys        app.Keys
@@ -186,8 +188,10 @@ type Server struct {
 	authLimit  *limiter
 	pollLimit  *limiter
 	writeLimit *limiter
-	openMu     sync.Mutex
-	open       map[domain.ID]int // event streams per identity
+	// refreshLimit bounds on-demand Proxmox discovery per caller and provider.
+	refreshLimit *limiter
+	openMu       sync.Mutex
+	open         map[domain.ID]int // event streams per identity
 
 	handler http.Handler
 	routes  []route
@@ -215,7 +219,8 @@ func New(o Options) (*Server, error) {
 		responder: responder{log: o.Log}, svc: o.Services, ids: o.IDs, resolver: o.Resolver, proxy: o.Proxy, db: o.DB,
 		stream: o.Stream.withDefaults(), timeout: o.RequestTimeout, residency: o.Residency, ready: o.Ready,
 		authLimit: newLimiter(authRate, o.Clock.Now), pollLimit: newLimiter(pollRate, o.Clock.Now), writeLimit: newLimiter(writeRate, o.Clock.Now),
-		open: map[domain.ID]int{}, closing: make(chan struct{}),
+		refreshLimit: newLimiter(refreshRate, o.Clock.Now),
+		open:         map[domain.ID]int{}, closing: make(chan struct{}),
 	}
 	if o.Resolver != nil {
 		s.transport = viaHTTPS

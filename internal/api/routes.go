@@ -89,6 +89,7 @@ func (s *Server) buildRoutes() []route {
 	r.plans()
 	r.jobs()
 	r.providers()
+	r.proxmox()
 	r.nodes()
 	r.sessions()
 	r.services()

@@ -101,17 +101,46 @@ func (m *Model) nodeTree(w, h int) []string {
 		if selected {
 			cursorRow = len(lines)
 		}
-		badge := ""
-		if n.Stale {
-			badge = " [stale]"
-		}
-		name := clip(safe(n.Name)+badge, w-6)
-		lines = append(lines, "  "+m.marker(selected)+m.reachGlyph(n)+" "+m.rowStyle(selected).Render(name))
+		indent := treeIndent(n)
+		name := clip(safe(n.Name)+nodeBadges(n), w-4-len(indent))
+		lines = append(lines, indent+m.marker(selected)+m.nodeGlyph(n)+" "+m.rowStyle(selected).Render(name))
 	}
 	if len(m.nodes) == 0 {
 		lines = append(lines, m.th.dim.Render(" "+clip(m.emptyNodes(), w-2)))
 	}
 	return append(lines[:2:2], window(lines[2:], cursorRow-2, max(h-2, 1))...)
+}
+
+// treeIndent nests a Proxmox guest under its cluster node.
+func treeIndent(n wire.Node) string {
+	if n.Proxmox != nil && n.Proxmox.Type != proxmoxClusterNode {
+		return "    "
+	}
+	return "  "
+}
+
+// nodeBadges are the words that must survive without color: stale data and,
+// for Proxmox, what the sync could not confirm about the object.
+func nodeBadges(n wire.Node) string {
+	var badges []string
+	if n.Stale {
+		badges = append(badges, "[stale]")
+	}
+	if g := n.Proxmox; g != nil {
+		if g.Template {
+			badges = append(badges, "[template]")
+		}
+		if g.Absent {
+			badges = append(badges, "[absent]")
+		}
+		if g.Inaccessible {
+			badges = append(badges, "[inaccessible]")
+		}
+	}
+	if len(badges) == 0 {
+		return ""
+	}
+	return " " + strings.Join(badges, " ")
 }
 
 func (m *Model) emptyNodes() string {
@@ -131,15 +160,71 @@ func (m *Model) nodeSummary(w int) []string {
 
 // nodeFacts is the node block shared by the resources pane and the node screen.
 func (m *Model) nodeFacts(n wire.Node, w int) []string {
+	state := nodeState(n)
+	if n.Proxmox != nil {
+		state = proxmoxState(n)
+	}
 	lines := []string{
-		" " + m.reachGlyph(n) + " " + m.th.title.Render(clip(safe(n.Name), w-6)) + m.th.dim.Render(" "+clip(nodeState(n), max(w-lenRunes(n.Name)-6, 0))),
+		" " + m.nodeGlyph(n) + " " + m.th.title.Render(clip(safe(n.Name), w-6)) + m.th.dim.Render(" "+clip(state, max(w-lenRunes(n.Name)-6, 0))),
 		m.kv("environment", safe(n.Environment), w),
 		m.kv("provider", providerText(n), w),
-		m.kv("metrics", metricsLine(n.Metrics), w),
-		m.kv("capabilities", capabilityNames(n), w),
-		m.kv("setup", setupSummary(n), w),
+	}
+	if n.Proxmox != nil {
+		lines = append(lines, m.kv("proxmox", proxmoxIdentity(n), w), m.kv("management", string(n.ManagementState), w))
+	}
+	lines = append(lines, m.kv("metrics", metricsLine(n.Metrics), w), m.kv("capabilities", capabilityNames(n), w))
+	if n.Proxmox == nil {
+		lines = append(lines, m.kv("setup", setupSummary(n), w))
 	}
 	return lines
+}
+
+const proxmoxClusterNode = "node"
+
+// proxmoxIdentity is "qemu/100 on pve1", or "cluster node" for the host.
+func proxmoxIdentity(n wire.Node) string {
+	g := n.Proxmox
+	if g.Type == proxmoxClusterNode {
+		return "cluster node " + safe(g.PVENode)
+	}
+	return fmt.Sprintf("%s/%d on %s", safe(g.Type), g.VMID, safe(g.PVENode))
+}
+
+// proxmoxState is the power state, or why there is none to show.
+func proxmoxState(n wire.Node) string {
+	g := n.Proxmox
+	switch {
+	case g.Absent:
+		return "absent · gone from Proxmox"
+	case g.Inaccessible:
+		return "inaccessible · the token cannot see it"
+	}
+	parts := []string{safe(g.Status)}
+	if g.Template {
+		parts = append(parts, "template")
+	}
+	if n.Stale {
+		parts = append(parts, "stale")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// nodeGlyph is the reachability glyph, or for a Proxmox object its power
+// state: running filled, stopped hollow, anything unconfirmed dotted.
+func (m *Model) nodeGlyph(n wire.Node) string {
+	g := n.Proxmox
+	if g == nil {
+		return m.reachGlyph(n)
+	}
+	switch {
+	case g.Absent || g.Inaccessible:
+		return m.th.dim.Render("◌")
+	case g.Status == "running" || g.Status == "online":
+		return m.th.ok.Render("●")
+	case g.Status == "stopped" || g.Status == "offline":
+		return m.th.dim.Render("○")
+	}
+	return m.th.dim.Render("◌")
 }
 
 func lenRunes(s string) int { return len([]rune(s)) }
@@ -204,14 +289,8 @@ func (m *Model) nodeShortcuts(n wire.Node, key tea.KeyPressMsg, fromTree bool) t
 func (m *Model) nodeBody(bw, bh int) []string {
 	n := m.nodeFull
 	lines := append([]string{""}, m.nodeFacts(n, bw)...)
+	lines = append(lines, m.nodeDetailRows(n, bw)...)
 	lines = append(lines,
-		m.kv("management", string(n.ManagementState), bw),
-		m.kv("os", safe(n.OS+" "+n.Arch), bw),
-		m.kv("endpoint", safe(fmt.Sprintf("%s@%s:%d (admin %s)", n.Endpoint.User, n.Endpoint.Host, n.Endpoint.Port, n.Endpoint.AdminUser)), bw),
-		m.kv("connection", connectionText(n), bw),
-		m.kv("last seen", m.whenPtr(n.LastSeenAt), bw),
-		m.kv("addresses", addressText(n), bw),
-		m.kv("tags", safe(dashIfEmpty(strings.Join(n.Tags, " "))), bw),
 		"",
 		m.heading("Services")+m.th.dim.Render("  v opens the full list"),
 	)
@@ -223,6 +302,25 @@ func (m *Model) nodeBody(bw, bh int) []string {
 		lines = append(lines, m.th.dim.Render("   "+m.emptyServices()))
 	}
 	return lines
+}
+
+// nodeDetailRows are the rows below the facts. A Proxmox object has no SSH
+// endpoint, connection or OS of its own: its identity is already in the facts.
+func (m *Model) nodeDetailRows(n wire.Node, bw int) []string {
+	common := []string{
+		m.kv("last seen", m.whenPtr(n.LastSeenAt), bw),
+		m.kv("addresses", addressText(n), bw),
+		m.kv("tags", safe(dashIfEmpty(strings.Join(n.Tags, " "))), bw),
+	}
+	if n.Proxmox != nil {
+		return common
+	}
+	return append([]string{
+		m.kv("management", string(n.ManagementState), bw),
+		m.kv("os", safe(n.OS+" "+n.Arch), bw),
+		m.kv("endpoint", safe(fmt.Sprintf("%s@%s:%d (admin %s)", n.Endpoint.User, n.Endpoint.Host, n.Endpoint.Port, n.Endpoint.AdminUser)), bw),
+		m.kv("connection", connectionText(n), bw),
+	}, common...)
 }
 
 func (m *Model) emptyServices() string {
@@ -603,6 +701,9 @@ func (m *Model) providersBody(bw, bh int) []string {
 	for _, p := range m.providers {
 		text := cell(safe(p.Name), 22) + cell(safe(p.Type), 12) + cell(string(p.Origin), 10) + cell(safe(p.Status), 10) + m.whenPtr(p.LastSyncAt)
 		rows = append(rows, " "+clip(text, bw-2))
+		if p.LastError != "" {
+			rows = append(rows, "   "+m.th.bad.Render(clip("! "+safe(p.LastError), bw-4)))
+		}
 	}
 	if len(rows) == 0 {
 		rows = append(rows, m.th.dim.Render(" "+m.emptyProviders()))

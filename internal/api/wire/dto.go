@@ -45,6 +45,7 @@ type Provider struct {
 	Status       string                `json:"status"`
 	SpecRevision int64                 `json:"spec_revision"`
 	LastSyncAt   *time.Time            `json:"last_sync_at"`
+	LastError    string                `json:"last_error"` // why the latest sync failed; empty when it did not
 }
 
 // CreateProviderRequest is POST /providers. M1 accepts only type "local",
@@ -81,10 +82,25 @@ type Node struct {
 	Connection         Connection             `json:"connection"`
 	Metrics            *Metrics               `json:"metrics"`
 	Setup              *Setup                 `json:"setup"`
+	Proxmox            *ProxmoxGuest          `json:"proxmox"` // nil unless the node is a Proxmox node or guest
 	Stale              bool                   `json:"stale"`
 	SpecRevision       int64                  `json:"spec_revision"`
 	LastSeenAt         *time.Time             `json:"last_seen_at"`
 	UpdatedAt          time.Time              `json:"updated_at"`
+}
+
+// ProxmoxGuest is the Proxmox view of a node (ADR-0024). For a cluster
+// member VMID is 0 and Type is "node". Status is the last observed power
+// state. Inaccessible: the token lost the audit privilege, so the node's
+// presence is unknown; Absent: the token could see it and it is gone.
+type ProxmoxGuest struct {
+	PVENode      string `json:"pve_node"`
+	VMID         int    `json:"vmid"`
+	Type         string `json:"type"`
+	Status       string `json:"status"`
+	Template     bool   `json:"template"`
+	Inaccessible bool   `json:"inaccessible"`
+	Absent       bool   `json:"absent"`
 }
 
 // Endpoint is the configured management endpoint (spec §6.4, ADR-0009 b).

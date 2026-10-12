@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +38,7 @@ func SystemDeps(out io.Writer, prompts io.Reader, env []string) Deps {
 	runner := execRunner{stderr: os.Stderr}
 	d := Deps{
 		Host: Host{
-			GOOS: runtime.GOOS, UID: os.Geteuid(), Home: values["HOME"], Env: values,
+			GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, UID: os.Geteuid(), Home: values["HOME"], Env: values,
 			HasSystemd: dirExists("/run/systemd/system"),
 		},
 		Files:    osFiles{},
@@ -52,10 +54,18 @@ func SystemDeps(out io.Writer, prompts io.Reader, env []string) Deps {
 	} else {
 		d.UserServices = systemd{runner: runner, user: true}
 	}
+	if fileExecutable(pveVersionTool) {
+		d.PVE = newExecPVE(runner)
+	}
 	if prompts != nil {
 		d.Prompter = linePrompter{in: bufio.NewReader(prompts), out: out}
 	}
 	return d
+}
+
+func fileExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
 func dirExists(path string) bool {
@@ -70,6 +80,19 @@ type osFiles struct{}
 func (osFiles) Exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+// Lstat describes path itself: a symlink is reported as neither a directory nor a regular file.
+func (osFiles) Lstat(path string) (EntryInfo, error) {
+	info, err := os.Lstat(filepath.Clean(path))
+	if err != nil {
+		return EntryInfo{}, err
+	}
+	uid := -1
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		uid = int(st.Uid)
+	}
+	return EntryInfo{Dir: info.IsDir(), Regular: info.Mode().IsRegular(), UID: uid, Mode: info.Mode().Perm()}, nil
 }
 
 func (osFiles) ReadFile(path string) ([]byte, error) { return os.ReadFile(filepath.Clean(path)) }
@@ -103,6 +126,81 @@ func (osFiles) CopyFile(src, dst string, mode fs.FileMode, owner Owner) error {
 		_, err := io.Copy(w, in)
 		return err
 	})
+}
+
+func (osFiles) AppendSync(path string, line []byte) error {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func (osFiles) SyncDir(dir string) error {
+	d, err := os.Open(filepath.Clean(dir))
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
+}
+
+func (osFiles) Rename(oldPath, newPath string) error { return os.Rename(oldPath, newPath) }
+
+func (osFiles) Link(oldPath, newPath string) error { return os.Link(oldPath, newPath) }
+
+func (osFiles) Hash(path string) (string, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Lock takes an exclusive, non-blocking advisory lock on path and returns its
+// release. The lock dies with the process, so a crash never leaves it stale.
+func (osFiles) Lock(path string) (func(), error) {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() { _ = f.Close() }, nil
+}
+
+// ListDir returns the names in dir; a missing directory is empty.
+func (osFiles) ListDir(dir string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Clean(dir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names, nil
 }
 
 func writeAtomic(path string, mode fs.FileMode, owner Owner, fill func(io.Writer) error) (err error) {
@@ -181,23 +279,72 @@ type systemd struct {
 	user   bool
 }
 
-func (s systemd) systemctl(ctx context.Context, args ...string) error {
+func (s systemd) systemctl(ctx context.Context, args ...string) ([]byte, error) {
 	if s.user {
 		args = append([]string{"--user"}, args...)
 	}
-	_, err := s.runner.Run(ctx, Command{Name: "systemctl", Args: args})
-	return err
+	return s.runner.Run(ctx, Command{Name: "systemctl", Args: args})
 }
 
 func (s systemd) Register(ctx context.Context, u Unit) error {
-	if err := s.systemctl(ctx, "daemon-reload"); err != nil {
+	if err := s.Load(ctx, u); err != nil {
 		return err
 	}
-	return s.systemctl(ctx, "enable", u.Name)
+	_, err := s.systemctl(ctx, "enable", u.Name)
+	return err
+}
+
+// Load makes systemd read the unit file; the unit stays disabled.
+func (s systemd) Load(ctx context.Context, _ Unit) error {
+	_, err := s.systemctl(ctx, "daemon-reload")
+	return err
 }
 
 // Start restarts, so a reinstall picks up the new binary.
-func (s systemd) Start(ctx context.Context, u Unit) error { return s.systemctl(ctx, "restart", u.Name) }
+func (s systemd) Start(ctx context.Context, u Unit) error {
+	_, err := s.systemctl(ctx, "restart", u.Name)
+	return err
+}
+
+func (s systemd) Stop(ctx context.Context, u Unit) error {
+	_, err := s.systemctl(ctx, "stop", u.Name)
+	return err
+}
+
+func (s systemd) Disable(ctx context.Context, u Unit) error {
+	_, err := s.systemctl(ctx, "disable", u.Name)
+	return err
+}
+
+// WaitStopped polls until the unit is inactive and its main process is gone.
+func (s systemd) WaitStopped(ctx context.Context, u Unit, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		out, err := s.systemctl(ctx, "show", "--property=ActiveState", "--property=MainPID", u.Name)
+		if err == nil && stoppedState(string(out)) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("unit %s did not stop within %s", u.Name, timeout)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func stoppedState(show string) bool {
+	state, pid := "", ""
+	for _, line := range strings.Split(show, "\n") {
+		switch k, v, _ := strings.Cut(strings.TrimSpace(line), "="); k {
+		case "ActiveState":
+			state = v
+		case "MainPID":
+			pid = v
+		}
+	}
+	return (state == "inactive" || state == "failed") && (pid == "0" || pid == "")
+}
 
 type launchd struct {
 	runner Runner
@@ -205,6 +352,18 @@ type launchd struct {
 }
 
 func (launchd) Register(context.Context, Unit) error { return nil }
+
+func (launchd) Load(context.Context, Unit) error { return nil }
+
+func (launchd) Disable(context.Context, Unit) error { return nil }
+
+// Stop boots the agent out; bootout returns once the job is gone.
+func (l launchd) Stop(ctx context.Context, u Unit) error {
+	_, err := l.runner.Run(ctx, Command{Name: "launchctl", Args: []string{"bootout", "gui/" + strconv.Itoa(l.uid), u.Path}})
+	return err
+}
+
+func (launchd) WaitStopped(context.Context, Unit, time.Duration) error { return nil }
 
 func (l launchd) Start(ctx context.Context, u Unit) error {
 	target := "gui/" + strconv.Itoa(l.uid)
@@ -218,9 +377,13 @@ type execRunner struct{ stderr io.Writer }
 func (r execRunner) Run(ctx context.Context, c Command) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...) //nolint:gosec // fixed argument vectors, never shell strings
 	cmd.Stdin = c.Stdin
-	cmd.Stderr = r.stderr
-	var stdout bytes.Buffer
+	var stdout, hidden bytes.Buffer
 	cmd.Stdout = &stdout
+	if c.Sensitive {
+		cmd.Stderr = &hidden // may carry a secret: kept in memory, never shown
+	} else {
+		cmd.Stderr = r.stderr
+	}
 	if c.User != "" {
 		cred, err := credentialOf(c.User)
 		if err != nil {
@@ -230,8 +393,15 @@ func (r execRunner) Run(ctx context.Context, c Command) ([]byte, error) {
 	}
 	err := cmd.Run()
 	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		return stdout.Bytes(), &ExitStatus{Command: c.Name, Code: exit.ExitCode()}
+	switch {
+	case errors.As(err, &exit):
+		out := stdout.Bytes()
+		if c.Sensitive {
+			out = nil
+		}
+		return out, &ExitStatus{Command: c.Name, Code: exit.ExitCode()}
+	case err != nil && c.Sensitive:
+		return nil, errors.New(c.Name + " could not run")
 	}
 	return stdout.Bytes(), err
 }

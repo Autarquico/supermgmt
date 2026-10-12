@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -51,22 +52,26 @@ func newSecretsCmd(env []string) *cobra.Command {
 
 func newSecretsImportCmd(env []string) *cobra.Command {
 	var name, fromFile string
-	var offline bool
+	var offline, deleteSource bool
 	cmd := &cobra.Command{
 		Use:   "import",
 		Short: "Store a secret value as the next version of a named secret",
 		Long: "Store a secret value, read from the terminal (no echo), from standard input or from a file with --from-file\n" +
 			"(which must not be readable by others). The value is sealed on the server and never shown again.\n\n" +
 			"With --offline (for a value the server needs before any administrator exists, such as the OIDC client\n" +
-			"secret) nothing is requested: the service must be stopped, the value comes from the terminal or standard\n" +
-			"input only, and it is sealed with the active master key straight into the database.",
+			"secret or a provider token) nothing is requested: the service must be stopped, and the value is sealed with\n" +
+			"the active master key straight into the database. With --from-file, --delete-source unlinks the file once\n" +
+			"the value is committed, and only then.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" {
 				return usageErrorf("--name is required")
 			}
+			if deleteSource && (!offline || fromFile == "") {
+				return usageErrorf("--delete-source needs --offline and --from-file")
+			}
 			if offline {
-				return importSecretOffline(cmd, env, name, fromFile)
+				return importSecretOffline(cmd, env, name, fromFile, deleteSource)
 			}
 			value, err := secretValue(cmd, fromFile)
 			if err != nil {
@@ -88,6 +93,7 @@ func newSecretsImportCmd(env []string) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "secret name, e.g. providers/pve/token")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the value from this file (mode 0600) instead of the terminal or stdin")
 	cmd.Flags().BoolVar(&offline, "offline", false, "store the value with the service stopped, without an administrator")
+	cmd.Flags().BoolVar(&deleteSource, "delete-source", false, "with --offline --from-file: delete the file once the value is committed")
 	return cmd
 }
 
@@ -95,14 +101,20 @@ func newSecretsImportCmd(env []string) *cobra.Command {
 
 const eventSecretImported = "secret.imported"
 
-func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string) error {
-	switch {
-	case fromFile != "":
-		return usageErrorf("--offline reads the value from the terminal or standard input only, not --from-file")
-	case name == secrets.SSHIdentityName:
+func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string, deleteSource bool) error {
+	if name == secrets.SSHIdentityName {
 		return usageErrorf("secret %s is the instance SSH identity: it is never imported", name)
 	}
-	value, err := readSecret(cmd, secretInput{prompt: "Secret value: ", whole: true, limit: maxSecretValueBytes})
+	var source secretFile
+	var value string
+	var err error
+	if fromFile != "" {
+		source, err = readSecretFile(fromFile)
+		value = source.value
+		defer source.close()
+	} else {
+		value, err = secretValue(cmd, "")
+	}
 	if err != nil {
 		return err
 	}
@@ -119,6 +131,11 @@ func importSecretOffline(cmd *cobra.Command, env []string, name, fromFile string
 	ref, err := storeOffline(cmd.Context(), db, session.keysDir, name, value)
 	if err != nil {
 		return err
+	}
+	if deleteSource {
+		if err := source.remove(); err != nil {
+			return fmt.Errorf("stored %s version %d but could not delete %s: %w", ref.Name, ref.Version, fromFile, err)
+		}
 	}
 	return emit(cmd, wire.SecretVersion{Name: ref.Name, Version: ref.Version}, func(w io.Writer) error {
 		_, err := fmt.Fprintf(w, "stored %s version %d\n", ref.Name, ref.Version)
@@ -159,20 +176,89 @@ func secretValue(cmd *cobra.Command, fromFile string) (string, error) {
 	if fromFile == "" {
 		return readSecret(cmd, secretInput{prompt: "Secret value: ", whole: true, limit: maxSecretValueBytes})
 	}
-	info, err := os.Stat(fromFile)
+	source, err := readSecretFile(fromFile)
+	source.close()
+	return source.value, err
+}
+
+// secretFile is a --from-file source that was opened without following links
+// and judged through the open descriptor, so the file that was checked is the
+// file that was read. The descriptor stays open until close, so the inode
+// cannot be freed and handed to a file swapped in at the same path.
+type secretFile struct {
+	path   string
+	file   *os.File
+	opened fs.FileInfo
+	value  string
+}
+
+func (s secretFile) close() {
+	if s.file != nil {
+		_ = s.file.Close()
+	}
+}
+
+func readSecretFile(path string) (secretFile, error) {
+	// O_NONBLOCK keeps a FIFO from hanging the open before it can be refused.
+	f, err := os.OpenFile(filepath.Clean(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	switch {
+	case errors.Is(err, syscall.ELOOP):
+		return secretFile{}, usageErrorf("%s is a symbolic link: name the file itself", path)
 	case err != nil:
-		return "", usageErrorf("cannot read %s: %v", fromFile, err)
-	case !info.Mode().IsRegular():
-		return "", usageErrorf("%s is not a regular file", fromFile)
-	case info.Mode().Perm()&0o077 != 0:
-		return "", usageErrorf("%s is readable by others (mode %04o): chmod 600 it first", fromFile, info.Mode().Perm())
+		return secretFile{}, usageErrorf("cannot read %s: %v", path, err)
 	}
-	data, err := os.ReadFile(filepath.Clean(fromFile))
+	fail := func(err error) (secretFile, error) {
+		_ = f.Close()
+		return secretFile{}, err
+	}
+	info, err := f.Stat()
 	if err != nil {
-		return "", usageErrorf("cannot read %s: %v", fromFile, err)
+		return fail(usageErrorf("cannot read %s: %v", path, err))
 	}
-	return checkSecret(trimFinalNewline(string(data)), maxSecretValueBytes)
+	if err := checkSecretFile(path, info, os.Geteuid()); err != nil {
+		return fail(err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxSecretValueBytes+3))
+	if err != nil {
+		return fail(usageErrorf("cannot read %s: %v", path, err))
+	}
+	value, err := checkSecret(trimFinalNewline(string(data)), maxSecretValueBytes)
+	if err != nil {
+		return fail(err)
+	}
+	return secretFile{path: path, file: f, opened: info, value: value}, nil
+}
+
+func checkSecretFile(path string, info fs.FileInfo, euid int) error {
+	switch {
+	case !info.Mode().IsRegular():
+		return usageErrorf("%s is not a regular file", path)
+	case info.Mode().Perm()&0o077 != 0:
+		return usageErrorf("%s is readable by others (mode %04o): chmod 600 it first", path, info.Mode().Perm())
+	case fileOwner(info) != euid:
+		return usageErrorf("%s is not owned by you (uid %d)", path, euid)
+	}
+	return nil
+}
+
+func fileOwner(info fs.FileInfo) int {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return int(stat.Uid)
+	}
+	return -1
+}
+
+// remove unlinks the file only while its directory entry still names the file
+// that was read: a path swapped for another file or a link is left alone.
+func (s secretFile) remove() error {
+	current, err := os.Lstat(s.path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(s.opened, current) {
+		return errors.New("the path no longer names the file that was read")
+	}
+	return os.Remove(s.path)
 }
 
 func trimFinalNewline(s string) string {
@@ -559,6 +645,7 @@ func importKeyOffline(cmd *cobra.Command, env []string, from string) error {
 // offlineSession is a stopped control plane that a command works on directly:
 // it holds the database lock and knows where the keys and the database are.
 type offlineSession struct {
+	cfg     *config.Config
 	lock    *database.Lock
 	dbPath  string
 	keysDir string
@@ -585,7 +672,7 @@ func openOffline(cmd *cobra.Command, env []string) (*offlineSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w (stop the service first)", err)
 	}
-	return &offlineSession{lock: lock, dbPath: dbPath, keysDir: keysDir}, nil
+	return &offlineSession{cfg: cfg, lock: lock, dbPath: dbPath, keysDir: keysDir}, nil
 }
 
 // repo opens the database read-only as a secrets.Repo, or returns nil when

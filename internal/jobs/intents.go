@@ -48,6 +48,9 @@ type Intent struct {
 	CompletedAt     *time.Time
 	Outcome         string
 	Evidence        json.RawMessage
+	// ExternalRef is the provider-side handle of the dispatched operation (a
+	// Proxmox task UPID); empty when the operation has none.
+	ExternalRef string
 }
 
 // Dispatched reports whether the operation may have started on the target.
@@ -134,6 +137,55 @@ func (s *Store) completeIntent(ctx context.Context, q database.Querier, job, int
 		domain.UnixMillis(s.clock.Now()), outcome, nullText(string(evidence)))
 }
 
+// RecordExternalRef durably stores the provider-side handle of a dispatched
+// intent (a Proxmox UPID) under the lease. It is write-once: repeating the same
+// ref is a no-op, a different one is a conflict.
+func (s *Store) RecordExternalRef(ctx context.Context, lease Lease, intent domain.ID, ref string) error {
+	if ref == "" {
+		return smerr.New(smerr.CodeInvalidArgument, "", "external ref must not be empty")
+	}
+	return s.fenced(ctx, lease, func(ctx context.Context, tx *database.Tx) error {
+		err := s.updateIntent(ctx, tx, lease.JobID, intent, `UPDATE operation_intents SET external_ref = ?
+			WHERE id = ? AND job_id = ? AND state = 'recorded' AND dispatched_at IS NOT NULL AND external_ref IS NULL`, ref)
+		if err == nil {
+			return nil
+		}
+		current, getErr := getIntent(ctx, tx, intent)
+		if getErr == nil && current.JobID == lease.JobID && current.ExternalRef == ref {
+			return nil
+		}
+		return err
+	})
+}
+
+// RecordTaskStop stores proof that the task behind a dispatched, task-tracked
+// intent has stopped. It leaves the intent recorded; reconciliation or the
+// handler completes it. The write applies only to a dispatched intent of a job
+// that is still running or interrupted, and only once per intent.
+func (s *Store) RecordTaskStop(ctx context.Context, q database.Querier, intent domain.ID, ev Evidence) error {
+	if !ev.taskStop() {
+		return smerr.New(smerr.CodeInvalidArgument, "", "task stop evidence must be a definite pve_task observation with a fingerprint")
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("encode task stop evidence: %w", err)
+	}
+	res, err := q.ExecContext(ctx, `UPDATE operation_intents SET evidence_json = ?
+		WHERE id = ? AND state = 'recorded' AND dispatched_at IS NOT NULL
+		  AND (evidence_json IS NULL OR evidence_json = ?)
+		  AND EXISTS (SELECT 1 FROM jobs j WHERE j.id = operation_intents.job_id
+		              AND j.state IN ('running', 'interrupted')
+		              AND j.lease_generation >= operation_intents.lease_generation)`,
+		string(raw), intent, string(raw))
+	if err != nil {
+		return fmt.Errorf("record task stop for intent %s: %w", intent, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return smerr.New(smerr.CodeConflict, "", "intent cannot take task stop evidence")
+	}
+	return nil
+}
+
 // updateIntent runs a single-row UPDATE whose trailing parameters are (intent, job).
 func (s *Store) updateIntent(ctx context.Context, q database.Querier, job, intent domain.ID, query string, leading ...any) error {
 	res, err := q.ExecContext(ctx, query, append(leading, intent, job)...)
@@ -165,7 +217,7 @@ func (s *Store) Intents(ctx context.Context, q database.Querier, job domain.ID) 
 }
 
 const intentColumns = `id, job_id, step, lease_generation, state, operation, target_type, target_id, marker,
-	pre_state_json, deadline_at, dispatched_at, completed_at, outcome, evidence_json`
+	pre_state_json, deadline_at, dispatched_at, completed_at, outcome, evidence_json, external_ref`
 
 func getIntent(ctx context.Context, q database.Querier, id domain.ID) (Intent, error) {
 	in, err := scanIntent(q.QueryRowContext(ctx, `SELECT `+intentColumns+` FROM operation_intents WHERE id = ?`, id))
@@ -177,13 +229,13 @@ func getIntent(ctx context.Context, q database.Querier, id domain.ID) (Intent, e
 
 func scanIntent(row rowScanner) (Intent, error) {
 	var (
-		in                     Intent
-		pre, outcome, evidence sql.NullString
-		deadline               int64
-		dispatched, completed  sql.NullInt64
+		in                          Intent
+		pre, outcome, evidence, ref sql.NullString
+		deadline                    int64
+		dispatched, completed       sql.NullInt64
 	)
 	err := row.Scan(&in.ID, &in.JobID, &in.Step, &in.LeaseGeneration, &in.State, &in.Operation, &in.TargetType,
-		&in.TargetID, &in.Marker, &pre, &deadline, &dispatched, &completed, &outcome, &evidence)
+		&in.TargetID, &in.Marker, &pre, &deadline, &dispatched, &completed, &outcome, &evidence, &ref)
 	if err != nil {
 		return Intent{}, err
 	}
@@ -193,7 +245,7 @@ func scanIntent(row rowScanner) (Intent, error) {
 	if evidence.Valid {
 		in.Evidence = json.RawMessage(evidence.String)
 	}
-	in.Outcome = outcome.String
+	in.Outcome, in.ExternalRef = outcome.String, ref.String
 	in.DeadlineAt = domain.FromUnixMillis(deadline)
 	in.DispatchedAt, in.CompletedAt = timeOf(dispatched), timeOf(completed)
 	return in, nil

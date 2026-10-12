@@ -360,6 +360,26 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfProvider'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/providers/{id}/refresh:
+    post:
+      operationId: refreshProvider
+      summary: Run Proxmox discovery now and return the provider as the sync left it.
+      description: >-
+        The same discovery the provider runs every sync interval (action `provider.read`; it writes observations
+        and discovered nodes only). Concurrent refreshes of one provider share a single run. A cluster that cannot
+        be read is not an error of this call: the provider's `status` is `error`. Rate-limited per caller and
+        provider; over the limit the answer is 429 with `Retry-After`. Takes no `Idempotency-Key`.
+      tags: [providers]
+      x-supermgmt-route: action:provider.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The provider after the sync.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Provider'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes:
     get:
       operationId: listNodes
@@ -1105,7 +1125,7 @@ components:
         fingerprint_sha256: {type: string}
     Provider:
       type: object
-      required: [id, type, name, origin, status, spec_revision, last_sync_at]
+      required: [id, type, name, origin, status, spec_revision, last_sync_at, last_error]
       properties:
         id: {$ref: '#/components/schemas/ID'}
         type: {type: string}
@@ -1114,6 +1134,7 @@ components:
         status: {type: string}
         spec_revision: {type: integer, format: int64}
         last_sync_at: {type: [string, 'null'], format: date-time}
+        last_error: {type: string, description: Why the latest sync failed; empty when it did not.}
     CreateProviderRequest:
       type: object
       required: [type]
@@ -1121,7 +1142,7 @@ components:
         type: {type: string, enum: [local]}
     Node:
       type: object
-      required: [id, name, kind, provider_id, provider, origin, environment, management_state, reachability, endpoint, credential_ref, admin_credential_ref, os, arch, tags, capabilities, addresses, connection, metrics, setup, stale, spec_revision, last_seen_at, updated_at]
+      required: [id, name, kind, provider_id, provider, origin, environment, management_state, reachability, endpoint, credential_ref, admin_credential_ref, os, arch, tags, capabilities, addresses, connection, metrics, setup, proxmox, stale, spec_revision, last_seen_at, updated_at]
       properties:
         id: {$ref: '#/components/schemas/ID'}
         name: {type: string}
@@ -1143,10 +1164,23 @@ components:
         connection: {$ref: '#/components/schemas/Connection'}
         metrics: {oneOf: [{$ref: '#/components/schemas/Metrics'}, {type: 'null'}]}
         setup: {oneOf: [{$ref: '#/components/schemas/Setup'}, {type: 'null'}]}
+        proxmox: {oneOf: [{$ref: '#/components/schemas/ProxmoxGuest'}, {type: 'null'}]}
         stale: {type: boolean}
         spec_revision: {type: integer, format: int64}
         last_seen_at: {type: [string, 'null'], format: date-time}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
+    ProxmoxGuest:
+      type: object
+      description: The Proxmox view of a node (ADR-0024); for a cluster member vmid is 0 and type is "node".
+      required: [pve_node, vmid, type, status, template, inaccessible, absent]
+      properties:
+        pve_node: {type: string}
+        vmid: {type: integer}
+        type: {type: string, enum: [node, qemu, lxc]}
+        status: {type: string}
+        template: {type: boolean}
+        inaccessible: {type: boolean}
+        absent: {type: boolean}
     Endpoint:
       type: object
       required: [host, port, user, admin_user, host_public_key, host_key_fingerprint_sha256]

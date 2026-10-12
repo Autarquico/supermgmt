@@ -316,8 +316,19 @@ func TestExistingServiceUserIsReused(t *testing.T) {
 func TestUnknownModeIsInvalid(t *testing.T) {
 	w := newWorld()
 	d, _ := w.deps("linux", 0, false)
-	if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: "upgrade"})); got != ExitInvalid {
+	if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: "bogus"})); got != ExitInvalid {
 		t.Fatalf("exit %d", got)
+	}
+}
+
+// proxmox-lxc needs a Proxmox host: elsewhere it exits 3.
+func TestM3ModesAreUnsupportedUntilImplemented(t *testing.T) {
+	for _, mode := range []Mode{ModeProxmoxLXC} {
+		w := newWorld()
+		d, _ := w.deps("linux", 0, false)
+		if got := exitCodeOf(t, New(d).Run(context.Background(), Options{Mode: mode})); got != ExitUnsupported {
+			t.Errorf("%s: exit %d", mode, got)
+		}
 	}
 }
 

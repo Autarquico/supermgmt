@@ -10,7 +10,6 @@ LDFLAGS := -s -w \
 GOVULNCHECK_VERSION := v1.8.0
 ACTIONLINT_VERSION := v1.7.7
 VACUUM_VERSION := v0.30.6
-VACUUM_VERSION := v0.30.6
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 E2E_DIST ?=
 E2E_TIMEOUT ?= 40m
@@ -25,7 +24,7 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
-	integration-fixtures cross-build api-check e2e e2e-server e2e-install snapshot release-check install-test
+	integration-fixtures cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade snapshot release-check install-test
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -33,12 +32,16 @@ help: ## List targets
 build: ## Build dist/sm
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/sm ./cmd/sm
 
+# The PTY suite measures terminal timing; it runs alone in test-pty, never
+# beside the rest of the suite where load makes its deadlines flaky.
+UNIT_PKGS = $(shell go list ./... | grep -v /test/integration/pty)
+
 test: ## Run unit tests
-	$(IF_GO) go test -count=1 -shuffle=on ./...
-	$(IF_GO) go test -count=1 -tags crashpoints ./internal/backup/...
+	$(IF_GO) go test -count=1 -shuffle=on $(UNIT_PKGS)
+	$(IF_GO) go test -count=1 -tags crashpoints ./internal/backup/... ./internal/installer/...
 
 test-race: ## Run unit tests with the race detector
-	$(IF_GO) go test -race -count=1 -shuffle=on ./...
+	$(IF_GO) go test -race -count=1 -shuffle=on $(UNIT_PKGS)
 
 test-pty: ## Run the PTY handoff-restoration tests (ubuntu and macOS CI)
 	@if [ -d test/integration/pty ]; then go test -race -count=1 -shuffle=on -v ./test/integration/pty/...; \
@@ -91,6 +94,12 @@ e2e-server: ## e2e: remote control (direct and proxy TLS, Dex), local mode, back
 e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (exit 5); E2E_DIST=dist serves a `make snapshot` release
 	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
 		-run 'TestM2_(CurlBashInstallsServer|TamperedReleaseFailsWithExit5|ReviewFirstDetectsModifiedScripts)$$' ./test/e2e/
+
+e2e-appliance: ## e2e: appliance on a simulated Proxmox host (pvesim); on arm64 set SM_E2E_PVE_HOST_PLATFORM=linux/amd64
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Appliance' ./test/e2e/...
+
+e2e-upgrade: ## e2e: upgrade from the M2 release (commit e6d5577; needs the full history), failure boundaries, uninstall
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_(Upgrade|Uninstall)' ./test/e2e/
 
 snapshot: ## Build a snapshot release into dist/ signed with a throwaway key (needs goreleaser v2 and syft)
 	packaging/release/snapshot.sh

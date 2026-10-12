@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -27,21 +29,30 @@ const (
 // actedMsg is the reply of one mutation. Mutations are never generation-gated:
 // every reply is reported, and only one runs at a time.
 type actedMsg struct {
-	notice string
-	err    error
+	notice   string
+	err      error
+	readOnly bool // changes nothing on a node: a timeout needs no warning
 }
+
+// refreshTimeout bounds a discovery run from the palette: it reads a whole
+// cluster, so it gets longer than an ordinary call.
+const refreshTimeout = 30 * time.Second
 
 // act runs one mutation as a command. A timeout does not mean it failed.
 func (m *Model) act(call func(ctx context.Context) (string, error)) tea.Cmd {
+	return m.run(m.opts.Timeout, false, call)
+}
+
+func (m *Model) run(timeout time.Duration, readOnly bool, call func(ctx context.Context) (string, error)) tea.Cmd {
 	if m.acting {
 		m.notice = notice{text: "another action is still in progress", isErr: true}
 		return nil
 	}
 	m.acting = true
-	timeout, parent := m.opts.Timeout, m.ctx
+	parent := m.ctx
 	return func() tea.Msg {
 		text, err := within(parent, timeout, call)
-		return actedMsg{notice: text, err: err}
+		return actedMsg{notice: text, err: err, readOnly: readOnly}
 	}
 }
 
@@ -50,7 +61,7 @@ func (m *Model) onActed(msg actedMsg) tea.Cmd {
 	if msg.err != nil {
 		var timeout timeoutError
 		text := "action failed: " + describe(msg.err)
-		if errors.As(msg.err, &timeout) {
+		if errors.As(msg.err, &timeout) && !msg.readOnly {
 			text += "; it may still have been applied, check Jobs before retrying"
 		}
 		m.notice = notice{text: text, isErr: true}
@@ -317,8 +328,8 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] · probe <node> · refresh"
-	paletteShortcut = "ssh · logs · services · setup · probe · refresh   (? shows the arguments)"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] · probe <node> · power <node> <verb> · refresh [proxmox [provider]]"
+	paletteShortcut = "ssh · logs · services · setup · probe · power · refresh   (? arguments)"
 )
 
 func (m *Model) openPalette() tea.Cmd {
@@ -333,13 +344,116 @@ func (m *Model) runCommand(line string) tea.Cmd {
 	cmd, args := fields[0], fields[1:]
 	switch cmd {
 	case "refresh":
-		return m.reload(true, m.screenLoaders()...)
+		return m.commandRefresh(args)
+	case "power":
+		return m.commandPower(args)
 	case "logs":
 		return m.commandLogs(args)
 	case "ssh", "services", "setup", "probe":
 		return m.commandOnNode(cmd, args)
 	}
 	m.notice = notice{text: fmt.Sprintf("unknown command %q: %s", cmd, paletteHint), isErr: true}
+	return nil
+}
+
+func (m *Model) commandRefresh(args []string) tea.Cmd {
+	switch {
+	case len(args) == 0:
+		return m.reload(true, m.screenLoaders()...)
+	case args[0] == providerTypeProxmox && len(args) <= 2:
+		return m.refreshProxmox(strings.Join(args[1:], ""))
+	}
+	m.notice = notice{text: "usage: refresh [proxmox [provider]]", isErr: true}
+	return nil
+}
+
+// refreshProxmox runs a discovery now on every Proxmox provider, or on the
+// one named. Nothing changes on the cluster: only what SuperMgmt knows of it.
+func (m *Model) refreshProxmox(name string) tea.Cmd {
+	api := m.api
+	m.say("refreshing Proxmox…")
+	return m.run(refreshTimeout, true, func(ctx context.Context) (string, error) {
+		page, err := api.ListProviders(ctx, wire.PageQuery{Limit: wire.MaxLimit})
+		if err != nil {
+			return "", err
+		}
+		var refreshed, failed []string
+		for _, p := range page.Items {
+			if p.Type != providerTypeProxmox || (name != "" && !strings.EqualFold(p.Name, name)) {
+				continue
+			}
+			got, err := api.RefreshProvider(ctx, p.ID)
+			switch {
+			case err != nil:
+				return "", fmt.Errorf("%s: %w", p.Name, err)
+			case got.Status != providerStatusOK:
+				failed = append(failed, textsafe.Line(p.Name+": "+dashIfEmpty(got.LastError)))
+			default:
+				refreshed = append(refreshed, textsafe.Line(p.Name))
+			}
+		}
+		switch {
+		case len(failed) > 0:
+			return "", errors.New(strings.Join(failed, "; "))
+		case len(refreshed) == 0 && name != "":
+			return "", fmt.Errorf("no Proxmox provider named %q", name)
+		case len(refreshed) == 0:
+			return "", errors.New("no Proxmox provider is configured")
+		}
+		return "refreshed " + strings.Join(refreshed, ", "), nil
+	})
+}
+
+// commandPower opens the plan of a power action on a Proxmox guest. stop is
+// high risk: the plan shows it and whether it waits for approval.
+func (m *Model) commandPower(args []string) tea.Cmd {
+	if len(args) != 2 {
+		m.notice = notice{text: "usage: power <node> <" + strings.Join(powerVerbs, "|") + ">", isErr: true}
+		return nil
+	}
+	n, err := m.resolveNode(args[0])
+	if err == nil {
+		err = powerTargetError(n, args[1])
+	}
+	if err != nil {
+		m.notice = notice{text: err.Error(), isErr: true}
+		return nil
+	}
+	verb := args[1]
+	var warnings []string
+	if verb == "stop" {
+		warnings = append(warnings, "stop cuts the guest's power without a clean shutdown; shutdown lets its OS stop first")
+	}
+	return m.planFor(textsafe.Line(fmt.Sprintf("Power %s: %s", verb, n.Name)), warnings, wire.CreatePlanRequest{
+		Action:     actionProxmoxVMPower,
+		Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: n.ID}},
+		Parameters: map[string]any{"verb": verb},
+	})
+}
+
+const (
+	actionProxmoxVMPower = "proxmox.vm.power"
+	providerTypeProxmox  = "proxmox"
+	providerStatusOK     = "ok"
+)
+
+var powerVerbs = []string{"start", "shutdown", "reboot", "stop"}
+
+// powerTargetError says why a node cannot be powered, before asking the daemon.
+func powerTargetError(n wire.Node, verb string) error {
+	name := textsafe.Line(n.Name)
+	switch g := n.Proxmox; {
+	case !slices.Contains(powerVerbs, verb):
+		return fmt.Errorf("unknown power action %q: want %s", verb, strings.Join(powerVerbs, ", "))
+	case g == nil || g.Type == proxmoxClusterNode:
+		return fmt.Errorf("%s is not a Proxmox VM or container", name)
+	case g.Template:
+		return fmt.Errorf("%s is a template and cannot be powered", name)
+	case g.Absent:
+		return fmt.Errorf("%s is gone from Proxmox (absent)", name)
+	case g.Inaccessible:
+		return fmt.Errorf("%s is inaccessible: the token cannot see it", name)
+	}
 	return nil
 }
 

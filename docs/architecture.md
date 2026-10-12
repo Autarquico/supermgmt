@@ -12,7 +12,7 @@ Laptop
 │   ├── API: Unix socket 0600                 [M1]   (server mode: HTTPS + admin socket, M2)
 │   ├── SQLite                                [M0 schema; M1 migration 000002]
 │   ├── job workers, reconciler, refresher    [M0 engine; M1 wired to SSH, systemd, Docker]
-│   └── connectors: SSH, local                [M1]   (Proxmox M3, GitHub M4)
+│   └── connectors: SSH, local, Proxmox       [M1; Proxmox M3]   (GitHub M4)
 └── sm TUI / CLI: API clients                 [M1]   (MCP bridge: planned M5)
         │ interactive SSH only: the terminal is handed to the system `ssh`, which
         └ the daemon authorizes and audits but does not proxy
@@ -58,9 +58,10 @@ Dependencies point inward: adapters (CLI, API, TUI, MCP) call application servic
 | `internal/auth`, `internal/auth/oidc` | credentials, sessions, tokens, OIDC adapter | M2 |
 | `internal/netguard` | outbound request filter | M2 |
 | `internal/join` | node enrollment (`sm join`) | M2 |
-| `internal/providers/proxmox`, `internal/deployments/*`, `internal/health` | Proxmox, Compose pipeline, health checks | planned M3, M4 |
+| `internal/providers/proxmox` | Proxmox VE API client, UPID parsing, task correlation; `pvefake` is its test fake | M3 |
+| `internal/deployments/*`, `internal/health` | Compose pipeline, health checks | planned M4 |
 | `internal/mcp` | MCP transport, tools, resources | planned M5 |
-| `internal/installer`, `internal/backup` | installer logic, backup and restore | M2 (Proxmox LXC, upgrade and uninstall: M3) |
+| `internal/installer`, `internal/backup` | installer logic, backup and restore | M2; Proxmox LXC appliance, upgrade and uninstall: M3 |
 
 Enforced boundaries today (`.golangci.yml`): `internal/domain` imports only the standard library, `uuid` and `internal/errors`; `internal/api/wire` imports only the standard library, `internal/domain` and `internal/errors`; `internal/policy` does not import `internal/database` or `internal/jobs`; `database/sql` and the SQLite driver stay in `internal/database`, `internal/jobs` and `migrations`; `internal/tui` and `internal/client` never import `app`, `jobs`, `database`, `daemon`, `transport`, `runtimes` or `providers`; `internal/api` reaches nodes only through `app`; `internal/cli` does not import `app`, `jobs` or `transport`; `cmd/` imports only `internal/cli`; `time.Now` and `fmt.Print*` are linted away from library code.
 

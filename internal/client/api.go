@@ -26,6 +26,13 @@ func (c *Client) ListProviders(ctx context.Context, q wire.PageQuery) (wire.Page
 	return call[wire.Page[wire.Provider]](ctx, c, get(wire.PathProviders, q.Values()))
 }
 
+// RefreshProvider runs a discovery now and answers with the provider as the
+// sync left it (spec §15.3). A refresh is safe to repeat, so it carries no
+// Idempotency-Key.
+func (c *Client) RefreshProvider(ctx context.Context, id domain.ID) (wire.Provider, error) {
+	return call[wire.Provider](ctx, c, postUnkeyed(wire.Path(wire.PathProviderRefresh, string(id)), nil))
+}
+
 // RegisterLocal records the user's consent to manage this machine (spec §14).
 func (c *Client) RegisterLocal(ctx context.Context) (wire.Direct[wire.Provider], error) {
 	return call[wire.Direct[wire.Provider]](ctx, c, post(wire.PathProviders, wire.CreateProviderRequest{Type: wire.ProviderLocal}))

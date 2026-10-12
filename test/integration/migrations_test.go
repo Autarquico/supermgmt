@@ -61,8 +61,12 @@ func TestMigrationsM1ToM2KeepsData(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 3 {
-		t.Errorf("schema version = %d, want 3", v)
+	latest, err := database.LatestSchemaVersion()
+	if err != nil {
+		t.Fatalf("LatestSchemaVersion: %v", err)
+	}
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != latest {
+		t.Errorf("schema version = %d, want %d", v, latest)
 	}
 	for table, want := range map[string]int{
 		"instances": 1, "identities": 2, "providers": 1, "nodes": 1, "jobs": 1, "secrets": 1,
@@ -94,10 +98,61 @@ func TestMigrationsM1ToM2KeepsData(t *testing.T) {
 	}
 }
 
-func seedM1(t *testing.T, db *database.DB) {
+// TestMigrationsM2ToM3KeepsIntents builds a database as an M2 binary left it
+// (migrations 000001-000003) with a dispatched intent, then migrates it with the
+// current binary: the intent survives with no external ref and can take one.
+func TestMigrationsM2ToM3KeepsIntents(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "sm.db"), database.Options{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	seed(t, db, m2Migrations, m1Seed+m2Intent)
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 3 {
+		t.Fatalf("seeded schema version = %d, want 3", v)
+	}
+
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 4 {
+		t.Errorf("schema version = %d, want 4", v)
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM operation_intents WHERE id = '`+m2IntentID+`' AND external_ref IS NULL AND dispatched_at = 1500`); got != 1 {
+		t.Errorf("existing intent lost or given an external ref by the migration")
+	}
+	err = db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE operation_intents SET external_ref = 'UPID:x' WHERE id = ?`, m2IntentID)
+		return err
+	})
+	if err != nil {
+		t.Errorf("set external_ref: %v", err)
+	}
+	assertIntegrity(t, db)
+}
+
+var (
+	m1Migrations = []string{"000001_initial.up.sql", "000002_m1.up.sql"}
+	m2Migrations = append(append([]string{}, m1Migrations...), "000003_m2.up.sql")
+)
+
+const m2IntentID = "01970000-0000-7000-8000-000000000080"
+
+const m2Intent = `
+INSERT INTO operation_intents (id, job_id, step, lease_generation, state, operation, target_type, target_id, marker, deadline_at, dispatched_at)
+VALUES ('01970000-0000-7000-8000-000000000080', '01970000-0000-7000-8000-000000000040', 'probe', 1, 'recorded',
+        'node.probe', 'node', '01970000-0000-7000-8000-000000000030', 'm-1', 2000, 1500);
+`
+
+func seedM1(t *testing.T, db *database.DB) { t.Helper(); seed(t, db, m1Migrations, m1Seed) }
+
+// seed applies the given migration files raw, records them as applied and loads data.
+func seed(t *testing.T, db *database.DB, files []string, data string) {
 	t.Helper()
 	err := db.WithWriteTx(context.Background(), func(ctx context.Context, tx *database.Tx) error {
-		for _, name := range []string{"000001_initial.up.sql", "000002_m1.up.sql"} {
+		for i, name := range files {
 			body, err := migrations.FS.ReadFile(name)
 			if err != nil {
 				return err
@@ -105,16 +160,16 @@ func seedM1(t *testing.T, db *database.DB) {
 			if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO schema_migrations (version, applied_at) VALUES (?, 1000)`, i+1); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations (version, applied_at) VALUES (1, 1000), (2, 1000)`); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, m1Seed)
+		_, err := tx.ExecContext(ctx, data)
 		return err
 	})
 	if err != nil {
-		t.Fatalf("seed M1 database: %v", err)
+		t.Fatalf("seed database: %v", err)
 	}
 }
 

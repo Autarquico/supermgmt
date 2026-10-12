@@ -49,6 +49,8 @@ type fakeAPI struct {
 	submitted          []domain.ID
 	planRequests       []wire.CreatePlanRequest
 	cancelled          []string
+	refreshed          []domain.ID
+	refreshOutcome     map[domain.ID]wire.Provider // what a refresh answers; default: the provider, status ok
 }
 
 func (f *fakeAPI) enter(ctx context.Context, name string) error {
@@ -86,6 +88,23 @@ func (f *fakeAPI) ListProviders(ctx context.Context, _ wire.PageQuery) (wire.Pag
 		return wire.Page[wire.Provider]{}, err
 	}
 	return wire.Page[wire.Provider]{Items: f.providers}, nil
+}
+
+func (f *fakeAPI) RefreshProvider(ctx context.Context, id domain.ID) (wire.Provider, error) {
+	err := f.enter(ctx, "RefreshProvider")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshed = append(f.refreshed, id)
+	if p, ok := f.refreshOutcome[id]; ok {
+		return p, err
+	}
+	for _, p := range f.providers {
+		if p.ID == id {
+			p.Status = "ok"
+			return p, err
+		}
+	}
+	return wire.Provider{}, err
 }
 
 func (f *fakeAPI) ListNodes(ctx context.Context, _ wire.NodeQuery) (wire.Page[wire.Node], error) {

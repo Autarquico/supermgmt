@@ -28,3 +28,8 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0020](0020-backup-format-and-offline-restore.md) | Backup format, offline restore and startup order | Proposed | M2 |
 | [0021](0021-key-and-identity-management.md) | Key and identity management (extends 0016) | Proposed | M2 |
 | [0022](0022-join-enrollment.md) | Join and enrollment (minimal) | Proposed | M2 |
+| [0023](0023-pve-identity-privileges-compatibility.md) | Proxmox identity, privileges, compatibility matrix and fake fidelity | Proposed | M3 |
+| [0024](0024-proxmox-discovery.md) | Proxmox discovery model | Proposed | M3 |
+| [0025](0025-proxmox-power-jobs-task-correlation.md) | Proxmox power jobs, task correlation and quiescence | Proposed | M3 |
+| [0026](0026-appliance-installer.md) | Appliance installer (`proxmox-lxc`, `auto`) | Proposed | M3 |
+| [0027](0027-upgrade-and-uninstall.md) | Upgrade and uninstall | Proposed | M3 |

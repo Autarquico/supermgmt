@@ -83,7 +83,7 @@ func TestHealthTimesOut(t *testing.T) {
 }
 
 func TestHealthTrustsOnlyTheConfiguredCertificate(t *testing.T) {
-	certPEM, keyPEM := testCert(t, "mgmt.example.com", testNow.Add(24*time.Hour))
+	certPEM, keyPEM := testCert(t, "mgmt.example.com", realTLSValidity)
 	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestHealthTrustsOnlyTheConfiguredCertificate(t *testing.T) {
 	if err := (httpHealth{}).WaitReady(context.Background(), good, 5*time.Second); err != nil {
 		t.Fatalf("configured certificate rejected: %v", err)
 	}
-	other, _ := testCert(t, "mgmt.example.com", testNow.Add(24*time.Hour))
+	other, _ := testCert(t, "mgmt.example.com", realTLSValidity)
 	bad := Probe{URL: srv.URL, ServerName: "mgmt.example.com", RootPEM: other}
 	if err := (httpHealth{}).WaitReady(context.Background(), bad, 700*time.Millisecond); err == nil {
 		t.Fatal("a different certificate must not be trusted")
@@ -141,3 +141,7 @@ func TestHealthProbeSendsTheForwardedProto(t *testing.T) {
 		t.Fatalf("X-Forwarded-Proto = %v, want https", got.Load())
 	}
 }
+
+// realTLSValidity outlives the wall clock a real TLS handshake checks
+// against; testNow alone would make these certificates expire.
+var realTLSValidity = testNow.AddDate(50, 0, 0)

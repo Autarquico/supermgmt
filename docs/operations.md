@@ -2,7 +2,7 @@
 
 How to run a SuperMgmt server (`instance.mode: server`) after it is installed: backups and restores, master keys, approvals of secret operations, and recovery access. Sources: SPEC §10, §11.5, §29, [ADR-0020](adr/0020-backup-format-and-offline-restore.md), [ADR-0021](adr/0021-key-and-identity-management.md), and the code under `internal/backup`, `internal/secrets`, `internal/app`, `internal/cli`.
 
-> **Verification status.** The commands below were read against the implementation. The end-to-end acceptance suite (task T13: install from a signed release in a Debian systemd container, crash-injected restore on a fresh host, Dex login) was **not part of the code this page was written against**; where a flow depends on it the text says "not verified". Nothing here has run on a real VM or a real identity provider other than the Dex test setup.
+> **Verification status.** The M2 flows below are exercised end to end in Docker by the e2e suites (`make e2e-server`, `make e2e-install`: install from a signed release in a Debian systemd container, restore on a fresh host, Dex login). Nothing here has run on a real VM or a real identity provider other than Dex. The M3 appliance, upgrade and uninstall flows run against a simulated Proxmox host (`make e2e-appliance`, `make e2e-upgrade`) and are not verified on real PVE.
 
 Run `sm` commands that talk to the service from a machine with a signed-in profile (`sm login`); run `sm admin`, the online `sm doctor` and the offline commands on the server as root or the service user `supermgmt`.
 
@@ -175,8 +175,42 @@ This sequence is derived from the code and has not been run end to end. See also
 - **Admin socket.** `server.admin_socket` (default `/run/supermgmt/admin.sock`, mode 0660, owned by the service user). The server checks that the peer is root or the service user; the client checks that the process that answered owns the socket file. It serves exactly `bootstrap-code`, `grant`, `restore-complete` and read-only `doctor`.
 - **Doctor.** `sudo sm doctor` asks the running server (mode, restore hold, whether an admin is bound, its checks); `sm doctor --offline` checks files and the database with the service stopped.
 
+## Upgrade and recovery
+
+`sm install upgrade` (steps and exit codes: [installation.md](installation.md#upgrade)) takes its pre-upgrade backup **after** the service has stopped and been seen to terminate, using the new binary in read-only mode, so the archive is a consistent copy of the database as the old version left it and has the old schema version (SPEC §29.3, ADR-0027). The archive path is printed. Keep it until you are satisfied with the new version; scheduled backups prune only by `backup.retention`.
+
+State lives in `/var/lib/supermgmt/upgrade.json` while an upgrade is unfinished. If the host dies mid-upgrade, run `sm install upgrade` again with the same binary: it resumes from the recorded phase. `sm.prev`, next to `sm`, is the previous binary; the live `sm` path exists at every moment.
+
+### The new version failed after the database was migrated
+
+The installer stops, finds the database schema moved past the one in the backup, **leaves the service stopped, restores nothing**, and prints the commands (exit 9). They are, for a server install (paths as on that printout):
+
+```bash
+# 1. put the previous binary back
+cp -p /usr/local/bin/sm.prev /usr/local/bin/sm.revert && mv -f /usr/local/bin/sm.revert /usr/local/bin/sm
+# 2. restore the pre-upgrade archive offline, as the service user
+runuser -u supermgmt -- /usr/local/bin/sm backup restore --offline <archive> --config /etc/supermgmt/config.yaml
+# 3. clear the upgrade state and start
+rm /var/lib/supermgmt/upgrade.json && systemctl start supermgmt
+```
+
+On a new host use `sm install restore --archive <archive> --key-export <export>` instead. The restore puts the service into the restore hold (see [Restore](#restore)): review `sm doctor` and the interrupted jobs, then `sudo sm admin restore-complete`. Whatever the new version wrote after it started is lost with the restore. Rerunning `sm install upgrade` while `upgrade.json` says `failed` prints the same instructions and changes nothing.
+
+If the new version fails while the schema is unchanged, the installer puts `sm.prev` back and starts it by itself (exit 9, "reverted").
+
+### Uninstall
+
+`sm install uninstall` keeps `/etc/supermgmt`, `/var/lib/supermgmt` and the backups; `--purge-data` deletes them after a typed confirmation. **Back up and export your keys first** (`sm secrets export-key`): with the default layout the key files live under the data directory, so a purge deletes them too, and without a key export an archive cannot be restored ([Key management](#key-management)). On an appliance the default also keeps the container and the Proxmox identities of that install; `--purge-data` destroys the container and removes those identities. Details: [installation.md](installation.md#uninstall).
+
+### Proxmox appliance recovery
+
+- A failed or interrupted `sm install proxmox-lxc` is rolled back from its journal in `/var/tmp/supermgmt-installer-<id>/`; the next run offers to finish it ([installation.md](installation.md#failure-rollback-and-recovery)). If a resource is reported as kept, it is yours to remove by hand: it is named in the message, and each Proxmox resource the installer created has `<id>` in its name (`pveum user list`, `pveum role list`, `pveum acl list`, `pct config <vmid>`).
+- The installed appliances are recorded in `/var/lib/supermgmt-installer/appliances/<vmid>.json` on the Proxmox host. That record, plus the install id in the container's description and the `supermgmt` tag, is what lets `upgrade` and `uninstall` act on the container. Do not edit or delete the records.
+- A Proxmox provider that fails (`sm providers list` shows `error`, `sm doctor` shows `providers: fail`): run `sm providers refresh <name>` to see the error; the usual causes are a rotated Proxmox certificate not covered by `ca_file`, a revoked token or ACL (guests turn `inaccessible`, see [providers.md](providers.md#discovery)), or port 8006 blocked from the container.
+- Held power jobs: [providers.md](providers.md#interrupted-power-jobs-and-task-correlation).
+
 ## Limits worth knowing
 
 - Rate limits are fixed constants: `/auth/*` and `/enroll` 10 per minute with a burst of 5 per remote address, writes 60 per minute with a burst of 20 per identity; an exceeded limit is 429 with `Retry-After` (the error code is `TIMEOUT`, as the spec has no rate-limit code). Behind a proxy the remote address is the forwarded client address, taken only from `trusted_proxies`.
 - `GET /events/stream` allows 4 open streams per identity; the credential is re-checked every 30 seconds and on revocation events.
-- `sm install upgrade`, `uninstall` and `proxmox-lxc` do not exist yet (M3). Upgrade by hand: back up, stop, replace `/usr/local/bin/sm`, start (not verified).
+- Upgrade, uninstall and the Proxmox appliance installer exist since M3: [installation.md](installation.md#upgrade) and the next section. Neither has run on a real host.

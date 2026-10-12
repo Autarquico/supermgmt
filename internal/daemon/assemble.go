@@ -35,6 +35,7 @@ const (
 type background struct {
 	engine    *jobs.Engine
 	refresher *app.Refresher
+	proxmox   *app.ProxmoxSync
 	sweeper   *app.Sweeper
 	backups   *backupSchedule // nil when no schedule is configured
 	authSweep *authSweep
@@ -59,24 +60,18 @@ func (s *system) close() error {
 	return s.db.Close()
 }
 
-// assemble performs the startup of ADR-0020 after the locks: it finishes or
-// discards an interrupted restore (before the database is opened, because the
-// restore may have replaced the files), opens and migrates the database,
-// loads the restore hold (an unreadable hold refuses the start), makes the
-// instance row, opens the key files, ensures the instance SSH identity,
-// activates the static configuration and the identities of the mode, and
-// wires the services.
+// assemble performs the startup of ADR-0020 after the locks: Prepare (restore
+// recovery, database, instance row, key files), then the instance SSH
+// identity, the static configuration and the identities of the mode, and the
+// wiring of the services.
 func assemble(ctx context.Context, o Options) (*system, error) {
-	if err := recoverRestore(o.Config); err != nil {
-		return nil, err
-	}
-	db, err := openDatabase(ctx, o.Config, o.Clock)
+	prepared, err := Prepare(ctx, o)
 	if err != nil {
 		return nil, err
 	}
-	sys, err := wireUp(ctx, o, db)
+	sys, err := wireUp(ctx, o, prepared)
 	if err != nil {
-		_ = db.Close()
+		_ = prepared.Close()
 		return nil, err
 	}
 	return sys, nil
@@ -145,16 +140,10 @@ func openSecrets(ctx context.Context, cfg *config.Config, db *database.DB, clock
 	}, nil
 }
 
-func wireUp(ctx context.Context, o Options, db *database.DB) (*system, error) {
-	cfg, clock, ids := o.Config, o.Clock, o.IDs
-	if err := ensureInstance(ctx, db, cfg, clock, ids); err != nil {
-		return nil, fmt.Errorf("create the instance row: %w", err)
-	}
+func wireUp(ctx context.Context, o Options, prepared *Prepared) (*system, error) {
+	cfg, clock := o.Config, o.Clock
+	db, kit := prepared.db, prepared.kit
 	appCfg, policyBytes, err := appConfig(db, o)
-	if err != nil {
-		return nil, err
-	}
-	kit, err := openSecrets(ctx, cfg, db, clock, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +192,7 @@ type builder struct {
 	conn      app.Connector
 	focus     *app.Focus
 	prober    *app.Prober
+	proxmox   *app.ProxmoxSync
 }
 
 // openGate builds the job store and loads the restore hold into it: from here
@@ -325,7 +315,15 @@ func (b *builder) coreServices() error {
 	}); err != nil {
 		return err
 	}
-	b.prober, err = app.NewProber(b.app, b.conn, nil)
+	if b.prober, err = app.NewProber(b.app, b.conn, nil); err != nil {
+		return err
+	}
+	b.proxmox, err = app.NewProxmoxSync(b.app, app.ProxmoxSyncOptions{
+		Token: app.SecretToken(b.kit.store),
+		OnError: func(provider domain.ID, err error) {
+			b.o.Log.Warn("proxmox sync", slog.String("provider", provider.String()), slog.Any("error", err))
+		},
+	})
 	return err
 }
 
@@ -333,6 +331,7 @@ func (b *builder) coreServices() error {
 func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
+		Proxmox: b.proxmox,
 	})
 	if err != nil {
 		return nil, err
@@ -344,7 +343,11 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 
 func (b *builder) background(handlers map[string]jobs.Handler) (background, error) {
 	cfg, log := b.cfg, b.o.Log
-	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil)
+	pveEvidence, err := app.NewProxmoxEvidence(b.app, b.proxmox, 0)
+	if err != nil {
+		return background{}, err
+	}
+	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil, app.WithProxmoxEvidence(pveEvidence))
 	if err != nil {
 		return background{}, err
 	}
@@ -375,7 +378,7 @@ func (b *builder) background(handlers map[string]jobs.Handler) (background, erro
 	if err != nil {
 		return background{}, err
 	}
-	return background{engine: engine, refresher: refresher, sweeper: sweeper, backups: schedule, authSweep: b.authSweep()}, nil
+	return background{engine: engine, refresher: refresher, proxmox: b.proxmox, sweeper: sweeper, backups: schedule, authSweep: b.authSweep()}, nil
 }
 
 func (b *builder) apiServices() (api.Services, error) {
@@ -405,7 +408,7 @@ func (b *builder) apiServices() (api.Services, error) {
 	}
 	return api.Services{
 		Plans: b.plans, Approvals: approvals, Governance: governance, Services: actions,
-		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys,
+		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
 	}, nil
 }

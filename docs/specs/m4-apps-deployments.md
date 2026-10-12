@@ -25,7 +25,7 @@ Master spec §31 M4. Despliegues Docker Compose condicionados a CI, con artefact
 
 **Entra:**
 - ADR-0006, 0007, 0008, 0010, 0011 antes del código.
-- Migración 000004 (repositorios, apps, app_targets, artifacts, artifact_checks, deployments, deployment_steps, health_checks, webhook_deliveries).
+- Migración 000005 (repositorios, apps, app_targets, artifacts, artifact_checks, deployments, deployment_steps, health_checks, webhook_deliveries).
 - `internal/providers/github` (checks vía API, OIDC, attestations, webhooks/polling).
 - Parser del manifiesto (§19); pipeline Compose cerrado (§20.3); health (§21).
 - Máquina de estados de despliegue (§20.1), intents, evidencia y reconciliación (§20.4); ownership y locks (§20.5).

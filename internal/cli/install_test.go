@@ -40,6 +40,17 @@ func (h *stubHost) UserExists(string) (bool, error)                         { re
 func (h *stubHost) CreateServiceUser(context.Context, string, string) error { return nil }
 func (h *stubHost) Register(context.Context, installer.Unit) error          { return nil }
 func (h *stubHost) Start(context.Context, installer.Unit) error             { return nil }
+func (h *stubHost) Load(context.Context, installer.Unit) error              { return nil }
+func (h *stubHost) Stop(context.Context, installer.Unit) error              { return nil }
+func (h *stubHost) Disable(context.Context, installer.Unit) error           { return nil }
+func (h *stubHost) WaitStopped(context.Context, installer.Unit, time.Duration) error {
+	return nil
+}
+func (h *stubHost) AppendSync(string, []byte) error { return nil }
+func (h *stubHost) SyncDir(string) error            { return nil }
+func (h *stubHost) Rename(string, string) error     { return nil }
+func (h *stubHost) Link(string, string) error       { return nil }
+func (h *stubHost) Hash(string) (string, error)     { return "", nil }
 func (h *stubHost) Run(context.Context, installer.Command) ([]byte, error) {
 	return []byte("CODE-9\n"), nil
 }
@@ -54,6 +65,11 @@ func (stubClock) Now() time.Time { return time.Date(2026, 10, 11, 0, 0, 0, 0, ti
 
 func runInstall(t *testing.T, host *stubHost, uid int, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
+	return runInstallEnv(t, host, uid, nil, args...)
+}
+
+func runInstallEnv(t *testing.T, host *stubHost, uid int, env []string, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
 	deps := func(cmd *cobra.Command, _ bool) installer.Deps {
 		return installer.Deps{
 			Host:  installer.Host{GOOS: "linux", UID: uid, Home: "/home/t", Env: map[string]string{}, HasSystemd: true},
@@ -63,7 +79,7 @@ func runInstall(t *testing.T, host *stubHost, uid int, args ...string) (code int
 	}
 	root := &cobra.Command{Use: "sm", SilenceUsage: true, SilenceErrors: true}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErrorf("%s", err) })
-	root.AddCommand(newInstallCmdWith([]string{"HOME=/home/t"}, deps))
+	root.AddCommand(newInstallCmdWith(append([]string{"HOME=/home/t"}, env...), deps))
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errOut)
@@ -94,8 +110,8 @@ func TestInstallExitCodesFollowThePlatformContract(t *testing.T) {
 		{"http public url", 0, []string{"server", "--public-url", "http://m.example.com"}, installer.ExitInvalid},
 		{"direct without certificate", 0, []string{"server", "--public-url", "https://m.example.com", "--tls", "direct"}, installer.ExitInvalid},
 		{"missing public url", 0, []string{"server"}, installer.ExitInvalid},
-		{"later mode", 0, []string{"upgrade"}, installer.ExitUnsupported},
-		{"proxmox mode", 0, []string{"proxmox-lxc"}, installer.ExitUnsupported},
+		{"upgrade without an installation", 0, []string{"upgrade"}, installer.ExitPrerequisite},
+		{"proxmox mode off a Proxmox host", 0, []string{"proxmox-lxc"}, installer.ExitUnsupported},
 		{"unknown mode", 0, []string{"bogus"}, exitUsage},
 		{"unknown flag", 0, []string{"server", "--bogus"}, exitUsage},
 		{"restore without inputs", 0, []string{"restore", "--public-url", "https://m.example.com"}, installer.ExitInvalid},
@@ -153,5 +169,30 @@ func TestInstallRestoreFlagsCarryPathsOnly(t *testing.T) {
 		if restore.Flags().Lookup(name) == nil {
 			t.Errorf("restore lacks --%s", name)
 		}
+	}
+}
+
+func TestInstallApplianceIntegersAreChecked(t *testing.T) {
+	for _, env := range []string{"SUPERMGMT_VMID=abc", "SUPERMGMT_MEMORY=-1", "SUPERMGMT_DISK_GIB=1.5"} {
+		code, _, errOut := runInstallEnv(t, &stubHost{files: map[string][]byte{}}, 0, []string{env}, "proxmox-lxc")
+		if code != exitUsage || !strings.Contains(errOut, strings.SplitN(env, "=", 2)[0]) {
+			t.Errorf("%s: exit %d (stderr %q)", env, code, errOut)
+		}
+	}
+}
+
+func TestApplianceOptionsReadSection36Variables(t *testing.T) {
+	a, err := applianceOptions(map[string]string{
+		"SUPERMGMT_VMID": "900", "SUPERMGMT_STORAGE": "local-lvm", "SUPERMGMT_BRIDGE": "vmbr0",
+		"SUPERMGMT_MEMORY": "2048", "SUPERMGMT_PVE_POWER": "0", "SUPERMGMT_PVE_CA_FILE": "/tmp/ca.pem",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.VMID != 900 || a.Storage != "local-lvm" || a.Bridge != "vmbr0" || a.MemoryMiB != 2048 || a.Power || a.PVECAFile != "/tmp/ca.pem" {
+		t.Fatalf("%+v", a)
+	}
+	if b, _ := applianceOptions(map[string]string{}); !b.Power {
+		t.Error("the power role is granted unless SUPERMGMT_PVE_POWER=0")
 	}
 }

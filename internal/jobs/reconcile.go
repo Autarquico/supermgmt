@@ -74,6 +74,8 @@ const (
 	// ProofMarkerAbsent is a marker that never appeared once the operation's
 	// deadline plus grace has passed.
 	ProofMarkerAbsent = "marker_absent"
+	// ProofPVETask is a Proxmox task observed as stopped (ADR-0025).
+	ProofPVETask = "pve_task"
 )
 
 // Evidence is what an adapter observed about one dispatched operation.
@@ -96,6 +98,12 @@ type Evidence struct {
 
 // Proven reports whether the operation provably completed with exit status 0.
 func (e Evidence) Proven() bool { return e.Done && e.ExitStatus == 0 }
+
+// taskStop reports whether the evidence is a definite observation of a stopped
+// provider task: the only proof that releases a task-tracked intent.
+func (e Evidence) taskStop() bool {
+	return e.definite() && e.Proof == ProofPVETask && len(e.Fingerprint) > 0
+}
 
 // definite reports whether the evidence is proven and names a classification
 // automatic recovery may act on (partial_stable and unknown never are).
@@ -166,6 +174,9 @@ func (s *Store) reconcileJob(ctx context.Context, job Job, src EvidenceSource) (
 		return nil, err
 	}
 	now := s.clock.Now()
+	if intents, err = s.recordTaskStops(ctx, src, job, intents, now); err != nil {
+		return nil, err
+	}
 	if !s.quiescent(job, intents, now) {
 		return nil, nil
 	}
@@ -202,9 +213,21 @@ func (s *Store) reconcileJob(ctx context.Context, job Job, src EvidenceSource) (
 
 // quiescent holds when no worker can still write for the job and no remote
 // process of ours can still be running: the lease has expired, the generation
-// was bumped past every intent's, and every dispatched intent either carries
-// completion proof or is past deadline_at + reconcile_grace (spec §20.4).
+// was bumped past every intent's, and every dispatched intent is settled
+// remotely (spec §20.4).
 func (s *Store) quiescent(job Job, intents []Intent, now time.Time) bool {
+	if !workersGone(job, intents, now) {
+		return false
+	}
+	for _, in := range intents {
+		if in.Dispatched() && !s.remoteSettled(in, now) {
+			return false
+		}
+	}
+	return true
+}
+
+func workersGone(job Job, intents []Intent, now time.Time) bool {
 	if job.LeaseUntil == nil || job.LeaseUntil.After(now) {
 		return false
 	}
@@ -212,11 +235,60 @@ func (s *Store) quiescent(job Job, intents []Intent, now time.Time) bool {
 		if in.LeaseGeneration >= job.LeaseGeneration {
 			return false
 		}
-		if in.Dispatched() && !storedEvidence(in).Proven() && !now.After(in.DeadlineAt.Add(s.reconcileGrace)) {
-			return false
-		}
 	}
 	return true
+}
+
+// remoteSettled reports that nothing of ours can still run for a dispatched
+// intent. A task-tracked intent needs stored proof that its task stopped:
+// elapsed time proves nothing about a provider task (ADR-0025). Any other
+// intent carries completion proof or is past deadline_at + reconcile_grace.
+func (s *Store) remoteSettled(in Intent, now time.Time) bool {
+	stored := storedEvidence(in)
+	if s.taskTracked(in.Operation) {
+		return stored.taskStop()
+	}
+	return stored.Proven() || now.After(in.DeadlineAt.Add(s.reconcileGrace))
+}
+
+// recordTaskStops persists confirmed stop evidence for the task-tracked intents
+// of a job whose workers are gone, so that quiescence can be established. It
+// returns the intents as they stand afterwards.
+func (s *Store) recordTaskStops(ctx context.Context, src EvidenceSource, job Job, intents []Intent, now time.Time) ([]Intent, error) {
+	if !workersGone(job, intents, now) {
+		return intents, nil
+	}
+	var pending []Intent
+	for _, in := range intents {
+		if in.Dispatched() && s.taskTracked(in.Operation) && !storedEvidence(in).taskStop() {
+			pending = append(pending, in)
+		}
+	}
+	confirmed := s.observe(ctx, src, job, pending, now)
+	if len(confirmed) == 0 {
+		return intents, nil
+	}
+	err := s.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		fresh, err := s.Get(ctx, tx, job.ID)
+		if err != nil {
+			return err
+		}
+		if fresh.State != domain.JobInterrupted || fresh.LeaseGeneration != job.LeaseGeneration {
+			return nil // resolved or taken over meanwhile
+		}
+		for _, in := range pending {
+			if ev, ok := confirmed[in.ID]; ok && ev.taskStop() {
+				if err := s.RecordTaskStop(ctx, tx, in.ID, ev); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("record task stop: %w", err)
+	}
+	return s.Intents(ctx, s.db.Reader(), job.ID)
 }
 
 func storedEvidence(in Intent) Evidence {
@@ -240,6 +312,13 @@ type sample struct {
 // Every other dispatched intent needs fresh evidence: proven, classified, and
 // confirmed by two identical samples at least sampleGap apart, collected no
 // later than deadline_at + evidenceWindow.
+// pastEvidenceWindow bounds how long the reconciler keeps asking for evidence.
+// A provider task stays provable after its deadline, so a task-tracked intent
+// is observed until it is settled and never left to a human by time alone.
+func (s *Store) pastEvidenceWindow(in Intent, now time.Time) bool {
+	return !s.taskTracked(in.Operation) && now.After(in.DeadlineAt.Add(evidenceWindow))
+}
+
 func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intents []Intent, now time.Time) map[domain.ID]Evidence {
 	confirmed := map[domain.ID]Evidence{}
 	for _, in := range intents {
@@ -250,7 +329,7 @@ func (s *Store) observe(ctx context.Context, src EvidenceSource, job Job, intent
 			confirmed[in.ID] = stored
 			continue
 		}
-		if src == nil || now.After(in.DeadlineAt.Add(evidenceWindow)) {
+		if src == nil || s.pastEvidenceWindow(in, now) {
 			continue
 		}
 		ev, err := src.Collect(ctx, in)

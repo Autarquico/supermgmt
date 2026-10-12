@@ -205,6 +205,7 @@ func serve(ctx context.Context, o Options, sys *system, bounds []bound, ready fu
 func (w background) start(ctx context.Context, work *sync.WaitGroup) {
 	work.Go(func() { _ = w.engine.Run(ctx) })
 	work.Go(func() { _ = w.refresher.Run(ctx) })
+	work.Go(func() { _ = w.proxmox.Run(ctx) })
 	work.Go(func() { _ = w.sweeper.Run(ctx) })
 	work.Go(func() { w.authSweep.run(ctx) })
 	if w.backups != nil {

@@ -1,0 +1,24 @@
+┌ SuperMgmt · Node ────────────── 10 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ ● web running                                                                │
+│ environment                                                                  │
+│ provider      pve · proxmox.qemu                                             │
+│ proxmox       qemu/100 on pve1                                               │
+│ management    discovered                                                     │
+│ metrics       CPU 12%   RAM 50%   DISK 30%                                   │
+│ capabilities  proxmox.vm.power                                               │
+│ last seen     10-10 11:59:00                                                 │
+│ addresses     -                                                              │
+│ tags          -                                                              │
+│                                                                              │
+│ Services  v opens the full list                                              │
+│   no services discovered                                                     │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ v services  s ssh  d docker  p probe  esc back  / command  ? help  q quit    │
+└──────────────────────────────────────────────────────────────────────────────┘
