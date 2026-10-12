@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -21,19 +22,113 @@ type resolved struct {
 	inputs   []plan.Input
 }
 
-// resolve supports nodes, services and the instance. The instance has no
-// spec_revision and no configured inputs (spec §29.1 backups act on it).
+// resolve supports nodes, services, apps, app targets and the instance. The
+// instance has no spec_revision and no configured inputs (spec §29.1 backups
+// act on it).
 func resolve(ctx context.Context, q database.Querier, ref domain.ResourceRef) (resolved, error) {
-	if ref.Type == domain.ResourceNode {
+	switch ref.Type { //nolint:exhaustive // every other type is refused below
+	case domain.ResourceNode:
 		return resolveNode(ctx, q, ref.ID)
-	}
-	if ref.Type == domain.ResourceService {
+	case domain.ResourceService:
 		return resolveService(ctx, q, ref.ID)
-	}
-	if ref.Type == domain.ResourceInstance {
+	case domain.ResourceApp:
+		return resolveApp(ctx, q, ref.ID)
+	case domain.ResourceAppTarget:
+		return resolveAppTarget(ctx, q, ref.ID)
+	case domain.ResourceInstance:
 		return resolved{target: policy.Target{Ref: ref}}, nil
 	}
 	return resolved{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("resource type %q is not supported yet", ref.Type))
+}
+
+// resolveApp is the policy view of an app. An app has no environment of its
+// own, so a change to it is judged by the strictest environment among its
+// targets: editing the Compose of a production app needs the production
+// approvals (spec §19.2). Every target and environment is a plan input.
+func resolveApp(ctx context.Context, q database.Querier, id domain.ID) (resolved, error) {
+	app, err := database.GetApp(ctx, q, id)
+	if err != nil {
+		return resolved{}, err
+	}
+	targets, err := database.ListAppTargetsByApp(ctx, q, id)
+	if err != nil {
+		return resolved{}, err
+	}
+	out := resolved{target: appPolicyTarget(id, app.Name), revision: app.SpecRevision}
+	var strictest *domain.Environment
+	for _, t := range targets {
+		env, err := database.GetEnvironment(ctx, q, t.EnvironmentID)
+		if err != nil {
+			return resolved{}, err
+		}
+		out.inputs = append(out.inputs,
+			revisionInput(domain.ResourceAppTarget, t.ID, t.SpecRevision),
+			revisionInput(domain.ResourceEnvironment, env.ID, env.SpecRevision))
+		if strictest == nil || stricterEnvironment(env, *strictest) {
+			strictest = &env
+		}
+	}
+	if strictest != nil {
+		out.target.Attrs.Environment = strictest.Name
+		out.target.Attrs.EnvironmentRisk = strictest.RiskLevel
+		out.target.Attrs.ApprovalsRequired = strictest.ApprovalsRequired
+	}
+	return out, nil
+}
+
+// stricterEnvironment orders environments by risk level, then by approvals.
+func stricterEnvironment(a, b domain.Environment) bool {
+	rank := func(e domain.Environment) int {
+		return slices.Index(domain.AllEnvironmentRiskLevels(), e.RiskLevel)
+	}
+	if rank(a) != rank(b) {
+		return rank(a) > rank(b)
+	}
+	return a.ApprovalsRequired > b.ApprovalsRequired
+}
+
+// resolveAppTarget is the policy view of a target: its environment, its app's
+// name and its node's name, tags and capabilities (docker.compose.deploy is a
+// capability of the node).
+func resolveAppTarget(ctx context.Context, q database.Querier, id domain.ID) (resolved, error) {
+	row, err := database.GetAppTarget(ctx, q, id)
+	if err != nil {
+		return resolved{}, err
+	}
+	app, err := database.GetApp(ctx, q, row.AppID)
+	if err != nil {
+		return resolved{}, err
+	}
+	env, err := database.GetEnvironment(ctx, q, row.EnvironmentID)
+	if err != nil {
+		return resolved{}, err
+	}
+	node, err := database.GetNode(ctx, q, row.NodeID)
+	if err != nil {
+		return resolved{}, err
+	}
+	capabilities, err := capabilitiesOf(ctx, q, node.ID)
+	if err != nil {
+		return resolved{}, err
+	}
+	return resolved{
+		target: policy.Target{
+			Ref: domain.ResourceRef{Type: domain.ResourceAppTarget, ID: id}, Attrs: appTargetAttributes(app, env, node), Capabilities: capabilities,
+		},
+		revision: row.SpecRevision,
+		inputs: []plan.Input{
+			revisionInput(domain.ResourceApp, app.ID, app.SpecRevision),
+			revisionInput(domain.ResourceEnvironment, env.ID, env.SpecRevision),
+			revisionInput(domain.ResourceNode, node.ID, node.SpecRevision),
+		},
+	}, nil
+}
+
+func appTargetAttributes(app database.App, env domain.Environment, node domain.Node) policy.Attributes {
+	return policy.Attributes{
+		Tags: node.Tags, Environment: env.Name, EnvironmentRisk: env.RiskLevel,
+		ApprovalsRequired: env.ApprovalsRequired, Node: node.Name, App: app.Name,
+	}
 }
 
 func resolveNode(ctx context.Context, q database.Querier, id domain.ID) (resolved, error) {
