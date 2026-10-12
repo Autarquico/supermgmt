@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.4-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.5-draft (changes in Appendix F)
 
 ---
 
@@ -265,13 +265,13 @@ Steps:
 7. Create unprivileged LXC with no unnecessary features.
 8. Configure DHCP or requested static network.
 9. Start LXC and wait for network/readiness with timeout.
-10. Copy/download verified SuperMgmt release into LXC.
-11. Install binary, config directories, system user and systemd service.
-12. Create restricted Proxmox API identity/token according to §15. Do not print secret after initial secure transfer.
+10. Copy the already-verified SuperMgmt binary (the running `sm`) into the LXC.
+11. Install binary, config directories, system user and systemd service without enabling or starting it (`sm install server --no-start --tls self-signed`: direct TLS with a CA generated inside the LXC), then initialize the data directory offline as the service user (`sm server init`: database, schema, instance, first master key).
+12. Verify that `/run` in the LXC is tmpfs and the service account exists, and verify from inside the LXC the certificate chain the API endpoint actually serves for the chosen host name against the CA (default: the host's public `/etc/pve/pve-root-ca.pem`; overridable with `SUPERMGMT_PVE_ENDPOINT`/`SUPERMGMT_PVE_CA_FILE`) before any token exists. Then create restricted per-install Proxmox identities and token according to §15.2. Do not print secret after initial secure transfer.
 13. Store credential encrypted in SuperMgmt secret store.
 14. Register Proxmox endpoint using the host/cluster API address reachable from LXC.
-15. Run discovery and connectivity test.
-16. Print access instructions and backup recommendation.
+15. Run an offline connectivity test, enable and start the service, and wait for readiness and the first discovery.
+16. Print access instructions (the CA certificate and its fingerprint, the bootstrap code, `sm login --ca-file`) and backup recommendation.
 
 Steps 1–16 are executed by `sm install proxmox-lxc` (Go), invoking `pct`, `pveam`, `pvesh` and `pveum` through fixed argument vectors (never shell strings). Every PVE CLI interaction is behind an interface with a fake used in tests.
 
@@ -281,12 +281,12 @@ Secure credential transfer (steps 12–13):
 2. The installer writes the token to a host temp file inside a fresh `mktemp -d` directory (mode 0700, file mode 0600, created with `O_EXCL|O_NOFOLLOW`).
 3. Inside the container it runs `pct exec <vmid> -- install -d -m 0700 -o supermgmt -g supermgmt /run/supermgmt-bootstrap` (tmpfs) **before** pushing. It then pushes the file to `/run/supermgmt-bootstrap/pve-token` in the container (a tmpfs path) with owner `supermgmt` and mode 0600 via `pct push` (the ownership/permission flags must be verified per PVE version in the compatibility matrix; if unsupported, follow up with `pct exec … chown/chmod` before any other step).
 4. It deletes the host file and directory immediately, and again in the rollback journal's cleanup.
-5. Inside the container: `pct exec <vmid> -- sm secrets import --offline --name providers/<name>/token --from-file /run/supermgmt-bootstrap/pve-token --delete-source`. This runs before the service starts (an offline command, §2.1.1): it takes the database lock, encrypts the secret, and unlinks the source file.
+5. Inside the container, as the service user: `pct exec <vmid> -- runuser -u supermgmt -- sm secrets import --offline --name providers/<name>/token --from-file /run/supermgmt-bootstrap/pve-token --delete-source`. This runs before the service starts (an offline command, §2.1.1): it takes the database lock, encrypts the secret, and unlinks the source file.
 6. On **any** failure after step 1 — push, chown, or import — the installer runs `pct exec <vmid> -- rm -rf /run/supermgmt-bootstrap` (ignoring a stopped container: `/run` is tmpfs and is cleared on stop), revokes the token (`pveum user token remove`), deletes the host temp directory, and continues the rollback journal. On success it removes the directory as well.
 
 The token value never appears in process arguments, environment, logs or the journal.
 
-Failure behavior: if creation fails before SuperMgmt becomes usable, installer prints exact failure and offers/executes safe rollback of resources it created. It MUST NOT delete pre-existing resources. Rollback operations are tracked in a local transaction journal under `/var/tmp/supermgmt-installer-*` and cleaned after success.
+Failure behavior: if creation fails before SuperMgmt becomes usable, installer prints exact failure and offers/executes safe rollback of resources it created. It MUST NOT delete pre-existing resources. Rollback operations are tracked in a local transaction journal under `/var/tmp/supermgmt-installer-*` and cleaned after success. A Proxmox template downloaded in step 6 is a shared cache and is kept (and reported) on rollback. A resource is undone only when it provably carries this install's identifier; anything uncertain is kept and reported for manual recovery. On success the installer records the appliance (`/var/lib/supermgmt-installer/appliances/<vmid>.json`) before it discards the journal; that record is the ownership proof §29.4 refers to (ADR-0026).
 
 Non-interactive example:
 
@@ -334,6 +334,9 @@ SUPERMGMT_MEMORY
 SUPERMGMT_SWAP
 SUPERMGMT_DISK_GIB
 SUPERMGMT_LOG_LEVEL
+SUPERMGMT_PVE_POWER          # proxmox-lxc: 0 omits the power role (default 1)
+SUPERMGMT_PVE_ENDPOINT       # proxmox-lxc: API endpoint the appliance uses (default: detected host address)
+SUPERMGMT_PVE_CA_FILE        # proxmox-lxc: CA for that endpoint (default /etc/pve/pve-root-ca.pem)
 ```
 
 Secrets MUST NOT be accepted as command-line flags. Sensitive bootstrap material uses stdin, temporary mode-0600 files, or environment variables only when unavoidable and immediately unset.
@@ -1332,7 +1335,7 @@ Discover cluster nodes, QEMU VMs, LXCs, status, configured CPU/RAM/storage, sele
 
 Use a dedicated Proxmox identity/API token with privilege separation and minimum required roles. Do not use root password. The installer should create/read a project-defined least-privilege role when necessary. Because exact Proxmox privileges may vary by supported PVE version and operation, maintain a tested compatibility matrix and separate read-only vs write privilege sets.
 
-Initial automatic appliance install SHOULD grant read/discovery plus explicitly selected operational capabilities. Destructive permissions are not enabled by default.
+Initial automatic appliance install SHOULD grant read/discovery plus explicitly selected operational capabilities. Destructive permissions are not enabled by default. The appliance installer creates per-install identities (user, token, roles and ACLs whose names carry a random install id) and never creates, modifies or deletes a shared user, role or ACL; rollback and uninstall remove only that install's identities (ADR-0023). Supported versions and the privilege sets live in `docs/compatibility.md`.
 
 ## 15.3 Discovery
 
@@ -2100,6 +2103,7 @@ POST   /api/v1/nodes/{id}/sessions/{sid}/end  # body: {reason, exit_code?}; firs
 GET    /api/v1/presence              # held open by long-lived clients for daemon residency (exempt:self, §2.1.1)
 GET    /api/v1/providers
 POST   /api/v1/providers
+POST   /api/v1/providers/{id}/refresh  # on-demand discovery (provider.read; rate-limited; writes observations only, §15.3)
 GET    /api/v1/nodes
 POST   /api/v1/nodes/ssh/host-key    # read-only keyscan for first-trust confirmation (node.add; no Idempotency-Key)
 POST   /api/v1/nodes/ssh
@@ -2491,12 +2495,13 @@ The live database is never opened during Phase B.
 
 - Download verified release.
 - Validate compatibility and free disk.
-- Create pre-upgrade backup.
-- Stop service.
-- Replace binary atomically.
+- Stop service and verify it has terminated; take the database lock.
+- Create pre-upgrade backup offline (read-only: it never migrates; the archive carries the pre-upgrade schema version).
+- Replace binary atomically, keeping the previous binary.
 - Run forward migrations.
 - Start and health-check.
-- If binary fails before irreversible migration, restore prior binary; database rollback uses backup, not down migrations.
+- If the new binary fails and the schema version is unchanged, restore the prior binary and start it. If the schema has advanced, leave the service stopped and print the exact restore commands (pre-upgrade archive plus prior binary); database rollback uses backup, not down migrations, and is never automatic. Both cases exit 9.
+- A Proxmox host with an appliance record delegates the upgrade into the LXC after verifying ownership (§29.4).
 
 ## 29.4 Uninstall
 
@@ -3079,6 +3084,11 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0010 Secret env-file encoding | M4 | How secret values are written to `secrets/<service>.env` so Compose reads them byte-exact | Must round-trip every value in a test corpus (`$`, quotes, `#`, spaces, unicode). Values with NUL or newline are rejected at `secret.write` time unless the ADR proves support (e.g. a pinned Compose version with `format: raw`). The node-side check compares resolved values privately (hash-only output) before masking |
 | ADR-0011 Provisional deployment API | M4 | Request/response shape of a deployment before its final plan exists | `plan_hash: null` while provisional; persisted in `deployments` with commit, requested digest(s) and credential context; only `job.cancel` applies before finalization; approve/reject accepted only once a final hash exists; finalization emits a `deployment.finalized` event carrying the hash |
 | ADR-0012 Route metadata | M2 | OpenAPI extension marking every route with exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`, `exempt:self` | CI fails on unmapped routes; exempt routes are listed explicitly; key-management CLI commands map to `secret.write` (rotate/retire/export) or are offline-only (`import-key`); enrollment consumption is `exempt:auth`; planning on resource types without a read action (secrets, repositories) requires `config.read` |
+| ADR-0023 Proxmox identity and compatibility | M3 | Identities, privilege sets, supported versions, fake fidelity | Per-install identities only; read and power privilege sets separate; nothing destructive by default; matrix rows marked fake- or real-verified |
+| ADR-0024 Proxmox discovery | M3 | Node rows, sync loop, on-demand refresh, absent vs inaccessible | Guests stay `discovered`; power state is not reachability; rows are never deleted |
+| ADR-0025 Proxmox power jobs | M3 | Dispatch, UPID persistence, correlation, quiescence | UPID persisted before polling; uncertain dispatch never retried; quiescence needs a stopped task or an audited override |
+| ADR-0026 Appliance installer | M3 | Steps, journal, commit, token transfer | Undo only provably owned resources; token never in argv/env/logs/journal; service not enabled before the credential is imported |
+| ADR-0027 Upgrade and uninstall | M3 | Phase state, backup, swap, failure policy, appliance delegation | Backup never migrates; no automatic data restore; data deletion separately confirmed |
 
 Each ADR lives in `docs/adr/` and is referenced from this table once accepted.
 
@@ -3481,6 +3491,21 @@ App. C  Plan v3: sorted inputs, secret bindings (refs), sub-actions, credential 
 §11.2   note on secret.write approval.
 §3.2    minimum OpenSSH is 8.2, not 8.1: the verifier self-test needs valid-after in allowed_signers (install.sh
         already enforced 8.2; ADR-0019 follows).
+```
+
+## F.9 Changes from 1.4.4-draft to 1.4.5-draft
+
+```text
+§3.5    Appliance in-LXC sequence: push the verified sm, install server --no-start --tls self-signed, offline
+        `sm server init` as the service user, /run tmpfs and served-chain checks before any token, offline
+        import as the service user, enable+start only after it; downloaded templates kept on rollback;
+        appliance record as ownership proof.
+§3.6    SUPERMGMT_PVE_POWER, SUPERMGMT_PVE_ENDPOINT, SUPERMGMT_PVE_CA_FILE.
+§15.2   Per-install Proxmox identities; matrix in docs/compatibility.md.
+§23     POST /api/v1/providers/{id}/refresh (provider.read).
+§29.3   Stop and verify before an offline read-only backup; binary revert only when the schema is unchanged,
+        otherwise stay stopped with restore instructions (exit 9); appliance delegation.
+§46     ADR-0023..0027 (M3).
 ```
 
 ---
