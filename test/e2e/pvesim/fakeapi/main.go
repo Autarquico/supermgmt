@@ -46,7 +46,9 @@ func main() {
 	if err := json.Unmarshal(raw, &topo); err != nil {
 		log.Fatal(err)
 	}
-	fake := pvefake.New(processTB{})
+	// Real PVE stamps tasks with wall time; SuperMgmt checks a returned UPID
+	// against the dispatch window, so the fake must too.
+	fake := pvefake.New(processTB{}, pvefake.WithClock(time.Now)) //nolint:forbidigo // the fake host's own clock
 	fake.AddNode(topo.Node)
 	for _, st := range topo.Storages {
 		fake.AddStorage(pvefake.Storage{ID: st.ID, Node: topo.Node, Plugin: st.Type, Content: strings.Split(st.Content, ","), Total: int64(st.TotalGB) << 30})
