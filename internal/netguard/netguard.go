@@ -44,7 +44,7 @@ type Allow struct {
 	Redirects       RedirectPolicy
 }
 
-// Option adjusts a client. The production code passes none.
+// Option adjusts a client. Only WithRootCAs is meant for production code.
 type Option func(*options)
 
 type options struct {
@@ -59,11 +59,15 @@ func WithTestDialer(dial func(network, address string) (net.Conn, error)) Option
 	return func(o *options) { o.dial = dial }
 }
 
-// WithTestRootCAs trusts the given roots instead of the system pool, so tests
-// can serve TLS from a throwaway CA. Test only, like WithTestDialer.
-func WithTestRootCAs(pool *x509.CertPool) Option {
+// WithRootCAs trusts the given roots instead of the system pool, for
+// endpoints served with a private CA (a Proxmox appliance). Filtering,
+// hostname verification and the redirect policy are unchanged.
+func WithRootCAs(pool *x509.CertPool) Option {
 	return func(o *options) { o.rootCAs = pool }
 }
+
+// WithTestRootCAs is WithRootCAs under its older, test-only name.
+func WithTestRootCAs(pool *x509.CertPool) Option { return WithRootCAs(pool) }
 
 // NewClient returns an http.Client that applies the filter on every dial,
 // caps response bodies at maxBody and uses proxy (nil: direct) via CONNECT to
