@@ -144,7 +144,7 @@ func verifyBundle(raw json.RawMessage, materials []root.TrustedMaterial, policy 
 				reasons = append(reasons, err)
 				continue
 			}
-			return evidenceOf(result, digest)
+			return attestationEvidence(result, digest)
 		}
 	}
 	return Evidence{}, errors.Join(reasons...)
@@ -167,7 +167,7 @@ func verifiersFor(material root.TrustedMaterial) []*verify.Verifier {
 	return out
 }
 
-func evidenceOf(result *verify.VerificationResult, digest string) (Evidence, error) {
+func attestationEvidence(result *verify.VerificationResult, digest string) (Evidence, error) {
 	if result.Statement == nil || result.Signature == nil || result.Signature.Certificate == nil {
 		return Evidence{}, errors.New("verified bundle lacks a statement or certificate")
 	}
