@@ -30,6 +30,27 @@ func TestUpgradeAppliance_StagesTheBinaryInAFreshRootOnlyDirectory(t *testing.T)
 	}
 }
 
+func TestUpgradeAppliance_CleanupLeavesAContainerThatChangedHandsAlone(t *testing.T) {
+	p := newPVEWrap(t)
+	p.mustInstall(t)
+	p.opLog = nil
+	p.onUpgrade = func() {
+		p.guests[900] = &fakeGuest{desc: "somebody else's", status: "running", foreign: true, tags: []string{"prod"}}
+	}
+	if err := p.run(p.upgradeOpts(), fastHooks(), false); err != nil {
+		t.Fatalf("%v\n%s", err, p.out.String())
+	}
+	clears := 0
+	for _, op := range p.opLog {
+		if op == "ct.exec /usr/bin/rm -rf "+stageDir {
+			clears++
+		}
+	}
+	if clears != 1 {
+		t.Errorf("rm -rf %s ran %d times; only the clearing before the push belongs to this upgrade", stageDir, clears)
+	}
+}
+
 func TestUpgradeAppliance_RefusesAStagingDirectoryThatIsNotPrivate(t *testing.T) {
 	p := newPVEWrap(t)
 	p.mustInstall(t)

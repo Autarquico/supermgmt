@@ -22,6 +22,8 @@ type pveWrap struct {
 	// loosenStageDir makes the container answer that the staging directory is not root:700.
 	loosenStageDir bool
 	upgrades       []execRecord
+	onUpgrade      func() // runs while the upgrade is "inside" the container
+	lockedInside   []bool // for every upgrade run in the container: was the installer lock held
 	uninstalls     int
 }
 
@@ -69,6 +71,10 @@ func (p *pveWrap) Exec(ctx context.Context, vmid int, user string, argv []string
 	bin := applianceLayout().Binary
 	switch {
 	case len(argv) > 2 && argv[0] == stagedBinary && argv[1] == "install" && argv[2] == "upgrade":
+		p.lockedInside = append(p.lockedInside, p.locked)
+		if p.onUpgrade != nil {
+			p.onUpgrade()
+		}
 		p.upgrades = append(p.upgrades, execRecord{user: user, argv: append([]string{strconv.Itoa(vmid)}, argv...)})
 		return []byte("upgraded inside\n"), p.upgradeErr
 	case p.loosenStageDir && len(argv) == 4 && argv[0] == "/usr/bin/stat" && argv[3] == stageDir:

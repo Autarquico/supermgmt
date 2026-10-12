@@ -1,8 +1,6 @@
 package installer
 
 import (
-	"errors"
-	"io/fs"
 	"slices"
 	"strings"
 	"testing"
@@ -268,6 +266,3 @@ func lastIndex(ops []string, match func(string) bool) int {
 	}
 	return -1
 }
-
-var _ = errors.New
-var _ = fs.ErrNotExist

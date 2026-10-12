@@ -50,6 +50,10 @@ type uhost struct {
 	freeBytes    uint64
 	lockHeld     bool
 	noDisk       bool
+	symlinks     map[string]string // directory -> where it really is, for Canonical
+	dbLocks      int               // database locks held right now
+	// renamedUnderDBLock: the new binary was renamed into place while the database lock was held.
+	renamedUnderDBLock bool
 
 	// observation
 	events     []string
@@ -207,6 +211,9 @@ func (h *uhost) Rename(oldPath, newPath string) error {
 	}
 	h.inodes[newPath] = n
 	delete(h.inodes, oldPath)
+	if newPath == applianceLayout().Binary && oldPath == newPath+".new" {
+		h.renamedUnderDBLock = h.dbLocks > 0
+	}
 	h.record("rename %s %s", oldPath, newPath)
 	h.check()
 	return nil
@@ -239,7 +246,11 @@ func (h *uhost) Lock(p string) (func(), error) {
 		return nil, errors.New("held by another process")
 	}
 	h.record("lock %s", p)
-	return func() {}, nil
+	if p == installerLockPath {
+		return func() {}, nil
+	}
+	h.dbLocks++
+	return func() { h.dbLocks-- }, nil
 }
 
 func (h *uhost) ListDir(dir string) ([]string, error) {
@@ -266,7 +277,11 @@ func (d diskHost) FileSize(p string) (int64, error) { return int64(len(d.content
 
 type usvc struct{ h *uhost }
 
-func (s usvc) Register(context.Context, Unit) error { return nil }
+func (s usvc) Register(_ context.Context, u Unit) error {
+	s.h.record("register %s", u.Name)
+	s.h.enabled = true
+	return nil
+}
 func (s usvc) Load(_ context.Context, u Unit) error { s.h.record("reload %s", u.Name); return nil }
 
 func (s usvc) Start(_ context.Context, u Unit) error {

@@ -452,6 +452,7 @@ func (p *provision) recoverJournal(ctx context.Context, dir string) error {
 	case commitUnknown:
 		return fail(ExitConfiguration, "an earlier install (%s) left a journal, but its appliance record cannot be read, so whether it completed is unknown; "+
 			"nothing was removed or stopped. Inspect %s and %s", j.id, dir, appliancesDir)
+	case uncommitted:
 	}
 	return p.rollbackStale(ctx, j)
 }

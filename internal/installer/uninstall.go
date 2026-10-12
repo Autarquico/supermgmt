@@ -19,6 +19,11 @@ func (in *Installer) runUninstall(ctx context.Context, o Options) error {
 
 func (in *Installer) uninstall(ctx context.Context, o Options, h provisionHooks) error {
 	in.reportHost()
+	release, held, err := in.lockForAppliances()
+	if err != nil {
+		return err
+	}
+	defer release()
 	rec, appliance, err := in.selectAppliance(o)
 	if err != nil {
 		return err
@@ -30,7 +35,7 @@ func (in *Installer) uninstall(ctx context.Context, o Options, h provisionHooks)
 	if err != nil {
 		return err
 	}
-	if t.server {
+	if t.server && !held {
 		release, err := in.lockInstaller()
 		if err != nil {
 			return err

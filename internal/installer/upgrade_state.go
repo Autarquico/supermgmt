@@ -30,6 +30,7 @@ const (
 const (
 	upgradeStateFile = "upgrade.json"
 	stopTimeout      = 90 * time.Second
+	probeTimeout     = 3 * time.Second // a service that is stopped answers at once
 	diskMargin       = 16 << 20
 )
 

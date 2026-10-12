@@ -84,6 +84,8 @@ type aw struct {
 	confirmYes    bool
 	asked         []string
 	answers       []string
+	onAsk         func() // runs after a question is asked and before it is answered
+	recordReads   []bool // for every read of the appliance records: was the installer lock held
 	out           bytes.Buffer
 	rollbackStart int // the first operation of a rollback, 0 if none
 }
@@ -235,6 +237,9 @@ func (w *aw) ReadFile(p string) ([]byte, error) {
 	if err := w.read("host.read " + p); err != nil {
 		return nil, err
 	}
+	if strings.HasPrefix(p, appliancesDir) {
+		w.recordReads = append(w.recordReads, w.locked)
+	}
 	if w.unreadable[p] {
 		return nil, fs.ErrPermission
 	}
@@ -321,6 +326,9 @@ func (w *aw) Lock(string) (func(), error) {
 }
 
 func (w *aw) ListDir(dir string) ([]string, error) {
+	if dir == appliancesDir {
+		w.recordReads = append(w.recordReads, w.locked)
+	}
 	seen := map[string]bool{}
 	for k := range w.dirs {
 		if path.Dir(k) == dir {
@@ -361,6 +369,9 @@ func (w *aw) Confirm(q string) (bool, error) { w.asked = append(w.asked, q); ret
 
 func (w *aw) Ask(q string) (string, error) {
 	w.asked = append(w.asked, q)
+	if w.onAsk != nil {
+		w.onAsk()
+	}
 	if len(w.answers) == 0 {
 		return "", io.EOF
 	}
