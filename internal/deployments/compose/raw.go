@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"go.yaml.in/yaml/v3"
 
@@ -327,5 +326,3 @@ func joinPath(path, key string) string {
 	}
 	return path + "." + key
 }
-
-func isExtension(key string) bool { return strings.HasPrefix(key, "x-") }

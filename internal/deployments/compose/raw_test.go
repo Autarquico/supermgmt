@@ -36,13 +36,13 @@ networks:
     internal: true
 `
 
-var testTarget = Target{
+var rawTarget = Target{
 	Project:     "myapp",
 	Owner:       "0198f3a0-0000-7000-8000-000000000001",
 	AllowedBind: []netip.Addr{netip.MustParseAddr("10.0.0.5")},
 }
 
-func wantRejected(t *testing.T, err error, contains string) {
+func wantRawRejected(t *testing.T, err error, contains string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("accepted, want COMPOSE_REJECTED containing %q", contains)
@@ -60,7 +60,7 @@ func wantRejected(t *testing.T, err error, contains string) {
 }
 
 func TestCheckRaw_AcceptsAValidDocument(t *testing.T) {
-	if err := CheckRaw([]byte(validCompose), testTarget); err != nil {
+	if err := CheckRaw([]byte(validCompose), rawTarget); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -87,7 +87,7 @@ func TestCheckRaw_Step1(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wantRejected(t, CheckRaw([]byte(tt.doc), testTarget), tt.want)
+			wantRawRejected(t, CheckRaw([]byte(tt.doc), rawTarget), tt.want)
 		})
 	}
 }
@@ -103,11 +103,11 @@ func TestCheckRaw_AliasExpansionBombIsBounded(t *testing.T) {
 		b.WriteString("]\n")
 	}
 	b.WriteString("services: {}\n")
-	wantRejected(t, CheckRaw([]byte(b.String()), testTarget), "expands to more than")
+	wantRawRejected(t, CheckRaw([]byte(b.String()), rawTarget), "expands to more than")
 }
 
 func TestCheckRaw_SelfReferencingAliasIsRejected(t *testing.T) {
-	if err := CheckRaw([]byte("x-a: &a [*a]\nservices: {}\n"), testTarget); err == nil {
+	if err := CheckRaw([]byte("x-a: &a [*a]\nservices: {}\n"), rawTarget); err == nil {
 		t.Fatal("accepted a cyclic alias")
 	}
 }
@@ -147,5 +147,5 @@ services:
 
 func TestParseMerged_MergeKeyNeedsAMapping(t *testing.T) {
 	_, err := parseMerged([]byte("services:\n  web:\n    <<: [1, 2]\n"))
-	wantRejected(t, err, "merge key needs a mapping")
+	wantRawRejected(t, err, "merge key needs a mapping")
 }

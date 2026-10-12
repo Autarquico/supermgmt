@@ -22,8 +22,6 @@ var (
 	envNamePattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
-var exemptibleCapabilities = []string{"NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL"}
-
 var reservedLabelPrefixes = []string{"com.docker.", "dev.supermgmt."}
 
 func checkSchema(root *node, t Target) error {

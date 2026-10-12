@@ -21,7 +21,7 @@ func FuzzCheckRaw(f *testing.F) {
 		f.Add([]byte(s))
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		_ = CheckRaw(raw, testTarget)
+		_ = CheckRaw(raw, rawTarget)
 	})
 }
 

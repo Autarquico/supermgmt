@@ -96,7 +96,7 @@ func TestCheckRaw_RejectsSourceForms(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wantRejected(t, CheckRaw([]byte(tt.doc), testTarget), tt.want)
+			wantRawRejected(t, CheckRaw([]byte(tt.doc), rawTarget), tt.want)
 		})
 	}
 }
@@ -123,7 +123,7 @@ func TestCheckRaw_RejectsPrivilegedConstructsIntroducedByAnchorsAndMerges(t *tes
 		for shape, tmpl := range shapes {
 			t.Run(shape+"/"+f, func(t *testing.T) {
 				doc := strings.Replace(tmpl, "%s", f, 1)
-				err := CheckRaw([]byte(doc), testTarget)
+				err := CheckRaw([]byte(doc), rawTarget)
 				if err == nil {
 					t.Fatalf("accepted:\n%s", doc)
 				}
@@ -137,7 +137,7 @@ func TestCheckRaw_RejectsPrivilegedConstructsIntroducedByAnchorsAndMerges(t *tes
 
 func TestCheckRaw_ExplicitKeyOverridesMergedForbiddenValue(t *testing.T) {
 	doc := "x-bad: &bad\n  restart: sometimes\nservices:\n  web:\n    <<: *bad\n    image: x\n    restart: always\n"
-	if err := CheckRaw([]byte(doc), testTarget); err != nil {
+	if err := CheckRaw([]byte(doc), rawTarget); err != nil {
 		t.Fatalf("the explicit value replaces the merged one, so the document is valid: %v", err)
 	}
 }
@@ -191,12 +191,12 @@ networks:
   backend: {internal: true, labels: {com.acme.kind: net}}
 x-anything: [1, 2, {a: b}]
 `
-	if err := CheckRaw([]byte(doc), testTarget); err != nil {
+	if err := CheckRaw([]byte(doc), rawTarget); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCheckRaw_ErrorsCarryPathAndLine(t *testing.T) {
-	err := CheckRaw([]byte(service("    privileged: true\n")), testTarget)
-	wantRejected(t, err, "services.web.privileged (line 4)")
+	err := CheckRaw([]byte(service("    privileged: true\n")), rawTarget)
+	wantRawRejected(t, err, "services.web.privileged (line 4)")
 }

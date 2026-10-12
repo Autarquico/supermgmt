@@ -145,7 +145,7 @@ func TestInterpolate_Rejects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Interpolate([]byte(tt.doc), src)
-			wantRejected(t, err, tt.want)
+			wantRawRejected(t, err, tt.want)
 		})
 	}
 }
@@ -195,7 +195,7 @@ services:
 func TestInterpolate_ExtensionBlocksAreNotInterpolationSites(t *testing.T) {
 	withVariable := "x-env: &env\n  environment: {A: $REGION}\nservices:\n  web:\n    <<: *env\n    image: x\n"
 	_, err := Interpolate([]byte(withVariable), testSource)
-	wantRejected(t, err, "x-env.environment.A")
+	wantRawRejected(t, err, "x-env.environment.A")
 
 	escaped := "x-env: &env\n  environment: {A: \"$$REGION\"}\nservices:\n  web:\n    <<: *env\n    image: x\n"
 	root := interpolateOK(t, escaped)
@@ -225,12 +225,12 @@ func TestInterpolate_OutputStillPassesCheckRaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckRaw(out, testTarget); err != nil {
+	if err := CheckRaw(out, rawTarget); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
 
 func TestInterpolate_PropagatesRawFailures(t *testing.T) {
 	_, err := Interpolate([]byte("a: [\n"), testSource)
-	wantRejected(t, err, "invalid YAML")
+	wantRawRejected(t, err, "invalid YAML")
 }
