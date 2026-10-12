@@ -28,9 +28,27 @@
 
 Through the real generated files and the real CLI v5.5.1 in the node fixture: variable versus `env_file` precedence, empty values, spaces, `$`, tampered `env_file` wiring, a stray extra env file, a modified `secrets/<service>.env`. Corpus: `$`, single and double quotes, `#`, inner, leading and trailing spaces, `=`, backslashes, unicode, the empty value.
 
-### Pending T0s spike
+### CLI behaviour (T0s spike, measured on Compose v5.5.1 and jq 1.7)
 
-> **Pending T0s spike (W0).** `format: raw` and the resolved check are CLI behaviour, so they are proven on the pinned CLI before this ADR is final: T0s round-trips the corpus through Compose v5.5.1 (`test/integration/fixtures_envfile_test.go`) and shows that the resolved hash set equals the expected one for precedence, empty, spaces and `$`, and differs for tampered wiring (`test/integration/fixtures_envhash_spike_test.go`). If the resolved check cannot be made to work on v5.5.1, the architect escalates to the user before W1; the ADR is not finalized on a weaker mechanism.
+Tests: `test/integration/fixtures_envfile_test.go`, `test/integration/fixtures_envhash_spike_test.go`.
+
+- **`format: raw`.** All 20 corpus values resolve verbatim in `config` and inside the container (`printenv`): `$`, `${C}`, `$$`, quotes, `#`, leading, trailing and only spaces, `=`, backslashes (`\n` stays literal), unicode and emoji, tab, backticks, `%`, empty. A missing `required: true` env file makes `config` fail (fail closed).
+- **`$` escaping.** `config --format json` doubles every `$`; the program un-doubles it (`$$` to `$`, lossless) for `environment` values only.
+- **Precedence.** `environment:` beats `env_file`; an empty string stays `""`; a name-only `NAME:` with no host value under `env -i` resolves to JSON `null` (emitted as sha256 `null`). The control plane never produces such a name, so a `null` in the node set counts as a mismatch.
+- **jq has no sha256.** The template therefore uses jq, a bash loop and `sha256sum`: node tools required are `jq`, `bash`, `base64`, `sha256sum`, `cut`. Command shape: `env -i PATH=... bash script <dir>`; inside, `docker compose -f $dir/compose.yaml -p P --project-directory $dir config --format json` (no `--no-env-resolution`), with stderr kept out of stdout.
+  1. ROWS, `jq -r`: `.services | to_entries[] | .key as $s | (.value.environment // {}) | to_entries[] | [$s, .key, (if .value == null then "n" else "s" end), ((.value // "") | gsub("\\$\\$"; "$") | @base64)] | @tsv`. Bash decodes the base64 column and hashes it (`base64 -d | sha256sum | cut`), producing `service<TAB>name<TAB>sha|null` lines.
+  2. SET, `jq -Rn -c`: `[inputs | select(length > 0) | split("\t") | {service: .[0], env_name: .[1], sha256: (if .[2] == "null" then null else .[2] end)}]`
+  3. MASK, `jq -c --argjson h SET`: `($h | map({key: (.service + "/" + .env_name), value: .sha256}) | from_entries) as $m | .services |= with_entries(.key as $s | if .value.environment then .value.environment |= with_entries(.value = (if .value == null then null else "sha256:" + $m[$s + "/" + .key] end)) else . end)`
+  - Output: one line `{"model": <masked model>, "set": [{service, env_name, sha256}]}`. Services without `environment` yield no rows and no invented key. The programs are the constants in `fixtures_envhash_spike_test.go`, which is authoritative.
+- **Proven.** The expected set equals the node set (precedence, empty, spaces, `$`, `=`, quotes); the masked model carries `"NAME":"sha256:<hex>"` for every name and no plaintext value; tampering is detected for a changed value, an extra name, a missing name, an env file swapped between services and a dropped `environment` override.
+
+### Image size (ADR-0029 input)
+
+- `docker manifest inspect --verbose <ref>@<digest>` prints one JSON object for a single image manifest (`Descriptor.platform`, `SchemaV2Manifest{config, layers[]}`) and a JSON array of such entries for an index. Without `--verbose` no platform is printed.
+- Program: normalize to an array, select exactly one entry whose `.Descriptor.platform.os/.architecture` equal `docker version --format '{{.Server.Os}}'` / `'{{.Server.Arch}}'` (not `docker info` Architecture, which says `aarch64`), size = `config.size + sum(layers[].size)` (`.SchemaV2Manifest // .OCIManifest`). Variant is ignored on purpose. busybox arm64: 477 + 1977510 = 1977987 bytes. An unknown digest exits nonzero (fail closed, `IMAGE_SIZE_UNKNOWN`).
+- `--insecure` is needed only for a plain-HTTP registry (the fixture's local registry:2); real registries do not need it.
+- **Not verified:** OCI manifests/indexes (`OCIManifest` key), nested indexes, registry auth and rate limits. To be checked against a real registry digest in an e2e before ADR-0029 is final.
+- The node fixture has neither curl nor wget; bash `/dev/tcp` works for readiness polling.
 
 ## Consequences
 

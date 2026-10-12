@@ -37,9 +37,16 @@ Both passes run again after the image rewrite (step 8). A key listed as exemptib
 
 compose-go is imported only by `internal/deployments/compose` (depguard). That package imports only the standard library, compose-go, `go.yaml.in/yaml/v3`, `domain`, `errors` and `audit`.
 
-### Pending T0s spike
+### CLI pin (T0s spike, measured)
 
-> **Pending T0s spike (W0).** The node fixture does not yet pin the CLI: T0s installs the Docker Compose v5.5.1 static binary with its sha256 and `jq`, and confirms that `config --format json` on v5.5.1 is usable for the step-10 comparison. Until that report is accepted, the CLI pin and the "fixture-verified" status of the matrix row are unconfirmed, and this ADR is not final.
+Measured on the node fixture (Debian trixie, docker 26.1.5, aarch64 host): `docker compose version` reports v5.5.1 and `jq-1.7`. `docker compose version --short` was not pinned down (`5.5.1` versus `v5.5.1`; the fixture test accepts both), so the matrix check must be settled against the real output before it matches on it.
+
+- The fixture installs the static binary as a CLI plugin at `/usr/local/lib/docker/cli-plugins/docker-compose` through BuildKit `ADD --checksum=sha256:...` (`test/fixtures/node/Dockerfile`):
+  - linux-x86_64: `db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576`
+  - linux-aarch64: `732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7`
+- `jq` comes from apt (1.7) and is not hash-pinned.
+- `config --format json` is usable for the step-10 comparison with environment resolution on. It **escapes `$` as `$$` in every string** (`a$b${C}$$` prints as `a$$b$${C}$$$$`). The environment hashing undoes this only for `environment` values (ADR-0010); other fields (command, labels) stay escaped, so a whole-model comparison must put both sides in the same form.
+- The matrix row is fixture-verified for the env-file and environment-hash behaviour. Not verified: the full normalization table against the golden corpus (CI job `compose-equivalence`).
 
 ## Consequences
 
