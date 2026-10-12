@@ -114,7 +114,7 @@ func TestSnapshots_StoreIsIdempotent(t *testing.T) {
 }
 
 func TestSnapshots_PolicySnapshotHoldsNoHealthCheck(t *testing.T) {
-	set, err := newSnapshotSet(time.Now(), composeSnapshotOf(snapFrozen()), wire.ComposeExceptions{}, snapEffective())
+	set, err := newSnapshotSet(epoch, composeSnapshotOf(snapFrozen()), wire.ComposeExceptions{}, snapEffective())
 	mustf(t, err, "newSnapshotSet")
 
 	for _, item := range set.items {

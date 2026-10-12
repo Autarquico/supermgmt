@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // git blob ids are SHA-1 by definition
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,7 +105,7 @@ type finClient struct {
 }
 
 func finBlobSHA(content []byte) string {
-	h := sha1.New() //nolint:gosec // see import
+	h := sha1.New()
 	fmt.Fprintf(h, "blob %d\x00", len(content))
 	_, _ = h.Write(content)
 	return fmt.Sprintf("%x", h.Sum(nil))
