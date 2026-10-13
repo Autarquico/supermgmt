@@ -26,6 +26,8 @@ const (
 	KindAPIToken  Kind = 't'
 	KindBootstrap Kind = 'b'
 	KindJoin      Kind = 'j'
+	// KindMCP tokens authenticate a local MCP client on the admin socket only.
+	KindMCP Kind = 'm'
 )
 
 const (
@@ -38,7 +40,7 @@ var tokenEncoding = base64.RawURLEncoding
 
 func (k Kind) valid() bool {
 	switch k {
-	case KindSession, KindAPIToken, KindBootstrap, KindJoin:
+	case KindSession, KindAPIToken, KindBootstrap, KindJoin, KindMCP:
 		return true
 	}
 	return false
