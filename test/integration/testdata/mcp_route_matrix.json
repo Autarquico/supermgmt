@@ -232,20 +232,20 @@
   },
   {
    "route": "POST /api/v1/jobs/{id}/resolve",
-   "class": "governance",
+   "class": "forbidden",
    "path": "/api/v1/jobs/{job}/resolve",
    "body": "{\"plan_hash\":\"{job_plan_hash}\",\"outcome\":\"failed\",\"note\":\"checked by hand\"}",
    "headers": null,
    "stream": false,
    "off": {
     "status": 403,
-    "reason": "MCP_WRITES_DISABLED"
+    "reason": "MCP_ACTION_FORBIDDEN"
    },
    "on": {
-    "status": 409,
-    "reason": "INVALID_TRANSITION"
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
    },
-   "note": "The fixture job is not interrupted: with writes on the request passes the gate and is refused as an invalid transition."
+   "note": "job.resolve is human judgment over ambiguous evidence (spec §20.4): forbidden to an mcp actor in every mode."
   },
   {
    "route": "GET /api/v1/providers",
