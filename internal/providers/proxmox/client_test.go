@@ -112,24 +112,6 @@ func TestResourcesOnlyContainWhatTheTokenMayAudit(t *testing.T) {
 	}
 }
 
-func TestPermissions(t *testing.T) {
-	e := newEnv(t)
-	e.fake.SetRole("Audit", "VM.Audit")
-	e.fake.SetRole("Power", "VM.PowerMgmt")
-	tok := e.fake.AddToken("sm@pve", "t", true)
-	for _, s := range []string{"sm@pve", "sm@pve!t"} {
-		e.fake.Grant(s, "/", "Audit", true)
-		e.fake.Grant(s, "/vms/100", "Power", true)
-	}
-	perms, err := newClient(t, e.fake, tok).Permissions(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !perms["/vms/100"].Has("VM.PowerMgmt") || perms["/vms/200"].Has("VM.PowerMgmt") || !perms["/"].Has("VM.Audit") {
-		t.Errorf("perms = %v", perms)
-	}
-}
-
 // SEC-14: a grant that does not propagate is effective on its own path.
 func TestNonPropagatingGrantIsKeptAsEffectiveOnItsOwnPath(t *testing.T) {
 	e := newEnv(t)
@@ -138,12 +120,8 @@ func TestNonPropagatingGrantIsKeptAsEffectiveOnItsOwnPath(t *testing.T) {
 	e.fake.Grant("sm@pve", "/vms/100", "Power", false)
 	c := newClient(t, e.fake, tok)
 
-	perms, err := c.Permissions(context.Background())
-	if err != nil || !perms["/vms/100"].Has("VM.PowerMgmt") || perms["/vms/100"]["VM.PowerMgmt"].Propagate {
-		t.Errorf("Permissions = %v, %v; want VM.PowerMgmt on /vms/100 without propagation", perms, err)
-	}
 	privs, err := c.PathPermissions(context.Background(), "/vms/100")
-	if err != nil || !privs.Has("VM.PowerMgmt") {
+	if err != nil || !privs.Has("VM.PowerMgmt") || privs["VM.PowerMgmt"].Propagate {
 		t.Errorf("PathPermissions(/vms/100) = %v, %v", privs, err)
 	}
 }
@@ -452,7 +430,7 @@ func TestTokenNeverAppearsInErrors(t *testing.T) {
 	errs = append(errs, err)
 	_, err = e.client.Resources(ctx)
 	errs = append(errs, err)
-	_, err = e.client.Permissions(ctx)
+	_, err = e.client.PathPermissions(ctx, "/")
 	errs = append(errs, err)
 	_, err = e.client.Tasks(ctx, "pve1", proxmox.TaskFilter{})
 	errs = append(errs, err)
