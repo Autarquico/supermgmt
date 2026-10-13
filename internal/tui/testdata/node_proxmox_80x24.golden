@@ -1,4 +1,4 @@
-┌ SuperMgmt · Node ────────────── 10 nodes · 3 online · 1 warning · 1 approval ┐
+┌ SuperMgmt · Node ──── 6 nodes · 4 guests · 3 online · 1 warning · 1 approval ┐
 │                                                                              │
 │ ● web running                                                                │
 │ environment                                                                  │
@@ -20,5 +20,5 @@
 │                                                                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│ v services  s ssh  d docker  p probe  esc back  / command  ? help  q quit    │
+│ v services  esc back  / command  ? help  q quit                              │
 └──────────────────────────────────────────────────────────────────────────────┘

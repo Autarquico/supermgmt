@@ -1,4 +1,4 @@
-┌ SuperMgmt · Providers ───────── 10 nodes · 3 online · 1 warning · 1 approval ┐
+┌ SuperMgmt · Providers ── 6 nodes · 4 guests · 3 online · 1 warning · 1 appro…┐
 │ NAME                  TYPE        ORIGIN    STATUS    LAST SYNC              │
 │ local                 local       api       ready     never                  │
 │ pve                   proxmox     static    ok        10-10 11:59:00         │

@@ -1,4 +1,4 @@
-┌ SuperMgmt · Resources ───────── 10 nodes · 3 online · 1 warning · 1 approval ┐
+┌ SuperMgmt · Resources ── 6 nodes · 4 guests · 3 online · 1 warning · 1 appro…┐
 │ RESOURCES                │ DETAIL                                            │
 │                          │                                                   │
 │ ▼ local                  │ ● web running                                     │
@@ -20,5 +20,5 @@
 │                          │                                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│ j/k move  enter detail  v services  s ssh  d docker  / command  ? help  q q… │
+│ j/k move  enter detail  v services  / command  ? help  q quit                │
 └──────────────────────────────────────────────────────────────────────────────┘
