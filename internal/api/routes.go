@@ -56,8 +56,10 @@ type route struct {
 	// Idempotency-Key and is never stored as an idempotent answer.
 	credential bool
 	unixOnly   bool
-	maxBody    int64
-	do         endpoint
+	// httpsOnly routes are not served on the local-mode Unix socket.
+	httpsOnly bool
+	maxBody   int64
+	do        endpoint
 }
 
 func (rt route) isAction() bool { return rt.action != "" && !strings.HasPrefix(rt.action, "exempt:") }
@@ -90,6 +92,10 @@ func (s *Server) buildRoutes() []route {
 	r.jobs()
 	r.providers()
 	r.proxmox()
+	r.repositories()
+	r.apps()
+	r.deployments()
+	r.webhook()
 	r.nodes()
 	r.sessions()
 	r.services()
@@ -99,7 +105,9 @@ func (s *Server) buildRoutes() []route {
 	r.backups()
 	r.enrollment()
 	r.stream()
-	return slices.DeleteFunc(r.routes, func(rt route) bool { return rt.unixOnly && s.transport != viaUnixSocket })
+	return slices.DeleteFunc(r.routes, func(rt route) bool {
+		return rt.unixOnly && s.transport != viaUnixSocket || rt.httpsOnly && s.transport != viaHTTPS
+	})
 }
 
 type routeSet struct {
