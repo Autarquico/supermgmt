@@ -951,7 +951,16 @@ func (w *aw) doctor() ([]byte, error) {
 
 // ---- observation ----
 
+// hostPaths lists what the host holds under prefix. The legacy journal prefix also covers
+// journalRoot, so assertions about journal debris follow the journals to their new home.
 func (w *aw) hostPaths(prefix string) []string {
+	if prefix == journalTmpRoot+"/"+journalDirPrefix {
+		return append(w.legacyHostPaths(journalRoot+"/"), w.legacyHostPaths(prefix)...)
+	}
+	return w.legacyHostPaths(prefix)
+}
+
+func (w *aw) legacyHostPaths(prefix string) []string {
 	var found []string
 	for p := range w.files {
 		if strings.HasPrefix(p, prefix) {

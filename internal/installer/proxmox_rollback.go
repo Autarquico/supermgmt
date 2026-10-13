@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -385,22 +386,42 @@ func caCertificatesPEM(chain []byte) ([]byte, error) {
 
 // recoverStale handles journals left by earlier runs, before any new side
 // effect: committed ones are only cleaned up; uncommitted ones are rolled
-// back after confirmation. /var/tmp is shared, so a journal is acted on only
-// when its name, owner, mode and content are exactly what this installer writes.
+// back after confirmation. It scans journalRoot and the legacy journalTmpRoot,
+// which is shared, so a journal is acted on only when its name, owner, mode
+// and content are exactly what this installer writes.
 func (p *provision) recoverStale(ctx context.Context) error {
-	names, err := p.host.ListDir(journalTmpRoot)
+	if err := p.requirePrivate(journalRoot, true); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for _, root := range []struct {
+		dir   string
+		valid *regexp.Regexp
+		owns  func(name string) bool
+	}{
+		{journalRoot, reJournalDir, func(string) bool { return true }},
+		{journalTmpRoot, reLegacyJournalDir, func(name string) bool { return strings.HasPrefix(name, journalDirPrefix) }},
+	} {
+		if err := p.recoverRoot(ctx, root.dir, root.valid, root.owns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *provision) recoverRoot(ctx context.Context, root string, valid *regexp.Regexp, owns func(string) bool) error {
+	names, err := p.host.ListDir(root)
 	if err != nil {
 		return failWrap(ExitConfiguration, "look for earlier installs", err)
 	}
 	for _, name := range names {
-		if !strings.HasPrefix(name, journalDirPrefix) {
+		if !owns(name) {
 			continue
 		}
-		if !reJournalDir.MatchString(name) {
-			p.say("ignoring %s: not a journal directory of this installer", path.Join(journalTmpRoot, name))
+		if !valid.MatchString(name) {
+			p.say("ignoring %s: not a journal directory of this installer", path.Join(root, name))
 			continue
 		}
-		if err := p.recoverJournal(ctx, path.Join(journalTmpRoot, name)); err != nil {
+		if err := p.recoverJournal(ctx, path.Join(root, name)); err != nil {
 			return err
 		}
 	}
