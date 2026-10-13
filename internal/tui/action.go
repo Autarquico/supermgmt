@@ -349,11 +349,23 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.commandPower(args)
 	case "logs":
 		return m.commandLogs(args)
+	case wizardDeploy, wizardRollback:
+		return m.commandDeploy(cmd, args)
 	case "ssh", "services", "setup", "probe":
 		return m.commandOnNode(cmd, args)
 	}
 	m.notice = notice{text: fmt.Sprintf("unknown command %q: %s", cmd, paletteHint), isErr: true}
 	return nil
+}
+
+// commandDeploy starts the creation wizard or the rollback review of an
+// app's environment.
+func (m *Model) commandDeploy(cmd string, args []string) tea.Cmd {
+	if len(args) != 2 {
+		m.notice = notice{text: "usage: " + cmd + " <app> <environment>", isErr: true}
+		return nil
+	}
+	return m.startWizard(cmd, args[0], args[1])
 }
 
 func (m *Model) commandRefresh(args []string) tea.Cmd {

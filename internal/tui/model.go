@@ -233,6 +233,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case planMsg:
 		m.onPlan(msg)
 		return m, nil
+	case wizardStartMsg:
+		return m, m.onWizardStart(msg)
 	case handoffOpenedMsg:
 		return m, m.onHandoffOpened(msg)
 	case handoffReturnedMsg:
