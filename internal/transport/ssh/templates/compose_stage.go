@@ -242,7 +242,7 @@ printf '%s\n' "$file"
 // "<kind> <inspect JSON>". The caller judges ownership from the labels.
 const projectResourcesScript = `set -euo pipefail
 p=$1
-list() { { docker "$1" ls -q --no-trunc --filter "label=com.docker.compose.project=$p"; docker "$1" ls -q --no-trunc --filter "name=${p}_"; } | sort -u; }
+list() { { docker "$1" ls -q --filter "label=com.docker.compose.project=$p"; docker "$1" ls -q --filter "name=${p}_"; } | sort -u; }
 for kind in volume network; do
   ids=$(list "$kind")
   [ -z "$ids" ] || docker "$kind" inspect --format "$kind @JSON@" $ids
