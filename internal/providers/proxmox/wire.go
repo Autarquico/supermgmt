@@ -102,35 +102,21 @@ func splitList(s string) []string {
 	return strings.Split(s, ",")
 }
 
-// decodePerms reads path -> privilege -> propagate flag. A privilege listed
-// with flag 0 is effective on its own path and just does not descend, so it is
-// kept; only Propagate tells the two apart.
-func decodePerms(data []byte) (Perms, error) {
+// decodePathPrivileges reads the answer to a query for one path: path ->
+// privilege -> propagate flag. A privilege listed with flag 0 is effective on
+// its own path and just does not descend, so it is kept; only Propagate tells
+// the two apart. The result is empty when PVE lists no entry for the path (the
+// token holds nothing there).
+func decodePathPrivileges(path string, data []byte) (Privileges, error) {
 	var raw map[string]map[string]number
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("proxmox: decode permissions: %w", err)
 	}
-	perms := make(Perms, len(raw))
-	for path, privs := range raw {
-		perms[path] = make(Privileges, len(privs))
-		for priv, propagate := range privs {
-			perms[path][priv] = Grant{Propagate: propagate.flag()}
-		}
+	privs := make(Privileges, len(raw[path]))
+	for priv, propagate := range raw[path] {
+		privs[priv] = Grant{Propagate: propagate.flag()}
 	}
-	return perms, nil
-}
-
-// decodePathPrivileges reads the answer to a query for one path: the entry of
-// that path, empty when PVE lists none (the token holds nothing there).
-func decodePathPrivileges(path string, data []byte) (Privileges, error) {
-	perms, err := decodePerms(data)
-	if err != nil {
-		return nil, err
-	}
-	if privs := perms[path]; privs != nil {
-		return privs, nil
-	}
-	return Privileges{}, nil
+	return privs, nil
 }
 
 type taskWire struct {

@@ -381,6 +381,20 @@ func TestProvidersCheckFailsWhenTheTokenSeesNoClusterNode(t *testing.T) {
 	}
 }
 
+func TestProvidersCheckRefusesATokenWithoutSysAuditOnTheRoot(t *testing.T) {
+	b := newPVEBox(t)
+	b.importToken(t, b.token)
+	b.fake.Revoke("sm@pve", "/", "Discovery")
+	b.fake.Grant("sm@pve", "/nodes", "Discovery", true)
+
+	r := b.check("pve")
+
+	report := decodeCheck(t, r)
+	if r.code != 8 || report.OK || !strings.Contains(report.Problem, "Sys.Audit on /") {
+		t.Errorf("exit %d, report %+v", r.code, report)
+	}
+}
+
 func TestProvidersCheckIsAUsageErrorForAProviderTheFileDoesNotDeclare(t *testing.T) {
 	b := newPVEBox(t)
 

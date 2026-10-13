@@ -147,14 +147,6 @@ func (c *client) Resources(ctx context.Context) (Inventory, error) {
 	return decodeInventory(data)
 }
 
-func (c *client) Permissions(ctx context.Context) (Perms, error) {
-	data, err := c.get(ctx, "/access/permissions", nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodePerms(data)
-}
-
 func (c *client) PathPermissions(ctx context.Context, path string) (Privileges, error) {
 	if !aclPathPattern.MatchString(path) {
 		return nil, fmt.Errorf("proxmox: invalid ACL path %q", path)
