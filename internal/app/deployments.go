@@ -186,7 +186,7 @@ func (d *Deployments) Create(ctx context.Context, by Caller, r CreateDeployment)
 		if err != nil {
 			return DeploymentView{}, err
 		}
-		if err := d.authorizeCreate(ctx, tx, actor, scope); err != nil {
+		if err := d.authorizeAdmission(ctx, tx, actor, deploymentCreateAction, scope); err != nil {
 			return DeploymentView{}, err
 		}
 		if err := requireDeployedImage(scope, req.images); err != nil {
@@ -203,13 +203,15 @@ func (d *Deployments) Create(ctx context.Context, by Caller, r CreateDeployment)
 	})
 }
 
-func (d *Deployments) authorizeCreate(ctx context.Context, q database.Querier, actor domain.Actor, scope deploymentScope) error {
+// authorizeAdmission is the policy check at the door, before anything is stored
+// or started; finalization checks the frozen plan again.
+func (d *Deployments) authorizeAdmission(ctx context.Context, q database.Querier, actor domain.Actor, action string, scope deploymentScope) error {
 	target, err := scope.policyTarget(ctx, q, appTargetRef(scope.target.ID))
 	if err != nil {
 		return err
 	}
-	res := d.authorize(policy.Request{Actor: actor, Action: deploymentCreateAction, Targets: []policy.Target{target}})
-	if err := d.auditDecision(ctx, q, actor, deploymentCreateAction, target.Ref, res); err != nil {
+	res := d.authorize(policy.Request{Actor: actor, Action: action, Targets: []policy.Target{target}})
+	if err := d.auditDecision(ctx, q, actor, action, target.Ref, res); err != nil {
 		return err
 	}
 	if err := decisionError(res); err != nil {
@@ -396,7 +398,7 @@ func (d *Deployments) authorizeCancel(ctx context.Context, q database.Querier, a
 	if err != nil {
 		return err
 	}
-	res := d.cfg.Policy.EvaluateGovernance(actor, policy.ActionJobCancel, []policy.Target{target}, nil)
+	res := d.authorizeGovernanceOn(actor, policy.ActionJobCancel, []policy.Target{target}, nil)
 	if err := d.auditDecision(ctx, q, actor, policy.ActionJobCancel, deploymentResource(row.ID), res); err != nil {
 		return err
 	}

@@ -39,6 +39,9 @@ func (f *DeploymentFinalizer) Rollback(ctx context.Context, by Caller, id domain
 		if err != nil {
 			return DeploymentView{}, err
 		}
+		if err := f.authorizeAdmission(ctx, tx, actor, deploymentRollbackAction, scope); err != nil {
+			return DeploymentView{}, err
+		}
 		good, err := rollbackSource(ctx, tx, source, req.ToDeploymentID)
 		if err != nil {
 			return DeploymentView{}, err
