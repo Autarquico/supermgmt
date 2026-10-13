@@ -409,7 +409,7 @@ func (p *provision) recoverStale(ctx context.Context) error {
 }
 
 func (p *provision) recoverRoot(ctx context.Context, root string, valid *regexp.Regexp, owns func(string) bool) error {
-	names, err := p.host.ListDir(root)
+	names, err := p.d.Files.ListDir(root)
 	if err != nil {
 		return failWrap(ExitConfiguration, "look for earlier installs", err)
 	}
@@ -431,7 +431,7 @@ func (p *provision) recoverRoot(ctx context.Context, root string, valid *regexp.
 // requirePrivate refuses anything that is not what the installer creates in a
 // shared directory: a real directory or regular file, owned by root, closed to others.
 func (p *provision) requirePrivate(entry string, wantDir bool) error {
-	info, err := p.stat.Lstat(entry)
+	info, err := p.d.Files.Lstat(entry)
 	if err != nil {
 		return err
 	}

@@ -3,7 +3,6 @@ package installer
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -85,10 +84,6 @@ func (j *journal) path() string { return path.Join(j.dir, journalFile) }
 // parent are what the installer creates: real root-owned directories closed to
 // others. It then makes the directory and the first entry durable.
 func createJournal(files Files, id string) (*journal, error) {
-	stat, ok := files.(entryStatter)
-	if !ok {
-		return nil, errors.New("the file system cannot describe entries, so the journal location cannot be verified")
-	}
 	j := &journal{files: files, id: id, dir: journalDirFor(id)}
 	if files.Exists(j.dir) {
 		return nil, fmt.Errorf("journal directory %s already exists", j.dir)
@@ -100,7 +95,7 @@ func createJournal(files Files, id string) (*journal, error) {
 		return nil, err
 	}
 	for _, dir := range []string{journalRoot, j.dir} {
-		if err := requireRootPrivateDir(stat, dir); err != nil {
+		if err := requireRootPrivateDir(files, dir); err != nil {
 			return nil, err
 		}
 	}
@@ -116,8 +111,8 @@ func createJournal(files Files, id string) (*journal, error) {
 	return j, nil
 }
 
-func requireRootPrivateDir(stat entryStatter, dir string) error {
-	info, err := stat.Lstat(dir)
+func requireRootPrivateDir(files Files, dir string) error {
+	info, err := files.Lstat(dir)
 	if err != nil {
 		return err
 	}
