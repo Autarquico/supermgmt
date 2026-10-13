@@ -286,7 +286,51 @@ func (s systemd) systemctl(ctx context.Context, args ...string) ([]byte, error) 
 	return s.runner.Run(ctx, Command{Name: "systemctl", Args: args})
 }
 
+// holdDropIn names the systemd drop-in that holds a unit during an upgrade (ADR-0035).
+const holdDropIn = "50-upgrade-hold.conf"
+
+// upgradeHold keeps a unit from starting by any route: manual and dependency starts are
+// refused, and the always-false condition stops anything else (ADR-0035).
+const upgradeHold = `[Unit]
+RefuseManualStart=yes
+ConditionPathExists=/nonexistent/supermgmt-upgrade-hold
+`
+
+func holdDropInPath(u Unit) string { return filepath.Join(u.Path+".d", holdDropIn) }
+
+// Hold writes the drop-in next to the unit file (so it survives a reboot), reloads and
+// disables. Register lifts it.
+func (s systemd) Hold(ctx context.Context, u Unit) error {
+	path := holdDropInPath(u)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // unit drop-in directories are world-readable
+		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	}
+	err := writeAtomic(path, 0o644, Owner{}, func(w io.Writer) error {
+		_, err := io.WriteString(w, upgradeHold)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := s.Load(ctx, u); err != nil {
+		return err
+	}
+	return s.Disable(ctx, u)
+}
+
+func liftHoldDropIn(u Unit) error {
+	path := holdDropInPath(u)
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	_ = os.Remove(filepath.Dir(path)) // only when empty: other drop-ins stay
+	return nil
+}
+
 func (s systemd) Register(ctx context.Context, u Unit) error {
+	if err := liftHoldDropIn(u); err != nil {
+		return err
+	}
 	if err := s.Load(ctx, u); err != nil {
 		return err
 	}
@@ -351,7 +395,19 @@ type launchd struct {
 	uid    int
 }
 
-func (launchd) Register(context.Context, Unit) error { return nil }
+func (l launchd) target(u Unit) string { return "gui/" + strconv.Itoa(l.uid) + "/" + u.Name }
+
+// Register lifts the upgrade hold: a disabled label cannot be bootstrapped.
+func (l launchd) Register(ctx context.Context, u Unit) error {
+	_, err := l.runner.Run(ctx, Command{Name: "launchctl", Args: []string{"enable", l.target(u)}})
+	return err
+}
+
+// Hold records a persistent override that keeps the agent from loading until Register.
+func (l launchd) Hold(ctx context.Context, u Unit) error {
+	_, err := l.runner.Run(ctx, Command{Name: "launchctl", Args: []string{"disable", l.target(u)}})
+	return err
+}
 
 func (launchd) Load(context.Context, Unit) error { return nil }
 

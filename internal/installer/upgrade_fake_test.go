@@ -36,6 +36,7 @@ type uhost struct {
 	// service and database
 	unit      bool
 	enabled   bool
+	held      bool
 	running   bool
 	healthy   bool
 	dbSchema  int
@@ -279,7 +280,7 @@ type usvc struct{ h *uhost }
 
 func (s usvc) Register(_ context.Context, u Unit) error {
 	s.h.record("register %s", u.Name)
-	s.h.enabled = true
+	s.h.enabled, s.h.held = true, false
 	return nil
 }
 func (s usvc) Load(_ context.Context, u Unit) error { s.h.record("reload %s", u.Name); return nil }
@@ -311,6 +312,12 @@ func (s usvc) Stop(_ context.Context, u Unit) error {
 		return s.h.stopErr
 	}
 	s.h.running = false
+	return nil
+}
+
+func (s usvc) Hold(_ context.Context, u Unit) error {
+	s.h.record("hold %s", u.Name)
+	s.h.enabled, s.h.held = false, true
 	return nil
 }
 

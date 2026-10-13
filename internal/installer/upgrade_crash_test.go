@@ -45,7 +45,7 @@ func crashAfter(t *testing.T, h *uhost, point string) {
 func TestUpgrade_CrashAtEveryBoundaryConverges(t *testing.T) {
 	points := upgradePoints(t, func(*uhost) {})
 	for _, want := range []string{
-		"U:staged", "U:prev-linked", "U:prepared:recorded", "U:stopped:applied", "U:stopped:recorded",
+		"U:staged", "U:prev-linked", "U:prepared:recorded", "U:hold:applied", "U:stopped:applied", "U:stopped:recorded",
 		"U:backed_up:applied", "U:backed_up:recorded", "U:swap:before", "U:swap:renamed", "U:swapped:recorded",
 		"U:started:applied", "U:started:recorded", "U:done:recorded",
 	} {
@@ -198,5 +198,23 @@ func TestUpgrade_ResumeRepairsDamageFromTheCrash(t *testing.T) {
 			}
 			h.noViolations(t)
 		})
+	}
+}
+
+func TestUpgrade_CrashAfterTheHoldKeepsItUntilTheServiceStarts(t *testing.T) {
+	h := newUHost(t)
+	crashAfter(t, h, "U:hold:applied")
+	if !h.held || h.enabled {
+		t.Errorf("held %t enabled %t after the crash", h.held, h.enabled)
+	}
+	h.reboot()
+	if h.running && h.startedAs != binV1 {
+		t.Errorf("a reboot started %q during the upgrade", h.startedAs)
+	}
+	if err := h.rerun(); err != nil {
+		t.Fatalf("rerun: %v\n%s", err, h.out.String())
+	}
+	if h.held || !h.running || h.startedAs != binV2 {
+		t.Errorf("held %t running %t as %q", h.held, h.running, h.startedAs)
 	}
 }

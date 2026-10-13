@@ -426,21 +426,28 @@ func (u *upgrader) stopAndVerify(ctx context.Context) error {
 	return u.record(upStopped)
 }
 
-// quiesce stops the service, verifies it terminated and that nobody holds the
-// database. Every offline sm command takes the database lock itself, so the
-// lock is proven free here (taken and released) rather than held across them.
+// serviceHolder is a ServiceManager that can keep a unit from starting by any route (manual,
+// dependency, boot) until Register lifts the hold. Uninstall keeps using plain Disable.
+type serviceHolder interface {
+	Hold(ctx context.Context, unit Unit) error
+}
+
+// quiesce holds the service, stops it, verifies it terminated and that nobody holds the
+// database. Every offline sm command takes the database lock itself, so the lock is proven
+// free here (taken and released) rather than held across them.
 func (u *upgrader) quiesce(ctx context.Context) error {
 	if t := u.t; t.unit != nil {
+		if err := u.holdService(ctx); err != nil {
+			return err
+		}
+		if err := u.hit("U:hold:applied"); err != nil {
+			return err
+		}
 		if err := t.services.Stop(ctx, *t.unit); err != nil {
 			return fmt.Errorf("stop %s: %w", t.unit.Name, err)
 		}
 		if err := t.services.WaitStopped(ctx, *t.unit, stopTimeout); err != nil {
 			return fmt.Errorf("verify %s terminated: %w", t.unit.Name, err)
-		}
-		// The hold: a reboot or a dependency must not start the service while the upgrade is
-		// unfinished. It is lifted by startService, the only way a version is brought back.
-		if err := t.services.Disable(ctx, *t.unit); err != nil {
-			return fmt.Errorf("keep %s from starting during the upgrade: %w", t.unit.Name, err)
 		}
 	}
 	release, err := u.lockDatabase()
@@ -448,6 +455,21 @@ func (u *upgrader) quiesce(ctx context.Context) error {
 		return err
 	}
 	release()
+	return nil
+}
+
+// holdService keeps the service from starting while the upgrade is unfinished. The hold is
+// placed before Stop, so no start can slip in between, and lifted only by startService, the
+// only way a version is brought back.
+func (u *upgrader) holdService(ctx context.Context) error {
+	t := u.t
+	hold := t.services.Disable
+	if h, ok := t.services.(serviceHolder); ok {
+		hold = h.Hold
+	}
+	if err := hold(ctx, *t.unit); err != nil {
+		return fmt.Errorf("keep %s from starting during the upgrade: %w", t.unit.Name, err)
+	}
 	return nil
 }
 
