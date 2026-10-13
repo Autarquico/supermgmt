@@ -79,6 +79,12 @@ func NewOAuthResolver(ctx context.Context, cfg OAuthConfig, db *database.DB) (*O
 	if cfg.JWKSURL != "" {
 		r.jwt = jwtVerifier{keys: gooidc.NewRemoteKeySet(gooidc.ClientContext(ctx, cfg.HTTP), cfg.JWKSURL)}
 	}
+	if cfg.IntrospectionURL != "" {
+		if cfg.ClientID == "" || cfg.ClientSecret.Reveal() == "" {
+			return nil, errors.New("oauth introspection needs a client id and secret")
+		}
+		r.opaque = newIntrospector(cfg)
+	}
 	return r, nil
 }
 
