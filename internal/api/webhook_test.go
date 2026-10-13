@@ -176,3 +176,62 @@ func TestWebhookIsRateLimitedPerClient(t *testing.T) {
 		t.Errorf("delivery %d: status %d, want 429", int(webhookRate.burst)+1, last.Status)
 	}
 }
+
+type auditedDelivery struct {
+	provider domain.ID
+	delivery string
+	status   string
+}
+
+// acceptWithAudit runs the webhook's accept step with an Audit hook that
+// records its calls, or fails with auditErr.
+func (f *m4Fixture) acceptWithAudit(auditErr error, deliveries ...github.WebhookEvent) ([]auditedDelivery, []error, domain.Provider) {
+	f.t.Helper()
+	providers, err := database.ListProviders(context.Background(), f.db.Reader())
+	must(f.t, err)
+	var seen []auditedDelivery
+	hook := GitHubWebhook{
+		DB: f.db, Secrets: f.secrets, Watcher: f.nudges,
+		Audit: func(_ context.Context, _ database.Querier, p domain.Provider, ev github.WebhookEvent, status string) error {
+			seen = append(seen, auditedDelivery{p.ID, ev.DeliveryID, status})
+			return auditErr
+		},
+	}
+	var errs []error
+	for _, ev := range deliveries {
+		_, err := hook.accept(context.Background(), f.clock.Now, f.ids, providers[0], ev)
+		errs = append(errs, err)
+	}
+	return seen, errs, providers[0]
+}
+
+func TestWebhookAuditsEachNewDeliveryOnceWithItsOutcome(t *testing.T) {
+	f := newM4Fixture(t)
+	f.withWebhookProvider()
+	check := github.WebhookEvent{DeliveryID: "d-1", Type: "check_run", RepositoryID: 42, HeadSHA: webhookSHA}
+	ping := github.WebhookEvent{DeliveryID: "d-2"}
+
+	seen, errs, p := f.acceptWithAudit(nil, check, check, ping)
+
+	for _, err := range errs {
+		must(t, err)
+	}
+	want := []auditedDelivery{{p.ID, "d-1", webhookNudged}, {p.ID, "d-2", webhookIgnored}}
+	if fmt.Sprint(seen) != fmt.Sprint(want) {
+		t.Errorf("audited %+v, want %+v (a redelivery is not audited again)", seen, want)
+	}
+}
+
+func TestWebhookAuditFailureRejectsTheDeliveryAndRecordsNothing(t *testing.T) {
+	f := newM4Fixture(t)
+	f.withWebhookProvider()
+
+	_, errs, _ := f.acceptWithAudit(fmt.Errorf("audit down"), github.WebhookEvent{DeliveryID: "d-1", Type: "check_run", RepositoryID: 42, HeadSHA: webhookSHA})
+
+	if errs[0] == nil {
+		t.Fatal("accept succeeded although the audit failed")
+	}
+	if f.deliveryRows() != 0 || len(f.nudges.seen()) != 0 {
+		t.Errorf("a rejected delivery left rows=%d nudges=%d; a retry must be treated as new", f.deliveryRows(), len(f.nudges.seen()))
+	}
+}

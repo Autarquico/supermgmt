@@ -54,6 +54,11 @@ type GitHubWebhook struct {
 	DB      *database.DB
 	Secrets SecretReader
 	Watcher Nudger
+
+	// Audit, when set, records each new delivery in the transaction that
+	// stores it (app.WebhookAudit.Record); a failure rejects the delivery
+	// so the sender retries it.
+	Audit func(ctx context.Context, q database.Querier, p domain.Provider, ev github.WebhookEvent, status string) error
 }
 
 func (w GitHubWebhook) complete() error {
@@ -167,7 +172,11 @@ func (g GitHubWebhook) accept(ctx context.Context, now func() time.Time, ids dom
 		if err != nil || !fresh {
 			return err
 		}
-		return database.MarkWebhookDeliveryProcessed(ctx, tx, p.ID.String(), ev.DeliveryID, received, resultOf(ev))
+		status := resultOf(ev)
+		if err := database.MarkWebhookDeliveryProcessed(ctx, tx, p.ID.String(), ev.DeliveryID, received, status); err != nil {
+			return err
+		}
+		return g.audit(ctx, tx, p, ev, status)
 	})
 	switch {
 	case err != nil:
@@ -179,6 +188,13 @@ func (g GitHubWebhook) accept(ctx context.Context, now func() time.Time, ids dom
 	}
 	g.Watcher.Nudge(ev.RepositoryID, ev.HeadSHA)
 	return webhookNudged, nil
+}
+
+func (g GitHubWebhook) audit(ctx context.Context, q database.Querier, p domain.Provider, ev github.WebhookEvent, status string) error {
+	if g.Audit == nil {
+		return nil
+	}
+	return g.Audit(ctx, q, p, ev, status)
 }
 
 func resultOf(ev github.WebhookEvent) string {
