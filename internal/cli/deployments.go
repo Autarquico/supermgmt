@@ -320,7 +320,7 @@ func newRollbackCmd(env []string) *cobra.Command {
 }
 
 func newestDeployment(ctx context.Context, api *client.Client, target domain.ID) (wire.Deployment, error) {
-	page, err := api.ListDeployments(ctx, client.DeploymentQuery{PageQuery: wire.PageQuery{Limit: 1}, AppTargetID: target})
+	page, err := api.ListDeployments(ctx, wire.DeploymentQuery{PageQuery: wire.PageQuery{Limit: 1}, AppTargetID: target})
 	if err != nil {
 		return wire.Deployment{}, err
 	}
@@ -355,7 +355,7 @@ func newDeploymentsListCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			q := client.DeploymentQuery{PageQuery: *page, State: state}
+			q := wire.DeploymentQuery{PageQuery: *page, State: state}
 			if app != "" {
 				if q.AppID, err = resolveApp(cmd.Context(), api, app); err != nil {
 					return err
