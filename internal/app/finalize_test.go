@@ -907,3 +907,15 @@ func TestFinalize_IsTheWatchersFinalizer(t *testing.T) {
 		t.Errorf("state = %s, want the watcher's pass to have finalized the ungated deployment", row.State)
 	}
 }
+
+func TestFinalize_RequireProvenanceRefusesAPinnedDeployedDigestWithoutAnAcceptedAttestation(t *testing.T) {
+	f := newFinFixture(t, finOptions{gated: true, pinned: true})
+	f.exec(`UPDATE environments SET config_json = json_set(config_json, '$.require_provenance', json('true')) WHERE id = ?`, f.dev.ID)
+	f.gh.attest(depWebDigest)
+	f.verify.err = fmt.Errorf("%w: wrong workflow", github.ErrAttestationRejected)
+	created := f.create()
+
+	f.mustFinalize(created.ID)
+
+	f.wantFailed(created.ID, smerr.CodeArtifactNotImmutable, smerr.ReasonDigestUnbound)
+}
