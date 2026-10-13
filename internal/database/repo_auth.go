@@ -312,12 +312,19 @@ func ClaimOIDCJTI(ctx context.Context, q Querier, issuer, jti string, expiresAt 
 
 // ---- bulk operations -------------------------------------------------------
 
-// RevokeAllCredentials revokes every session and API token that is still
-// active, as a restore does (spec §29.2, ADR-0020), and returns how many.
+// RevokeAllCredentials revokes every session, API token, MCP token and OAuth
+// access token that is still active, as a restore does (spec §29.2, ADR-0020),
+// and returns how many. A remote MCP client holds no token of its own, so its
+// row stays as it is; its access tokens are what die.
 func RevokeAllCredentials(ctx context.Context, q Querier, at time.Time) (int64, error) {
 	var total int64
-	for _, table := range []string{"sessions", "api_tokens"} {
-		n, err := affected(ctx, q, table, `UPDATE `+table+` SET revoked_at = ? WHERE revoked_at IS NULL`, millis(at))
+	for _, target := range []struct{ table, active string }{
+		{"sessions", `revoked_at IS NULL`},
+		{"api_tokens", `revoked_at IS NULL`},
+		{"mcp_clients", `revoked_at IS NULL AND token_hash IS NOT NULL`},
+		{"oauth_access_tokens", `revoked_at IS NULL`},
+	} {
+		n, err := affected(ctx, q, target.table, `UPDATE `+target.table+` SET revoked_at = ? WHERE `+target.active, millis(at))
 		if err != nil {
 			return 0, err
 		}
@@ -342,15 +349,17 @@ func InvalidatePendingCodes(ctx context.Context, q Querier, at time.Time) (int64
 
 // AuthSwept counts the rows SweepAuth removed.
 type AuthSwept struct {
-	Sessions, APITokens, BootstrapCodes, JoinTokens, OIDCReplays int64
+	Sessions, APITokens, OAuthAccessTokens, BootstrapCodes, JoinTokens, OIDCReplays int64
 }
 
-// SweepAuth deletes sessions, API tokens, bootstrap codes, join tokens and
-// OIDC replay records that expired at or before cutoff. Callers pass a cutoff
+// SweepAuth deletes sessions, API tokens, OAuth access tokens, bootstrap codes,
+// join tokens and OIDC replay records that expired at or before cutoff. Callers pass a cutoff
 // a little in the past so a recently expired credential still reads as
 // "expired" rather than "unknown". Revoked rows go with their expiry, except
-// sessions and API tokens that a job not yet finished was submitted with: the
-// claim-time check must still find them (spec §11.1).
+// sessions, API tokens and OAuth access tokens that a job not yet finished (or,
+// for OAuth tokens, a provisional deployment still waiting on CI) was submitted
+// with: the claim-time check must still find them (spec §11.1). MCP client rows
+// are never swept: they are history.
 func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, error) {
 	var out AuthSwept
 	targets := []struct {
@@ -360,6 +369,7 @@ func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, err
 	}{
 		{"sessions", unfinishedJobCredential("session"), &out.Sessions},
 		{"api_tokens", unfinishedJobCredential("api_token"), &out.APITokens},
+		{"oauth_access_tokens", unfinishedJobCredential("oauth_access_token") + provisionalDeploymentCredential("oauth_access_token"), &out.OAuthAccessTokens},
 		{"bootstrap_codes", "", &out.BootstrapCodes},
 		{"join_tokens", "", &out.JoinTokens},
 		{"oidc_replay", "", &out.OIDCReplays},
@@ -379,4 +389,12 @@ func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, err
 func unfinishedJobCredential(kind string) string {
 	return ` AND id NOT IN (SELECT credential_id FROM jobs WHERE credential_kind = '` + kind +
 		`' AND state NOT IN ('succeeded', 'failed', 'cancelled'))`
+}
+
+// provisionalDeploymentCredential spares the credentials of deployments that
+// hold no job yet but will finalize with the credential once CI passes
+// (ADR-0011).
+func provisionalDeploymentCredential(kind string) string {
+	return ` AND id NOT IN (SELECT credential_id FROM deployments WHERE credential_kind = '` + kind +
+		`' AND state IN ('created', 'waiting_ci'))`
 }
