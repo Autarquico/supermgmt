@@ -289,4 +289,39 @@ func TestParseACLNameRoundTrips(t *testing.T) {
 	}
 }
 
+func TestPVE_TokenIsOursOnlyWithTheInstallComment(t *testing.T) {
+	const user = "sm-abc123@pve"
+	tests := map[string]struct {
+		listing string
+		want    bool
+	}{
+		"our comment":     {`[{"tokenid":"sm","comment":"supermgmt install abc123"}]`, true},
+		"no comment":      {`[{"tokenid":"sm"}]`, false},
+		"foreign comment": {`[{"tokenid":"sm","comment":"made by hand"}]`, false},
+		"another install": {`[{"tokenid":"sm","comment":"supermgmt install zzz"}]`, false},
+		"other token id":  {`[{"tokenid":"other","comment":"supermgmt install abc123"}]`, false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			p, r := newRecordedPVE()
+			r.answer = func(Command) ([]byte, error) { return []byte(tc.listing), nil }
+			got, err := p.TokenExists(bg, user, "sm")
+			if err != nil || got != tc.want {
+				t.Errorf("TokenExists = %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPVE_AddTokenCarriesTheInstallComment(t *testing.T) {
+	p, r := newRecordedPVE()
+	r.answer = func(Command) ([]byte, error) { return []byte(`{"value":"S"}`), nil }
+	if _, err := p.AddToken(bg, "sm-abc123@pve", "sm"); err != nil {
+		t.Fatal(err)
+	}
+	if args := strings.Join(r.cmds[0].Args, " "); !strings.Contains(args, "--comment supermgmt install abc123") {
+		t.Errorf("argv = %q", args)
+	}
+}
+
 var _ = fs.ErrNotExist

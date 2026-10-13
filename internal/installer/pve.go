@@ -638,7 +638,31 @@ func (p execPVE) TokenExists(ctx context.Context, user, id string) (bool, error)
 	if err := validToken(user, id); err != nil {
 		return false, err
 	}
-	return p.listed(ctx, "tokenid", id, pveumTool, "user", "token", "list", user)
+	return p.ownedToken(ctx, user, id)
+}
+
+// tokenComment is the ownership mark of a token: the install id its user was
+// derived from. A token without it was not created by that install.
+func tokenComment(user string) string {
+	return ownershipMark(strings.TrimSuffix(strings.TrimPrefix(user, "sm-"), "@pve"))
+}
+
+// ownedToken reports whether the token exists and carries this install's
+// comment; a same-named token without it counts as absent, so it is never
+// revoked.
+func (p execPVE) ownedToken(ctx context.Context, user, id string) (bool, error) {
+	var rows []map[string]any
+	if err := p.json(ctx, &rows, pveumTool, "user", "token", "list", user); err != nil {
+		return false, err
+	}
+	for _, r := range rows {
+		tokenID, _ := r["tokenid"].(string)
+		comment, _ := r["comment"].(string)
+		if tokenID == id && comment == tokenComment(user) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // AddToken reads the secret from the captured output only; a failure or an
@@ -647,7 +671,7 @@ func (p execPVE) AddToken(ctx context.Context, user, id string) (audit.Secret, e
 	if err := validToken(user, id); err != nil {
 		return "", err
 	}
-	out, err := p.run(ctx, true, nil, pveumTool, "user", "token", "add", user, id, "--privsep", "1", "--output-format", "json")
+	out, err := p.run(ctx, true, nil, pveumTool, "user", "token", "add", user, id, "--privsep", "1", "--comment", tokenComment(user), "--output-format", "json")
 	if err != nil {
 		return "", errors.New("pveum could not create the API token")
 	}
