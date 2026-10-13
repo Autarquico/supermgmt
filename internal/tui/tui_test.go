@@ -660,6 +660,29 @@ func TestHandoffLaunchFailureIsShownAndEndsTheSession(t *testing.T) {
 	contains(t, h.view(), "could not start shell on web-1")
 }
 
+func TestHandoffThatCannotStartSkipsTheTerminalHandover(t *testing.T) {
+	var probe handoffProbe
+	api := newFake()
+	api.handoff = probe.handoff("sm-no-such-program")
+	h, open := startShell(t, api)
+	opened, ok := open().(handoffOpenedMsg)
+	if !ok {
+		t.Fatal("the session did not open")
+	}
+	cmd := h.send(opened)
+	if cmd == nil {
+		t.Fatal("an opened handoff produced no command")
+	}
+	msg := cmd()
+	returned, ok := msg.(handoffReturnedMsg)
+	if !ok {
+		t.Fatalf("got %T, want handoffReturnedMsg without handing the terminal over", msg)
+	}
+	if !errors.Is(returned.err, exec.ErrNotFound) {
+		t.Errorf("err = %v, want exec.ErrNotFound", returned.err)
+	}
+}
+
 func TestHandoffSignalledChildIsReportedAsFailureCode(t *testing.T) {
 	var probe handoffProbe
 	api := newFake()

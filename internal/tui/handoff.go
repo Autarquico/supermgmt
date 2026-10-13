@@ -119,9 +119,17 @@ func (m *Model) onHandoffOpened(msg handoffOpenedMsg) tea.Cmd {
 		return nil
 	}
 	h := msg.h
-	return tea.ExecProcess(h.Cmd, func(err error) tea.Msg {
+	returned := func(err error) tea.Msg {
 		return handoffReturnedMsg{node: msg.node, tool: msg.tool, h: h, err: err}
-	})
+	}
+	if h.Cmd.Err != nil {
+		// A command that cannot start (program not on PATH) must not go through
+		// tea.ExecProcess: bubbletea releases and restores the terminal back to
+		// back, and its stale renderer goroutine then stops the restarted
+		// ticker, so nothing is ever painted again.
+		return func() tea.Msg { return returned(h.Cmd.Err) }
+	}
+	return tea.ExecProcess(h.Cmd, returned)
 }
 
 // exitOutcome maps the ExecProcess error to Handoff.Done's arguments.
