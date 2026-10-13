@@ -256,7 +256,7 @@ func (w *m5World) waitJobState(id domain.ID, timeout time.Duration, want domain.
 
 // ---- MCP clients -------------------------------------------------------------------------------
 
-var approveHint = regexp.MustCompile(`sm approvals approve (\S+)`)
+var approveHint = regexp.MustCompile(`sm jobs approve (\S+) --plan-hash`)
 
 // addMCPClient runs `sm mcp clients add` the way a person does: when registration waits for
 // approval, approve the job it names and run the command again. It returns the token file.
