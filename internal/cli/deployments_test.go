@@ -292,7 +292,7 @@ func timelineFixture() wire.Deployment {
 	finished := deploymentTestAt.Add(5 * time.Second)
 	d := deploymentTestRecord("failed")
 	d.PlanHash, d.JobID = &deploymentTestPlan, &deploymentTestJob
-	d.StateCode, d.StateReason = smerr.CodeDeploymentFailed, smerr.ReasonHealthFailed
+	d.StateCode, d.StateReason, d.StateCause = smerr.CodeDeploymentFailed, smerr.ReasonHealthFailed, "STATEFUL"
 	d.FinishedAt = &finished
 	d.Steps = []wire.DeploymentStep{
 		{Ordinal: 1, Name: "preflight", State: "succeeded", Attempt: 1, StartedAt: &started, FinishedAt: &finished},
@@ -302,6 +302,13 @@ func timelineFixture() wire.Deployment {
 		},
 	}
 	return d
+}
+
+func TestOutcomeErrorNamesTheRecordedCause(t *testing.T) {
+	d := timelineFixture()
+	if msg := outcomeError(d).Error(); !strings.Contains(msg, "(HEALTH_FAILED: STATEFUL)") {
+		t.Errorf("outcomeError = %q, want the reason and its cause", msg)
+	}
 }
 
 func TestDeploymentsGetShowsTheStepTimeline(t *testing.T) {

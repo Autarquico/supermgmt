@@ -145,6 +145,9 @@ func stateWithReason(d wire.Deployment) string {
 	if d.StateReason == "" {
 		return safe(d.State)
 	}
+	if d.StateCause != "" {
+		return safe(d.State + " (" + string(d.StateReason) + ": " + d.StateCause + ")")
+	}
 	return safe(d.State + " (" + string(d.StateReason) + ")")
 }
 

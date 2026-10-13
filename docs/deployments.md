@@ -36,7 +36,7 @@ Add a `github` provider to the configuration file ([configuration.md](configurat
 sm secrets import --name providers/github/token
 ```
 
-`POST /api/v1/providers` with `type: github` is documented in `api/openapi.yaml` and the service method exists (`Apps.CreateGitHubProvider`, test `TestApplyApproved_GitHubProvider`), but **the HTTP route in this build accepts only `type: local`** (`internal/api/routes.go`, `POST /providers` handler). Register the provider through the file until that is wired.
+`POST /api/v1/providers` with `type: github` registers the provider over HTTP; the request is approval-gated (`provider.write`), so it is applied at once or parked for approval (`TestPostProvidersAcceptsAGitHubProvider`, `internal/api/routes_providers_m4_test.go`). The file route still works.
 
 The token is a fine-grained, read-only personal access token with Contents, Checks, Actions, Attestations and Metadata read access. Whether this permission set is exactly sufficient is **not verified against real GitHub**.
 
@@ -210,7 +210,9 @@ If health fails after `deploy`, rollback is automatic only when all of these hol
 
 A manual rollback (`sm rollback`) creates a `kind: rollback` deployment. Its plan binds the known-good deployment's frozen snapshots: Compose model, image digests, **exact secret versions**, and its health and policy snapshots. Later edits to the app's Compose, health checks or secrets do not change what is restored, and rotating a secret changes nothing in an existing plan (`TestRollbackPlan_BindsKnownGoodSnapshot`, `TestRevalidateRollback_AfterSourceEditAndRotation`). If a bound secret version or snapshot is gone the rollback is refused before any change (`ROLLBACK_UNAVAILABLE`; `TestRollback_MissingVersionIsUnavailableBeforeAnythingIsEnqueued`). Rollback needs no CI gate; production still needs approval (`TestRollback_ProductionRollbackWaitsForApproval`).
 
-Previous deployment directories on the node are kept. **There is no garbage collection of old directories in this build** (no code removes them; ADR-0029 describes keeping the last five, which is not implemented); disk use grows with each deployment until an operator removes old directories.
+A failed deployment ends with its reason and, when one was recorded, its cause: `sm deployments get` shows `reason: ROLLBACK_UNAVAILABLE (STATEFUL)`, and `--wait` errors and the TUI timeline show `ROLLBACK_UNAVAILABLE: STATEFUL` (`state_cause` in the API).
+
+Old deployment directories on the node are collected after a deployment ends `succeeded` or `rolled_back` (`internal/app/deploy_gc.go`, template `compose.gc`). The newest five deployments of the target are always kept. Beyond those, only a `rolled_back` deployment, or a `failed` one that never started changing services, is removed. A known-good deployment, the current deployment and its frozen rollback target are never removed (`TestCollectableDeployments`, `TestDeployHandler_SuccessCollectsOldDirectoriesBeyondTheNewestFive`). A collection failure never fails the deployment; it leaves a `deployment.gc_failed` event (`TestDeployHandler_AFailingCollectionNeverFailsTheDeployment`).
 
 ### Interruption and recovery
 
@@ -226,7 +228,5 @@ Secrets referenced by apps live under `apps/` (`secret://apps/...`). `secret.wri
 - `repository` Compose source refused in production environments.
 - Health bounds (30s / 1m / 60) are a V1 decision, not spec text. Health types limited to `http`, `tcp`, `docker-health` on the node and `http`/`https` from the control plane.
 - No environment-claim requirement for Actions tokens.
-- Provider registration over HTTP for `github` is not wired (file only).
-- Old deployment directories are not removed.
 - `snapshot` in a deployment policy and the Proxmox items deferred from M3 are not available.
 - Real GitHub, GHCR and Sigstore behavior, including redirects, the TUF trust anchor and attestation verification: **not verified**, see [the manual checklist](manual-checks/m4-real-github.md).

@@ -1,5 +1,5 @@
  DEPLOYMENT 00001002                                                          
- state         failed (HEALTH_CHECK_FAILED)                                   
+ state         failed (HEALTH_CHECK_FAILED: STATEFUL)                         
  kind          deploy                                                         
  commit        2222222222222222222222222222222222222222                       
  plan          sha256:99999                                                   
