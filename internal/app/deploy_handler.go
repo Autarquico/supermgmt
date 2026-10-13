@@ -486,8 +486,23 @@ func (h deployHandler) dispatch(ctx context.Context, j *deployJob, step deployme
 }
 
 func (h deployHandler) closeIntent(ctx context.Context, j *deployJob, intent domain.ID, outcome string) error {
-	evidence, _ := json.Marshal(map[string]string{"outcome": outcome})
-	return h.store.CompleteIntent(ctx, j.lease, intent, outcome, evidence)
+	return h.store.CompleteIntent(ctx, j.lease, intent, outcome, commandExitEvidence(outcome, 0))
+}
+
+// commandExitEvidence is what the worker knows when a command's session ended:
+// a succeeded command is closed with its live exit status as proven, complete
+// evidence, so the reconciler never has to ask the node about it again. A failed
+// one records its outcome and status only; it proves nothing.
+func commandExitEvidence(outcome string, exit int) json.RawMessage {
+	if outcome != jobs.OutcomeSucceeded {
+		raw, _ := json.Marshal(map[string]any{"outcome": outcome, "exit_status": exit})
+		return raw
+	}
+	raw, _ := json.Marshal(jobs.Evidence{
+		Done: true, ExitStatus: exit, Proof: "ssh_exit", Classification: jobs.ClassComplete,
+		Fingerprint: json.RawMessage(`{"marker":"live","exit":0}`),
+	})
+	return raw
 }
 
 // commandFailed reports whether err says the command ran (or was refused by the

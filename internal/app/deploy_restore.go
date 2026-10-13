@@ -273,8 +273,7 @@ func (r *restoreRun) concludeDispatch(ctx context.Context, intent domain.ID, ste
 	if exit != 0 {
 		outcome = jobs.OutcomeFailed
 	}
-	evidence, _ := json.Marshal(map[string]int{"exit_status": exit})
-	if err := r.Ledger.CompleteIntent(ctx, intent, outcome, evidence); err != nil {
+	if err := r.Ledger.CompleteIntent(ctx, intent, outcome, commandExitEvidence(outcome, exit)); err != nil {
 		return err
 	}
 	if exit != 0 {
