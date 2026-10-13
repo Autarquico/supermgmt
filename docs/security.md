@@ -305,5 +305,5 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Actions OIDC tokens are not required to carry an `environment` claim.
 - The GitHub TUF trust anchor is not independently verified; real attestations, real Actions tokens, redirect behavior and GHCR pulls are unverified.
 - Health check bounds (timeout 30s, interval 1m, 60 attempts) and the Compose CLI pin (5.5.1) are V1 choices, not spec text.
-- Old deployment directories on a node are not garbage-collected.
+- Old deployment directories are garbage-collected after a success (newest 5 kept, never the current one, a known-good or the rollback target); a GC failure only emits `deployment.gc_failed`.
 - No independent security audit has been performed.
