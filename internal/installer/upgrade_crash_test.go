@@ -5,7 +5,13 @@ package installer
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -250,5 +256,113 @@ func TestUpgrade_CrashAfterTheHoldKeepsItUntilTheServiceStarts(t *testing.T) {
 	}
 	if h.held || !h.running || h.startedAs != binV2 {
 		t.Errorf("held %t running %t as %q", h.held, h.running, h.startedAs)
+	}
+}
+
+// ---- SUPERMGMT_CRASH_AT ----
+
+func TestUpgradeCrashPoints_CoverEveryHitLiteral(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "upgrade.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	literals := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return true
+		}
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		lit, isLit := call.Args[0].(*ast.BasicLit)
+		if !isSel || sel.Sel.Name != "hit" || !isLit {
+			return true
+		}
+		literals++
+		if point, _ := strconv.Unquote(lit.Value); !slices.Contains(upgradeCrashPoints, point) {
+			t.Errorf("hit(%s) in upgrade.go is missing from upgradeCrashPoints", lit.Value)
+		}
+		return true
+	})
+	if literals == 0 {
+		t.Fatal("found no hit literal; the scan is broken")
+	}
+}
+
+func TestUpgradeCrashPoints_NameEveryPointOfARun(t *testing.T) {
+	for _, point := range upgradePoints(t, func(*uhost) {}) {
+		if !slices.Contains(upgradeCrashPoints, point) {
+			t.Errorf("a normal run passes %q, which the env hook cannot name", point)
+		}
+	}
+}
+
+// TestUpgradeCrashHelper is the child process of TestUpgradeEnvHookExits86.
+func TestUpgradeCrashHelper(t *testing.T) {
+	if os.Getenv("SM_CRASH_HELPER") != "1" {
+		t.Skip("child process only")
+	}
+	h := newUHost(t)
+	d := h.deps()
+	d.Host.Env = map[string]string{crashAtEnv: os.Getenv(crashAtEnv)}
+	_ = New(d).upgrade(context.Background(), h.upgradeOpts(), defaultHooks())
+}
+
+func TestUpgradeEnvHookExits86(t *testing.T) {
+	for _, point := range []string{"U:staged", "U:swap:before", "U:swapped:recorded"} {
+		t.Run(point, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUpgradeCrashHelper$")
+			cmd.Env = append(os.Environ(), "SM_CRASH_HELPER=1", crashAtEnv+"="+point)
+			err := cmd.Run()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != crashExitCode {
+				t.Fatalf("exit = %v, want code %d", err, crashExitCode)
+			}
+		})
+	}
+}
+
+func TestUpgradeEnvHookIgnoresUnknownPoints(t *testing.T) {
+	h := newUHost(t)
+	d := h.deps()
+	d.Host.Env = map[string]string{crashAtEnv: "U:no-such-point"}
+	if err := New(d).upgrade(context.Background(), h.upgradeOpts(), defaultHooks()); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+}
+
+func TestUpgrade_CrashBeforeSwapLeavesTheDowngradeRecordOnce(t *testing.T) {
+	h := newUHost(t)
+	h.oldContent = binV2
+	h.put(applianceLayout().Binary, binV2)
+	h.put("/usr/local/src/sm-new", binV1)
+	o := h.upgradeOpts()
+	o.AllowDowngrade = true
+	hooks := defaultHooks()
+	hooks.crash = func(point string) error {
+		if point == "U:swap:before" {
+			return errCrashed
+		}
+		return nil
+	}
+	if err := New(h.deps()).upgrade(context.Background(), o, hooks); !errors.Is(err, errCrashed) {
+		t.Fatalf("crash err = %v", err)
+	}
+	pending := func() int {
+		n := 0
+		for p := range h.inodes {
+			if strings.HasPrefix(p, applianceLayout().DataDir+"/"+pendingAuditDir+"/") {
+				n++
+			}
+		}
+		return n
+	}
+	if pending() != 1 {
+		t.Fatalf("records after the crash = %d, want 1", pending())
+	}
+	if err := New(h.deps()).upgrade(context.Background(), o, defaultHooks()); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	if pending() != 1 || h.live() != binV1 {
+		t.Errorf("after the rerun: records %d, live %q; want 1 record (resume must not duplicate) and the new binary", pending(), h.live())
 	}
 }

@@ -77,7 +77,12 @@ type upgrader struct {
 	st upgradeState
 }
 
-func (u *upgrader) hit(point string) error { return u.h.at(point) }
+func (u *upgrader) hit(point string) error {
+	if err := u.h.at(point); err != nil {
+		return err
+	}
+	return crashFromEnv(u.d.Host.Env, point)
+}
 
 func (u *upgrader) say(format string, args ...any) { u.in.say(format, args...) }
 
@@ -646,6 +651,9 @@ func (u *upgrader) swap() error {
 		defer release()
 		if sha, err := files.Hash(t.staged()); err != nil || sha != u.st.NewSHA256 {
 			return fmt.Errorf("%s is missing or changed", t.staged())
+		}
+		if err := u.recordDowngrade(); err != nil {
+			return err
 		}
 		if err := u.hit("U:swap:before"); err != nil {
 			return err
