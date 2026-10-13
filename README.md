@@ -6,7 +6,7 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](ROADMAP.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) M3 (Proxmox discovery and power actions, the Proxmox appliance installer, upgrade and uninstall) and M4 (applications, the GitHub connector and CI-gated Docker Compose deployments with health checks and rollback) are implemented on the integration branch and await release-level review. **Proxmox was verified against fakes only: nothing has run on a real Proxmox VE host** ([checklist](docs/manual-checks/m3-real-pve.md)). **GitHub was verified against a fake only: no real GitHub, GHCR, attestation or Actions OIDC token has been used** ([checklist](docs/manual-checks/m4-real-github.md)). There is no MCP endpoint. No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
+> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) M3 (Proxmox discovery and power actions, the Proxmox appliance installer, upgrade and uninstall), M4 (applications, the GitHub connector and CI-gated Docker Compose deployments with health checks and rollback) and M5 (the MCP server: stdio bridge, read tools, approval-gated plans, optional write tools off by default, remote MCP as an OAuth protected resource) are implemented on the integration branch and await release-level review. **Proxmox was verified against fakes only: nothing has run on a real Proxmox VE host** ([checklist](docs/manual-checks/m3-real-pve.md)). **GitHub was verified against a fake only: no real GitHub, GHCR, attestation or Actions OIDC token has been used** ([checklist](docs/manual-checks/m4-real-github.md)). **MCP was verified only with the official Go SDK's own client, hand-written JSON-RPC goldens and a fake authorization server: no real MCP client (Claude Code, Claude Desktop, MCP Inspector) and no real OAuth authorization server has been used** ([checklist](docs/manual-checks/m5-real-mcp-clients.md)). No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
 
 SuperMgmt is a local-first, terminal-first control plane for developers. Connect Linux machines, Proxmox, Docker, systemd, GitHub repositories and deployments in one place; manage them from a fast TUI/CLI, or expose the same policy-controlled operations to AI agents through MCP.
 
@@ -23,7 +23,7 @@ _No screenshot yet._
 
 - **Local-first.** `sm` runs on a laptop with no server dependency (implemented, M1; SPEC §1.4).
 - **Agentless-first.** Linux nodes are managed over SSH. Nothing of SuperMgmt runs on them: only a dedicated user, its files and a sudoers drop-in (implemented, M1).
-- **MCP-native, not MCP-controlled.** AI agents use the same policy and audit core as humans and get no privileged bypass (planned, M5; the policy core exists since M0).
+- **MCP-native, not MCP-controlled.** AI agents use the same policy and audit core as humans and get no privileged bypass (implemented in M5 and tested with the SDK client only; the policy core exists since M0).
 - **Provider-independent.** Proxmox is a first-class integration, never a core dependency (implemented in M3 against fakes; not run on a real host).
 
 ## Architecture
@@ -47,7 +47,7 @@ The target architecture (SPEC §2, §6). One daemon owns state; every other surf
      (agentless)  VE API      systemd       API          optional)
 ```
 
-What exists today (M0 to M4): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer, and (M3) Proxmox discovery of nodes, VMs, containers and storages, power actions as non-retryable jobs correlated by Proxmox task id, the `proxmox-lxc` appliance installer with a rollback journal, and upgrade and uninstall. and (M4) the GitHub connector (CI checks, contents at one commit, Sigstore attestations, Actions OIDC, webhook), applications and targets, and Compose deployments through a closed pipeline with preflight, health verification and rollback. Not present: MCP. Details: [docs/architecture.md](docs/architecture.md).
+What exists today (M0 to M5): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer, and (M3) Proxmox discovery of nodes, VMs, containers and storages, power actions as non-retryable jobs correlated by Proxmox task id, the `proxmox-lxc` appliance installer with a rollback journal, and upgrade and uninstall. and (M4) the GitHub connector (CI checks, contents at one commit, Sigstore attestations, Actions OIDC, webhook), applications and targets, and Compose deployments through a closed pipeline with preflight, health verification and rollback, and (M5) the MCP server (`sm mcp` over stdio, `/mcp` over streamable HTTP in server mode) with registered MCP clients. Details: [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
@@ -151,7 +151,10 @@ Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doc
 | Secret env files for apps (byte-exact, resolved-hash check on the node, needs `jq`) | Implemented (M4); fixture-verified | §10, ADR-0010 |
 | Several targets per environment, GitHub App tokens, Proxmox snapshot policy, `command-template` and `systemd-active` health, other backup templates | Not built | §19, §21 |
 | Deployments against real GitHub, GHCR and real attestations | DEFERRED ([checklist](docs/manual-checks/m4-real-github.md)) | App. E |
-| MCP server (read tools, plan submission) | Planned (M5) | §24 |
+| MCP server: `sm mcp` stdio bridge, read tools, `infra_plan_action`; MCP clients registered with `sm mcp clients add\|list\|remove` (approval-gated registration, token issued once to a 0600 file or the OS keychain) | Implemented (M5); verified with the Go SDK client and raw JSON-RPC goldens (`TestE2E_MCPStdioReadsGraph`, job `e2e-mcp`); real MCP clients DEFERRED ([checklist](docs/manual-checks/m5-real-mcp-clients.md)) | §24, ADR-0031, ADR-0032 |
+| Write tools (`infra_submit_plan`, `infra_restart_service`, `infra_reboot_node`, `infra_create_deployment`, `infra_rollback_deployment`): absent and denied at the API unless `mcp.write_tools_enabled: true`; an MCP identity can never approve, reject or resolve, nor mint credentials | Implemented (M5); `TestMCPRouteMatrix` and `test/integration/mcp_security_test.go` | §11.2, §24 |
+| Remote MCP at `<public_url>/mcp` as an OAuth 2.0 protected resource (RFC 9728 metadata, RFC 9068 JWT or RFC 7662 introspection); SuperMgmt never issues OAuth tokens | Implemented (M5); `TestE2E_MCPRemoteStreamable` against a fake authorization server only; a real authorization server (incl. RFC 8707 `resource`) DEFERRED | §24, ADR-0033 |
+| MCP resources and prompts, interactive exec through MCP | Not built (`allow_interactive_exec: true` is refused) | §24 |
 | Metrics endpoint, automated node teardown | Planned (not scheduled) | §33 |
 | Fuzzing, security scans, packaging, E2E on all modes | Planned (M6) | §31, §36 |
 
@@ -173,7 +176,7 @@ Summary only; see [SECURITY.md](SECURITY.md) and [docs/security.md](docs/securit
 - The `journal-group` log mode lets the node credential read the node's entire system journal. Docker access is root-equivalent. Granting restart on a unit trusts everything that unit executes (a trust profile, not a proof).
 - The KEK files in `security.keys_dir` are not in the database or in backup archives and must be backed up separately (`sm secrets export-key`). Archives are not encrypted.
 - Server mode: every request needs a bearer token (session from OIDC, or an API token); key operations and secret imports are approval-gated jobs. `curl | bash` trusts the `main` branch; the review-first path does not (see [docs/installation.md](docs/installation.md)).
-- MCP content is untrusted input; an MCP identity can never approve its own plans (planned, M5).
+- MCP content is untrusted input; an MCP identity can never approve, reject or resolve plans or jobs, and can never mint credentials. Tool output redacts a fixed set of secret patterns only; unknown secrets in remote text are not detected ([docs/mcp.md](docs/mcp.md)).
 
 ## Supported platforms and integrations
 
@@ -187,7 +190,7 @@ Summary only; see [SECURITY.md](SECURITY.md) and [docs/security.md](docs/securit
 | Proxmox VE | Implemented (M3) for 9.x on amd64 only, against fakes; real host DEFERRED ([docs/compatibility.md](docs/compatibility.md)). 8.x is unsupported (upstream end of life 2026-08) |
 | Docker Compose deployments | Implemented (M4) on SSH nodes with `node.setup` v2, Docker Compose CLI 5.5.1 exactly and `jq`; fixture node and fake GitHub only |
 | GitHub | Implemented (M4) for github.com-style APIs against a fake; real GitHub and GitHub Enterprise Server not verified |
-| MCP clients | Planned (M5) |
+| MCP clients | Implemented (M5) against the Go SDK client and a fake authorization server; no real MCP client or authorization server verified (DEFERRED) |
 | Cloudflare | Optional, guide only ([docs/cloudflare.md](docs/cloudflare.md)); not verified against a real account |
 
 ## Configuration
@@ -196,18 +199,25 @@ See [docs/configuration.md](docs/configuration.md) and [examples/config.yaml](ex
 
 ## MCP example
 
-> **Planned for M5. Not implemented.** The shape below illustrates the design and may change.
+Register a client once (the registration may need human approval), then point the MCP host at the bridge. The token goes straight into the file or keychain entry and is never printed:
 
-```jsonc
-// Example MCP client configuration (planned)
+```bash
+sm mcp clients add claude-desktop --token-file ~/.config/supermgmt/mcp-claude-desktop.token
+# if approval is pending: sm approvals approve <job>, then run the same command again
+```
+
+```json
 {
   "mcpServers": {
-    "supermgmt": { "command": "sm", "args": ["mcp"] }
+    "supermgmt": {
+      "command": "sm",
+      "args": ["mcp", "--token-file", "/Users/you/.config/supermgmt/mcp-claude-desktop.token"]
+    }
   }
 }
 ```
 
-An agent would be able to inspect the infrastructure graph and submit a plan; execution of anything operational in production would wait for human approval of that exact plan.
+More host configurations, including the remote `/mcp` endpoint, are in [examples/mcp/](examples/mcp/) (checked by `test/specexamples`). An agent can inspect the infrastructure graph and plan an action; write tools exist only with `mcp.write_tools_enabled: true`, and anything operational in production waits for human approval of that exact plan. **Not verified with a real MCP client** (only the Go SDK client and raw JSON-RPC goldens); see [docs/mcp.md](docs/mcp.md) and [docs/manual-checks/m5-real-mcp-clients.md](docs/manual-checks/m5-real-mcp-clients.md).
 
 ## Development
 
@@ -229,7 +239,7 @@ make cross-build   # linux/darwin x amd64/arm64, CGO disabled
 
 ## Roadmap
 
-M0 core, M1 local daemon, SSH and TUI, M2 server and releases, M3 Proxmox and the appliance installer, and M4 apps and deployments (all implemented, pending release-level review; M3 pending a real-host run, M4 a real-GitHub run), then M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
+M0 core, M1 local daemon, SSH and TUI, M2 server and releases, M3 Proxmox and the appliance installer, M4 apps and deployments, and M5 MCP (all implemented, pending release-level review; M3 pending a real-host run, M4 a real-GitHub run, M5 real MCP clients and a real authorization server), then M6 hardening. See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing and security
 
