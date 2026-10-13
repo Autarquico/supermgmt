@@ -883,9 +883,9 @@ func (u *upgrader) reportAdvanced() error {
 		"To return to %s:\n"+
 		"  1. cp -p %s %s.revert && mv -f %s.revert %s\n"+
 		"  2. %s\n"+
-		"  3. rm %s && systemctl enable --now %s\n"+
+		"  3. rm %s%s && systemctl enable --now %s\n"+
 		"(On a new host: sm install restore --archive %s --key-export <your key export>.)",
 		st.ToVersion, st.SchemaBefore, st.Archive, st.FromVersion,
-		t.previous(), t.l.Binary, t.l.Binary, t.l.Binary, restore, t.statePath(), UnitName, st.Archive)
+		t.previous(), t.l.Binary, t.l.Binary, t.l.Binary, restore, t.statePath(), t.liftHoldCommand(), UnitName, st.Archive)
 	return fail(ExitRestore, "upgrade to %s failed after the database schema advanced; the service is stopped (restore commands printed above)", st.ToVersion)
 }

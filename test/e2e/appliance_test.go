@@ -347,7 +347,7 @@ func TestM3_ApplianceRollbackLeavesHostClean(t *testing.T) {
 		},
 		{
 			name: "S12f the token cannot be pushed into the container", exit: 7,
-			fault: pvesim.Fault{Tool: "pct", Contains: "push 900 /var/tmp/supermgmt-installer-"},
+			fault: pvesim.Fault{Tool: "pct", Contains: "push 900 /var/lib/supermgmt-installer/journals/"},
 		},
 		{
 			name: "S13 the offline import of the token fails", exit: 7,

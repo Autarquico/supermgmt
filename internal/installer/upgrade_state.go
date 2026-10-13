@@ -72,6 +72,15 @@ type upgradeTarget struct {
 
 func (t upgradeTarget) staged() string   { return t.l.Binary + ".new" }
 func (t upgradeTarget) previous() string { return t.l.Binary + ".prev" }
+
+// liftHoldCommand is the printed shell fragment that removes the upgrade hold, which would
+// otherwise refuse the operator's manual start.
+func (t upgradeTarget) liftHoldCommand() string {
+	if t.unit == nil {
+		return ""
+	}
+	return " && rm -f " + holdDropInPath(*t.unit) + " && systemctl daemon-reload"
+}
 func (t upgradeTarget) statePath() string {
 	return filepath.Join(t.l.DataDir, upgradeStateFile)
 }
