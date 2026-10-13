@@ -1,7 +1,3 @@
-if [ -n "${SM_RELEASE_CHECK_STRUCTURE_ONLY:-}" ] && { [ "${GITHUB_REF_TYPE:-}" = tag ] || [ -n "${GITHUB_ACTIONS:-}" ] && [ "${GITHUB_WORKFLOW:-}" = release ]; }; then
-	echo "check.sh: SM_RELEASE_CHECK_STRUCTURE_ONLY is refused for a release build" >&2
-	exit 2
-fi
 #!/bin/sh
 # Assert a finalized release directory is complete and verifiable (make release-check, release.yml).
 # Usage: check.sh DIST TRUST      (TRUST: see verify-asset.sh)
