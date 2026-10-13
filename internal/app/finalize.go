@@ -278,6 +278,7 @@ func freezeForTarget(ctx context.Context, scope deploymentScope, dep database.De
 	}
 	source := scope.spec.composeSource(image.digest)
 	source.BoundDigests = binding.boundDigests(image.ref)
+	source.RequireProvenance = scope.env.RequireProvenance
 	if remote.composeText != nil {
 		source.Raw = remote.composeText
 	}
