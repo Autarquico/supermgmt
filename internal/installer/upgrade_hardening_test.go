@@ -95,35 +95,6 @@ func TestUpgrade_RevertNeverRestoresTheOldBinaryOverAMigratedDatabase(t *testing
 	}
 }
 
-func TestUpgrade_ResumedBackupIsRetakenWhenTheServiceRanAgain(t *testing.T) {
-	tests := []struct {
-		name         string
-		running      bool
-		wantArchives int
-	}{
-		{"service running again", true, 1},
-		{"service still stopped", false, 0},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newUHost(t)
-			h.seedUpgrade(t, upgradeState{Phase: upBackedUp, Archive: "/x/stale.tar.zst"}, binV2)
-			h.put(applianceLayout().Binary+".new", binV2)
-			h.running = tc.running
-			if err := h.upgrade(defaultHooks()); err != nil {
-				t.Fatalf("%v\n%s", err, h.out.String())
-			}
-			if h.archives != tc.wantArchives {
-				t.Errorf("%d new backups, want %d", h.archives, tc.wantArchives)
-			}
-			if st, _ := h.state(); st.Phase != upDone || (tc.wantArchives == 1) != strings.Contains(st.Archive, "pre-1") {
-				t.Errorf("state = %+v", st)
-			}
-			h.noViolations(t)
-		})
-	}
-}
-
 func TestUpgrade_BuildMetadataAloneIsNotADowngrade(t *testing.T) {
 	h := newUHost(t)
 	h.oldContent = "sm;version=1.0.0+build.2;schema=3"

@@ -70,12 +70,46 @@ func TestUpgrade_CrashAtEveryBoundaryConverges(t *testing.T) {
 			if st, ok := h.state(); !ok || st.Phase != upDone {
 				t.Errorf("state = %+v", st)
 			}
-			if k >= recorded && h.archives != 1 {
-				t.Errorf("a second backup was taken after the first was recorded (%d archives)", h.archives)
+			if k >= recorded && h.liveArchives() != 1 {
+				t.Errorf("%d live archives after a crash past the recorded backup, want exactly 1", h.liveArchives())
 			}
 			h.noViolations(t)
 		})
 	}
+}
+
+func TestUpgrade_ResumeAfterBackedUpRecordedLeavesOneNewerArchive(t *testing.T) {
+	h := newUHost(t)
+	crashAfter(t, h, "U:backed_up:recorded")
+	if err := h.rerun(); err != nil {
+		t.Fatalf("rerun: %v\n%s", err, h.out.String())
+	}
+	st, _ := h.state()
+	if h.liveArchives() != 1 || h.archives != 2 || !strings.Contains(st.Archive, "pre-2") {
+		t.Errorf("live %d, taken %d, recorded %q", h.liveArchives(), h.archives, st.Archive)
+	}
+}
+
+func TestUpgrade_CrashAfterRetakeKeepsOneRecordedArchive(t *testing.T) {
+	h := newUHost(t)
+	crashAfter(t, h, "U:backed_up:recorded")
+	hooks := defaultHooks()
+	hooks.crash = func(point string) error {
+		if point == "U:backup:retaken" {
+			return errCrashed
+		}
+		return nil
+	}
+	if err := New(h.deps()).upgrade(context.Background(), h.upgradeOpts(), hooks); !errors.Is(err, errCrashed) {
+		t.Fatalf("crash err = %v", err)
+	}
+	if err := h.rerun(); err != nil {
+		t.Fatalf("rerun: %v\n%s", err, h.out.String())
+	}
+	if h.liveArchives() != 1 {
+		t.Errorf("%d live archives, want 1", h.liveArchives())
+	}
+	h.noViolations(t)
 }
 
 func TestUpgrade_CrashDuringFailurePolicyConverges(t *testing.T) {

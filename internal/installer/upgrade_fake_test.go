@@ -401,11 +401,26 @@ func (h *uhost) doctor(c Command, f map[string]string) ([]byte, error) {
 	case h.dbSchema > latest:
 		detail, status = fmt.Sprintf("database schema version %d is newer than this binary (%d)", h.dbSchema, latest), "fail"
 	}
-	out, _ := json.Marshal(map[string]any{"ok": status != "fail", "checks": []map[string]string{{"name": "schema", "status": status, "detail": detail}}})
+	report := map[string]any{"ok": status != "fail", "checks": []map[string]string{{"name": "schema", "status": status, "detail": detail}}}
+	if f["doctor"] != "legacy" {
+		report["format_version"], report["database_schema_version"], report["binary_schema_version"] = 1, h.dbSchema, latest
+	}
+	out, _ := json.Marshal(report)
 	if status == "fail" {
 		return out, &ExitStatus{Command: c.Name, Code: 1}
 	}
 	return out, nil
+}
+
+// liveArchives counts the pre-upgrade archives still on disk.
+func (h *uhost) liveArchives() int {
+	n := 0
+	for p := range h.inodes {
+		if strings.HasPrefix(p, applianceLayout().BackupsDir+"/pre-") {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *uhost) backup(c Command, f map[string]string) ([]byte, error) {

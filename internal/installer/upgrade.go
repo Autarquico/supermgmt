@@ -304,6 +304,12 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 	if err := u.ensurePrepared(ctx, newBin); err != nil {
 		return err
 	}
+	if err := u.retakeArchive(ctx); err != nil {
+		if isCrash(err) {
+			return err
+		}
+		return u.abortBeforeSwap(ctx, err)
+	}
 	return u.advance(ctx)
 }
 
@@ -329,22 +335,37 @@ func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 	if err := u.linkPrevious(u.st.OldSHA256); err != nil {
 		return err
 	}
-	return u.dropArchiveIfServiceRan(ctx)
+	return nil
 }
 
-// dropArchiveIfServiceRan: the archive of a resumed run is only as good as the guarantee that the
-// old service did not write to the database after it was taken. A service found running now is
-// proof it did; the upgrade then goes back to the stopped phase and takes a new archive.
-func (u *upgrader) dropArchiveIfServiceRan(ctx context.Context) error {
-	if u.st.Phase != upBackedUp || u.t.unit == nil {
+// retakeArchive: an archive recorded before a crash is only as good as the guarantee that
+// the database did not change after it. The service may have run again, and its WAL is not
+// visible to a stopped-service check, so a resume in phase backed_up never trusts it: the
+// service is quiesced, a new archive replaces it, and the superseded one is removed last.
+func (u *upgrader) retakeArchive(ctx context.Context) error {
+	if u.st.Phase != upBackedUp || !u.in.hasData(u.t) {
 		return nil
 	}
-	if err := u.t.services.WaitStopped(ctx, *u.t.unit, probeTimeout); err == nil {
-		return nil
+	if live, err := u.d.Files.Hash(u.t.l.Binary); err != nil || live != u.st.OldSHA256 {
+		return nil // already swapped: nothing ran on the old database since
 	}
-	u.say("the service is running again since the backup was taken; that backup is stale and will be taken anew")
-	u.st.Archive = ""
-	return u.record(upStopped)
+	if err := u.quiesce(ctx); err != nil {
+		return err
+	}
+	superseded := u.st.Archive
+	if err := u.takeArchive(ctx); err != nil {
+		return err
+	}
+	u.say("the unfinished upgrade's backup is retaken; the earlier one is removed")
+	if err := u.record(upBackedUp); err != nil {
+		return err
+	}
+	if superseded != "" && superseded != u.st.Archive {
+		if err := u.d.Files.RemoveAll(superseded); err != nil {
+			return fmt.Errorf("remove the superseded backup %s: %w", superseded, err)
+		}
+	}
+	return u.hit("U:backup:retaken")
 }
 
 // abandon drops an upgrade that never replaced the binary and brings the old service back.
@@ -523,6 +544,17 @@ func (u *upgrader) backup(ctx context.Context) error {
 	if !u.in.hasData(u.t) {
 		return u.record(upBackedUp)
 	}
+	if err := u.takeArchive(ctx); err != nil {
+		return err
+	}
+	if err := u.hit("U:backed_up:applied"); err != nil {
+		return err
+	}
+	return u.record(upBackedUp)
+}
+
+// takeArchive runs the offline backup and keeps its path and schema in the state (in memory).
+func (u *upgrader) takeArchive(ctx context.Context) error {
 	before, err := u.schemaVersion(ctx, u.t.l.Binary)
 	if err != nil {
 		return fmt.Errorf("read the schema version before the upgrade: %w", err)
@@ -545,10 +577,7 @@ func (u *upgrader) backup(ctx context.Context) error {
 	}
 	u.st.SchemaBefore, u.st.Archive = before, report.Path
 	u.say("pre-upgrade backup: %s (schema %d)", report.Path, before)
-	if err := u.hit("U:backed_up:applied"); err != nil {
-		return err
-	}
-	return u.record(upBackedUp)
+	return nil
 }
 
 var (
@@ -556,19 +585,36 @@ var (
 	reSchemaBehind  = regexp.MustCompile(`schema version (\d+) is behind`)
 )
 
+// doctorReport is the part of `sm doctor --offline --json` the upgrader reads. FormatVersion
+// is absent (zero) in binaries that predate the stable contract.
+type doctorReport struct {
+	FormatVersion         int                                     `json:"format_version"`
+	DatabaseSchemaVersion *int                                    `json:"database_schema_version"`
+	Checks                []struct{ Name, Status, Detail string } `json:"checks"`
+}
+
 // schemaVersion asks bin's offline doctor which schema the database is at.
 // A failing doctor still prints its report, so only a missing report is an error.
 func (u *upgrader) schemaVersion(ctx context.Context, bin string) (int, error) {
 	out, err := u.d.Runner.Run(ctx, Command{
 		Name: bin, Args: []string{"doctor", "--offline", "--json", "--config", u.t.l.ConfigFile}, User: u.t.runAs,
 	})
-	var report struct {
-		Checks []struct{ Name, Status, Detail string } `json:"checks"`
-	}
+	var report doctorReport
 	if jsonErr := json.Unmarshal(out, &report); jsonErr != nil {
 		return 0, fmt.Errorf("doctor --offline gave no report (%w)", errors.Join(err, jsonErr))
 	}
-	for _, c := range report.Checks {
+	if report.FormatVersion > 0 {
+		if report.DatabaseSchemaVersion == nil {
+			return 0, errors.New("doctor reports no database schema version")
+		}
+		return *report.DatabaseSchemaVersion, nil
+	}
+	return report.schemaFromText()
+}
+
+// schemaFromText reads the schema check of a pre-M6 binary, which only describes it in prose.
+func (r doctorReport) schemaFromText() (int, error) {
+	for _, c := range r.Checks {
 		if c.Name != "schema" {
 			continue
 		}
