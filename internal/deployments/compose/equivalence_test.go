@@ -14,28 +14,15 @@ const equivalenceExpected = `{
       "image": "ghcr.io/acme/api@sha256:1",
       "ports": [{"host_ip": "127.0.0.1", "protocol": "tcp", "published": "8080", "target": 80}]
     },
-    "db": {"image": "docker.io/library/redis@sha256:2"}
+    "db": {"image": "docker.io/library/redis@sha256:2", "volumes": [{"type": "volume", "source": "data", "target": "/d"}]}
   },
   "volumes": {"data": {"labels": {"dev.supermgmt.owner": "o1"}}}
 }`
 
-// equivalenceCLI is the expected model plus exactly what Compose adds
-// (observed with `docker compose config --format json`).
-const equivalenceCLI = `{
-  "name": "sm-app-prod",
-  "networks": {"default": {"name": "sm-app-prod_default", "ipam": {}}},
-  "services": {
-    "api": {
-      "command": ["run", "$$x"],
-      "entrypoint": null,
-      "environment": {"A": "sha256:aaa", "S": "sha256:bbb"},
-      "image": "ghcr.io/acme/api@sha256:1",
-      "ports": [{"mode": "ingress", "host_ip": "127.0.0.1", "protocol": "tcp", "published": "8080", "target": 80}]
-    },
-    "db": {"command": null, "entrypoint": null, "image": "docker.io/library/redis@sha256:2", "networks": {"default": null}}
-  },
-  "volumes": {"data": {"name": "sm-app-prod_data", "labels": {"dev.supermgmt.owner": "o1"}}}
-}`
+// equivalenceCLI is the model the pinned CLI (v5.5.1) prints for the expected
+// one: identical, since the loader's model already carries every field the CLI
+// adds.
+const equivalenceCLI = equivalenceExpected
 
 func equivalenceDiffsOf(t *testing.T, expected, cli string) []string {
 	t.Helper()
@@ -46,14 +33,14 @@ func equivalenceDiffsOf(t *testing.T, expected, cli string) []string {
 	return diffs
 }
 
-func TestEquivalent_IgnoresOnlyCLIDefaults(t *testing.T) {
+func TestEquivalent_IdenticalModelsAreEquivalent(t *testing.T) {
 	if diffs := equivalenceDiffsOf(t, equivalenceExpected, equivalenceCLI); len(diffs) != 0 {
 		t.Errorf("diffs = %v, want none", diffs)
 	}
 }
 
 func TestEquivalent_KeyOrderDoesNotMatter(t *testing.T) {
-	reordered := `{"volumes": {"data": {"labels": {"dev.supermgmt.owner": "o1"}}}, "services": {"db": {"image": "docker.io/library/redis@sha256:2"}, "api": {"image": "ghcr.io/acme/api@sha256:1", "environment": {"S": "sha256:bbb", "A": "sha256:aaa"}, "command": ["run", "$$x"], "ports": [{"target": 80, "published": "8080", "protocol": "tcp", "host_ip": "127.0.0.1"}]}}}`
+	reordered := `{"volumes": {"data": {"labels": {"dev.supermgmt.owner": "o1"}}}, "services": {"db": {"volumes": [{"target": "/d", "source": "data", "type": "volume"}], "image": "docker.io/library/redis@sha256:2"}, "api": {"image": "ghcr.io/acme/api@sha256:1", "environment": {"S": "sha256:bbb", "A": "sha256:aaa"}, "command": ["run", "$$x"], "ports": [{"target": 80, "published": "8080", "protocol": "tcp", "host_ip": "127.0.0.1"}]}}}`
 	if diffs := equivalenceDiffsOf(t, equivalenceExpected, reordered); len(diffs) != 0 {
 		t.Errorf("diffs = %v, want none", diffs)
 	}
@@ -89,7 +76,7 @@ func TestEquivalent_Differences(t *testing.T) {
 			return strings.Replace(s, `, "S": "sha256:bbb"`, ``, 1)
 		}, []string{"services.api.environment.S: missing from node output"}},
 		{"smuggled privileged", func(s string) string {
-			return strings.Replace(s, `"entrypoint": null,`, `"entrypoint": null, "privileged": true,`, 1)
+			return strings.Replace(s, `"image": "ghcr.io/acme/api@sha256:1",`, `"image": "ghcr.io/acme/api@sha256:1", "privileged": true,`, 1)
 		}, []string{"services.api.privileged: unexpected in node output"}},
 		{
 			"command changed", func(s string) string { return strings.Replace(s, `"run"`, `"walk"`, 1) },
@@ -104,10 +91,6 @@ func TestEquivalent_Differences(t *testing.T) {
 			[]string{"services.api.ports.0.published: differs"},
 		},
 		{
-			"default with non-default value", func(s string) string { return strings.Replace(s, `"mode": "ingress"`, `"mode": "host"`, 1) },
-			[]string{"services.api.ports.0.mode: unexpected in node output"},
-		},
-		{
 			"image changed", func(s string) string { return strings.Replace(s, `redis@sha256:2`, `redis@sha256:3`, 1) },
 			[]string{"services.db.image: differs"},
 		},
@@ -116,7 +99,7 @@ func TestEquivalent_Differences(t *testing.T) {
 			[]string{"services.api.ports.0.target: differs"},
 		},
 		{"service dropped", func(s string) string {
-			return strings.Replace(s, `"db": {"command": null, "entrypoint": null, "image": "docker.io/library/redis@sha256:2", "networks": {"default": null}}`, `"x": {}`, 1)
+			return strings.Replace(s, `"db": {"image": "docker.io/library/redis@sha256:2", "volumes": [{"type": "volume", "source": "data", "target": "/d"}]}`, `"x": {}`, 1)
 		}, []string{"services.db: missing from node output", "services.x: unexpected in node output"}},
 	}
 	for _, tc := range tests {
@@ -129,9 +112,17 @@ func TestEquivalent_Differences(t *testing.T) {
 	}
 }
 
-func TestEquivalent_CLIOnlySubtreeNamesWhatIsNotADefault(t *testing.T) {
-	cli := strings.Replace(equivalenceCLI, `"networks": {"default": {"name": "sm-app-prod_default", "ipam": {}}},`,
-		`"networks": {"default": {"name": "n"}, "extra": {"driver": "host"}},`, 1)
+func TestEquivalent_CLIOmitsNetworksAndVolumesNoServiceUses(t *testing.T) {
+	expected := strings.Replace(equivalenceExpected, `"volumes": {"data": {`,
+		`"networks": {"idle": {"name": "p_idle"}}, "volumes": {"idle": {}, "data": {`, 1)
+
+	if diffs := equivalenceDiffsOf(t, expected, equivalenceCLI); len(diffs) != 0 {
+		t.Errorf("diffs = %v, want none", diffs)
+	}
+}
+
+func TestEquivalent_ACLIOnlyNetworkIsNamed(t *testing.T) {
+	cli := strings.Replace(equivalenceCLI, `"services"`, `"networks": {"extra": {"driver": "host"}}, "services"`, 1)
 
 	got := equivalenceDiffsOf(t, equivalenceExpected, cli)
 

@@ -1,0 +1,12 @@
+services:
+  app:
+    image: ghcr.io/acme/app:placeholder
+    volumes:
+      - {type: volume, source: used, target: /data}
+  cache:
+    image: docker.io/library/redis@sha256:3333333333333333333333333333333333333333333333333333333333333333
+volumes:
+  used:
+  idle:
+networks:
+  idle:

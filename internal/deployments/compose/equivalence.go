@@ -18,8 +18,8 @@ import (
 //
 // It returns one entry per difference, each naming a path and a kind and never
 // a value, so the list is safe to log and to return in an error. The only
-// differences ignored are fields in the CLI-defaults table (normalize.go).
-// Empty diffs means equivalent.
+// difference ignored is a declared network or volume no service uses, which
+// the CLI omits (normalize.go). Empty diffs means equivalent.
 func Equivalent(expectedMasked json.RawMessage, cliMasked []byte) (diffs []string, err error) {
 	expected, err := equivalenceDecode(expectedMasked, "expected model")
 	if err != nil {
@@ -29,6 +29,7 @@ func Equivalent(expectedMasked json.RawMessage, cliMasked []byte) (diffs []strin
 	if err != nil {
 		return nil, err
 	}
+	pruneUnusedResources(expected.(map[string]any))
 	var d equivalenceDiffs
 	d.compare(nil, expected, cli)
 	sort.Strings(d)
@@ -91,13 +92,9 @@ func (d *equivalenceDiffs) compareObjects(path []string, expected, cli map[strin
 	}
 }
 
-// unexpected reports the parts of a CLI-only subtree that are not listed CLI
-// defaults, so an implicit `networks.default` passes while anything else
-// the CLI adds next to it is still named.
+// unexpected names the leaves of a CLI-only subtree, so the diff points at the
+// field and not just at its parent.
 func (d *equivalenceDiffs) unexpected(path []string, cli any) {
-	if normalizeIgnorable(path, cli) {
-		return
-	}
 	if object, ok := cli.(map[string]any); ok && len(object) > 0 {
 		for key, child := range object {
 			d.unexpected(append(path, key), child)
