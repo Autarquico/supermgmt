@@ -524,11 +524,7 @@ func (rig *mcpRig) seedGovernedResources() {
 	rig.fixtures["deployment"] = deployment.ID.String()
 
 	var session wire.SessionOpened
-	opened := rig.send(mcpRigInProcess, http.MethodPost, wire.Path(wire.PathNodeSessions, rig.fixtures["node"]), `{"tool":"shell"}`, rig.keyed()...)
-	if opened.status != http.StatusCreated {
-		rig.t.Fatalf("seed session: status %d: %s", opened.status, opened.body)
-	}
-	opened.data(rig.t, &session)
+	rig.fixture(http.MethodPost, wire.Path(wire.PathNodeSessions, rig.fixtures["node"]), `{"tool":"shell"}`).data(rig.t, &session)
 	rig.fixtures["session"] = session.Session.ID.String()
 
 	var keys wire.Page[wire.MasterKey]

@@ -711,38 +711,35 @@
   },
   {
    "route": "GET /api/v1/nodes/{id}/connect-info",
-   "class": "query",
+   "class": "forbidden",
    "path": "/api/v1/nodes/{node}/connect-info",
    "body": "",
    "headers": null,
    "stream": false,
    "off": {
-    "status": 200
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
    },
    "on": {
-    "status": 200
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
    }
   },
   {
    "route": "POST /api/v1/nodes/{id}/sessions",
-   "class": "query",
+   "class": "forbidden",
    "path": "/api/v1/nodes/{node}/sessions",
    "body": "{\"tool\":\"shell\"}",
    "headers": null,
    "stream": false,
    "off": {
-    "status": 201,
-    "created": {
-     "interactive_sessions": 1
-    }
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
    },
    "on": {
-    "status": 201,
-    "created": {
-     "interactive_sessions": 1
-    }
-   },
-   "note": "OPEN QUESTION: node.connect is a catalog query, so an mcp actor with a `*` grant opens an interactive session even with writes off; ADR-0032 does not forbid it and App. E says MCP has no privileged shell."
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
   },
   {
    "route": "POST /api/v1/nodes/{id}/sessions/{sid}/end",
@@ -752,12 +749,12 @@
    "headers": null,
    "stream": false,
    "off": {
-    "status": 200
+    "status": 404
    },
    "on": {
-    "status": 200
+    "status": 404
    },
-   "note": "Ends the session this client opened in the rig (see the sessions row)."
+   "note": "The rig's session belongs to the local user: an mcp client can never open one, so it cannot end it either."
   },
   {
    "route": "GET /api/v1/services/{id}",

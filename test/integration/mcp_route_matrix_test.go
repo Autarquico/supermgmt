@@ -217,7 +217,7 @@ func mcpMatrixClassMatches(rt api.Route, class mcpMatrixClass) string {
 			return "class governance on " + rt.Action
 		}
 	case class == classForbidden:
-		if !spec.CredentialIssuing && !slices.Contains([]string{"mcp_client.register", "mcp_client.delete", "identity.write", "role_binding.write"}, rt.Action) {
+		if !spec.CredentialIssuing && !slices.Contains([]string{"mcp_client.register", "mcp_client.delete", "identity.write", "role_binding.write", "node.connect"}, rt.Action) {
 			return "class forbidden on " + rt.Action + ", which an mcp actor may be granted"
 		}
 	case class == classPlan:
