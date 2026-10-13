@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -19,7 +22,9 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/netguard"
 	"github.com/autarquico/supermgmt/internal/policy"
+	"github.com/autarquico/supermgmt/internal/providers/github"
 	"github.com/autarquico/supermgmt/internal/providers/local"
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/secrets"
@@ -29,6 +34,11 @@ import (
 const (
 	focusLeaseFactor = 2
 	staleAfterFactor = 3
+
+	// healthCheckTimeout bounds one control_plane health request; it is the
+	// upper bound of health.timeout.
+	healthCheckTimeout = 30 * time.Second
+	healthMaxBody      = 64 << 10
 )
 
 // background is what runs next to the HTTP servers for the daemon's lifetime.
@@ -39,6 +49,7 @@ type background struct {
 	sweeper   *app.Sweeper
 	backups   *backupSchedule // nil when no schedule is configured
 	authSweep *authSweep
+	ci        app.CIWatcher
 }
 
 // system is the assembled daemon: every service wired to one database, ready
@@ -193,6 +204,12 @@ type builder struct {
 	focus     *app.Focus
 	prober    *app.Prober
 	proxmox   *app.ProxmoxSync
+
+	governance *app.Governance
+	apps       *app.Apps
+	repos      *app.Repositories
+	finalizer  *app.DeploymentFinalizer // the deployments service of the API and the Finalizer of the CI watcher
+	ci         app.CIWatcher
 }
 
 // openGate builds the job store and loads the restore hold into it: from here
@@ -203,10 +220,15 @@ func (b *builder) openGate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	deployPolicy, err := app.NewDeploymentPolicy(b.app, revalidator)
+	if err != nil {
+		return err
+	}
 	cfg := b.cfg
 	b.jobs, err = jobs.NewStore(jobs.Config{
 		DB: b.db, Clock: b.o.Clock, IDs: b.o.IDs, Revalidator: revalidator, LockPlanner: app.LockPlanner{},
 		LeaseTTL: cfg.Jobs.Lease, BackoffBase: cfg.Jobs.RetryBase, ReconcileGrace: cfg.Jobs.ReconcileGrace,
+		TypePolicies: deployPolicy.TypePolicies(),
 	})
 	if err != nil {
 		return err
@@ -324,14 +346,111 @@ func (b *builder) coreServices() error {
 			b.o.Log.Warn("proxmox sync", slog.String("provider", provider.String()), slog.Any("error", err))
 		},
 	})
+	if err != nil {
+		return err
+	}
+	return b.deploymentServices()
+}
+
+// deploymentServices builds the M4 services: apps, repositories, the
+// deployments service with its finalizer, and the CI watcher that hands
+// deployments whose CI passed to that same finalizer (ADR-0011).
+func (b *builder) deploymentServices() error {
+	clients := app.NewGitHubClients(b.db, b.kit.store)
+	var err error
+	if b.governance, err = app.NewGovernance(b.app, b.jobs); err != nil {
+		return err
+	}
+	if b.apps, err = app.NewApps(b.app, b.jobs, clients); err != nil {
+		return err
+	}
+	if b.repos, err = app.NewRepositories(b.app, clients); err != nil {
+		return err
+	}
+	attestations, err := b.attestations()
+	if err != nil {
+		return err
+	}
+	poll := b.ciPolling()
+	deployments, err := app.NewDeployments(b.app, b.governance, poll)
+	if err != nil {
+		return err
+	}
+	deps := app.FinalizerDeps{Clients: clients, Attestations: attestations, Jobs: b.jobs}
+	if b.finalizer, err = app.NewDeploymentFinalizer(deployments, deps); err != nil {
+		return err
+	}
+	b.ci, err = app.NewCIWatcher(b.app, clients, b.finalizer, poll, app.CIWatcherOptions{
+		OnError: func(err error) { b.o.Log.Warn("ci watcher", slog.Any("error", err)) },
+	})
 	return err
 }
 
-// handlers is the job type table: the M1 handlers plus backup.create.
+// ciPolling is github.ci_* with the mode: a server is driven by webhooks and
+// polls only as a backstop.
+func (b *builder) ciPolling() app.CIPolling {
+	g := b.cfg.GitHub
+	return app.CIPolling{Initial: g.CIPollInitial, Max: g.CIPollMax, Timeout: g.CITimeout, Server: b.cfg.Instance.Mode == config.ModeServer}
+}
+
+// attestations verifies artifact attestations against the Sigstore public-good
+// and GitHub trusted roots, refreshed over TUF and cached under the data
+// directory. A root that cannot be vouched for rejects, never passes.
+func (b *builder) attestations() (github.AttestationVerifier, error) {
+	roots := github.NewTrustRoots(github.TrustRootsConfig{
+		CacheDir: filepath.Join(b.cfg.Instance.DataDir, "sigstore"), Clock: b.o.Clock,
+		Sources: []github.TUFSource{github.PublicGoodSource(), github.GitHubSource()},
+	})
+	return github.NewAttestationVerifier(roots)
+}
+
+// healthClient runs the control_plane health checks: only the destinations
+// health.allowed_private_cidrs lets through, plain HTTP allowed, no redirects.
+func (b *builder) healthClient() (*http.Client, error) {
+	var private []netip.Prefix
+	for _, s := range b.cfg.Health.AllowedPrivateCIDRs {
+		prefix, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("health.allowed_private_cidrs %q: %w", s, err)
+		}
+		private = append(private, prefix)
+	}
+	return netguard.NewClient(netguard.Allow{PrivateCIDRs: private, AllowHTTP: true}, nil, healthCheckTimeout, healthMaxBody), nil
+}
+
+// bearerResolver authenticates HTTPS bearers: native tokens always, GitHub
+// Actions OIDC tokens when github.oidc_audience (default server.public_url)
+// is set.
+func (b *builder) bearerResolver() (auth.Resolver, error) {
+	tokens := auth.DBResolver{DB: b.db, Clock: b.o.Clock}
+	audience := b.cfg.GitHub.OIDCAudience
+	if audience == "" {
+		b.o.Log.Info("github.oidc_audience and server.public_url are empty: GitHub Actions tokens are not accepted")
+		return tokens, nil
+	}
+	verifier, err := github.NewOIDCVerifier(github.OIDCConfig{Audience: audience, Clock: b.o.Clock, Replay: auth.OIDCReplay{DB: b.db}})
+	if err != nil {
+		return nil, fmt.Errorf("GitHub OIDC verifier: %w", err)
+	}
+	return auth.BearerResolver{Tokens: tokens, GitHub: auth.GitHubResolver{DB: b.db, Verifier: verifier, Clock: b.o.Clock}}, nil
+}
+
+// githubWebhook is POST /github/webhook (server mode): a verified delivery
+// nudges the CI watcher.
+func (b *builder) githubWebhook() *api.GitHubWebhook {
+	return &api.GitHubWebhook{DB: b.db, Secrets: b.kit.store, Watcher: b.ci}
+}
+
+// handlers is the job type table: the M1 handlers, the deployment types and
+// backup.create.
 func (b *builder) handlers() (map[string]jobs.Handler, error) {
+	health, err := b.healthClient()
+	if err != nil {
+		return nil, err
+	}
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
-		Proxmox: b.proxmox,
+		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health},
 	})
 	if err != nil {
 		return nil, err
@@ -347,7 +466,12 @@ func (b *builder) background(handlers map[string]jobs.Handler) (background, erro
 	if err != nil {
 		return background{}, err
 	}
-	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil, app.WithProxmoxEvidence(pveEvidence))
+	deployEvidence, err := app.NewDeploymentEvidence(b.app, b.conn, b.jobs)
+	if err != nil {
+		return background{}, err
+	}
+	evidence, err := app.NewEvidenceRouter(b.app, b.conn, nil,
+		app.WithProxmoxEvidence(pveEvidence), app.WithDeploymentEvidence(deployEvidence))
 	if err != nil {
 		return background{}, err
 	}
@@ -378,15 +502,11 @@ func (b *builder) background(handlers map[string]jobs.Handler) (background, erro
 	if err != nil {
 		return background{}, err
 	}
-	return background{engine: engine, refresher: refresher, proxmox: b.proxmox, sweeper: sweeper, backups: schedule, authSweep: b.authSweep()}, nil
+	return background{engine: engine, refresher: refresher, proxmox: b.proxmox, sweeper: sweeper, backups: schedule, authSweep: b.authSweep(), ci: b.ci}, nil
 }
 
 func (b *builder) apiServices() (api.Services, error) {
 	approvals, err := app.NewApprovals(b.app, b.jobs)
-	if err != nil {
-		return api.Services{}, err
-	}
-	governance, err := app.NewGovernance(b.app, b.jobs)
 	if err != nil {
 		return api.Services{}, err
 	}
@@ -407,8 +527,9 @@ func (b *builder) apiServices() (api.Services, error) {
 		return api.Services{}, err
 	}
 	return api.Services{
-		Plans: b.plans, Approvals: approvals, Governance: governance, Services: actions,
+		Plans: b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
+		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
 	}, nil
 }
