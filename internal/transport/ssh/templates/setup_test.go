@@ -250,7 +250,7 @@ func runDeployRootStep(t *testing.T, target, owner string) (installed bool, runE
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", "-c", c.Line)
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", c.Line)
 	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
 	runErr = cmd.Run()
 	_, statErr := os.Stat(installLog)
