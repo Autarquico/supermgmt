@@ -25,6 +25,14 @@ type HandlersOptions struct {
 	// window of an uncertain dispatch depends on it.
 	Proxmox            *ProxmoxSync
 	ProxmoxHTTPTimeout time.Duration
+
+	// Apps lets the control_plane.apply job apply approved app, app target and
+	// GitHub provider writes; without it those jobs fail loudly.
+	Apps *Apps
+
+	// Deploy enables deployment.create and deployment.rollback; without it the
+	// types have no handler.
+	Deploy *DeployOptions
 }
 
 // Handlers are the executors of the job types M1 adds.
@@ -34,6 +42,7 @@ type Handlers struct {
 	action actionHandler
 	apply  applyHandler
 	power  *proxmoxPowerHandler // nil unless Proxmox is configured
+	deploy *deployHandler       // nil unless deployments are configured
 }
 
 // NewHandlers validates the options.
@@ -59,12 +68,17 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
 		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
-		apply:  applyHandler{inv: o.Inventory},
+		apply:  applyHandler{inv: o.Inventory, apps: o.Apps},
 	}
 	if o.Proxmox != nil {
 		h.power = &proxmoxPowerHandler{
 			core: c, store: o.Store, sync: o.Proxmox, settle: o.Settle.withDefaults(),
 			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, defaultProxmoxHTTPTimeout),
+		}
+	}
+	if o.Deploy != nil {
+		if h.deploy, err = newDeployHandler(c, o.Store, o.Connector, *o.Deploy); err != nil {
+			return nil, err
 		}
 	}
 	return h, nil
@@ -82,6 +96,10 @@ func (h *Handlers) Map() map[string]jobs.Handler {
 	}
 	if h.power != nil {
 		table[policy.ActionProxmoxVMPower] = h.power
+	}
+	if h.deploy != nil {
+		table[deploymentCreateAction] = h.deploy
+		table[deploymentRollbackAction] = h.deploy
 	}
 	return table
 }
