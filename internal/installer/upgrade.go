@@ -468,7 +468,7 @@ func (u *upgrader) step(ctx context.Context, phase upgradePhase) error {
 	case upStopped:
 		return u.backup(ctx)
 	case upBackedUp:
-		return u.swap()
+		return u.swap(ctx)
 	case upSwapped:
 		return u.startNew(ctx)
 	case upStarted:
@@ -658,7 +658,7 @@ func (r doctorReport) schemaFromText() (int, error) {
 
 // ---- swap, start, health ----
 
-func (u *upgrader) swap() error {
+func (u *upgrader) swap(ctx context.Context) error {
 	files, t := u.d.Files, u.t
 	live, err := files.Hash(t.l.Binary)
 	if err != nil {
@@ -675,7 +675,7 @@ func (u *upgrader) swap() error {
 		if sha, err := files.Hash(t.staged()); err != nil || sha != u.st.NewSHA256 {
 			return fmt.Errorf("%s is missing or changed", t.staged())
 		}
-		if err := u.recordDowngrade(); err != nil {
+		if err := u.recordDowngrade(ctx); err != nil {
 			return err
 		}
 		if err := u.hit("U:swap:before"); err != nil {

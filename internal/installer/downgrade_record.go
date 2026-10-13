@@ -34,7 +34,7 @@ type downgradeRecord struct {
 // recordDowngrade makes an --allow-downgrade authorization durable before the
 // swap, since upgrade.json is deleted at the end. A resumed swap derives the
 // same event id, so it never writes a second record for the same upgrade.
-func (u *upgrader) recordDowngrade() error {
+func (u *upgrader) recordDowngrade(ctx context.Context) error {
 	if !u.st.AllowDowngrade {
 		return nil
 	}
@@ -53,7 +53,7 @@ func (u *upgrader) recordDowngrade() error {
 		return fmt.Errorf("render the downgrade record: %w", err)
 	}
 	dir := filepath.Dir(path)
-	if err := u.writePendingAudit(dir, filepath.Base(path), append(data, '\n')); err != nil {
+	if err := u.writePendingAudit(ctx, dir, filepath.Base(path), append(data, '\n')); err != nil {
 		return fmt.Errorf("write the downgrade record: %w", err)
 	}
 	for _, d := range []string{dir, dataDir} {
@@ -81,11 +81,11 @@ sync`
 
 // writePendingAudit stores the record as the service account. A local install
 // has no separate account: the caller owns the data directory already.
-func (u *upgrader) writePendingAudit(dir, name string, data []byte) error {
+func (u *upgrader) writePendingAudit(ctx context.Context, dir, name string, data []byte) error {
 	if u.t.runAs == "" {
 		return u.writePendingAuditAsCaller(dir, filepath.Join(dir, name), data)
 	}
-	_, err := u.d.Runner.Run(context.Background(), Command{
+	_, err := u.d.Runner.Run(ctx, Command{
 		Name: "/bin/sh", Args: []string{"-c", writePendingAuditScript, "sh", dir, name},
 		User: u.t.runAs, Stdin: bytes.NewReader(data),
 	})

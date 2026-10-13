@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"io/fs"
@@ -12,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autarquico/supermgmt/internal/app"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
@@ -137,19 +137,17 @@ func TestUpgrade_DowngradeRecordMatchesTheDaemonContract(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	rec, err := app.DecodePendingAudit(raw)
+	// The daemon decodes this exact file in internal/app (TestPendingAudit_DecodesTheInstallerContract);
+	// the shared golden keeps both sides on one contract without the installer importing app.
+	want, err := os.ReadFile(filepath.Join("testdata", "pending_audit.golden.json"))
 	if err != nil {
-		t.Fatalf("the daemon rejects the installer's record: %v", err)
+		t.Fatal(err)
 	}
-	if filepath.Base(path) != string(rec.EventID)+".json" {
-		t.Errorf("file name %q does not match event_id %q", filepath.Base(path), rec.EventID)
+	if !bytes.Equal(raw, want) {
+		t.Errorf("record =\n%s\nwant (testdata/pending_audit.golden.json)\n%s", raw, want)
 	}
-	want := app.PendingAudit{
-		EventID: rec.EventID, Action: app.ActionDowngradeAuthorized, OSUID: 0, OSUser: "root", SudoUser: "alex",
-		From: "1.1.0", To: "1.0.0", At: testNow.UTC(),
-	}
-	if rec != want {
-		t.Errorf("record = %+v, want %+v", rec, want)
+	if filepath.Base(path) != "126dd170-e3b1-74f1-bd51-82c86abd06b5.json" {
+		t.Errorf("file name %q does not match the event_id", filepath.Base(path))
 	}
 }
 
@@ -199,7 +197,7 @@ func symlinkedDowngrade(t *testing.T) (u *upgrader, victim string) {
 func TestUpgrade_DowngradeRecordRefusesAPlantedSymlink(t *testing.T) {
 	u, victim := symlinkedDowngrade(t)
 
-	if err := u.recordDowngrade(); err == nil {
+	if err := u.recordDowngrade(t.Context()); err == nil {
 		t.Fatal("recordDowngrade followed a symlink at audit-pending")
 	}
 
@@ -219,7 +217,7 @@ func TestUpgrade_DowngradeRecordScriptWritesARealDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), pendingAuditDir)
 	u := &upgrader{d: Deps{Runner: pendingAuditExec{}}, t: upgradeTarget{runAs: ServiceUser}}
 
-	if err := u.writePendingAudit(dir, "x.json", []byte("{}\n")); err != nil {
+	if err := u.writePendingAudit(t.Context(), dir, "x.json", []byte("{}\n")); err != nil {
 		t.Fatal(err)
 	}
 
