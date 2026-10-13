@@ -2,9 +2,19 @@ package proxmox_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -474,4 +484,78 @@ func TestEndpointURLIsNotLeakedWithQueryTokens(t *testing.T) {
 			t.Fatalf("the token travelled outside the Authorization header: %+v", r)
 		}
 	}
+}
+
+func TestResourcesAtReportsThePVEDateHeader(t *testing.T) {
+	e := newEnv(t)
+	before := time.Now().Add(-2 * time.Second) //nolint:forbidigo // the fake server stamps the real clock
+
+	inventory, at, err := e.client.(proxmox.DatedInventory).ResourcesAt(context.Background())
+
+	if err != nil || len(inventory.Nodes) != 2 || at.Before(before) || at.After(time.Now().Add(2*time.Second)) { //nolint:forbidigo // see above
+		t.Fatalf("ResourcesAt = %d nodes, %v, %v; want the inventory and about now", len(inventory.Nodes), at, err)
+	}
+}
+
+func TestResourcesAtReportsAnUnknownClockWhenTheDateHeaderIsMissingOrGarbled(t *testing.T) {
+	for name, date := range map[string]*string{"missing": nil, "garbled": dateHeader("last tuesday"), "empty": dateHeader("")} {
+		t.Run(name, func(t *testing.T) {
+			client := dateServerClient(t, date)
+
+			_, at, err := client.(proxmox.DatedInventory).ResourcesAt(context.Background())
+
+			if err != nil || !at.IsZero() {
+				t.Fatalf("ResourcesAt date = %v, %v; want the zero time and no error", at, err)
+			}
+		})
+	}
+}
+
+func dateHeader(s string) *string { return &s }
+
+// dateServerClient reaches a PVE-like server whose /cluster/resources answer carries
+// the given Date header (nil: none at all).
+func dateServerClient(t *testing.T, date *string) proxmox.Client {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if date == nil {
+			w.Header()["Date"] = nil
+		} else {
+			w.Header().Set("Date", *date)
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	cert := selfSignedFor(t, pvefake.ServerIP)
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	dial := func(network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).Dial(network, srv.Listener.Addr().String())
+	}
+	c, err := proxmox.New("https://"+pvefake.ServerIP+":8006", caPEM, audit.Secret("root@pam!t=secret"),
+		proxmox.WithHTTPTimeout(testTimeout), proxmox.WithNetguardOptions(netguard.WithTestDialer(dial)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func selfSignedFor(t *testing.T, ip string) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "pve"},
+		NotBefore: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), NotAfter: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
+		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.ParseIP(ip)}, BasicConstraintsValid: true, IsCA: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }

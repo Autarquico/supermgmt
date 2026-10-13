@@ -85,6 +85,21 @@ type SyncReport struct {
 	// ClockSkew is the PVE answer's Date header minus the local clock (ADR-0025:
 	// task correlation tolerates 120s).
 	ClockSkew time.Duration `json:"clock_skew_ns"`
+	// ClockSkewUnknown is set when PVE's clock could not be read (no or
+	// garbled Date header); ClockSkew is then zero and means nothing.
+	ClockSkewUnknown bool `json:"clock_skew_unknown,omitempty"`
+}
+
+// skewRerecordStep is how far the skew must move before an otherwise
+// unchanged outcome is recorded again: the Date header has one-second
+// resolution, so smaller moves are noise.
+const skewRerecordStep = 5 * time.Second
+
+func (r SyncReport) sameAs(other SyncReport) bool {
+	moved := r.ClockSkew - other.ClockSkew
+	return r.Error == other.Error &&
+		r.ClockSkewUnknown == other.ClockSkewUnknown &&
+		moved > -skewRerecordStep && moved < skewRerecordStep
 }
 
 // StorageObservation is one storage in the provider's proxmox.storage
@@ -339,6 +354,25 @@ type clusterRead struct {
 	inventory proxmox.Inventory
 	access    map[string]proxmox.Privileges
 	readAt    time.Time
+
+	clockSkew      time.Duration
+	clockSkewKnown bool
+}
+
+// readInventory is the cluster inventory and PVE's clock minus ours. A client
+// that cannot tell, or a Date header that is missing or garbled, yields
+// (0, false): unknown is never reported as "in sync", and never fails the sync.
+func (s *ProxmoxSync) readInventory(ctx context.Context, client proxmox.Client) (proxmox.Inventory, time.Duration, bool, error) {
+	dated, ok := client.(proxmox.DatedInventory)
+	if !ok {
+		inventory, err := client.Resources(ctx)
+		return inventory, 0, false, err
+	}
+	inventory, pveNow, err := dated.ResourcesAt(ctx)
+	if err != nil || pveNow.IsZero() {
+		return inventory, 0, false, err
+	}
+	return inventory, pveNow.Sub(s.cfg.Clock.Now()), true, nil
 }
 
 func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead, error) {
@@ -346,7 +380,7 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if err != nil {
 		return clusterRead{}, err
 	}
-	inventory, err := client.Resources(ctx)
+	inventory, skew, skewKnown, err := s.readInventory(ctx, client)
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the cluster: %w", err)
 	}
@@ -358,7 +392,7 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the token's permissions: %w", err)
 	}
-	return clusterRead{inventory: inventory, access: access, readAt: s.cfg.Clock.Now()}, nil
+	return clusterRead{inventory: inventory, access: access, readAt: s.cfg.Clock.Now(), clockSkew: skew, clockSkewKnown: skewKnown}, nil
 }
 
 // aclPathsToJudge are the paths whose privileges the sync acts on: the
@@ -489,7 +523,7 @@ func (s *ProxmoxSync) recordOutcome(ctx context.Context, q database.Querier, p d
 		status = ProviderStatusOK
 	}
 	transition := p.Status != status
-	if known && !transition && previous.Error == report.Error {
+	if known && !transition && previous.sameAs(report) {
 		return nil
 	}
 	if err := s.observe(ctx, q, providerRef(p.ID), ObservationProxmoxSync, report, s.cfg.Clock.Now()); err != nil {
@@ -548,6 +582,7 @@ func (s *ProxmoxSync) apply(ctx context.Context, p domain.Provider, c clusterRea
 		}
 		return s.recordOutcome(ctx, tx, p, SyncReport{
 			OK: true, Nodes: len(c.inventory.Nodes), Guests: len(c.inventory.Guests), Storages: len(c.inventory.Storages),
+			ClockSkew: c.clockSkew, ClockSkewUnknown: !c.clockSkewKnown,
 		})
 	})
 }

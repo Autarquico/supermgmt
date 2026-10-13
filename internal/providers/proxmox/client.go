@@ -140,11 +140,25 @@ func (c *client) Version(ctx context.Context) (Version, error) {
 }
 
 func (c *client) Resources(ctx context.Context) (Inventory, error) {
-	data, err := c.get(ctx, "/cluster/resources", nil)
+	inventory, _, err := c.ResourcesAt(ctx)
+	return inventory, err
+}
+
+// DatedInventory is implemented by clients that report PVE's clock along with
+// the inventory, so the sync learns the clock skew without another request.
+type DatedInventory interface {
+	// ResourcesAt is Resources plus the answer's Date header. The time is
+	// zero when the header is missing or unreadable: unknown, never "in sync".
+	ResourcesAt(ctx context.Context) (Inventory, time.Time, error)
+}
+
+func (c *client) ResourcesAt(ctx context.Context) (Inventory, time.Time, error) {
+	env, date, err := c.getEnvelope(ctx, "/cluster/resources", nil)
 	if err != nil {
-		return Inventory{}, err
+		return Inventory{}, time.Time{}, err
 	}
-	return decodeInventory(data)
+	inventory, err := decodeInventory(env.Data)
+	return inventory, date, err
 }
 
 func (c *client) PathPermissions(ctx context.Context, path string) (Privileges, error) {
@@ -182,7 +196,7 @@ func (c *client) Tasks(ctx context.Context, node string, f TaskFilter) ([]TaskSt
 		if page == maxTaskPages {
 			return nil, fmt.Errorf("proxmox: node %s task list exceeds %d pages", node, maxTaskPages)
 		}
-		env, err := c.getEnvelope(ctx, "/nodes/"+node+"/tasks", taskQuery(f, start))
+		env, _, err := c.getEnvelope(ctx, "/nodes/"+node+"/tasks", taskQuery(f, start))
 		if err != nil {
 			return nil, err
 		}
@@ -318,26 +332,34 @@ func isPVEError(body []byte) bool {
 }
 
 func (c *client) get(ctx context.Context, path string, q url.Values) (json.RawMessage, error) {
-	env, err := c.getEnvelope(ctx, path, q)
+	env, _, err := c.getEnvelope(ctx, path, q)
 	return env.Data, err
 }
 
-func (c *client) getEnvelope(ctx context.Context, path string, q url.Values) (envelope, error) {
-	status, body, err := c.do(ctx, http.MethodGet, path, q, nil)
+// getEnvelope also returns PVE's Date header: the zero time when it is
+// missing or unreadable.
+func (c *client) getEnvelope(ctx context.Context, path string, q url.Values) (envelope, time.Time, error) {
+	status, header, body, err := c.exchange(ctx, http.MethodGet, path, q, nil)
 	if err != nil {
-		return envelope{}, err
+		return envelope{}, time.Time{}, err
 	}
 	if status < 200 || status >= 300 {
-		return envelope{}, c.apiError(status, body)
+		return envelope{}, time.Time{}, c.apiError(status, body)
 	}
 	var env envelope
 	if err := json.Unmarshal(body, &env); err != nil || len(env.Data) == 0 {
-		return envelope{}, fmt.Errorf("proxmox: GET %s: unreadable answer", path)
+		return envelope{}, time.Time{}, fmt.Errorf("proxmox: GET %s: unreadable answer", path)
 	}
-	return env, nil
+	date, _ := http.ParseTime(header.Get("Date"))
+	return env, date, nil
 }
 
 func (c *client) do(ctx context.Context, method, path string, q, form url.Values) (int, []byte, error) {
+	status, _, body, err := c.exchange(ctx, method, path, q, form)
+	return status, body, err
+}
+
+func (c *client) exchange(ctx context.Context, method, path string, q, form url.Values) (int, http.Header, []byte, error) {
 	target := c.base + apiPrefix + path
 	if len(q) > 0 {
 		target += "?" + q.Encode()
@@ -348,7 +370,7 @@ func (c *client) do(ctx context.Context, method, path string, q, form url.Values
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, payload)
 	if err != nil {
-		return 0, nil, c.scrub(err)
+		return 0, nil, nil, c.scrub(err)
 	}
 	req.Header.Set("Authorization", c.auth)
 	req.Header.Set("Accept", "application/json")
@@ -357,14 +379,14 @@ func (c *client) do(ctx context.Context, method, path string, q, form url.Values
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, nil, c.scrub(fmt.Errorf("proxmox: %s %s: %w", method, path, err))
+		return 0, nil, nil, c.scrub(fmt.Errorf("proxmox: %s %s: %w", method, path, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, c.scrub(fmt.Errorf("proxmox: %s %s: read answer: %w", method, path, err))
+		return 0, nil, nil, c.scrub(fmt.Errorf("proxmox: %s %s: read answer: %w", method, path, err))
 	}
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, resp.Header, body, nil
 }
 
 func (c *client) apiError(status int, body []byte) error {
