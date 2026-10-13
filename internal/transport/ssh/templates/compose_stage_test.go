@@ -608,3 +608,117 @@ func TestProjectResourcesRendersWithoutLiteralBracesAndRefusesBadProjects(t *tes
 		t.Error("an invalid project name rendered")
 	}
 }
+
+func collect(t *testing.T, root string) scriptResult {
+	t.Helper()
+	return script{
+		interpreter: "sh", text: collectScript,
+		args: []string{root, "sm-shop-prod", testDeployment},
+	}.run(t)
+}
+
+func TestCollectRemovesOnlyTheNamedDeploymentDirectory(t *testing.T) {
+	root := physicalTempDir(t)
+	in := mustEncode(t, StagedFile{"compose.yaml", []byte("x")}, StagedFile{"secrets/api.env", []byte("S=1")})
+	if res := materialize(t, root, in); res.err != nil {
+		t.Fatal(res.stderr)
+	}
+	sibling := filepath.Join(root, "sm-shop-prod", "other")
+	mustMkdir(t, sibling)
+
+	if res := collect(t, root); res.err != nil {
+		t.Fatalf("%v: %s", res.err, res.stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "sm-shop-prod", testDeployment)); !os.IsNotExist(err) {
+		t.Errorf("the deployment directory survived: %v", err)
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("a sibling directory was touched: %v", err)
+	}
+}
+
+func TestCollectOfAMissingDirectoryIsAlreadyDone(t *testing.T) {
+	root := physicalTempDir(t)
+	if res := collect(t, root); res.err != nil {
+		t.Errorf("no project directory: %v: %s", res.err, res.stderr)
+	}
+	mustMkdir(t, filepath.Join(root, "sm-shop-prod"))
+	if res := collect(t, root); res.err != nil {
+		t.Errorf("no deployment directory: %v: %s", res.err, res.stderr)
+	}
+}
+
+func TestCollectFollowsNoSymlink(t *testing.T) {
+	tests := map[string]func(t *testing.T, root, outside string){
+		"project directory is a symlink": func(t *testing.T, root, outside string) {
+			mustSymlink(t, outside, filepath.Join(root, "sm-shop-prod"))
+		},
+		"deployment directory is a symlink": func(t *testing.T, root, outside string) {
+			mustMkdir(t, filepath.Join(root, "sm-shop-prod"))
+			mustSymlink(t, outside, filepath.Join(root, "sm-shop-prod", testDeployment))
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			root, outside := physicalTempDir(t), physicalTempDir(t)
+			keep := filepath.Join(outside, "keep")
+			mustMkdir(t, keep)
+			setup(t, root, outside)
+
+			if res := collect(t, root); res.err == nil {
+				t.Error("collect went through a symlink")
+			}
+			if _, err := os.Stat(keep); err != nil {
+				t.Errorf("the symlink target was touched: %v", err)
+			}
+		})
+	}
+}
+
+func TestCollectRefusesASymlinkedDeployRoot(t *testing.T) {
+	outside := physicalTempDir(t)
+	if err := os.MkdirAll(filepath.Join(outside, "sm-shop-prod", testDeployment), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(physicalTempDir(t), "root")
+	mustSymlink(t, outside, link)
+
+	if res := collect(t, link); res.err == nil {
+		t.Error("collect accepted a symlinked deploy root")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "sm-shop-prod", testDeployment)); err != nil {
+		t.Errorf("the directory behind the symlink was removed: %v", err)
+	}
+}
+
+func TestCollectNeverRemovesWhatALinkInsideTheDirectoryPointsTo(t *testing.T) {
+	root, outside := physicalTempDir(t), physicalTempDir(t)
+	dir := filepath.Join(root, "sm-shop-prod", testDeployment)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(outside, "keep")
+	mustMkdir(t, keep)
+	mustSymlink(t, outside, filepath.Join(dir, "link"))
+
+	if res := collect(t, root); res.err != nil {
+		t.Fatalf("%v: %s", res.err, res.stderr)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("the link target was removed: %v", err)
+	}
+}
+
+func TestCollectIsAMutatingTemplateWithTheMarkerWrapper(t *testing.T) {
+	c, err := RenderMutating("compose.gc", "gc-1", deployArgs("/srv/supermgmt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Mutating || !strings.Contains(c.Line, MarkerDir+"/gc-1") {
+		t.Errorf("command = %+v", c)
+	}
+	if _, err := Render("compose.gc", deployArgs("/srv/supermgmt")); err == nil {
+		t.Error("compose.gc rendered without a marker")
+	}
+}

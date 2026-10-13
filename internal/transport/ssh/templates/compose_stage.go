@@ -167,6 +167,21 @@ done
 [ -f "$dir/compose.yaml" ] || fail "compose.yaml was not provided"
 `
 
+// collectScript removes one deployment directory. Only the three validated
+// names can select it, and a symlink at the root, project or deployment level
+// is refused rather than followed; rm -rf never follows links inside it.
+// A directory that does not exist is already collected.
+const collectScript = `
+fail() { echo "compose.gc: $1" >&2; exit 1; }
+root=$1; project=$root/$2; dir=$project/$3
+[ -d "$root" ] && [ ! -L "$root" ] || fail "deploy root is not a plain directory"
+if [ ! -e "$project" ] && [ ! -L "$project" ]; then exit 0; fi
+[ -d "$project" ] && [ ! -L "$project" ] || fail "project directory is not a plain directory"
+if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then exit 0; fi
+[ -d "$dir" ] && [ ! -L "$dir" ] || fail "deployment directory is not a plain directory"
+rm -rf -- "$dir" || fail "cannot remove the deployment directory"
+`
+
 // The jq programs of the resolved-environment check (ADR-0010). jq has no
 // sha256, so a bash loop hashes each base64-decoded value.
 const (
@@ -301,6 +316,11 @@ var composeStageTemplates = []Template{
 		Name: "compose.materialize", Params: deployDirectoryParams, Mutating: true, Sensitive: true,
 		Deadline: stageDeadline, MaxBytes: 4 << 10, MaxLines: 20,
 		Body: shellScript("sh", materializeScript, "root", "project", "deployment"),
+	},
+	{
+		Name: "compose.gc", Params: deployDirectoryParams, Mutating: true,
+		Deadline: stageDeadline, MaxBytes: 4 << 10, MaxLines: 20,
+		Body: shellScript("sh", collectScript, "root", "project", "deployment"),
 	},
 	{
 		Name: "compose.verify", Params: deployDirectoryParams, MaxBytes: 8 << 20, MaxLines: 5,
