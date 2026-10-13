@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"sort"
@@ -389,6 +390,9 @@ func atoiOr(s string, fallback int) int {
 func (h *uhost) Run(_ context.Context, c Command) ([]byte, error) {
 	h.runs = append(h.runs, c)
 	h.record("run %s %s", c.Name, strings.Join(c.Args, " "))
+	if c.Name == "/bin/sh" {
+		return nil, h.writePendingAuditScript(c)
+	}
 	content, ok := h.inodes[c.Name]
 	if !ok {
 		return nil, fmt.Errorf("%s: not found", c.Name)
@@ -544,4 +548,16 @@ func (h *uhost) noViolations(t *testing.T) {
 	if len(h.violations) > 0 {
 		t.Errorf("violations: %v", h.violations)
 	}
+}
+
+// writePendingAuditScript plays the downgrade record script (args: sh dir name; the record on
+// stdin): the record ends up at dir/name. The script's text is pinned in downgrade_record_test.go.
+func (h *uhost) writePendingAuditScript(c Command) error {
+	data, err := io.ReadAll(c.Stdin)
+	if err != nil {
+		return err
+	}
+	h.dirs[c.Args[3]] = true
+	h.put(c.Args[3]+"/"+c.Args[4], string(data))
+	return nil
 }
