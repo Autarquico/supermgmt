@@ -81,6 +81,7 @@ func (t upgradeTarget) liftHoldCommand() string {
 	}
 	return " && rm -f " + holdDropInPath(*t.unit) + " && systemctl daemon-reload"
 }
+
 func (t upgradeTarget) statePath() string {
 	return filepath.Join(t.l.DataDir, upgradeStateFile)
 }
