@@ -1,0 +1,19 @@
+id:            0199d000-0000-7000-8000-000000000001
+kind:          deploy
+state:         failed
+reason:        HEALTH_FAILED
+commit:        0123456789abcdef0123456789abcdef01234567
+plan hash:     sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+compose hash:  -
+known good:    -
+created:       2026-10-13T09:00:00Z
+finished:      2026-10-13T09:00:05Z
+
+images:
+SERVICE  DIGEST
+app      sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+steps:
+#  STEP       STATE      ATTEMPT  STARTED               FINISHED              ERROR
+1  preflight  succeeded  1        2026-10-13T09:00:01Z  2026-10-13T09:00:05Z  -
+2  health     failed     1        2026-10-13T09:00:01Z  2026-10-13T09:00:05Z  DEPLOYMENT_FAILED/HEALTH_FAILED (HTTP_503)
