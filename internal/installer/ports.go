@@ -31,6 +31,18 @@ type Files interface {
 	Link(oldPath, newPath string) error
 	// Hash returns the lowercase hex SHA-256 of a file's contents.
 	Hash(path string) (string, error)
+	// Lock takes an exclusive, non-blocking lock on path and returns its release.
+	Lock(path string) (release func(), err error)
+	// Canonical makes path absolute and resolves symlinks in its directory; the file itself may not exist.
+	Canonical(path string) (string, error)
+	// FreeBytes is the space available to an unprivileged writer under dir.
+	FreeBytes(dir string) (uint64, error)
+	// FileSize is the size in bytes of a file.
+	FileSize(path string) (int64, error)
+	// ListDir lists the entry names of dir; a missing directory is empty.
+	ListDir(dir string) ([]string, error)
+	// Lstat describes path itself, without following a final symlink.
+	Lstat(path string) (EntryInfo, error)
 }
 
 // Accounts manages the service user.

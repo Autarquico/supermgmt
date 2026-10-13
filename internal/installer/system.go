@@ -77,6 +77,8 @@ func dirExists(path string) bool {
 
 type osFiles struct{}
 
+var _ Files = osFiles{}
+
 func (osFiles) Exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil

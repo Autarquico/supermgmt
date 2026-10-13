@@ -55,11 +55,7 @@ func (in *Installer) lockForAppliances() (release func(), held bool, err error) 
 }
 
 func (in *Installer) lockInstaller() (func(), error) {
-	l, ok := in.d.Files.(locker)
-	if !ok {
-		return nil, fail(ExitPrerequisite, "this host cannot take the installer lock")
-	}
-	release, err := l.Lock(installerLockPath)
+	release, err := in.d.Files.Lock(installerLockPath)
 	if err != nil {
 		return nil, failWrap(ExitPrerequisite, "another SuperMgmt installer is running", err)
 	}
@@ -156,10 +152,7 @@ func (u *upgrader) fresh(ctx context.Context) error {
 // checkDisk needs room for the staged binary (twice, in case the previous one
 // is copied rather than linked) and for the backup of the database.
 func (u *upgrader) checkDisk(newBin string) error {
-	disk, ok := u.d.Files.(hostDisk)
-	if !ok {
-		return fail(ExitPrerequisite, "this host cannot report free disk space")
-	}
+	disk := u.d.Files
 	size, err := disk.FileSize(newBin)
 	if err != nil {
 		return failWrap(ExitInvalid, "read the new sm binary", err)
@@ -190,7 +183,7 @@ func (u *upgrader) existingParent(dir string) string {
 	return dir
 }
 
-func (u *upgrader) requireFree(disk hostDisk, dir string, need uint64) error {
+func (u *upgrader) requireFree(disk Files, dir string, need uint64) error {
 	free, err := disk.FreeBytes(dir)
 	if err != nil {
 		return failWrap(ExitPrerequisite, "check free space under "+dir, err)
@@ -505,15 +498,14 @@ func (u *upgrader) lockDatabase() (release func(), err error) {
 	if u.t.dbPath == "" {
 		return func() {}, nil
 	}
-	lockFile := u.lockFilePath()
+	lockFile, err := u.lockFilePath()
+	if err != nil {
+		return nil, err
+	}
 	if !u.d.Files.Exists(lockFile) {
 		return func() {}, nil
 	}
-	l, ok := u.d.Files.(locker)
-	if !ok {
-		return nil, errors.New("this host cannot take the database lock")
-	}
-	release, err = l.Lock(lockFile)
+	release, err = u.d.Files.Lock(lockFile)
 	if err != nil {
 		return nil, fmt.Errorf("the database is still in use: %w", err)
 	}
@@ -522,14 +514,12 @@ func (u *upgrader) lockDatabase() (release func(), err error) {
 
 // lockFilePath is "<canonical database path>.lock", as internal/database names it: the daemon
 // resolves the directory, so a relative or symlinked configuration still meets the same file.
-func (u *upgrader) lockFilePath() string {
-	db := u.t.dbPath
-	if c, ok := u.d.Files.(canonicalizer); ok {
-		if resolved, err := c.Canonical(db); err == nil {
-			db = resolved
-		}
+func (u *upgrader) lockFilePath() (string, error) {
+	db, err := u.d.Files.Canonical(u.t.dbPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve the database path %s: %w", u.t.dbPath, err)
 	}
-	return db + ".lock"
+	return db + ".lock", nil
 }
 
 // ---- backup ----

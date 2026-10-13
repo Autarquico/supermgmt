@@ -1017,3 +1017,15 @@ func testCAPEM(t *testing.T) []byte {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
+
+func (w *aw) Canonical(p string) (string, error) { return p, nil }
+
+func (w *aw) FreeBytes(string) (uint64, error) { return 1 << 40, nil }
+
+func (w *aw) FileSize(p string) (int64, error) {
+	b, ok := w.files[p]
+	if !ok {
+		return 0, fs.ErrNotExist
+	}
+	return int64(len(b)), nil
+}

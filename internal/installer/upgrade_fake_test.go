@@ -269,10 +269,27 @@ func (h *uhost) ListDir(dir string) ([]string, error) {
 	return names, nil
 }
 
-type diskHost struct{ *uhost }
+func (h *uhost) FreeBytes(string) (uint64, error) {
+	if h.noDisk {
+		return 0, errors.New("free space unavailable")
+	}
+	return h.freeBytes, nil
+}
 
-func (d diskHost) FreeBytes(string) (uint64, error) { return d.freeBytes, nil }
-func (d diskHost) FileSize(p string) (int64, error) { return int64(len(d.content(p))), nil }
+func (h *uhost) FileSize(p string) (int64, error) { return int64(len(h.content(p))), nil }
+
+func (h *uhost) Lstat(p string) (EntryInfo, error) {
+	switch _, isFile := h.inodes[p]; {
+	case h.dirs[p]:
+		return EntryInfo{Dir: true, Mode: 0o700}, nil
+	case isFile:
+		return EntryInfo{Regular: true, Mode: 0o600}, nil
+	}
+	return EntryInfo{}, fs.ErrNotExist
+}
+
+// diskHost is the host the downgrade spy wraps; it is a uhost, which already answers for disk space.
+type diskHost struct{ *uhost }
 
 // ---- services, health ----
 
@@ -444,13 +461,9 @@ func (h *uhost) backup(c Command, f map[string]string) ([]byte, error) {
 // ---- wiring ----
 
 func (h *uhost) deps() Deps {
-	var files Files = h
-	if !h.noDisk {
-		files = diskHost{h}
-	}
 	d := Deps{
 		Host:  Host{GOOS: "linux", GOARCH: "amd64", UID: h.uid, Home: h.home, Env: map[string]string{}, HasSystemd: true},
-		Files: files, Runner: h, Health: h, Clock: fixedClock{}, Out: &h.out,
+		Files: h, Runner: h, Health: h, Clock: fixedClock{}, Out: &h.out,
 		Services: usvc{h}, UserServices: usvc{h},
 	}
 	if len(h.answers) > 0 || !h.yes {
