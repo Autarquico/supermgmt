@@ -99,46 +99,14 @@ func lifeStep(t *testing.T, name string, step func(t *testing.T)) {
 // lifeBuild builds ./cmd/sm of srcDir for this machine as version.
 func lifeBuild(t testing.TB, key, srcDir, version, tags string) string {
 	t.Helper()
-	path, err := m3Once("life-"+key, func() (string, error) {
-		out := filepath.Join(harness.WorkDir(), "sm-life-"+key)
-		env := append(os.Environ(), "CGO_ENABLED=0", "GOOS="+runtime.GOOS, "GOARCH="+runtime.GOARCH)
-		args := []string{"build", "-trimpath", "-ldflags", "-X " + versionPackage + ".Version=" + version}
-		if tags != "" {
-			args = append(args, "-tags", tags)
-		}
-		res, err := harness.Run(context.Background(), srcDir, env, "", "go", append(args, "-o", out, "./cmd/sm")...)
-		if e := commandFailure("go build "+out, res, err); e != nil {
-			return "", e
-		}
-		return out, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return harness.BuildSM(t, "life-"+key, srcDir, runtime.GOOS, runtime.GOARCH, version, tags)
 }
 
 // lifePreviousSM is the sm of the newest merged milestone, exported with git archive.
 func lifePreviousSM(t testing.TB) (string, milestone) {
 	t.Helper()
 	prev := lifecyclePrevious(t)
-	src := filepath.Join(harness.WorkDir(), "life-src-"+prev.name)
-	_, err := m3Once("life-src-"+prev.name, func() (string, error) {
-		if err := os.MkdirAll(src, 0o755); err != nil {
-			return "", err
-		}
-		tarball := src + ".tar"
-		ctx := context.Background()
-		res, err := harness.Run(ctx, harness.RepoRoot(), nil, "", "git", "archive", "--format=tar", "--output", tarball, prev.commit)
-		if e := commandFailure("git archive "+prev.commit+" (CI needs fetch-depth: 0)", res, err); e != nil {
-			return "", e
-		}
-		res, err = harness.Run(ctx, "", nil, "", "tar", "-xf", tarball, "-C", src)
-		return src, commandFailure("extract "+prev.commit, res, err)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	src := harness.MilestoneSource(t, prev.name, prev.commit)
 	return lifeBuild(t, "prev-"+prev.name, src, prev.version, ""), prev
 }
 

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,7 @@ func (f *fakeHost) probe() HostProbe {
 		Exists: func(p string) bool { return f.files[p] },
 		GOOS:   f.goos,
 		Home:   "/home/runner",
+		UID:    501,
 		PID1:   func() string { return f.pid1 },
 	}
 }
@@ -124,5 +126,22 @@ func TestHostCleanupRemovesWhatTheTestInstalledAndStopsServices(t *testing.T) {
 	}
 	if len(f.runs) != 2 || !strings.HasPrefix(f.runs[0], "systemctl disable --now") {
 		t.Errorf("service stops = %v, want system and user unit disabled", f.runs)
+	}
+}
+
+func TestHostCleanupBootsOutTheLaunchdAgentOfTheRealUser(t *testing.T) {
+	f := githubRunner()
+	f.goos = "darwin"
+	g, err := AcquireHost(f.probe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.run = func(name string, args ...string) { f.runs = append(f.runs, name+" "+strings.Join(args, " ")) }
+	g.rm = func(string) error { return nil }
+	if err := g.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"launchctl bootout gui/501 dev.supermgmt.daemon"}; !slices.Equal(f.runs, want) {
+		t.Fatalf("teardown commands = %q, want %q", f.runs, want)
 	}
 }

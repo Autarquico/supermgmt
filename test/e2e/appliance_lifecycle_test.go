@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -45,32 +43,11 @@ func lifecyclePrevious(t testing.TB) milestone {
 // lifecycleNextVersion orders after every milestone build.
 func lifecycleNextVersion() string { return fmt.Sprintf("v0.%d.0", len(milestones)+1) }
 
-// lifecyclePreviousBuild builds the sm of the milestone's merge commit (exported with git archive,
-// the working tree is untouched) as its synthetic version, for the PVE host.
+// lifecyclePreviousBuild builds the sm of the milestone's merge commit as its synthetic version, for the PVE host.
 func lifecyclePreviousBuild(t testing.TB, m milestone) string {
 	t.Helper()
-	arch := hostArch(t)
-	path, err := m3Once("lifecycle-"+m.name+"-"+arch, func() (string, error) {
-		src := filepath.Join(harness.WorkDir(), "lifecycle-src-"+m.name)
-		if err := os.MkdirAll(src, 0o755); err != nil {
-			return "", err
-		}
-		tarball := src + ".tar"
-		ctx := context.Background()
-		res, err := harness.Run(ctx, harness.RepoRoot(), nil, "", "git", "archive", "--format=tar", "--output", tarball, m.commit)
-		if e := commandFailure("git archive "+m.commit+" (CI needs fetch-depth: 0)", res, err); e != nil {
-			return "", e
-		}
-		res, err = harness.Run(ctx, "", nil, "", "tar", "-xf", tarball, "-C", src)
-		if e := commandFailure("extract "+m.commit, res, err); e != nil {
-			return "", e
-		}
-		return buildVersioned(src, filepath.Join(harness.WorkDir(), "sm-lifecycle-"+m.name+"-"+arch), arch, m.version)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path
+	src := harness.MilestoneSource(t, m.name, m.commit)
+	return harness.BuildSM(t, "lifecycle-"+m.name, src, "linux", hostArch(t), m.version, "")
 }
 
 // lifecycleSM runs `sm <args>` on the PVE host with the binary staged at path.

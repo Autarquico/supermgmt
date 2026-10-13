@@ -3,9 +3,6 @@
 package e2e_test
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -37,24 +34,7 @@ const (
 // crashBuild is the tree under test built as version, with the given build tags, for the containers.
 func crashBuild(t testing.TB, key, version, tags string) string {
 	t.Helper()
-	arch := harness.DockerArch(t)
-	path, err := m3Once(key, func() (string, error) {
-		out := filepath.Join(harness.WorkDir(), "sm-"+key+"-"+arch)
-		env := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
-		args := []string{"build", "-trimpath", "-ldflags", "-X " + versionPackage + ".Version=" + version}
-		if tags != "" {
-			args = append(args, "-tags", tags)
-		}
-		res, err := harness.Run(context.Background(), harness.RepoRoot(), env, "", "go", append(args, "-o", out, "./cmd/sm")...)
-		if e := commandFailure("go build "+out, res, err); e != nil {
-			return "", e
-		}
-		return out, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return harness.BuildSM(t, key, harness.RepoRoot(), "linux", harness.DockerArch(t), version, tags)
 }
 
 // newCrashHost is the previous release running as a server, with the crashpoints build of the new

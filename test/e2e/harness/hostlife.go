@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,8 @@ type HostProbe struct {
 	Exists func(path string) bool
 	GOOS   string
 	Home   string
+	// UID is the numeric user id (the launchd gui domain); $UID is a shell variable, not an environment one.
+	UID int
 	// PID1 is the name of the process with PID 1 ("" when unknown).
 	PID1 func() string
 }
@@ -34,6 +37,7 @@ func OSHostProbe() HostProbe {
 		Exists: func(path string) bool { _, err := os.Lstat(path); return err == nil },
 		GOOS:   runtime.GOOS,
 		Home:   home,
+		UID:    os.Getuid(),
 		PID1:   linuxPID1,
 	}
 }
@@ -131,7 +135,7 @@ func (g *HostGuard) Cleanup() error {
 
 func (g *HostGuard) stopServices() {
 	if g.probe.GOOS == "darwin" {
-		g.run("launchctl", "bootout", "gui/"+g.probe.Getenv("UID"), "dev.supermgmt.daemon")
+		g.run("launchctl", "bootout", "gui/"+strconv.Itoa(g.probe.UID), "dev.supermgmt.daemon")
 		return
 	}
 	g.run("systemctl", "disable", "--now", "supermgmt.service")
