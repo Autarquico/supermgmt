@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -26,8 +27,10 @@ import (
 )
 
 const (
-	// ImageTag is the local tag the helper builds and runs.
+	// ImageTag is the local tag of the default (Debian 13) image.
 	ImageTag = "sm-fixture-node:local"
+	// DistroEnv selects the node distro: debian13 (default) or ubuntu2404.
+	DistroEnv = "SM_FIXTURE_DISTRO"
 	// AdminUser is the bootstrap account baked into the image.
 	AdminUser = "admin"
 
@@ -56,11 +59,34 @@ type Node struct {
 	ClientSigner cryptossh.Signer
 }
 
-// Build builds the fixture image (cached by docker when unchanged).
+// image is the build recipe of one supported distro.
+type image struct{ tag, dockerfile string }
+
+// imageFor resolves a SM_FIXTURE_DISTRO value; empty means debian13.
+func imageFor(distro string) (image, error) {
+	switch distro {
+	case "", "debian13":
+		return image{tag: ImageTag, dockerfile: "Dockerfile"}, nil
+	case "ubuntu2404":
+		return image{tag: "sm-fixture-node:ubuntu2404", dockerfile: "Dockerfile.ubuntu2404"}, nil
+	default:
+		return image{}, fmt.Errorf("unknown %s %q (want debian13 or ubuntu2404)", DistroEnv, distro)
+	}
+}
+
+func selectedImage() (image, error) { return imageFor(os.Getenv(DistroEnv)) }
+
+// Build builds the image of the distro selected by SM_FIXTURE_DISTRO
+// (cached by docker when unchanged).
 func Build(ctx context.Context) error {
+	img, err := selectedImage()
+	if err != nil {
+		return err
+	}
 	_, file, _, _ := runtime.Caller(0)
 	dir := filepath.Join(filepath.Dir(file), "..", "node")
-	if out, err := docker(ctx, nil, "build", "--quiet", "--tag", ImageTag, dir); err != nil {
+	if out, err := docker(ctx, nil, "build", "--quiet", "--tag", img.tag,
+		"--file", filepath.Join(dir, img.dockerfile), dir); err != nil {
 		return fmt.Errorf("build fixture image: %w: %s", err, out)
 	}
 	return nil
@@ -77,13 +103,17 @@ func Start(ctx context.Context, o Options) (_ *Node, err error) {
 	if err != nil {
 		return nil, err
 	}
+	img, err := selectedImage()
+	if err != nil {
+		return nil, err
+	}
 	name := o.Name
 	if name == "" {
 		name = "sm-fixture-" + rand.Text()
 	}
 	if out, runErr := docker(ctx, nil, "run", "--detach", "--privileged", "--cgroupns=host",
 		"--tmpfs", "/run", "--tmpfs", "/run/lock", "--publish", "127.0.0.1::22",
-		"--name", name, ImageTag); runErr != nil {
+		"--name", name, img.tag); runErr != nil {
 		return nil, fmt.Errorf("run fixture: %w: %s", runErr, out)
 	}
 	n := &Node{Name: name, HostKey: hostKey.PublicKey(), ClientSigner: clientSigner}

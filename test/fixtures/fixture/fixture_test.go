@@ -144,3 +144,25 @@ func TestDemoContainerRunsInsideTheNode(t *testing.T) {
 		t.Fatalf("sm-demo-web running = %q, %v; want true", out, err)
 	}
 }
+
+func TestUnknownDistroIsRejected(t *testing.T) {
+	t.Setenv(fixture.DistroEnv, "alpine")
+	if err := fixture.Build(context.Background()); err == nil || !strings.Contains(err.Error(), "alpine") {
+		t.Fatalf("Build with unknown distro = %v; want an error naming it", err)
+	}
+	if _, err := fixture.Start(context.Background(), fixture.Options{}); err == nil {
+		t.Fatal("Start with unknown distro must fail")
+	}
+}
+
+func TestNodeRunsTheSelectedDistro(t *testing.T) {
+	want := map[string]string{"": "debian", "debian13": "debian", "ubuntu2404": "ubuntu"}[os.Getenv(fixture.DistroEnv)]
+	if want == "" {
+		t.Skipf("unsupported %s", fixture.DistroEnv)
+	}
+	n := startNode(t)
+	out, err := n.Exec(context.Background(), "sh", "-c", ". /etc/os-release && echo $ID")
+	if err != nil || strings.TrimSpace(out) != want {
+		t.Fatalf("os-release ID = %q, %v; want %q", out, err, want)
+	}
+}
