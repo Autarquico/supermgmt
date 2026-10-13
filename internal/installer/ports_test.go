@@ -14,10 +14,12 @@ var (
 	_ Files = (*uhost)(nil)
 	_ Files = (*aw)(nil)
 	_ Files = diskHost{}
+	_ PVE   = (*aw)(nil)
+	_ PVE   = execPVE{}
 )
 
 // filesPortSources are the files whose host access goes through the Files port alone.
-var filesPortSources = []string{"upgrade.go", "upgrade_host.go", "system.go"}
+var filesPortSources = []string{"upgrade.go", "upgrade_host.go", "system.go", "proxmox.go", "upgrade_appliance.go"}
 
 func TestFilesPortIsNeverTypeAsserted(t *testing.T) {
 	for _, file := range filesPortSources {
