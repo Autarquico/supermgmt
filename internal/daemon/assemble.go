@@ -438,7 +438,7 @@ func (b *builder) bearerResolver() (auth.Resolver, error) {
 // githubWebhook is POST /github/webhook (server mode): a verified delivery
 // nudges the CI watcher.
 func (b *builder) githubWebhook() *api.GitHubWebhook {
-	return &api.GitHubWebhook{DB: b.db, Secrets: b.kit.store, Watcher: b.ci}
+	return &api.GitHubWebhook{DB: b.db, Secrets: b.kit.store, Watcher: b.ci, Audit: app.NewWebhookAudit(b.app).Record}
 }
 
 // handlers is the job type table: the M1 handlers, the deployment types and
