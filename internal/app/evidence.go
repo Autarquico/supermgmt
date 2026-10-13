@@ -25,6 +25,7 @@ type EvidenceRouter struct {
 	conn     Connector
 	adapters Adapters
 	proxmox  *ProxmoxEvidence
+	deploys  *DeploymentEvidence
 }
 
 var _ jobs.EvidenceSource = (*EvidenceRouter)(nil)
@@ -35,6 +36,11 @@ type EvidenceOption func(*EvidenceRouter)
 // WithProxmoxEvidence routes the intents of Proxmox operations to p.
 func WithProxmoxEvidence(p *ProxmoxEvidence) EvidenceOption {
 	return func(r *EvidenceRouter) { r.proxmox = p }
+}
+
+// WithDeploymentEvidence routes the intents of deployments to d.
+func WithDeploymentEvidence(d *DeploymentEvidence) EvidenceOption {
+	return func(r *EvidenceRouter) { r.deploys = d }
 }
 
 // NewEvidenceRouter validates cfg. A nil adapters means DefaultAdapters.
@@ -60,6 +66,12 @@ func (r *EvidenceRouter) Collect(ctx context.Context, intent jobs.Intent) (jobs.
 			return jobs.Evidence{}, fmt.Errorf("no Proxmox evidence source for intent %s (%s)", intent.ID, intent.Operation)
 		}
 		return r.proxmox.Collect(ctx, intent)
+	}
+	if intent.TargetType == string(domain.ResourceDeployment) {
+		if r.deploys == nil {
+			return jobs.Evidence{}, fmt.Errorf("no deployment evidence source for intent %s (%s)", intent.ID, intent.Operation)
+		}
+		return r.deploys.Collect(ctx, intent)
 	}
 	if intent.TargetType != string(domain.ResourceService) || intent.DispatchedAt == nil {
 		return jobs.Evidence{}, fmt.Errorf("no evidence source for intent %s (%s on %s)", intent.ID, intent.Operation, intent.TargetType)
