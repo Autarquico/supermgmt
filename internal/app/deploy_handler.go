@@ -132,9 +132,12 @@ func (h deployHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	}
 	ctx = audit.WithCorrelationID(ctx, j.dep.ID)
 	if j.mode == deployments.RecoverySafetyRecovery {
-		return h.recover(ctx, j)
+		err = h.recover(ctx, j)
+	} else {
+		err = h.forward(ctx, j)
 	}
-	return h.forward(ctx, j)
+	h.collectDeploymentDirectories(ctx, j)
+	return err
 }
 
 func (h deployHandler) load(ctx context.Context, lease jobs.Lease) (*deployJob, error) {

@@ -235,7 +235,7 @@ func validArgsOf(tpl Template) map[string]string {
 
 func TestEveryDeploymentParameterRejectsInjectionPayloads(t *testing.T) {
 	templates := deploymentTemplates(t)
-	if len(templates) != 18 {
+	if len(templates) != 19 {
 		t.Fatalf("only %d deployment templates found", len(templates))
 	}
 	for _, tpl := range templates {
