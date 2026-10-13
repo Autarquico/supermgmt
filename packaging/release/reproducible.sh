@@ -12,7 +12,13 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 min=${SM_REPRO_MIN:-4}
 build=${SM_REPRO_BUILD:-goreleaser release --snapshot --clean}
 work=$(mktemp -d)
-trap 'st=$?; chmod -R u+w "$work" 2>/dev/null; rm -rf "$work" 2>/dev/null || true; exit $st' EXIT
+cleanup() {
+	status=$?
+	chmod -R u+w "$work" 2>/dev/null
+	rm -rf "$work" 2>/dev/null || true
+	exit "$status"
+}
+trap cleanup EXIT
 
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
