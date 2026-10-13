@@ -639,16 +639,6 @@ func commandExitEvidence(outcome string, exit int) json.RawMessage {
 	return raw
 }
 
-// commandFailed reports whether err says the command ran (or was refused by the
-// node's lock) and failed, as opposed to its outcome being unknown.
-func commandFailed(err error) bool {
-	var typed *smerr.Error
-	if !errors.As(err, &typed) {
-		return false
-	}
-	return typed.Code == smerr.CodeDeploymentFailed || typed.Reason == smerr.ReasonResourceLocked
-}
-
 // ---- recovery and restore -------------------------------------------------------------------
 
 // recover runs a safety recovery: only restore steps, toward the frozen

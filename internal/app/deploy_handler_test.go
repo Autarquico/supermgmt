@@ -112,7 +112,7 @@ func (w *deployWorld) verifyReply(c templates.Command) (transport.Result, error)
 		w.t.Errorf("freeze: %v", err)
 		return transport.Result{ExitStatus: 2}, nil
 	}
-	hashes := compose.ExpectedEnvHashes(fz.frozen, fz.secrets, nil)
+	hashes := compose.ExpectedEnvHashes(fz.frozen, fz.secrets)
 	model, err := expectedMaskedModel(fz.frozen, directory, hashes)
 	mustf(w.t, err, "expectedMaskedModel")
 	out := nodeVerification{Model: model}
