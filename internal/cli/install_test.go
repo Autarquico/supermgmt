@@ -62,6 +62,7 @@ func (h *stubHost) Lstat(p string) (installer.EntryInfo, error) {
 	}
 	return installer.EntryInfo{}, nil
 }
+
 func (h *stubHost) Run(context.Context, installer.Command) ([]byte, error) {
 	return []byte("CODE-9\n"), nil
 }

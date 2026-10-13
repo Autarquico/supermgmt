@@ -1,6 +1,7 @@
 package install_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -89,7 +90,7 @@ func runVerifyProvenance(t *testing.T, statement []byte, files map[string]string
 	if err := os.WriteFile(path, statement, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("sh", "../../packaging/release/verify-provenance.sh", path, dist, provSHA, provRepo, provTag).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "sh", "../../packaging/release/verify-provenance.sh", path, dist, provSHA, provRepo, provTag).CombinedOutput()
 	return string(out), err
 }
 

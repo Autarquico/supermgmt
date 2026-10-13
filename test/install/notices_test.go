@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,7 +58,7 @@ func noticesWrite(t *testing.T, path, content string) {
 
 func noticesRun(t *testing.T, env []string, dir, name string, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(context.Background(), name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
@@ -366,7 +367,8 @@ func TestReleaseCheck_SupplyChain(t *testing.T) {
 	}
 	dropOther := func(text string) string {
 		start := strings.Index(text, "=== example.com/other")
-		return text[:start] + text[strings.Index(text, "=== go-stdlib"):]
+		stdlib := strings.Index(text, "=== go-stdlib")
+		return text[:start] + text[stdlib:]
 	}
 	cases := []struct {
 		name    string

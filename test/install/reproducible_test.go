@@ -1,6 +1,7 @@
 package install_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,7 +30,7 @@ echo archive > dist/sm_0.0.1_linux_amd64.tar.gz`
 
 func runReproducible(t *testing.T, build string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("sh", "../../packaging/release/reproducible.sh")
+	cmd := exec.CommandContext(context.Background(), "sh", "../../packaging/release/reproducible.sh")
 	if build != "" {
 		cmd.Env = append(os.Environ(), "SM_REPRO_BUILD="+build)
 	}
