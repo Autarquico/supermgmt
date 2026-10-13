@@ -34,13 +34,20 @@ func (v *validator) githubProvider(p GitHubProvider, at func(string) string) {
 		v.add(at("api_url"), "must be an https URL with no query, fragment or trailing slash, e.g. %s, got %q",
 			DefaultGitHubAPIURL, p.APIURL)
 	}
+	namespace := "secret://providers/" + p.Name + "/"
 	if p.CredentialRef == "" {
 		v.add(at("credential_ref"), "required")
 	} else {
 		v.secretRefOnly(at("credential_ref"), p.CredentialRef)
+		if strings.HasPrefix(p.CredentialRef, "secret://") && p.CredentialRef != namespace+"token" {
+			v.add(at("credential_ref"), "must be %stoken", namespace)
+		}
 	}
 	if p.WebhookSecretRef != "" {
 		v.secretRefOnly(at("webhook_secret_ref"), p.WebhookSecretRef)
+		if strings.HasPrefix(p.WebhookSecretRef, "secret://") && !strings.HasPrefix(p.WebhookSecretRef, namespace) {
+			v.add(at("webhook_secret_ref"), "must sit under %s", namespace)
+		}
 	}
 	if p.CAFile != "" && !path.IsAbs(p.CAFile) {
 		v.add(at("ca_file"), "must be an absolute path, got %q", p.CAFile)

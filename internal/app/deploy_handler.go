@@ -574,6 +574,12 @@ func (d commandDispatcher) dispatch(ctx context.Context, c nodeCommand) (transpo
 	if err != nil {
 		return transport.Result{}, err
 	}
+	if sent.TimedOut {
+		if err := d.closeTimedOut(ctx, sent.Intent); err != nil {
+			return transport.Result{}, err
+		}
+		return transport.Result{}, fmt.Errorf("%s timed out", c.Step)
+	}
 	return sent.Result, d.close(ctx, sent.Intent, sent.Result.ExitStatus)
 }
 
@@ -616,6 +622,13 @@ func (d commandDispatcher) close(ctx context.Context, intent domain.ID, exit int
 // can exit 0 and still be refused by the step that reads its output.
 func (d commandDispatcher) closeFailed(ctx context.Context, intent domain.ID, exit int) error {
 	return d.Ledger.CompleteIntent(ctx, intent, jobs.OutcomeFailed, commandExitEvidence(jobs.OutcomeFailed, exit))
+}
+
+// closeTimedOut ends an intent whose run timeout expired: no exit status was
+// observed, so none is recorded.
+func (d commandDispatcher) closeTimedOut(ctx context.Context, intent domain.ID) error {
+	raw, _ := json.Marshal(map[string]any{"outcome": jobs.OutcomeFailed, "timed_out": true})
+	return d.Ledger.CompleteIntent(ctx, intent, jobs.OutcomeFailed, raw)
 }
 
 func dispatchOutcomeUnknown(step string, cause error) error {

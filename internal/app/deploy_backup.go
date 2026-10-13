@@ -114,10 +114,17 @@ func (b backupStep) authorize(ctx context.Context, req backupRequest) error {
 // fail closes the intent as failed and returns the typed deployment error.
 // The node's output is never part of the message: it is untrusted (spec §30).
 func (b backupStep) fail(ctx context.Context, d commandDispatcher, sent sentCommand, format string, args ...any) error {
-	if err := d.closeFailed(ctx, sent.Intent, sent.Result.ExitStatus); err != nil {
+	if err := b.closeFailed(ctx, d, sent); err != nil {
 		return err
 	}
 	return backupFailed(format, args...)
+}
+
+func (backupStep) closeFailed(ctx context.Context, d commandDispatcher, sent sentCommand) error {
+	if sent.TimedOut {
+		return d.closeTimedOut(ctx, sent.Intent)
+	}
+	return d.closeFailed(ctx, sent.Intent, sent.Result.ExitStatus)
 }
 
 // backupDoneEvidence is the proven exit evidence of a finished backup plus the

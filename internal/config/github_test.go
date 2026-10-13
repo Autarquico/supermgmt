@@ -60,6 +60,8 @@ func TestGitHubProviderRejections(t *testing.T) {
 		{"api_url with encoded path", "    api_url: https://ghe.example.com/api%2Fv3\n", "providers[0].api_url"},
 		{"token not a secret ref", "    credential_ref: file:///etc/gh-token\n", "providers[0].credential_ref"},
 		{"webhook secret not a secret ref", "    webhook_secret_ref: file:///etc/gh-hook\n", "providers[0].webhook_secret_ref"},
+		{"another provider's token", "    credential_ref: secret://providers/pve/token\n", "providers[0].credential_ref"},
+		{"another provider's webhook secret", "    webhook_secret_ref: secret://providers/pve/webhook\n", "providers[0].webhook_secret_ref"},
 		{"relative ca_file", "    ca_file: ghe-ca.pem\n", "providers[0].ca_file"},
 		{"unknown field", "    verify_tls: false\n", "providers[0].verify_tls"},
 	}

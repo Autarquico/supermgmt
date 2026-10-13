@@ -379,16 +379,23 @@ func (p githubProviderParams) validate() error {
 	if err := validateGitHubAPIURL(p.APIURL); err != nil {
 		return err
 	}
-	if !providerSecretRefPattern.MatchString(p.CredentialRef) {
-		return invalidArgument("credential_ref must be a secret://providers/... reference")
+	namespace := "secret://providers/" + p.Name + "/"
+	if p.CredentialRef != namespace+"token" {
+		return invalidArgument("credential_ref must be %stoken", namespace)
 	}
-	if p.WebhookSecretRef != "" && !providerSecretRefPattern.MatchString(p.WebhookSecretRef) {
-		return invalidArgument("webhook_secret_ref must be a secret://providers/... reference")
+	if p.WebhookSecretRef != "" && !ownSecretRef(p.WebhookSecretRef, namespace) {
+		return invalidArgument("webhook_secret_ref must be a reference under %s", namespace)
 	}
 	if p.CAFile != "" && (!filepath.IsAbs(p.CAFile) || filepath.Clean(p.CAFile) != p.CAFile) {
 		return invalidArgument("ca_file must be an absolute, clean path")
 	}
 	return nil
+}
+
+// ownSecretRef reports whether ref is a well-formed secret reference inside the
+// provider's own namespace, so a provider can never name another one's secret.
+func ownSecretRef(ref, namespace string) bool {
+	return strings.HasPrefix(ref, namespace) && providerSecretRefPattern.MatchString(ref)
 }
 
 func validateGitHubAPIURL(raw string) error {
