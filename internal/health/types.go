@@ -2,13 +2,6 @@
 // A check's destination is never taken from user input: it is resolved from a
 // host port the frozen Compose model publishes, under the rules of the check's
 // origin.
-//
-// Frozen in M4 W0. T4b implements, in this package:
-//
-//	func ValidateManifest(c Check, ports []compose.HostPort) (Destination, error)  // loopback host_ip only
-//	func ValidateControlPlane(c Check, ports []compose.HostPort, allowedBind []netip.Addr) (Destination, error)
-//	func NodeInvocation(c Check, d Destination) (template string, args map[string]string, err error)
-//	func ControlPlane(ctx context.Context, hc *http.Client, c Check) (Result, error)  // via netguard
 package health
 
 import (

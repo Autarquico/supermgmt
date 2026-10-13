@@ -32,7 +32,7 @@ func TestExpectedEnvHashes_CoversPublicAndSecretValues(t *testing.T) {
 		materializeValue("apps/a/key", 1, ""),
 	}
 
-	got := ExpectedEnvHashes(f, values, nil)
+	got := ExpectedEnvHashes(f, values)
 
 	want := []EnvHash{
 		{"api", "DB", envhashOf("p=a ${x} $$")},
@@ -52,7 +52,7 @@ func TestExpectedEnvHashes_EnvironmentWinsOverEnvFile(t *testing.T) {
 		Secrets: []SecretUse{{Service: "api", EnvName: "MODE", Ref: "apps/a/m", Version: 1}},
 	}
 
-	got := ExpectedEnvHashes(f, []ResolvedSecret{materializeValue("apps/a/m", 1, "from-secret")}, nil)
+	got := ExpectedEnvHashes(f, []ResolvedSecret{materializeValue("apps/a/m", 1, "from-secret")})
 
 	want := []EnvHash{{"api", "MODE", envhashOf("from-environment")}}
 	if !reflect.DeepEqual(got, want) {
@@ -66,7 +66,7 @@ func TestExpectedEnvHashes_OmitsWhatCannotBeResolved(t *testing.T) {
 		Secrets: []SecretUse{{Service: "api", EnvName: "LOST", Ref: "apps/a/l", Version: 1}},
 	}
 
-	got := ExpectedEnvHashes(f, nil, nil)
+	got := ExpectedEnvHashes(f, nil)
 
 	want := []EnvHash{{"api", "SET", envhashOf("v")}}
 	if !reflect.DeepEqual(got, want) {
@@ -75,21 +75,21 @@ func TestExpectedEnvHashes_OmitsWhatCannotBeResolved(t *testing.T) {
 }
 
 func TestExpectedEnvHashes_UnparsablePublicYieldsNoHashes(t *testing.T) {
-	if got := ExpectedEnvHashes(Frozen{Public: []byte("{{{")}, nil, nil); len(got) != 0 {
+	if got := ExpectedEnvHashes(Frozen{Public: []byte("{{{")}, nil); len(got) != 0 {
 		t.Errorf("got %v, want none", got)
 	}
 }
 
 func TestExpectedEnvHashes_ServicesWithoutEnvironmentAddNothing(t *testing.T) {
 	f := Frozen{Public: []byte("services:\n  db:\n    image: i\n")}
-	if got := ExpectedEnvHashes(f, nil, nil); len(got) != 0 {
+	if got := ExpectedEnvHashes(f, nil); len(got) != 0 {
 		t.Errorf("got %v, want none", got)
 	}
 }
 
 func TestExpectedEnvHashes_KnownDigest(t *testing.T) {
 	f := Frozen{Public: []byte("services:\n  a:\n    environment:\n      E: \"\"\n    image: i\n")}
-	got := ExpectedEnvHashes(f, nil, nil)
+	got := ExpectedEnvHashes(f, nil)
 	if len(got) != 1 || got[0].SHA256 != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
 		t.Errorf("got %v", got)
 	}

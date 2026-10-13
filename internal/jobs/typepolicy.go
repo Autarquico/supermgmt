@@ -10,7 +10,7 @@ import (
 // TypePolicy lets one job type refine reconciliation and claims without
 // weakening the fixed rules (ADR-0029). Job types without a policy keep
 // today's behavior byte for byte. Wired through Config.TypePolicies (job type
-// -> policy); T7b integrates it into Store.
+// -> policy).
 //
 // Fixed, whatever a policy says: every dispatched intent needs Proven()
 // evidence (.done exit 0) before any automatic action; missing proof holds the

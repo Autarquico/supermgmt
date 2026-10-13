@@ -188,7 +188,7 @@ func (s deployStage) stageVerify(ctx context.Context, dir deployDir, f compose.F
 	if err := json.Unmarshal(bytes.TrimSpace(res.Stdout), &got); err != nil || len(got.Model) == 0 {
 		return stagingFailed("compose verification output is not understood", "")
 	}
-	want := compose.ExpectedEnvHashes(f, values, nil)
+	want := compose.ExpectedEnvHashes(f, values)
 	if diffs := envHashDiffs(want, got.Set); len(diffs) > 0 {
 		return stagingFailedWithDiffs("the resolved environment differs on the node", deployments.CauseEnvHashMismatch, diffs)
 	}

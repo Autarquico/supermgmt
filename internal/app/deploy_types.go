@@ -7,12 +7,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
-// M4 contract (frozen in W0; ADR-0011, ADR-0028, ADR-0029). Implemented by:
-//
-//	T9a   (a *Apps) Create, Update, Get, List, CreateTarget, UpdateTarget
-//	T10a  (d *Deployments) Create, Cancel; the CI watcher
-//	T10b  (d *Deployments) Finalize, Rollback
-
 // The views are the wire shapes themselves, under the names of the contract.
 type (
 	AppView        = wire.App

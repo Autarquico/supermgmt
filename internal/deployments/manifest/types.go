@@ -1,11 +1,6 @@
 // Package manifest parses the repository manifest `.supermgmt.yaml` (spec §19)
 // and merges it with the control-plane deployment policy (§19, §19.1): the
 // control plane always wins and the manifest can only tighten.
-//
-// Frozen in M4 W0. T4a implements, in this package:
-//
-//	func Parse(data []byte) (Manifest, error)                                  // strict; forbidden fields fail
-//	func Effective(cp DeploymentPolicy, m *Manifest) (EffectivePolicy, error)  // m nil: no manifest
 package manifest
 
 import (
