@@ -1,0 +1,24 @@
+┌ SuperMgmt · Deployments ──────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ DEPLOYMENTS                                                                  │
+│   ID       KIND     APP / ENV           STATE         COMMIT  CREATED        │
+│ ▸ 00001004 rollback 0000f999            rolled_back   4444444 10-10 11:30:00 │
+│   00001003 deploy   shop / production   waiting_ci    3333333 10-10 11:00:00 │
+│   00001002 deploy   shop / production   failed        2222222 10-10 10:00:00 │
+│   00001001 deploy   shop / staging      succeeded     1111111 10-10 09:00:00 │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ j/k move  enter detail  r refresh  esc back  / command  ? help  q quit       │
+└──────────────────────────────────────────────────────────────────────────────┘
