@@ -115,82 +115,6 @@ func deployStageNoSecret(t *testing.T, what string, err error) {
 	}
 }
 
-func TestDeployStage_PullPullsEachDistinctImageOnceUnderItsOwnMarker(t *testing.T) {
-	exec := &deployStageExec{}
-	err := deployStage{exec: exec}.Pull(context.Background(), deployments.RecoveryForward, "marker-1", deployStageFrozen().Images)
-	if err != nil {
-		t.Fatalf("Pull: %v", err)
-	}
-	if len(exec.commands) != 2 {
-		t.Fatalf("commands = %d; want 2 (the repeated image is pulled once)", len(exec.commands))
-	}
-	for i, c := range exec.commands {
-		if c.Template != "compose.pull" || !c.Mutating || !strings.Contains(c.Line, fmt.Sprintf("marker-1-%d", i)) {
-			t.Errorf("command %d = %+v; want a marked compose.pull ending -%d", i, c, i)
-		}
-	}
-}
-
-func TestDeployStage_PullFailureStopsAndIsStagingFailed(t *testing.T) {
-	exec := &deployStageExec{reply: deployStageReply(transport.Result{ExitStatus: 1})}
-	err := deployStage{exec: exec}.Pull(context.Background(), deployments.RecoveryForward, "marker-1", deployStageFrozen().Images)
-	_ = deployStageWantError(t, err, smerr.ReasonStagingFailed)
-	if len(exec.commands) != 1 {
-		t.Errorf("commands = %d; want the run to stop at the first failed pull", len(exec.commands))
-	}
-}
-
-func TestDeployStage_TransportErrorIsNotStagingFailed(t *testing.T) {
-	unreachable := smerr.New(smerr.CodeNodeUnreachable, "", "down")
-	exec := &deployStageExec{reply: func(templates.Command) (transport.Result, error) { return transport.Result{}, unreachable }}
-	err := deployStage{exec: exec}.Pull(context.Background(), deployments.RecoveryForward, "marker-1", deployStageFrozen().Images)
-	if smerr.CodeOf(err) != smerr.CodeNodeUnreachable {
-		t.Errorf("code = %s; want NODE_UNREACHABLE", smerr.CodeOf(err))
-	}
-}
-
-func TestDeployStage_MaterializeSendsSecretsOnlyThroughSensitiveStdin(t *testing.T) {
-	exec := &deployStageExec{}
-	dir := deployStageDir()
-	err := deployStage{exec: exec}.Materialize(context.Background(), deployments.RecoveryForward, dir, "marker-2",
-		deployStageFrozen(), deployStageValues())
-	if err != nil {
-		t.Fatalf("Materialize: %v", err)
-	}
-	c := exec.commands[0]
-	if !c.Sensitive || !c.Mutating || c.Template != "compose.materialize" {
-		t.Errorf("command = %+v; want a sensitive mutating compose.materialize", c)
-	}
-	if strings.Contains(c.Line, deployStageSecretValue) {
-		t.Error("the secret value is on the command line")
-	}
-	stdin := string(c.Stdin)
-	for _, want := range []string{"compose.yaml", "secrets/api.env", "DATABASE_URL=" + deployStageSecretValue, "dev.supermgmt.deployment: " + dir.Deployment.String()} {
-		if !strings.Contains(stdin, want) {
-			t.Errorf("stdin lacks %q", want)
-		}
-	}
-}
-
-func TestDeployStage_MaterializeFailuresNeverEchoTheSecret(t *testing.T) {
-	t.Run("node refuses", func(t *testing.T) {
-		exec := &deployStageExec{reply: deployStageReply(transport.Result{ExitStatus: 1, Stderr: []byte(deployStageSecretValue)})}
-		err := deployStage{exec: exec}.Materialize(context.Background(), deployments.RecoveryForward, deployStageDir(), "marker-2",
-			deployStageFrozen(), deployStageValues())
-		_ = deployStageWantError(t, err, smerr.ReasonStagingFailed)
-		deployStageNoSecret(t, "materialize error", err)
-	})
-	t.Run("secret version missing", func(t *testing.T) {
-		exec := &deployStageExec{}
-		err := deployStage{exec: exec}.Materialize(context.Background(), deployments.RecoveryForward, deployStageDir(), "marker-2",
-			deployStageFrozen(), nil)
-		_ = deployStageWantError(t, err, smerr.ReasonStagingFailed)
-		if len(exec.commands) != 0 {
-			t.Error("a node command ran although the bundle could not be built")
-		}
-	})
-}
-
 func TestDeployStage_VerifyAcceptsAFaithfulNode(t *testing.T) {
 	dir := deployStageDir()
 	exec := &deployStageExec{reply: deployStageReply(transport.Result{Stdout: deployStageNodeOutput(dir, deployStageSum(deployStageSecretValue))})}
@@ -268,8 +192,6 @@ func TestDeployStage_StagingNeverTouchesRunningServices(t *testing.T) {
 	dir := deployStageDir()
 	exec := &deployStageExec{reply: deployStageReply(transport.Result{ExitStatus: 1})}
 	stage := deployStage{exec: exec}
-	_ = stage.Pull(context.Background(), deployments.RecoveryForward, "marker-1", deployStageFrozen().Images)
-	_ = stage.Materialize(context.Background(), deployments.RecoveryForward, dir, "marker-2", deployStageFrozen(), deployStageValues())
 	_ = stage.Verify(context.Background(), deployments.RecoveryForward, dir, deployStageFrozen(), deployStageValues())
 	for _, c := range exec.commands {
 		switch c.Template {
@@ -287,12 +209,9 @@ func TestDeployStage_ForwardStepsRefuseUnderSafetyRecovery(t *testing.T) {
 	dir := deployStageDir()
 	ctx, mode := context.Background(), deployments.RecoverySafetyRecovery
 	exec := &deployStageExec{}
-	stage, run := deployStage{exec: exec}, deployRun{exec: exec}
+	stage := deployStage{exec: exec}
 	steps := map[string]error{
-		deployments.StepPull:         stage.Pull(ctx, mode, "marker-1", deployStageFrozen().Images),
-		deployments.StepMaterialize:  stage.Materialize(ctx, mode, dir, "marker-2", deployStageFrozen(), deployStageValues()),
 		deployments.StepVerifyOnNode: stage.Verify(ctx, mode, dir, deployStageFrozen(), deployStageValues()),
-		deployments.StepDeploy:       run.Up(ctx, mode, dir, "marker-3"),
 	}
 	for step, err := range steps {
 		_ = deployStageWantError(t, err, smerr.ReasonInvalidTransition)
@@ -305,10 +224,19 @@ func TestDeployStage_ForwardStepsRefuseUnderSafetyRecovery(t *testing.T) {
 	}
 }
 
-func TestDeployStage_RestoreVariantsRunUnderSafetyRecovery(t *testing.T) {
-	exec := &deployStageExec{}
-	err := deployStage{exec: exec}.stagePull(context.Background(), "marker-1", deployStageFrozen().Images)
-	if err != nil || len(exec.commands) == 0 {
-		t.Errorf("stagePull = %v with %d commands; the restore variant has no mode refusal", err, len(exec.commands))
+func TestDeployHandler_ForwardStepsRefuseUnderSafetyRecoveryBeforeTouchingTheNode(t *testing.T) {
+	j := &deployJob{mode: deployments.RecoverySafetyRecovery}
+	h := deployHandler{}
+	steps := map[string]func(deployments.Step) error{
+		deployments.StepPull:        func(s deployments.Step) error { return h.pull(context.Background(), j, frozenDeployment{}, s) },
+		deployments.StepMaterialize: func(s deployments.Step) error { return h.materialize(context.Background(), j, frozenDeployment{}, s) },
+		deployments.StepDeploy:      func(s deployments.Step) error { return h.deploy(context.Background(), j, s) },
+	}
+	for name, run := range steps {
+		err := run(deployments.Step{Name: name})
+		_ = deployStageWantError(t, err, smerr.ReasonInvalidTransition)
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %q does not name step %s", err, name)
+		}
 	}
 }

@@ -33,10 +33,9 @@ func (d deployDir) args() map[string]string {
 // steps 8-10): pull, materialize, verify. Nothing here touches a running
 // service, so a failure leaves the project exactly as it was.
 //
-// The exported-style methods are the forward steps and refuse under
-// safety_recovery (ADR-0029). The unexported stage* methods are the same
-// operations without that refusal, for the restore steps, which redeploy the
-// frozen rollback target.
+// Verify is the forward verify step and refuses under safety_recovery
+// (ADR-0029); stageVerify is the same check for the restore steps. Pull and
+// materialize run through the shared commandDispatcher (deploy_handler.go).
 type deployStage struct {
 	exec transport.Executor
 }
@@ -44,25 +43,6 @@ type deployStage struct {
 // maxReportedDiffs bounds how many differences an error lists: the node's
 // output is untrusted and must not be able to inflate an error.
 const maxReportedDiffs = 10
-
-// Pull is the forward pull step. Each distinct image is pulled under the
-// marker "<marker>-<n>", n counting from 0 in sorted reference order.
-func (s deployStage) Pull(ctx context.Context, mode deployments.RecoveryMode, marker string, images []compose.ImageUse) error {
-	if err := refuseForwardStep(deployments.StepPull, mode); err != nil {
-		return err
-	}
-	return s.stagePull(ctx, marker, images)
-}
-
-// Materialize is the forward materialize step.
-func (s deployStage) Materialize(ctx context.Context, mode deployments.RecoveryMode, dir deployDir, marker string,
-	f compose.Frozen, values []compose.ResolvedSecret,
-) error {
-	if err := refuseForwardStep(deployments.StepMaterialize, mode); err != nil {
-		return err
-	}
-	return s.stageMaterialize(ctx, dir, marker, f, values)
-}
 
 // Verify is the forward verify-on-node step.
 func (s deployStage) Verify(ctx context.Context, mode deployments.RecoveryMode, dir deployDir,
@@ -84,23 +64,6 @@ func refuseForwardStep(step string, mode deployments.RecoveryMode) error {
 	return nil
 }
 
-func (s deployStage) stagePull(ctx context.Context, marker string, images []compose.ImageUse) error {
-	for i, ref := range distinctImageRefs(images) {
-		cmd, err := templates.RenderMutating("compose.pull", fmt.Sprintf("%s-%d", marker, i), map[string]string{"image": ref})
-		if err != nil {
-			return fmt.Errorf("render pull: %w", err)
-		}
-		res, err := s.exec.Run(ctx, cmd)
-		if err != nil {
-			return fmt.Errorf("pull %s: %w", ref, err)
-		}
-		if res.ExitStatus != 0 {
-			return stagingFailed(fmt.Sprintf("docker pull of %s exited %d", ref, res.ExitStatus), "")
-		}
-	}
-	return nil
-}
-
 func distinctImageRefs(images []compose.ImageUse) []string {
 	seen := map[string]bool{}
 	var refs []string
@@ -112,34 +75,6 @@ func distinctImageRefs(images []compose.ImageUse) []string {
 	}
 	sort.Strings(refs)
 	return refs
-}
-
-// stageMaterialize writes the deployment directory. The files travel on stdin
-// of a Sensitive command; the command line, the error messages and the
-// node's output never carry them.
-func (s deployStage) stageMaterialize(ctx context.Context, dir deployDir, marker string,
-	f compose.Frozen, values []compose.ResolvedSecret,
-) error {
-	bundle, err := compose.Materialize(f, dir.Deployment, values)
-	if err != nil {
-		return err
-	}
-	stdin, err := templates.EncodeMaterialization(stagedFiles(bundle))
-	if err != nil {
-		return stagingFailed("cannot encode the deployment files: "+err.Error(), "")
-	}
-	cmd, err := templates.RenderMutatingInput("compose.materialize", marker, dir.args(), stdin, "")
-	if err != nil {
-		return fmt.Errorf("render materialize: %w", err)
-	}
-	res, err := s.exec.Run(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("materialize: %w", err)
-	}
-	if res.ExitStatus != 0 {
-		return stagingFailed(fmt.Sprintf("materialize exited %d", res.ExitStatus), "")
-	}
-	return nil
 }
 
 func stagedFiles(b compose.Bundle) []templates.StagedFile {
