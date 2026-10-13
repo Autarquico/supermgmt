@@ -2,8 +2,9 @@ package app
 
 import (
 	"errors"
-	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"time"
+
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/jobs"
