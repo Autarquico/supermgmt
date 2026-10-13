@@ -372,7 +372,8 @@ func (h deployHandler) backup(ctx context.Context, j *deployJob, fz frozenDeploy
 }
 
 // backupGate re-evaluates the plan's backup sub-action for the requester under
-// the policy in force (spec §11.3), on the node the plan pinned.
+// the policy in force (spec §11.3): the deployment's own action with the
+// sub-action on the node the plan pinned, exactly as the claim evaluates it.
 func (h deployHandler) backupGate(j *deployJob) backupSubActionGate {
 	return func(ctx context.Context, sub plan.SubAction) error {
 		q := h.cfg.DB.Reader()
@@ -387,11 +388,18 @@ func (h deployHandler) backupGate(j *deployJob) backupSubActionGate {
 		if err != nil {
 			return err
 		}
-		target, err := scope.policyTarget(ctx, q, domain.ResourceRef{Type: domain.ResourceNode, ID: j.node.ID})
+		main, err := scope.policyTarget(ctx, q, appTargetRef(j.target.ID))
 		if err != nil {
 			return err
 		}
-		return decisionError(h.authorize(policy.Request{Actor: actor, Action: sub.Action, Targets: []policy.Target{target}}))
+		node, err := scope.policyTarget(ctx, q, domain.ResourceRef{Type: domain.ResourceNode, ID: j.node.ID})
+		if err != nil {
+			return err
+		}
+		return decisionError(h.authorize(policy.Request{
+			Actor: actor, Action: j.plan.Action, Params: j.plan.Parameters, Targets: []policy.Target{main},
+			SubActions: []policy.SubAction{{Action: sub.Action, Target: node}},
+		}))
 	}
 }
 
