@@ -46,7 +46,10 @@ func NewRemote(r Remote, opts Options) (*Client, error) {
 		return nil, err
 	}
 	c := New(opts)
-	c.base, c.token, c.remote = base, r.Token, true
+	c.base, c.remote = base, true
+	if r.Token != "" {
+		c.token = r.Token
+	}
 	c.http = &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{

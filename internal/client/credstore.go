@@ -53,18 +53,25 @@ type runner func(ctx context.Context, stdin []byte, name string, args ...string)
 // a headless host.
 func OpenCredentialStore(goos string, env []string, configDir string) CredentialStore {
 	file := &fileStore{path: filepath.Join(configDir, credentialsFile)}
-	var native CredentialStore
+	native, _ := OpenNativeCredentialStore(goos, env)
+	return &chainStore{native: native, file: file}
+}
+
+// OpenNativeCredentialStore returns the OS store alone, with no file fallback,
+// and false when this machine has none. It is for a secret that must not land
+// in a plain file by accident (an MCP client's one-time token, ADR-0032).
+func OpenNativeCredentialStore(goos string, env []string) (CredentialStore, bool) {
 	switch goos {
 	case "darwin":
 		if tool, ok := LookPath(env, "security"); ok {
-			native = &keychainStore{tool: tool, run: execRunner(env)}
+			return &keychainStore{tool: tool, run: execRunner(env)}, true
 		}
 	case "linux":
 		if tool, ok := LookPath(env, "secret-tool"); ok {
-			native = &secretToolStore{tool: tool, run: execRunner(env)}
+			return &secretToolStore{tool: tool, run: execRunner(env)}, true
 		}
 	}
-	return &chainStore{native: native, file: file}
+	return nil, false
 }
 
 // LookPath finds an executable on the PATH given in env (not the process's).

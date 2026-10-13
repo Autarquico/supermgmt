@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/tui"
@@ -68,6 +69,15 @@ type Options struct {
 	Sleep func(ctx context.Context, d time.Duration) error
 	// TempDir is where isolated known_hosts directories are created.
 	TempDir string
+	// Token, when set, is sent as the bearer credential on the daemon socket
+	// as well (an MCP client's smm_ token, ADR-0032).
+	Token audit.Secret
+	// Transport, when set, carries every request instead of the socket: the
+	// in-process path of the remote MCP handler, which stamps the caller
+	// itself. BaseURL is then the origin requests are addressed to ("" keeps
+	// the default). The peer-credential check does not apply.
+	Transport http.RoundTripper
+	BaseURL   string
 }
 
 // Client talks to one control plane. It is safe for concurrent use.
@@ -96,9 +106,17 @@ func New(opts Options) *Client {
 	if c.ids == nil {
 		c.ids = domain.UUIDv7Generator{}
 	}
+	c.token = opts.Token.Reveal()
 	c.http = &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return c.dial(ctx) },
 	}}
+	if opts.Transport != nil {
+		c.base = cmpOr(opts.BaseURL, c.base)
+		c.http = &http.Client{
+			Transport:     opts.Transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
+	}
 	return c
 }
 
