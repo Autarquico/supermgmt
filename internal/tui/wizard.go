@@ -208,38 +208,59 @@ func deploymentNotice(d wire.Deployment) string {
 // ---- rollback review -------------------------------------------------------------
 
 func (m *Model) reviewRollback(app wire.App, target wire.AppTarget, deployments []wire.Deployment) tea.Cmd {
-	current, ok := currentDeployment(deployments, target.ID)
+	source, ok := newestDeployment(deployments, target.ID)
 	if !ok {
-		m.notice = notice{text: fmt.Sprintf("nothing to roll back: %s / %s has no succeeded deployment", safe(app.Name), safe(target.Environment)), isErr: true}
+		m.notice = notice{text: fmt.Sprintf("nothing to roll back: %s / %s has no deployment", safe(app.Name), safe(target.Environment)), isErr: true}
 		return nil
 	}
 	api, _ := m.api.(DeployAPI)
 	m.confirm = &confirmation{
 		title: fmt.Sprintf("Roll back %s in %s", safe(app.Name), safe(target.Environment)),
 		lines: []string{
-			fmt.Sprintf("Replaces deployment %s (commit %s)", shortID(current.ID), safe(current.CommitSHA[:min(len(current.CommitSHA), 7)])),
-			"with the newest known-good deployment before it.",
+			fmt.Sprintf("Replaces deployment %s (commit %s)", shortID(source.ID), shortCommit(source)),
+			rollbackDestination(deployments, source),
 			"",
 			"The daemon picks that deployment and freezes the plan; policy may",
 			"ask for approval before it runs.",
 		},
 		run: func(ctx context.Context) (string, error) {
-			d, err := api.RollbackDeployment(ctx, current.ID, wire.RollbackRequest{})
+			d, err := api.RollbackDeployment(ctx, source.ID, wire.RollbackRequest{})
 			return deploymentNotice(d), err
 		},
 	}
 	return nil
 }
 
-// currentDeployment is the newest succeeded deployment of a target: the one a
-// rollback replaces.
-func currentDeployment(deployments []wire.Deployment, target domain.ID) (wire.Deployment, bool) {
-	var current wire.Deployment
+// newestDeployment is the newest deployment of a target in any state, the
+// source `sm rollback` passes to the daemon.
+func newestDeployment(deployments []wire.Deployment, target domain.ID) (wire.Deployment, bool) {
+	var newest wire.Deployment
 	found := false
 	for _, d := range deployments {
-		if d.AppTargetID == target && d.State == "succeeded" && (!found || d.CreatedAt.After(current.CreatedAt)) {
-			current, found = d, true
+		if d.AppTargetID == target && (!found || d.CreatedAt.After(newest.CreatedAt)) {
+			newest, found = d, true
 		}
 	}
-	return current, found
+	return newest, found
+}
+
+// rollbackDestination names the deployment the daemon restores: the newest
+// known-good one older than the source. The list is a window of recent
+// deployments, so when it holds none the daemon's choice stays unnamed.
+func rollbackDestination(deployments []wire.Deployment, source wire.Deployment) string {
+	var good wire.Deployment
+	found := false
+	for _, d := range deployments {
+		if d.AppTargetID == source.AppTargetID && d.KnownGood && d.CreatedAt.Before(source.CreatedAt) && (!found || d.CreatedAt.After(good.CreatedAt)) {
+			good, found = d, true
+		}
+	}
+	if !found {
+		return "with the newest known-good deployment before it."
+	}
+	return fmt.Sprintf("with known-good deployment %s (commit %s).", shortID(good.ID), shortCommit(good))
+}
+
+func shortCommit(d wire.Deployment) string {
+	return safe(d.CommitSHA[:min(len(d.CommitSHA), 7)])
 }

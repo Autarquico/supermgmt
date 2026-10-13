@@ -1,7 +1,7 @@
 id:            0199d000-0000-7000-8000-000000000001
 kind:          deploy
 state:         failed
-reason:        HEALTH_FAILED
+reason:        HEALTH_FAILED (STATEFUL)
 commit:        0123456789abcdef0123456789abcdef01234567
 plan hash:     sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 compose hash:  -

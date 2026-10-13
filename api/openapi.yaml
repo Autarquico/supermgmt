@@ -2296,6 +2296,7 @@ components:
         state: {type: string}
         state_code: {type: string}
         state_reason: {type: string}
+        state_cause: {type: string}
         requested_by: {$ref: '#/components/schemas/ID'}
         previous_deployment_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
         rollback_of_deployment_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}

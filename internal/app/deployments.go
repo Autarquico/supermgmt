@@ -513,7 +513,7 @@ func (d *Deployments) viewOf(ctx context.Context, q database.Querier, row databa
 		ID: row.ID, Kind: row.Kind, AppID: row.AppID, AppTargetID: row.AppTargetID, EnvironmentID: row.EnvironmentID,
 		NodeID: row.NodeID, CommitSHA: row.CommitSha, Images: images, ArtifactID: row.ArtifactID, PlanID: row.PlanID,
 		PlanHash: textOrNil(row.PlanHash), JobID: row.JobID, State: string(row.State),
-		StateCode: smerr.Code(row.Failure.Code), StateReason: smerr.Reason(row.Failure.Reason),
+		StateCode: smerr.Code(row.Failure.Code), StateReason: smerr.Reason(row.Failure.Reason), StateCause: row.Failure.Cause,
 		RequestedBy: row.RequestedBy, PreviousDeploymentID: row.PreviousDeploymentID,
 		RollbackOfDeploymentID: row.RollbackOfDeploymentID, KnownGood: row.KnownGood,
 		ComposeHash: textOrNil(row.ComposeHash), Steps: make([]wire.DeploymentStep, len(steps)),

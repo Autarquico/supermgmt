@@ -17,7 +17,7 @@ func timelineFixture() (wire.Deployment, []wire.Event) {
 	plan := "sha256:" + strings.Repeat("9", 64)
 	d := wire.Deployment{
 		ID: m4DeployTwo, Kind: "deploy", AppID: m4AppShop, AppTargetID: m4TargetPrd,
-		State: "failed", StateReason: "HEALTH_CHECK_FAILED", CommitSHA: strings.Repeat("2", 40),
+		State: "failed", StateReason: "HEALTH_CHECK_FAILED", StateCause: "STATEFUL", CommitSHA: strings.Repeat("2", 40),
 		Images:   []wire.RequestedImage{{Service: "web", Digest: "sha256:" + strings.Repeat("c", 64)}},
 		PlanHash: &plan, CreatedAt: started, FinishedAt: &finished,
 		Steps: []wire.DeploymentStep{

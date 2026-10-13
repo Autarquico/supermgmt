@@ -226,33 +226,47 @@ func TestDeployWizardReportsAFailedStart(t *testing.T) {
 	}
 }
 
-func TestRollbackReviewReplacesTheNewestSucceededDeployment(t *testing.T) {
+func TestRollbackReviewReplacesTheNewestDeploymentAndNamesTheKnownGoodOne(t *testing.T) {
 	h, api := newDeployFlow(t)
-	api.deployments = append(api.deployments, wire.Deployment{
-		ID: "0192a000-0000-7000-8000-000000001005", Kind: "deploy", AppID: m4AppShop, AppTargetID: m4TargetPrd,
-		State: "succeeded", CommitSHA: "5555555eeee", CreatedAt: epoch.Add(-90 * time.Minute),
-	})
+	// Production: known-good 1005 (-3h30), then 1002 failed (-2h), then 1003
+	// waiting_ci (-1h), the newest. The CLI would pass 1003 and the daemon
+	// restores 1005, the newest known-good before it.
+	api.deployments = append(api.deployments,
+		wire.Deployment{
+			ID: "0192a000-0000-7000-8000-000000001005", Kind: "deploy", AppID: m4AppShop, AppTargetID: m4TargetPrd,
+			State: "succeeded", KnownGood: true, CommitSHA: "5555555eeee", CreatedAt: epoch.Add(-210 * time.Minute),
+		},
+		wire.Deployment{
+			ID: "0192a000-0000-7000-8000-000000001006", Kind: "deploy", AppID: m4AppShop, AppTargetID: m4TargetPrd,
+			State: "succeeded", KnownGood: true, CommitSHA: "6666666ffff", CreatedAt: epoch.Add(-300 * time.Minute),
+		})
 	h.runPalette("rollback shop production")
 	if h.m.confirm == nil {
 		t.Fatalf("no review opened:\n%s", h.view())
+	}
+	view := h.view()
+	for _, want := range []string{"3333333", "known-good deployment", "5555555"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("review does not show %q:\n%s", want, view)
+		}
 	}
 	if len(api.rolledBack) != 0 {
 		t.Fatal("the rollback was requested before the review was confirmed")
 	}
 	h.press("y")
-	if len(api.rolledBack) != 1 || api.rolledBack[0] != "0192a000-0000-7000-8000-000000001005" {
-		t.Errorf("rolled back %v, want the newest succeeded deployment of production", api.rolledBack)
+	if len(api.rolledBack) != 1 || api.rolledBack[0] != m4DeployTri {
+		t.Errorf("rolled back %v, want the newest deployment of production in any state", api.rolledBack)
 	}
 	if api.rollbackTo[0] != nil {
 		t.Errorf("the daemon should pick the known-good target, got %v", *api.rollbackTo[0])
 	}
 }
 
-func TestRollbackWithNothingSucceededIsRefused(t *testing.T) {
+func TestRollbackWithNoDeploymentIsRefused(t *testing.T) {
 	h, api := newDeployFlow(t)
 	h.runPalette("rollback shop staging")
 	if h.m.confirm == nil {
-		t.Fatalf("staging has a succeeded deployment; no review opened:\n%s", h.view())
+		t.Fatalf("staging has a deployment; no review opened:\n%s", h.view())
 	}
 	h.press("n")
 

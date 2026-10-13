@@ -218,7 +218,18 @@ func reasonSuffix(d wire.Deployment) string {
 	if d.StateReason == "" {
 		return ""
 	}
+	if d.StateCause != "" {
+		return " (" + string(d.StateReason) + ": " + d.StateCause + ")"
+	}
 	return " (" + string(d.StateReason) + ")"
+}
+
+// reasonWithCause is the reason, followed by its recorded cause when there is one.
+func reasonWithCause(d wire.Deployment) string {
+	if d.StateCause == "" {
+		return string(d.StateReason)
+	}
+	return string(d.StateReason) + " (" + d.StateCause + ")"
 }
 
 // pollUntilTerminal refreshes d every interval until it is terminal, calling
@@ -253,7 +264,7 @@ func pollUntilTerminal(ctx context.Context, api *client.Client, d wire.Deploymen
 // deploymentFingerprint changes whenever something the timeline shows does.
 func deploymentFingerprint(d wire.Deployment) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%s|%s", d.State, d.StateCode, d.StateReason)
+	fmt.Fprintf(&b, "%s|%s|%s|%s", d.State, d.StateCode, d.StateReason, d.StateCause)
 	for _, s := range d.Steps {
 		fmt.Fprintf(&b, "|%d:%s:%d", s.Ordinal, s.State, s.Attempt)
 	}
@@ -485,7 +496,7 @@ func writeTimeline(w io.Writer, d wire.Deployment) error {
 		{"id", string(d.ID)},
 		{"kind", d.Kind},
 		{"state", d.State},
-		{"reason", orDash(string(d.StateReason))},
+		{"reason", orDash(reasonWithCause(d))},
 		{"commit", d.CommitSHA},
 		{"plan hash", orDash(derefString(d.PlanHash))},
 		{"compose hash", orDash(derefString(d.ComposeHash))},

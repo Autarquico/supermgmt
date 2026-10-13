@@ -213,6 +213,7 @@ type Deployment struct {
 	State                  string           `json:"state"`
 	StateCode              smerr.Code       `json:"state_code"`
 	StateReason            smerr.Reason     `json:"state_reason"`
+	StateCause             string           `json:"state_cause,omitempty"`
 	RequestedBy            domain.ID        `json:"requested_by"`
 	PreviousDeploymentID   *domain.ID       `json:"previous_deployment_id"`
 	RollbackOfDeploymentID *domain.ID       `json:"rollback_of_deployment_id"`
