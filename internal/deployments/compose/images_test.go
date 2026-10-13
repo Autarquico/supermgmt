@@ -68,6 +68,7 @@ func TestBindImages_DeployedServiceRules(t *testing.T) {
 		{"missing artifact digest", func(s *Source) { s.ArtifactDigest = "" }, smerr.ReasonDigestUnbound},
 		{"malformed artifact digest", func(s *Source) { s.ArtifactDigest = "sha256:XYZ" }, smerr.ReasonDigestUnbound},
 		{"unknown binding", func(s *Source) { s.BoundDigests[freezeAPIRef] = "trust-me" }, smerr.ReasonDigestUnbound},
+		{"provenance required, deployed digest only pinned", func(s *Source) { s.RequireProvenance, s.BoundDigests[freezeAPIRef] = true, BindingPinned }, smerr.ReasonDigestUnbound},
 		{"deployed service missing", func(s *Source) { s.DeployedService = "ghost" }, smerr.ReasonComposeRejected},
 		{"repository with tag", func(s *Source) { s.Images.Deployed = "ghcr.io/acme/api:1" }, smerr.ReasonComposeRejected},
 		{"no repository", func(s *Source) { s.Images.Deployed = "" }, smerr.ReasonComposeRejected},
@@ -95,5 +96,18 @@ func TestHasTag_RegistryPortIsNotATag(t *testing.T) {
 		if got := hasTag(repo); got != want {
 			t.Errorf("hasTag(%q) = %v, want %v", repo, got, want)
 		}
+	}
+}
+
+func TestBindImages_RequireProvenanceAcceptsAnAttestedDeployedServiceAndPinnedSidecars(t *testing.T) {
+	ref := imageRedisRepo + "@" + imageDigestOf("4")
+	s := freezeSource()
+	s.RequireProvenance = true
+	s.BoundDigests[freezeAPIRef] = BindingAttestation
+	s.Images.Pinned = []string{ref}
+	s.Raw = []byte(strings.Replace(freezeDocument, freezeRedis, ref, 1))
+	f := freezeOK(t, s, freezeTarget("prod"))
+	if f.Images[0].Binding != BindingAttestation || f.Images[1].Binding != BindingPinned {
+		t.Fatalf("images = %+v", f.Images)
 	}
 }

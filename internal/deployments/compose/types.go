@@ -3,27 +3,11 @@
 // pinned compose-go loader, the model allowlist, exceptions, image binding,
 // ownership labels, the target-bound frozen public model, materialization and
 // the on-node equivalence check. It never touches storage or a node.
-//
-// Frozen in M4 W0. Implemented in this package by:
-//
-//	T2a  func CheckRaw(raw []byte, t Target) error              // raw closed-schema pass (steps 1, 4–6 source forms)
-//	T2a  func Interpolate(raw []byte, s Source) ([]byte, error) // step 2
-//	T2b  func Load(interpolated []byte, project string) (*types.Project, error)
-//	T2b  func CheckModel(p *types.Project, t Target, e Exceptions) error
-//	T3a  func ValidateSource(s Source) error                   // steps 1–7, target-independent
-//	T3a  func Freeze(s Source, t Target) (Frozen, error)       // steps 1–9 for one target
-//	T3b  func Materialize(f Frozen, deployment domain.ID, values []ResolvedSecret) (Bundle, error)
-//	T3b  func ExpectedEnvHashes(f Frozen, values []ResolvedSecret, vars map[string]string) []EnvHash
-//	T3b  func Equivalent(expectedMasked json.RawMessage, cliMasked []byte) (diffs []string, err error)
 package compose
 
 import (
 	"encoding/json"
 	"net/netip"
-
-	// The pinned loader (ADR-0006). Load (T2b) is its only caller; the import
-	// keeps the module pinned in go.mod until then.
-	_ "github.com/compose-spec/compose-go/v2/loader"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -57,6 +41,10 @@ type Source struct {
 	DeployedService string
 	ArtifactDigest  string            // sha256:<hex> of the deployed service's image
 	BoundDigests    map[string]string // repo@digest -> binding (Binding*)
+
+	// RequireProvenance is the environment's flag: the deployed service's
+	// digest must be bound by an attestation; the pinned set does not count.
+	RequireProvenance bool
 }
 
 // Target is what binds a public model to one app_target (ADR-0007): the

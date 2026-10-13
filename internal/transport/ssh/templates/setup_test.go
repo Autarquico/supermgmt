@@ -1,6 +1,9 @@
 package templates
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -157,6 +160,13 @@ func TestValidateDeployRoot(t *testing.T) {
 		{HomeDir, false},
 		{HomeDir + "/deploy", false},
 		{HomeDir + "-other", true},
+		{"/etc", false},
+		{"/etc/sudoers.d", false},
+		{"/usr/local/bin", false},
+		{"/root", false},
+		{"/var/lib/docker/volumes", false},
+		{"/var/lib/other", true},
+		{"/etcetera", true},
 		{"/srv/a b", false},
 		{"/srv/$(id)", false},
 		{"/srv/a;b", false},
@@ -176,15 +186,14 @@ func TestDeployRootStepCreatesADirectoryOwnedByTheDedicatedUserOnlyForValidPaths
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "test ! -L '/srv/supermgmt' && " + rootPath + "install -d -m 0750 -o 'supermgmt' -g 'supermgmt' '/srv/supermgmt'"
-	if !strings.HasSuffix(root.Line, want) {
+	if !strings.Contains(root.Line, "sh -c '") || !strings.HasSuffix(root.Line, " sh '/srv/supermgmt' 'supermgmt'") {
 		t.Errorf("root variant = %q", root.Line)
 	}
 	viaSudo, err := RenderSetup("setup.deploy_root.sudo", args, nil)
-	if err != nil || !strings.Contains(viaSudo.Line, "sudo -n install -d -m 0750 -o 'supermgmt' -g 'supermgmt' '/srv/supermgmt'") {
+	if err != nil || !strings.Contains(viaSudo.Line, "sudo -n sh -c '") {
 		t.Errorf("sudo variant = %q, %v", viaSudo.Line, err)
 	}
-	for _, bad := range []string{"relative", "/srv/x;id", HomeDir + "/d", "/"} {
+	for _, bad := range []string{"relative", "/srv/x;id", HomeDir + "/d", "/", "/etc"} {
 		if _, err := RenderSetup("setup.deploy_root", map[string]string{"user": "supermgmt", "path": bad}, nil); err == nil {
 			t.Errorf("deploy_root accepted %q", bad)
 		}
@@ -219,5 +228,61 @@ func TestOwnStepsRunAsTheDedicatedUser(t *testing.T) {
 		if _, err := RenderSetup("setup.own_dir", map[string]string{"user": "supermgmt", "mode": "0700", "path": bad}, nil); err == nil {
 			t.Errorf("own_dir accepted %s", bad)
 		}
+	}
+}
+
+// runDeployRootStep executes the rendered step with stat and install replaced
+// by stubs: stat reports owner, install records that it ran.
+func runDeployRootStep(t *testing.T, target, owner string) (installed bool, runErr error) {
+	t.Helper()
+	bin := t.TempDir()
+	installLog := filepath.Join(bin, "install.log")
+	stubs := map[string]string{
+		"stat":    "echo " + owner,
+		"install": "echo ran >> " + installLog,
+	}
+	for name, body := range stubs {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := RenderSetup("setup.deploy_root", map[string]string{"user": "supermgmt", "path": target}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", c.Line)
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+	runErr = cmd.Run()
+	_, statErr := os.Stat(installLog)
+	return statErr == nil, runErr
+}
+
+func TestDeployRootStepNeverReownsAnExistingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, target, owner string
+		wantOK, wantInstall bool
+	}{
+		{"absent is created", filepath.Join(dir, "absent"), "supermgmt", true, true},
+		{"existing owned by the user is kept", dir, "supermgmt", true, false},
+		{"existing owned by another user is refused", dir, "root", false, false},
+		{"symlink is refused", link, "supermgmt", false, false},
+		{"regular file is refused", file, "supermgmt", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installed, err := runDeployRootStep(t, tt.target, tt.owner)
+			if (err == nil) != tt.wantOK || installed != tt.wantInstall {
+				t.Errorf("err = %v, installed = %v; want ok=%v installed=%v", err, installed, tt.wantOK, tt.wantInstall)
+			}
+		})
 	}
 }
