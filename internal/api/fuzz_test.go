@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,7 +30,7 @@ func FuzzReadInput(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, body []byte, limit uint16) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body))
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/x", bytes.NewReader(body))
 		r.Body = http.MaxBytesReader(w, r.Body, int64(limit))
 
 		in, err := readInput(r)
