@@ -338,10 +338,10 @@ func (h deployHandler) settleHealth(ctx context.Context, j *deployJob, fz frozen
 // a rollback runs now; no rollback is the typed ROLLBACK_UNAVAILABLE with the
 // cause the state machine recorded.
 func (h deployHandler) conclude(ctx context.Context, j *deployJob, state deployments.State, cause error) error {
-	switch state {
-	case deployments.StateSucceeded:
+	if state == deployments.StateSucceeded {
 		return nil
-	case deployments.StateRollingBack:
+	}
+	if state == deployments.StateRollingBack {
 		target := domain.ID(j.plan.Content.RollbackTarget.DeploymentID)
 		return h.restoreAndSettle(ctx, j, target, cause)
 	}

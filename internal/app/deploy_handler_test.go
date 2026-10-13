@@ -759,3 +759,47 @@ func TestNewDeployHandlerRequiresItsCollaborators(t *testing.T) {
 		t.Errorf("complete options refused: %v", err)
 	}
 }
+
+func (n *nodeFixture) handlersWith(t *testing.T, apps *Apps, deploy *DeployOptions) *Handlers {
+	t.Helper()
+	adapters := fakeAdapters(newFakeAdapter(domain.RuntimeSystemd), newFakeAdapter(domain.RuntimeDocker))
+	prober, err := NewProber(n.cfg, n.conn, adapters)
+	mustf(t, err, "NewProber")
+	h, err := NewHandlers(n.cfg, HandlersOptions{
+		Store: n.store, Connector: n.conn, Adapters: adapters, Inventory: n.inv, Prober: prober,
+		Identity: func(context.Context) (secrets.Identity, error) { return secrets.Identity{}, nil },
+		Apps:     apps, Deploy: deploy,
+	})
+	mustf(t, err, "NewHandlers")
+	return h
+}
+
+func TestHandlers_DeploymentTypesExistOnlyWhenDeploymentsAreConfigured(t *testing.T) {
+	n := newNodeFixture(t)
+
+	without := n.handlersWith(t, nil, nil).Map()
+	with := n.handlersWith(t, nil, &DeployOptions{Secrets: dhSecrets{}, HTTP: &http.Client{}}).Map()
+
+	for _, jobType := range []string{deploymentCreateAction, deploymentRollbackAction} {
+		if _, ok := without[jobType]; ok {
+			t.Errorf("%s has a handler without deployment options", jobType)
+		}
+		if _, ok := with[jobType]; !ok {
+			t.Errorf("%s has no handler although deployments are configured", jobType)
+		}
+	}
+	if with[deploymentCreateAction] != with[deploymentRollbackAction] {
+		t.Error("deployment.create and deployment.rollback must share one handler")
+	}
+}
+
+func TestHandlers_ApprovedAppWritesReachTheAppsCatalog(t *testing.T) {
+	n := newNodeFixture(t)
+	apps := &Apps{}
+
+	h := n.handlersWith(t, apps, nil)
+
+	if h.apply.apps != apps {
+		t.Error("the control_plane.apply handler was built without the apps catalog; approved app writes would fail")
+	}
+}
