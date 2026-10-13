@@ -26,6 +26,11 @@ var releaseWorkflows = map[string]struct {
 	"channels.yml": {writes: set("contents"), triggers: set("schedule", "workflow_dispatch")},
 }
 
+// nightlyWorkflow runs the slow gates (ADR-0034): scheduled or dispatched, read-only, no environment.
+const nightlyWorkflow = "nightly.yml"
+
+var nightlyTriggers = set("schedule", "workflow_dispatch")
+
 // unpinnedDebt lists existing workflows that still use tag-pinned actions. Not owned by the
 // release pipeline; remove the entry when the file is pinned.
 var unpinnedDebt = set("pm-policy.yml")
@@ -107,6 +112,10 @@ func fileViolations(name, source string) []string {
 		}
 	}
 
+	if name == nightlyWorkflow {
+		out = append(out, nightlyViolations(name, wf, triggers)...)
+	}
+
 	for _, scope := range permissionScopes(wf) {
 		out = append(out, permissionViolations(name, scope.where, scope.value, allowed.writes, isRelease)...)
 	}
@@ -127,6 +136,27 @@ func fileViolations(name, source string) []string {
 		}
 		for _, s := range j.Steps {
 			out = append(out, stepViolations(name, jobName, s, isRelease)...)
+		}
+	}
+	return out
+}
+
+// nightlyViolations keeps the nightly gates from running on untrusted triggers or holding write access.
+func nightlyViolations(name string, wf workflow, triggers map[string]any) []string {
+	var out []string
+	for _, trigger := range sortedKeys(triggers) {
+		if !nightlyTriggers[trigger] {
+			out = append(out, fmt.Sprintf("%s: trigger %q is not allowed", name, trigger))
+		}
+	}
+	for _, scope := range permissionScopes(wf) {
+		if granted, _ := scope.value.(map[string]any); hasWrite(granted) {
+			out = append(out, fmt.Sprintf("%s: %s: nightly must stay read-only", name, scope.where))
+		}
+	}
+	for _, jobName := range sortedKeys(wf.Jobs) {
+		if environmentName(wf.Jobs[jobName].Environment) != "" {
+			out = append(out, fmt.Sprintf("%s: job %s must not use an environment", name, jobName))
 		}
 	}
 	return out
@@ -418,6 +448,30 @@ func TestWorkflowPolicyRejectsBreaches(t *testing.T) {
 			file: "release.yml",
 			yaml: "on: {push: {tags: ['v*']}}\npermissions: {}\njobs:\n  j:\n    environment: release\n    permissions: {contents: write}\n    runs-on: x\n    steps:\n      - uses: " + pinned + "\n",
 			want: "persist-credentials: false",
+		},
+		{
+			name: "nightly on pull request",
+			file: "nightly.yml",
+			yaml: "on: {schedule: [{cron: '0 0 * * *'}], pull_request: {}}\npermissions: {contents: read}\njobs: {}\n",
+			want: `trigger "pull_request" is not allowed`,
+		},
+		{
+			name: "nightly job with write access",
+			file: "nightly.yml",
+			yaml: "on: workflow_dispatch\npermissions: {contents: read}\njobs:\n  j:\n    permissions: {issues: write}\n    runs-on: x\n    steps: []\n",
+			want: "nightly must stay read-only",
+		},
+		{
+			name: "nightly job in an environment",
+			file: "nightly.yml",
+			yaml: "on: workflow_dispatch\npermissions: {contents: read}\njobs:\n  j:\n    environment: staging\n    runs-on: x\n    steps: []\n",
+			want: "must not use an environment",
+		},
+		{
+			name: "unpinned action in nightly",
+			file: "nightly.yml",
+			yaml: "on: workflow_dispatch\npermissions: {contents: read}\njobs:\n  j:\n    runs-on: x\n    steps:\n      - uses: actions/upload-artifact@v4\n",
+			want: "not pinned to a commit SHA",
 		},
 	}
 	for _, tt := range tests {

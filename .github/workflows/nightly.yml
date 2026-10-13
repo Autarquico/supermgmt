@@ -1,0 +1,137 @@
+name: nightly
+
+# The gates that are too slow or too random for pull requests (ADR-0034): fuzzing, race stress and
+# the flake loops. The owner dispatches this workflow on the release candidate before tagging.
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: fuzz this shard, 5 minutes per target (FuzzReadArchive weighs double, see scripts/fuzz.sh)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: make fuzz FUZZTIME=5m FUZZ_SHARD="$SHARD" FUZZ_SHARDS=6
+      - name: crashers
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashers-shard-${{ matrix.shard }}
+          path: |
+            **/testdata/fuzz/**
+          if-no-files-found: ignore
+
+  race-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: concurrency seams under -race, 20 runs
+        run: make race-stress STRESS_COUNT=20
+
+  flake-loop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - loop: s4
+            os: ubuntu-latest
+            timeout: 150
+          - loop: pty
+            os: macos-latest
+            timeout: 90
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      LOOP: ${{ matrix.loop }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # S4 runs on the real clock and its failure mode is not yet understood, so every iteration
+      # keeps its own output and a side loop copies each daemon.log out of the test's temp
+      # directory, which the test deletes when it ends. No retries: one red iteration fails the job.
+      - name: S4 daemon killed mid-restart, 20 iterations
+        if: env.LOOP == 's4'
+        run: |
+          logs="$RUNNER_TEMP/flake-logs"
+          export TMPDIR="$RUNNER_TEMP/flake-tmp"
+          mkdir -p "$logs" "$TMPDIR"
+          (
+            while :; do
+              for log in "$TMPDIR"/smm*/daemon.log; do
+                if [ -f "$log" ]; then
+                  cp "$log" "$logs/daemon-$(basename "$(dirname "$log")").log" || true
+                fi
+              done
+              sleep 1
+            done
+          ) &
+          collector=$!
+          failed=0
+          for i in $(seq 1 20); do
+            echo "=== S4 iteration $i"
+            go test -tags fixtures -p 1 -count=1 -timeout 30m -v \
+              -run '^TestM1_DaemonKilledMidRestartReconciles$' ./test/integration/m1/ >"$logs/s4-$i.txt" 2>&1 || {
+              failed=$((failed + 1))
+              echo "iteration $i failed"
+              tail -n 40 "$logs/s4-$i.txt"
+            }
+          done
+          kill "$collector"
+          echo "S4: $failed of 20 iterations failed"
+          [ "$failed" -eq 0 ]
+      - name: PTY suite, 50 iterations
+        if: env.LOOP == 'pty'
+        run: |
+          logs="$RUNNER_TEMP/flake-logs"
+          mkdir -p "$logs"
+          go test -race -shuffle=on -count=50 -timeout 80m -v ./test/integration/pty/... >"$logs/pty.txt" 2>&1 || {
+            tail -n 80 "$logs/pty.txt"
+            exit 1
+          }
+      - name: logs of the failing run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flake-logs-${{ matrix.loop }}
+          path: ${{ runner.temp }}/flake-logs
+          if-no-files-found: ignore
+
+  # The body arrives with the Homebrew formula work (T25b); until then the job only holds the name
+  # the release gate will require.
+  brew-audit:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: not implemented yet
+        run: echo "brew audit is wired by T25b"

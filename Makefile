@@ -10,6 +10,14 @@ LDFLAGS := -s -w \
 GOVULNCHECK_VERSION := v1.8.0
 ACTIONLINT_VERSION := v1.7.7
 VACUUM_VERSION := v0.30.6
+GITLEAKS_VERSION := v8.30.1
+GO_LICENSES_VERSION := v2.0.1
+ALLOWED_LICENSES := Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
+LICENSE_OVERRIDES := packaging/release/license-overrides.txt
+FUZZ_SHARD ?= 0
+FUZZ_SHARDS ?= 1
+FUZZTIME ?= 5m
+STRESS_COUNT ?= 20
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 E2E_DIST ?=
 E2E_TIMEOUT ?= 40m
@@ -24,7 +32,8 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
-	integration-fixtures compose-equivalence cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade e2e-deploy e2e-mcp snapshot release-check install-test
+	integration-fixtures compose-equivalence cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade e2e-deploy e2e-mcp snapshot release-check install-test \
+	fuzz fuzz-inventory race-stress secrets-scan licenses
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -127,3 +136,24 @@ install-test: ## Run the install.sh tamper matrix under dash and bash (needs she
 	shellcheck -s sh install.sh scripts/join.sh packaging/release/*.sh
 	shellcheck -x test/install/*.sh
 	@set -e; for sh in dash bash; do test/install/run.sh $$sh; done
+
+fuzz: ## Fuzz one shard of the inventory for FUZZTIME per target (FUZZ_SHARD of FUZZ_SHARDS; default: all targets)
+	FUZZTIME=$(FUZZTIME) scripts/fuzz.sh shard $(FUZZ_SHARD) $(FUZZ_SHARDS)
+
+fuzz-inventory: ## Check that every discovered parser is mapped to a Fuzz target and that the seeds reach it
+	go test -count=1 ./test/fuzzinv/...
+	scripts/fuzz.sh reach
+
+race-stress: ## Hammer the concurrency seams under -race (STRESS_COUNT runs; -tags stress)
+	go test -tags stress -race -count=$(STRESS_COUNT) -timeout 30m ./test/stress/...
+
+secrets-scan: ## Scan the full commit history for secrets with gitleaks (needs a full clone)
+	go run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) git --config .gitleaks.toml --redact --no-banner .
+
+# Modules whose LICENSE go-licenses cannot classify are reviewed in $(LICENSE_OVERRIDES); this target
+# checks that every override is itself on the allowlist and ignores exactly those modules.
+licenses: ## Check the licences of the modules compiled into sm against the allowlist
+	@awk -F'\t' -v allowed=",$(ALLOWED_LICENSES)," '!/^#/ && NF >= 3 && index(allowed, "," $$3 ",") == 0 { print "licenses: override " $$1 " is " $$3 ", outside the allowlist"; bad = 1 } END { exit bad }' $(LICENSE_OVERRIDES)
+	go run github.com/google/go-licenses/v2@$(GO_LICENSES_VERSION) check ./cmd/sm \
+		--allowed_licenses=$(ALLOWED_LICENSES) \
+		--ignore "$$(awk -F'\t' '!/^#/ && NF >= 3 { print $$1 }' $(LICENSE_OVERRIDES) | paste -sd, -)"
