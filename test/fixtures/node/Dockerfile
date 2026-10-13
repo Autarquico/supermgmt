@@ -19,7 +19,7 @@ ENV container=docker DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus openssh-server sudo docker.io docker-cli \
-      iproute2 procps ca-certificates jq \
+      iproute2 procps ca-certificates jq curl \
  && rm -rf /var/lib/apt/lists/* \
  && rm -f /etc/ssh/ssh_host_*
 
