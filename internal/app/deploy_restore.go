@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/database"
@@ -13,7 +12,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/deployments/compose"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
-	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -47,9 +45,7 @@ type restoreVerification struct {
 // which steps it ran. Every write is fenced by the job's lease; the handler that
 // owns the lease provides the implementation.
 type restoreLedger interface {
-	RecordIntent(ctx context.Context, ni jobs.NewIntent) (domain.ID, error)
-	MarkDispatched(ctx context.Context, intent domain.ID) error
-	CompleteIntent(ctx context.Context, intent domain.ID, outcome string, evidence json.RawMessage) error
+	intentLedger
 	StartStep(ctx context.Context, s database.DeploymentStep) error
 	FinishStep(ctx context.Context, s database.DeploymentStep) error
 }
@@ -143,28 +139,18 @@ func (r restorer) finishStep(ctx context.Context, row database.DeploymentStep, s
 
 // pull fetches every image of the snapshot by its exact digest.
 func (r *restoreRun) pull(ctx context.Context) (string, error) {
-	refs := restoreImageRefs(r.snap.Frozen)
+	refs := distinctImageRefs(r.snap.Frozen.Images)
 	if len(refs) == 0 {
 		return "", restoreStepFailed{"the snapshot binds no image"}
 	}
 	for _, ref := range refs {
-		err := r.dispatch(ctx, deployments.StepRestorePull, "compose.pull", nil, func(marker string) (templates.Command, error) {
-			return templates.RenderMutatingInput("compose.pull", marker, map[string]string{"image": ref}, nil, "")
-		})
-		if err != nil {
+		if err := r.dispatch(ctx, deployments.StepRestorePull, "compose.pull", nil, func(marker string) (templates.Command, error) {
+			return pullCommand(marker, ref)
+		}); err != nil {
 			return "", err
 		}
 	}
 	return "", nil
-}
-
-func restoreImageRefs(f compose.Frozen) []string {
-	refs := make([]string, 0, len(f.Images))
-	for _, image := range f.Images {
-		refs = append(refs, image.Ref)
-	}
-	slices.Sort(refs)
-	return slices.Compact(refs)
 }
 
 // materialize writes the snapshot into a directory named by a fresh id: the
@@ -172,36 +158,19 @@ func restoreImageRefs(f compose.Frozen) []string {
 // or deletes it. The id is the step's output.
 func (r *restoreRun) materialize(ctx context.Context) (string, error) {
 	r.directory = r.IDs.NewID()
-	bundle, err := compose.Materialize(r.snap.Frozen, r.directory, r.snap.Secrets)
+	stdin, err := materializeInput(r.snap.Frozen, r.directory, r.snap.Secrets)
 	if err != nil {
 		return "", restoreStepFailed{"the snapshot cannot be materialized"}
 	}
-	stdin, err := restoreStagedInput(bundle)
-	if err != nil {
-		return "", restoreStepFailed{"the snapshot cannot be staged"}
-	}
 	pre, _ := json.Marshal(map[string]string{"directory": r.directory.String()})
 	err = r.dispatch(ctx, deployments.StepRestoreMaterialize, "compose.materialize", pre, func(marker string) (templates.Command, error) {
-		return templates.RenderMutatingInput("compose.materialize", marker, r.directoryArgs(), stdin, "")
+		return materializeCommand(marker, r.dir(), stdin)
 	})
 	return r.directory.String(), err
 }
 
-func restoreStagedInput(b compose.Bundle) ([]byte, error) {
-	files := []templates.StagedFile{{Path: "compose.yaml", Content: b.ComposeYAML}}
-	paths := make([]string, 0, len(b.EnvFiles))
-	for path := range b.EnvFiles {
-		paths = append(paths, path)
-	}
-	slices.Sort(paths)
-	for _, path := range paths {
-		files = append(files, templates.StagedFile{Path: path, Content: []byte(b.EnvFiles[path].Reveal())})
-	}
-	return templates.EncodeMaterialization(files)
-}
-
-func (r *restoreRun) directoryArgs() map[string]string {
-	return map[string]string{"root": r.snap.Root, "project": r.snap.Project, "deployment": r.directory.String()}
+func (r *restoreRun) dir() deployDir {
+	return deployDir{Root: r.snap.Root, Project: r.snap.Project, Deployment: r.directory}
 }
 
 // verify proves the node's Compose resolves the directory to the snapshot.
@@ -222,7 +191,7 @@ func (r *restoreRun) verify(ctx context.Context) (string, error) {
 // deploy starts the snapshot under the node-side project lock.
 func (r *restoreRun) deploy(ctx context.Context) (string, error) {
 	return "", r.dispatch(ctx, deployments.StepRestoreDeploy, "compose.up", nil, func(marker string) (templates.Command, error) {
-		return templates.RenderMutatingInput("compose.up", marker, r.directoryArgs(), nil, r.snap.Project)
+		return upCommand(marker, r.dir())
 	})
 }
 
@@ -238,11 +207,10 @@ func (r *restoreRun) healthCheck(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// dispatch sends one mutating command: the intent is durable and marked
-// dispatched before the command leaves, and closed by its exit status. A
-// command that ran and failed is a definite step failure. A transport failure
-// leaves the intent recorded and the outcome unknown (spec §20.4): the job is
-// interrupted and reconciliation decides.
+// dispatch sends one mutating command through the shared dispatcher. The
+// command is rendered first: a refusal is a definite step failure and nothing
+// is recorded. A command that ran and failed is a definite step failure too; a
+// transport failure leaves the outcome unknown (spec §20.4).
 func (r *restoreRun) dispatch(ctx context.Context, step, operation string, pre json.RawMessage,
 	render func(marker string) (templates.Command, error),
 ) error {
@@ -251,40 +219,16 @@ func (r *restoreRun) dispatch(ctx context.Context, step, operation string, pre j
 	if err != nil {
 		return restoreStepFailed{operation + " cannot be rendered for the node"}
 	}
-	intent, err := r.Ledger.RecordIntent(ctx, jobs.NewIntent{
-		Step: step, Operation: operation, TargetType: string(domain.ResourceDeployment), TargetID: r.snap.Deployment.String(),
-		Marker: marker, PreState: pre, DeadlineAt: r.Clock.Now().Add(cmd.Deadline + templates.KillAfter),
+	res, err := commandDispatcher{Node: r.Node, Ledger: r.Ledger, Clock: r.Clock}.dispatch(ctx, nodeCommand{
+		Step: step, Operation: operation, Deployment: r.snap.Deployment, Marker: marker, PreState: pre, Command: cmd,
 	})
 	if err != nil {
 		return err
 	}
-	if err := r.Ledger.MarkDispatched(ctx, intent); err != nil {
-		return err
-	}
-	res, runErr := r.Node.Run(ctx, cmd)
-	if runErr != nil {
-		return restoreOutcomeUnknown(step, runErr)
-	}
-	return r.concludeDispatch(ctx, intent, step, res.ExitStatus)
-}
-
-func (r *restoreRun) concludeDispatch(ctx context.Context, intent domain.ID, step string, exit int) error {
-	outcome := jobs.OutcomeSucceeded
-	if exit != 0 {
-		outcome = jobs.OutcomeFailed
-	}
-	if err := r.Ledger.CompleteIntent(ctx, intent, outcome, commandExitEvidence(outcome, exit)); err != nil {
-		return err
-	}
-	if exit != 0 {
-		return restoreStepFailed{fmt.Sprintf("%s exited with status %d", step, exit)}
+	if res.ExitStatus != 0 {
+		return restoreStepFailed{fmt.Sprintf("%s exited with status %d", step, res.ExitStatus)}
 	}
 	return nil
-}
-
-func restoreOutcomeUnknown(step string, cause error) error {
-	return smerr.Wrap(fmt.Errorf("%w: %w", jobs.ErrOutcomeUnknown, cause), smerr.CodeNodeUnreachable, "",
-		step+" was dispatched but its outcome could not be established; check the node and resolve the job")
 }
 
 // rollBackOrFail decides what follows a failed update or failed health check

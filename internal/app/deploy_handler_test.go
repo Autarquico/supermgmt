@@ -112,7 +112,7 @@ func (w *deployWorld) verifyReply(c templates.Command) (transport.Result, error)
 		w.t.Errorf("freeze: %v", err)
 		return transport.Result{ExitStatus: 2}, nil
 	}
-	hashes := compose.ExpectedEnvHashes(fz.frozen, fz.secrets, nil)
+	hashes := compose.ExpectedEnvHashes(fz.frozen, fz.secrets)
 	model, err := expectedMaskedModel(fz.frozen, directory, hashes)
 	mustf(w.t, err, "expectedMaskedModel")
 	out := nodeVerification{Model: model}
@@ -410,6 +410,32 @@ func TestDeployHandler_AMissingSnapshotFailsTheDeployment(t *testing.T) {
 
 	wantStagingCause(t, err, deployments.CauseSnapshotGone)
 	w.want(dep.ID, deployments.StateFailed)
+}
+
+func TestDeployHandler_ARenderRefusalFailsTheStepBeforeAnythingIsDispatched(t *testing.T) {
+	w := newDeployWorld(t)
+	w.queued()
+	claimed, ok := w.claim()
+	if !ok {
+		t.Fatal("no job")
+	}
+	j := &deployJob{
+		lease: claimed.Lease, dep: database.Deployment{ID: w.ids.NewID()}, ex: w.remote,
+		target: database.AppTarget{ComposeProject: "web-prod"}, root: "relative/deploy root",
+	}
+
+	err := w.handler.deploy(context.Background(), j, deployments.Step{Name: deployments.StepDeploy})
+
+	wantError(t, err, smerr.CodeDeploymentFailed, "")
+	if errors.Is(err, jobs.ErrOutcomeUnknown) {
+		t.Errorf("a render refusal is definite, got %v", err)
+	}
+	if n := len(w.intents(claimed.Lease.JobID)); n != 0 {
+		t.Errorf("%d intents recorded for a command that was never rendered", n)
+	}
+	if n := len(w.calls()); n != 0 {
+		t.Errorf("the node was reached %d times", n)
+	}
 }
 
 // ---- outcome unknown ----------------------------------------------------------------------------
