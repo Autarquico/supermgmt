@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
@@ -37,6 +39,9 @@ func (b *remoteBuilder) scalar(raw string) string {
 func (b *remoteBuilder) object(m map[string]any) map[string]any {
 	out, cut := remoteMap(m)
 	b.cut = b.cut || cut
+	if out == nil {
+		return map[string]any{}
+	}
 	return out
 }
 
@@ -128,7 +133,7 @@ func ViewService(s wire.Service) ServiceView {
 		Node:        operatorLine(s.Node),
 		RuntimeType: s.RuntimeType,
 		Kind:        s.Kind,
-		Actions:     s.Actions,
+		Actions:     orEmpty(s.Actions),
 		LastSeenAt:  s.LastSeenAt,
 		Remote:      remote,
 	}
@@ -353,17 +358,90 @@ func ViewDeploymentStep(s wire.DeploymentStep) DeploymentStepView {
 
 // ---- plans and jobs ----------------------------------------------------------
 
-// PlanView is a created plan without the plan document: the model needs the
-// hash to submit, the verdict to explain, and the expiry.
+// PlanView is a created plan: the hash to submit, the verdict to explain, the
+// expiry, and an allowlisted view of the canonical plan so the model can say
+// what it planned. Inputs and content hashes stay out; they are not for a model.
 type PlanView struct {
-	PlanID    domain.ID   `json:"plan_id"`
-	PlanHash  string      `json:"plan_hash"`
-	ExpiresAt time.Time   `json:"expires_at"`
-	Policy    wire.Policy `json:"policy"`
+	PlanID    domain.ID    `json:"plan_id"`
+	Plan      PlanDocument `json:"plan"`
+	PlanHash  string       `json:"plan_hash"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	Policy    wire.Policy  `json:"policy"`
 }
 
-func ViewCreatedPlan(p wire.CreatedPlan) PlanView {
-	return PlanView{PlanID: p.PlanID, PlanHash: p.PlanHash, ExpiresAt: p.ExpiresAt, Policy: p.Policy}
+// PlanDocument is the control-plane part of the canonical plan. Parameters
+// are caller-supplied free-form values, so they sit under Remote.
+type PlanDocument struct {
+	Version    int64               `json:"version"`
+	Action     string              `json:"action"`
+	Risk       domain.RiskClass    `json:"risk"`
+	Targets    []PlanTargetView    `json:"targets"`
+	SubActions []PlanSubActionView `json:"sub_actions"`
+	Steps      []string            `json:"steps"`
+	Remote     PlanRemote          `json:"remote"`
+}
+
+type PlanTargetView struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+type PlanSubActionView struct {
+	Action string         `json:"action"`
+	Target PlanTargetView `json:"target"`
+}
+
+type PlanRemote struct {
+	remoteMark
+	Parameters map[string]any `json:"parameters"`
+}
+
+type planDocumentWire struct {
+	Version    int64               `json:"version"`
+	Action     string              `json:"action"`
+	Risk       domain.RiskClass    `json:"risk"`
+	Targets    []PlanTargetView    `json:"targets"`
+	SubActions []PlanSubActionView `json:"sub_actions"`
+	Steps      []string            `json:"steps"`
+	Parameters map[string]any      `json:"parameters"`
+}
+
+func ViewCreatedPlan(p wire.CreatedPlan) (PlanView, error) {
+	var doc planDocumentWire
+	if len(p.Plan) > 0 {
+		if err := json.Unmarshal(p.Plan, &doc); err != nil {
+			return PlanView{}, fmt.Errorf("decode plan document: %w", err)
+		}
+	}
+	var b remoteBuilder
+	remote := PlanRemote{Parameters: b.object(doc.Parameters)}
+	remote.remoteMark = b.mark()
+	steps := make([]string, len(doc.Steps))
+	for i, step := range doc.Steps {
+		steps[i] = operatorLine(step)
+	}
+	return PlanView{
+		PlanID: p.PlanID,
+		Plan: PlanDocument{
+			Version:    doc.Version,
+			Action:     operatorLine(doc.Action),
+			Risk:       doc.Risk,
+			Targets:    orEmpty(doc.Targets),
+			SubActions: orEmpty(doc.SubActions),
+			Steps:      steps,
+			Remote:     remote,
+		},
+		PlanHash:  p.PlanHash,
+		ExpiresAt: p.ExpiresAt,
+		Policy:    p.Policy,
+	}, nil
+}
+
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 type SubmissionView struct {

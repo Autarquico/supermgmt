@@ -1710,6 +1710,117 @@
         "expires_at": {
           "type": "string"
         },
+        "plan": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "remote": {
+              "additionalProperties": false,
+              "properties": {
+                "parameters": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "untrusted_remote_output": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "untrusted_remote_output",
+                "truncated",
+                "parameters"
+              ],
+              "type": "object"
+            },
+            "risk": {
+              "type": "string"
+            },
+            "steps": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "sub_actions": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "action",
+                  "target"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "version": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "action",
+            "risk",
+            "targets",
+            "sub_actions",
+            "steps",
+            "remote"
+          ],
+          "type": "object"
+        },
         "plan_hash": {
           "type": "string"
         },
@@ -1749,6 +1860,7 @@
       },
       "required": [
         "plan_id",
+        "plan",
         "plan_hash",
         "expires_at",
         "policy",

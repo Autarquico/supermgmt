@@ -49,7 +49,11 @@ func addPlanTool(s *sdk.Server, api API, submittable bool) {
 				return planActionOutput{}, invalidArgument("exactly one target is required")
 			}
 			created, err := requestPlan(ctx, api, in.Action, in.Targets[0], in.Parameters)
-			return planActionOutput{PlanView: ViewCreatedPlan(created), SubmitVia: submitVia}, err
+			if err != nil {
+				return planActionOutput{}, err
+			}
+			view, err := ViewCreatedPlan(created)
+			return planActionOutput{PlanView: view, SubmitVia: submitVia}, err
 		})
 }
 

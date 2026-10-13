@@ -235,16 +235,61 @@ func TestViewApp_OmitsComposeAndSecrets(t *testing.T) {
 	}
 }
 
-func TestViewCreatedPlan_KeepsHashAndVerdictNotTheDocument(t *testing.T) {
+func TestViewCreatedPlan_CarriesThePlanButNotInputsOrSecrets(t *testing.T) {
 	plan := wire.CreatedPlan{
-		PlanID: viewUUID, PlanHash: viewPlanHash, Plan: json.RawMessage(`{"secret":"hunter2"}`),
+		PlanID: viewUUID, PlanHash: viewPlanHash,
+		Plan: json.RawMessage(`{"version":3,"action":"service.restart","risk":"operational",` +
+			`"targets":[{"type":"service","id":"` + viewUUID + `","spec_revision":4}],` +
+			`"inputs":[{"type":"node","id":"n-1","host_public_key_sha256":"abc"}],` +
+			`"content":{"compose_hash":"c"},"parameters":{"timeout":30,"db_password":"hunter2"},"steps":["restart"]}`),
 		Policy: wire.Policy{Decision: "allow", ApprovalRequired: true, Quorum: 1},
 	}
-	raw, generic := viewJSON(t, ViewCreatedPlan(plan))
+	view, err := ViewCreatedPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, generic := viewJSON(t, view)
 
-	wantNoLeak(t, raw)
+	wantNoLeak(t, raw, "host_public_key", "compose_hash", "spec_revision")
 	if generic["plan_hash"] != viewPlanHash || generic["plan_id"] != viewUUID {
 		t.Errorf("plan identity changed: %v", generic)
+	}
+	doc := generic["plan"].(map[string]any)
+	if doc["action"] != "service.restart" || doc["risk"] != "operational" {
+		t.Errorf("plan = %v", doc)
+	}
+	targets := doc["targets"].([]any)
+	if len(targets) != 1 || targets[0].(map[string]any)["id"] != viewUUID {
+		t.Errorf("targets = %v", targets)
+	}
+	wantRemoteObject(t, doc, false)
+	if _, top := doc["parameters"]; top {
+		t.Error("parameters are at the top level of the plan")
+	}
+}
+
+func TestViewCreatedPlan_RejectsAMalformedDocument(t *testing.T) {
+	if _, err := ViewCreatedPlan(wire.CreatedPlan{Plan: json.RawMessage(`[1]`)}); err == nil {
+		t.Fatal("a plan document that is not an object was accepted")
+	}
+}
+
+func TestViews_ZeroValuesMarshalEmptyCollectionsNeverNull(t *testing.T) {
+	plan, err := ViewCreatedPlan(wire.CreatedPlan{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, view := range map[string]any{
+		"service": ViewService(wire.Service{}),
+		"event":   ViewEvent(wire.Event{}),
+		"plan":    plan,
+	} {
+		raw, _ := viewJSON(t, view)
+		for _, field := range []string{"actions", "metadata", "data", "targets", "sub_actions", "steps", "parameters"} {
+			if strings.Contains(raw, `"`+field+`":null`) {
+				t.Errorf("%s view has %s: null: %s", name, field, raw)
+			}
+		}
 	}
 }
 

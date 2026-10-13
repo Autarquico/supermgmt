@@ -49,7 +49,7 @@ func addReadTools(s *sdk.Server, api API) {
 				return listResult[ServiceView]{}, err
 			}
 			page, err := api.ListServices(ctx, node, in.pageQuery())
-			return listOf(page, serviceForTool), err
+			return listOf(page, ViewService), err
 		})
 	readTool(s, "infra_get_service",
 		"Get one service by id or by name@node. A service is always addressed by its id afterwards."+remoteDataNotice,
@@ -59,7 +59,7 @@ func addReadTools(s *sdk.Server, api API) {
 				return ServiceView{}, err
 			}
 			service, err := api.GetService(ctx, id)
-			return serviceForTool(service), err
+			return ViewService(service), err
 		})
 	readTool(s, "infra_get_service_logs",
 		"Get the most recent log lines of one service (id or name@node), at most 500 lines and 64 KiB."+remoteDataNotice,
@@ -108,7 +108,7 @@ func addReadTools(s *sdk.Server, api API) {
 				return listResult[EventView]{}, err
 			}
 			page, err := api.ListEvents(ctx, query)
-			return listOf(page, eventForTool), err
+			return listOf(page, ViewEvent), err
 		})
 	readTool(s, "infra_get_health",
 		"Summarize the health of one node, service or deployment (kind and ref; a deployment ref is an id)."+remoteDataNotice,
@@ -313,7 +313,7 @@ func serviceHealth(ctx context.Context, api API, ref string) (HealthView, error)
 	if err != nil {
 		return HealthView{}, err
 	}
-	service := serviceForTool(raw)
+	service := ViewService(raw)
 	return HealthView{
 		Kind:       healthService,
 		ID:         service.ID,
@@ -344,26 +344,4 @@ func deploymentHealth(ctx context.Context, api API, ref string) (HealthView, err
 		StateReason: &deployment.StateReason,
 		FinishedAt:  deployment.FinishedAt,
 	}, nil
-}
-
-// The output schemas say "object" and "array", so a view must not hand the
-// SDK a nil map or slice, which marshals as null.
-
-func serviceForTool(s wire.Service) ServiceView {
-	view := ViewService(s)
-	if view.Remote.Metadata == nil {
-		view.Remote.Metadata = map[string]any{}
-	}
-	if view.Actions == nil {
-		view.Actions = []domain.ServiceVerb{}
-	}
-	return view
-}
-
-func eventForTool(e wire.Event) EventView {
-	view := ViewEvent(e)
-	if view.Remote.Data == nil {
-		view.Remote.Data = map[string]any{}
-	}
-	return view
 }
