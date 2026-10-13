@@ -252,8 +252,8 @@ providers:
   - type: github
     name: github
     api_url: https://api.github.com            # default; the exact origin is the only host contacted
-    credential_ref: secret://providers/github/token
-    webhook_secret_ref: secret://providers/github/webhook   # server mode only
+    credential_ref: secret://providers/github/token     # must be secret://providers/<name>/token
+    webhook_secret_ref: secret://providers/github/webhook   # server mode only; must sit under secret://providers/<name>/
     ca_file: ""                                 # optional absolute path (GitHub Enterprise Server)
 
 github:

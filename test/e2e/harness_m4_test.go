@@ -60,8 +60,8 @@ const (
 	m4DeployWorkflow = ".github/workflows/deploy.yml"
 	m4ActionsAppID   = 15368 // GitHub Actions, the app of Actions check runs
 
-	m4GitHubTokenSecret  = "github/token"
-	m4WebhookSecretName  = "github/webhook"
+	m4GitHubTokenSecret  = "providers/ghsim/token"
+	m4WebhookSecretName  = "providers/ghsim/webhook"
 	m4WebhookSecretValue = "ghsim-webhook-secret-0123456789"
 	m4GhsimImage         = "sm-e2e-ghsim:local"
 	m4AppPort            = 8080
