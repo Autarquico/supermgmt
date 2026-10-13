@@ -1,6 +1,6 @@
 # Compatibility
 
-This page has two matrices: [Proxmox VE](#proxmox-ve-m3) (M3) and [Deployments: Docker Compose, node tools and GitHub](#deployments-m4) (M4).
+This page has three matrices: [Proxmox VE](#proxmox-ve-m3) (M3), [Deployments: Docker Compose, node tools and GitHub](#deployments-m4) (M4) and [MCP](#mcp-m5) (M5).
 
 # Proxmox VE (M3)
 
@@ -135,3 +135,52 @@ Written into the fakes from documentation. Each is on [manual-checks/m4-real-git
 8. GitHub Enterprise Server.
 
 "CI-gated deployment against real GitHub, GHCR and real attestations" (spec Appendix E) stays unchecked until that run.
+
+# MCP (M5)
+
+Sources: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md); operator guide [mcp.md](mcp.md).
+
+**Tested MCP clients: none.** The spec asks for the tested clients to be documented; today the honest list is empty. Every MCP interaction in CI is driven by the official Go SDK's own client (the same module the server uses, `github.com/modelcontextprotocol/go-sdk` v1.8.0) and by hand-written raw JSON-RPC messages. A real client may differ in transport details, protocol version negotiation, authorization discovery or tool-schema handling in ways the SDK's client does not reveal. Rows for Claude Code, Claude Desktop and MCP Inspector are in [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md) and have not been run.
+
+## Reading the table
+
+- **verified** means a test in this repository exercises it. The test is named.
+- **assumed** means written from the specification text or documentation and not exercised against the real counterpart.
+- No row says "works with" a named product.
+
+## Protocol and transports
+
+| Item | Behavior | Evidence | Status |
+|---|---|---|---|
+| Protocol versions over streamable HTTP | `2026-07-28`, `2025-11-25`, `2025-06-18`; any other version is `400` | `TestHTTP_UnsupportedProtocolVersionIsRefused`, `TestWire_GoldensOverHTTP` | verified with raw messages and the SDK client |
+| Protocol versions over stdio | those three in the raw goldens; the SDK negotiates its other versions | `TestWire_GoldensOverStdio`, `TestSDK_ProtocolVersionsAreTheOnesADR0031Records` | the three verified; older versions rely on the SDK and are not pinned by a SuperMgmt test |
+| Streamable HTTP mode | stateless, JSON responses, no session id; `GET`/`DELETE` are `405` | `TestHTTP_StatelessServerRefusesGetAndDelete`, `TestHTTP_NoSessionIsIssued` | verified; **a real client that insists on a session or on SSE is not tested** |
+| `Origin` | refused with `403` unless equal to the origin of `server.public_url`; absent is served | `TestHTTP_OriginMustMatchTheConfiguredOne`, `TestHTTP_RequestWithoutOriginIsServed` | verified |
+| stdio bridge | `sm mcp` over stdin/stdout, JSON-RPC only on stdout | `TestBridge_ServesTheMCPToolsToAHost`, `TestE2E_MCPStdioReadsGraph` (SDK `CommandTransport`) | verified with the SDK client; real hosts not tested |
+| Tools | 10 read tools plus `infra_plan_action`, and 5 write tools when enabled, pinned by golden files; no resources, no prompts | `TestReadTools_ListGolden`, `TestNewServer_AllToolsGolden` | verified |
+| Host configuration files | `examples/mcp/*.json` launch `sm mcp` with real flags and name the `<origin>/mcp` resource | `TestMCPExamples_StdioHostsLaunchSmMcpWithRealFlags`, `TestMCPExamples_RemoteNamesTheMCPResourceOfAnOrigin` | the files are checked for shape; **whether Claude Desktop or Claude Code accept them is not verified** |
+
+## Remote authorization
+
+| Item | Behavior | Evidence | Status |
+|---|---|---|---|
+| Protected Resource Metadata (RFC 9728) | served at `/.well-known/oauth-protected-resource/mcp` and at the root path | `TestRemote_MetadataBothPaths`, `TestHTTP_ProtectedResourceMetadataDocument` | verified; **the root path is a known deviation from RFC 9728 section 3.3** for strict clients |
+| `401` challenge | `WWW-Authenticate: Bearer resource_metadata="<path-suffixed URL>", scope="..."` | `TestRemote_ChallengeCarriesThePathSuffixedMetadataURL` | verified |
+| JWT access tokens (RFC 9068) | `typ` `at+jwt`, signature via JWKS, `iss`, `aud`, `exp`, `iat`, `client_id`, scopes; ID-token shapes refused | `TestOAuthJWT_ClaimAndHeaderRules` | verified against `oauthfake`, which signs with RS256 only (the other allowed algorithms are not exercised); **a real authorization server's tokens are assumed to follow RFC 9068** |
+| Token introspection (RFC 7662) | authenticated POST, `active: true`, same claim rules, never cached | `TestOAuthIntrospect_ClaimAndResponseRules`, `TestOAuthIntrospect_NothingIsCachedAcrossRequests` | verified against `oauthfake`; real authorization servers not tested |
+| Audience binding / RFC 8707 `resource` | `aud` must contain exactly `<origin>/mcp` | `TestOAuthJWT_ClaimAndHeaderRules` (audience rows) | the check on the token is verified; **whether a real authorization server puts the resource in `aud` when the client sends the `resource` parameter at authorization and at token exchange is not tested** |
+| Authorization server fidelity | the fake serves JWKS (with rotation) and RFC 7662 introspection, written from the RFCs | `internal/auth/oauthfake/PROVENANCE.md`, `internal/auth/oauthfake/server_test.go` | assumed to match real servers; its provenance file says the RFC texts were not re-read when it was written |
+| Client registration at the authorization server | not implemented; no dynamic client registration; an administrator registers each client's `(iss, sub, client_id)` in SuperMgmt | `TestAnUnregisteredOAuthSubjectIsRefusedOnMCP` | verified (refusal) |
+| MCP authorization specification text | `2026-07-28` and `2025-06-18` read; `2025-11-25` served but its authorization text was not read | ADR-0033 | recorded in the ADR |
+
+## Deferred: assumed, not confirmed against real software
+
+Each is a row of [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md).
+
+1. Claude Code launching `sm mcp` over stdio and listing and calling the tools.
+2. Claude Desktop launching `sm mcp` over stdio from its configuration file.
+3. MCP Inspector (or another real client) connecting to `/mcp`, following the `401` challenge to the metadata, completing an OAuth flow and calling a tool.
+4. A real authorization server (Keycloak is the planned one) issuing `at+jwt` tokens or answering introspection, including the RFC 8707 `resource` parameter at authorization and at token exchange.
+5. Real clients' behavior with a stateless server, with root-path discovery, and with tool descriptions that contain the untrusted-content notice.
+
+"Read without shell" and "remote MCP as an OAuth protected resource" are done against the SDK client and a fake; they are **not** "verified with real clients" until those rows are run and dated.

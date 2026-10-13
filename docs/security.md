@@ -2,7 +2,7 @@
 
 Authoritative sources: SPEC §30 (threat model), §11 (policy and approvals), §2.1.1 (local trust boundary), §12 and §16 (nodes). Vulnerability reporting: [`../SECURITY.md`](../SECURITY.md).
 
-SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI; M2 adds server mode over HTTPS with sessions, tokens and OIDC, the full secret store, backup and restore, and a signed-release installer; M3 adds Proxmox and the appliance installer; M4 adds apps, a GitHub connector and Compose deployments. There is still no MCP endpoint, nothing has been released, and there is no independent security audit. **[M0]** to **[M4]** mark what is implemented in the repository now; **[planned Mx]** is not implemented. Statements about M2 were read against the code; what ran only in CI with test keys, a Dex container or fakes is said so, and the production signing key, a real VM, a real Cloudflare and any identity provider other than Dex were not exercised ([manual checks](manual-checks/m2-handoff.md)).
+SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI; M2 adds server mode over HTTPS with sessions, tokens and OIDC, the full secret store, backup and restore, and a signed-release installer; M3 adds Proxmox and the appliance installer; M4 adds apps, a GitHub connector and Compose deployments; M5 adds MCP. Nothing has been released, and there is no independent security audit. **[M0]** to **[M5]** mark what is implemented in the repository now; **[planned Mx]** is not implemented. Statements about M2 were read against the code; what ran only in CI with test keys, a Dex container or fakes is said so, and the production signing key, a real VM, a real Cloudflare and any identity provider other than Dex were not exercised ([manual checks](manual-checks/m2-handoff.md)).
 
 ## Trust boundaries in one page
 
@@ -22,7 +22,7 @@ Read this before you point SuperMgmt at a machine you care about.
 | Threat | Main mitigation | Status |
 |---|---|---|
 | Stolen browser or OIDC session | session TTL (12h default), revocation on logout, no cookies so no CSRF surface, `no-store` and `nosniff` headers, no CORS | **[M2]**; there is no browser UI yet |
-| Compromised MCP client; malicious prompt asking for a privileged action | MCP is its own actor type with no inherited roles; hard approval floor for operational writes; MCP can never approve | policy rules **[M0]**; MCP itself planned M5 |
+| Compromised MCP client; malicious prompt asking for a privileged action | MCP is its own actor type with no inherited roles; hard approval floor for operational writes; MCP can never approve | policy rules **[M0]**; MCP identities, tokens, the writes gate and the credential floor **[M5]**, tested with the SDK client and a fake authorization server, not with real MCP clients ([MCP](#mcp-m5)) |
 | Compromised managed node | least privilege on the node, bounded and sanitized output, timeouts | **[M1]** |
 | Malicious repository or PR | closed-schema Compose pipeline, immutable digests | planned M4 |
 | Forged or replayed GitHub webhook | signature check and replay dedupe | planned M4 |
@@ -79,7 +79,7 @@ SQLite runs in WAL mode with `synchronous=FULL` and a single writer ([ADR-0001](
 
 - The socket directory must be a real directory (no symlink) owned by the daemon user with mode exactly 0700; otherwise the daemon refuses to start. The daemon runs with umask 0177.
 - The daemon reads the peer UID of every connection (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS) and closes it on a mismatch or on a lookup error, before reading any byte. The client checks the listener's UID the same way before its first request, so it does not talk to another user's daemon.
-- Any `Authorization` header gets 401 `UNAUTHENTICATED`; tokens arrive with MCP in M5.
+- A request with no `Authorization` header is the local human. A request with an MCP client token (`smm_...`) is that MCP client **[M5]**; any other `Authorization` header, including every other token kind, gets 401 `UNAUTHENTICATED` without being resolved.
 - The caller is the `human` identity `local:<uid>`, bound to `admin`.
 - Every route maps to exactly one catalog action, enforced by a test. Every POST, PATCH and DELETE needs an `Idempotency-Key`; a key reused with a different request gets 409.
 - Two daemons on one database, or two databases on one socket, are refused (exit 2).
@@ -277,12 +277,49 @@ A deployment runs `docker compose up` as the `supermgmt` user, which is in the `
 - Secret values reach the node over stdin, are written to `secrets/<service>.env` on the node, are compared there only as hashes, and are never in plans, API views, events, logs or control-plane backups (`TestM4_SecretNeverOnControlPlane`, `TestFixtures_EnvHashResolvedPrecedenceAndTamper`). The e2e scan does not cover the node and CLI stdout. Old secret versions are kept encrypted so rollbacks can restore them; there is no deletion API in V1.
 - Pre-deploy database dumps are written on the node under `/var/lib/supermgmt/db-backups` (0700) and are not encrypted.
 
+## MCP **[M5]**
+
+([ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md); operator guide: [mcp.md](mcp.md), which names the test behind each claim.) Verified with the official Go SDK client, hand-written raw JSON-RPC goldens and a fake authorization server. **Not verified with any real MCP client or real authorization server** ([manual checklist](manual-checks/m5-real-mcp-clients.md), DEFERRED).
+
+### Identity, tokens and registration
+
+- An MCP client is an identity of type `mcp` with no role bindings, even when an admin registered it. The built-in policy grants it only `*.read` and `plan.create`; `service.logs` and `node.connect` are not granted.
+- Registration (`mcp_client.register`) is high risk and goes through approval under the normal floors. The token (`smm_...`, 32 random bytes, only its SHA-256 stored) is issued once, only to the requester, only while the client waits for it and within 24 hours of the approval; expiry is mandatory (default 90 days, at most 365). `sm mcp clients add` checks the destination (a 0600 file created exclusively, or the native keychain with no file fallback) before issuing, and never prints the token. `smm_` tokens work on the local socket only and are refused on HTTPS; with `mcp.enabled: false` the daemon refuses them.
+- Deleting a client revokes its token and every OAuth token seen for it, disables the identity and removes its role bindings; rows are kept. Restore revokes all MCP and OAuth tokens. A credential that is gone by the time a queued job is claimed fails the job.
+- A remote client is registered by hand as the triple (issuer, subject, client_id). Re-registering a deleted triple reuses the identity with no roles, and tokens issued before the registration (by `iat`) stay refused.
+
+### What MCP can never do
+
+Enforced in the application layer before policy, so they hold for the MCP tools, for raw API calls with the MCP token and for the in-process path of remote MCP, whatever a custom policy grants and whatever `mcp.write_tools_enabled` says:
+
+- approve or reject a job;
+- perform a credential-issuing action (API tokens, MCP tokens, enrollment), register or delete MCP clients, write identities or role bindings (`MCP_ACTION_FORBIDDEN`);
+- open an interactive node session (`node.connect`) or resolve an interrupted job (`job.resolve`).
+
+An operational-or-higher write by an MCP identity always needs approval, and approval is bound to the exact plan hash.
+
+### Writes are off by default
+
+With `mcp.write_tools_enabled: false` (the default) the write tools are not registered and every non-query action by an MCP identity is denied `MCP_WRITES_DISABLED`, including deployment admission, before any row, CI watch or provider call. Plans can still be created and carry the denial as their verdict.
+
+### Remote MCP as an OAuth protected resource
+
+- Server mode only, off by default. SuperMgmt validates tokens and never issues them. Access tokens are accepted at `/mcp` only and never on `/api/v1`; tool calls reach the API in process as the admitted client, and no header can choose that caller.
+- JWT access tokens must be RFC 9068 `at+jwt` with matching `iss`, `aud` (exactly `<public_url origin>/mcp`), `exp`, `iat`, `client_id` and every required scope; ID-token shapes, `alg: none`, HMAC and tokens with `nonce` are refused. Introspection (RFC 7662) is authenticated with a `secret://` client credential and never cached.
+- Every `/mcp` and metadata request first draws on the per-address limiter, before any token parsing, so bad-token floods cannot drive JWKS or introspection calls.
+- Stateless HTTP, protocol versions `2026-07-28`, `2025-11-25`, `2025-06-18`, an `Origin` check against `server.public_url`.
+- JWKS and introspection calls use the outbound filter as provider endpoints. Loopback, link-local and metadata ranges are refused; **private non-loopback hosts are allowed**, as for OIDC.
+- Known deviation: root-path metadata discovery does not match RFC 9728 section 3.3 for strict clients; the `401` challenge names the correct URL.
+
+### Output shown to the model
+
+Tool results are allowlisted views. Text that came from remote systems (log lines, service metadata, event data, deployment step errors) is sanitized, bounded, scrubbed and marked `untrusted_remote_output`. **The scrubbing is pattern-based:** Bearer/Basic credentials, PEM keys, SuperMgmt tokens, JWT-shaped values and values under secret-looking keys are removed, independent of `security.redact_command_output`. An unknown secret under a harmless name is not detected and reaches the model. See [mcp.md](mcp.md#the-redaction-boundary).
+
 ## Planned controls
 
 Not implemented; listed so nothing is mistaken for shipped.
 
 - SSH CA trust and per-node keys (not scheduled)
-- MCP registration, tokens, OAuth protected-resource layer and security tests (M5)
 - Fuzzing and security scans across all parsers (M6)
 
 ## Accepted limitations
@@ -306,4 +343,5 @@ Not implemented; listed so nothing is mistaken for shipped.
 - The GitHub TUF trust anchor is not independently verified; real attestations, real Actions tokens, redirect behavior and GHCR pulls are unverified.
 - Health check bounds (timeout 30s, interval 1m, 60 attempts) and the Compose CLI pin (5.5.1) are V1 choices, not spec text.
 - Old deployment directories are garbage-collected after a success (newest 5 kept, never the current one, a known-good or the rollback target); a GC failure only emits `deployment.gc_failed`.
+- MCP: redaction of remote text is pattern-based and unknown secrets are not detected; no real MCP client or authorization server has been tested; root-path OAuth metadata discovery deviates from RFC 9728 section 3.3; JWT access tokens must be `at+jwt` (otherwise use introspection); remote MCP does not support a path-prefixed reverse proxy.
 - No independent security audit has been performed.
