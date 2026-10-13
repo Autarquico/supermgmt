@@ -194,6 +194,9 @@ type builder struct {
 	hold   *app.HoldService
 	caller domain.ID // local mode: the identity of the OS user
 
+	// oauthHTTP replaces the netguard client of the OAuth endpoints; tests only.
+	oauthHTTP *http.Client
+
 	plans     *app.Plans
 	queries   *app.Queries
 	keys      *app.KeyManager
@@ -292,7 +295,7 @@ func (b *builder) build(ctx context.Context) (*system, error) {
 	if cfg.Instance.Mode == config.ModeLocal {
 		sys.local, err = b.localServer(services, sys.residency)
 	} else {
-		sys.remote, sys.admin, err = b.serverServers(services)
+		sys.remote, sys.admin, err = b.serverServers(ctx, services)
 	}
 	if err != nil {
 		return nil, err
@@ -526,8 +529,13 @@ func (b *builder) apiServices() (api.Services, error) {
 	if err != nil {
 		return api.Services{}, err
 	}
+	mcpClients, err := b.mcpClients()
+	if err != nil {
+		return api.Services{}, err
+	}
 	return api.Services{
-		Plans: b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
+		MCPClients: mcpClients,
+		Plans:      b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
 		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
@@ -544,7 +552,7 @@ func (b *builder) ready() func(context.Context) error {
 func (b *builder) localServer(services api.Services, residency *Residency) (*api.Server, error) {
 	return api.New(api.Options{
 		Services: services, IDs: b.o.IDs, Identity: b.caller, DB: b.db, Clock: b.o.Clock,
-		Residency: residency, Log: b.o.Log, Ready: b.ready(),
+		Residency: residency, Log: b.o.Log, Ready: b.ready(), MCPResolver: b.mcpSocketResolver(),
 	})
 }
 
@@ -557,6 +565,7 @@ func appConfig(db *database.DB, o Options) (app.Config, []byte, error) {
 	return app.Config{
 		DB: db, Clock: o.Clock, IDs: o.IDs, Policy: pol, Credentials: auth.CredentialStatus{DB: db, Clock: o.Clock},
 		ApprovalTTL: o.Config.Security.ApprovalTTL, DefaultLogsMode: runtimes.LogsMode(o.Config.SSH.LogsMode), AllowSelfApproval: allowSelf,
+		MCPWritesEnabled: o.Config.MCP.WriteToolsEnabled,
 	}, policyBytes, nil
 }
 
