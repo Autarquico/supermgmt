@@ -1777,7 +1777,7 @@ pinned: []                          # admin-approved repo@digest pairs (optional
 - After validation, the pipeline injects the deterministic **ownership labels** on every service, volume and network: `dev.supermgmt.owner=<app_target_id>` and `dev.supermgmt.project=<compose_project>`.
 - The model is serialized to canonical YAML (sorted keys, no anchors). That is the **public model**. `compose_hash` = SHA-256 of it.
 - **Per-deployment labels** (`dev.supermgmt.deployment=<deployment_id>`) and secret wiring are added only at materialization. They are excluded from `compose_hash` but are deterministic and checked in step 10.
-- On the node, SuperMgmt creates a new directory `<deploy_root>/<compose_project>/<deployment_id>/` (fails if it exists; `deploy_root` default `/srv/supermgmt`, root-owned 0755; project dirs owned by `supermgmt`, mode 0750). It then writes:
+- On the node, SuperMgmt creates a new directory `<deploy_root>/<compose_project>/<deployment_id>/` (fails if it exists; `deploy_root` default `/srv/supermgmt`, owned by `supermgmt` 0750 and created by root during node.setup (1.4.6; ADR-0030); project dirs owned by `supermgmt`, mode 0750). It then writes:
   - `compose.yaml`: the public model plus per-deployment labels plus, for each service with secrets, an `env_file: secrets/<service>.env` entry. Only the pipeline may emit `env_file`.
   - `secrets/` (mode 0700) containing `<service>.env` (mode 0600), with the decrypted values written from memory at staging. Values are never persisted unencrypted on the control plane.
 - Files are created with `O_CREAT|O_EXCL|O_NOFOLLOW` semantics through a fixed template, and `stat` verifies that no path component is a symlink.

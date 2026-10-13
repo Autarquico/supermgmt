@@ -135,10 +135,10 @@ var privilegedSteps = []privilegedStep{
 		[]Param{paramMode, paramOwner, paramOwnGroup, paramDir},
 	},
 	{
-		// deploy_root (ADR-0030): root-owned, 0755, never through a symlink.
+		// deploy_root (ADR-0030): owned by the dedicated user, 0750, never through a symlink.
 		"setup.deploy_root",
-		"@ROOT@test ! -L {{path}} && @ROOT@install -d -m 0755 -o root -g root {{path}}",
-		[]Param{paramDeployDir},
+		"@ROOT@test ! -L {{path}} && @ROOT@install -d -m 0750 -o {{user}} -g {{user}} {{path}}",
+		[]Param{paramUser, paramDeployDir},
 	},
 	{
 		"setup.own_dir",

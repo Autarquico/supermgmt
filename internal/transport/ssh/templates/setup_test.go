@@ -170,22 +170,22 @@ func TestValidateDeployRoot(t *testing.T) {
 	}
 }
 
-func TestDeployRootStepCreatesARootOwnedDirectoryOnlyForValidPaths(t *testing.T) {
-	args := map[string]string{"path": DefaultDeployRoot}
+func TestDeployRootStepCreatesADirectoryOwnedByTheDedicatedUserOnlyForValidPaths(t *testing.T) {
+	args := map[string]string{"user": "supermgmt", "path": DefaultDeployRoot}
 	root, err := RenderSetup("setup.deploy_root", args, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "test ! -L '/srv/supermgmt' && " + rootPath + "install -d -m 0755 -o root -g root '/srv/supermgmt'"
+	want := "test ! -L '/srv/supermgmt' && " + rootPath + "install -d -m 0750 -o 'supermgmt' -g 'supermgmt' '/srv/supermgmt'"
 	if !strings.HasSuffix(root.Line, want) {
 		t.Errorf("root variant = %q", root.Line)
 	}
 	viaSudo, err := RenderSetup("setup.deploy_root.sudo", args, nil)
-	if err != nil || !strings.Contains(viaSudo.Line, "sudo -n install -d -m 0755 -o root -g root '/srv/supermgmt'") {
+	if err != nil || !strings.Contains(viaSudo.Line, "sudo -n install -d -m 0750 -o 'supermgmt' -g 'supermgmt' '/srv/supermgmt'") {
 		t.Errorf("sudo variant = %q, %v", viaSudo.Line, err)
 	}
 	for _, bad := range []string{"relative", "/srv/x;id", HomeDir + "/d", "/"} {
-		if _, err := RenderSetup("setup.deploy_root", map[string]string{"path": bad}, nil); err == nil {
+		if _, err := RenderSetup("setup.deploy_root", map[string]string{"user": "supermgmt", "path": bad}, nil); err == nil {
 			t.Errorf("deploy_root accepted %q", bad)
 		}
 	}

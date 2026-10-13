@@ -171,7 +171,7 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 		Grants: req.Grants, LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, AdminIsRoot: asRoot,
 	})
 	if err == nil {
-		err = ensureDeployRoot(ctx, admin, deployRoot, asRoot)
+		err = ensureDeployRoot(ctx, admin, node.Endpoint.User, deployRoot, asRoot)
 	}
 	h.sessionEvent(context.WithoutCancel(ctx), lease, job, node, "end", asRoot, err)
 	return outcome, err
@@ -210,14 +210,15 @@ func requireJQ(ctx context.Context, ex transport.Executor) error {
 	return nil
 }
 
-// ensureDeployRoot creates deploy_root, root-owned 0755; it converges when the
-// directory already exists (ADR-0030).
-func ensureDeployRoot(ctx context.Context, ex transport.Executor, deployRoot string, asRoot bool) error {
+// ensureDeployRoot creates deploy_root owned by the dedicated user, 0750, so it
+// can create project directories below it; it converges when the directory
+// already exists (ADR-0030).
+func ensureDeployRoot(ctx context.Context, ex transport.Executor, user, deployRoot string, asRoot bool) error {
 	name := "setup.deploy_root"
 	if !asRoot {
 		name += templates.SudoVariantSuffix
 	}
-	c, err := templates.RenderSetup(name, map[string]string{"path": deployRoot}, nil)
+	c, err := templates.RenderSetup(name, map[string]string{"user": user, "path": deployRoot}, nil)
 	if err != nil {
 		return err
 	}
