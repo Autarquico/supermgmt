@@ -31,6 +31,9 @@ func bindImages(services *node, s Source) ([]ImageUse, error) {
 		if err != nil {
 			return nil, err
 		}
+		if e.key == s.DeployedService && s.RequireProvenance && binding != BindingAttestation {
+			return nil, imageError(smerr.ReasonDigestUnbound, e.key, "%s has no attestation and the environment requires provenance", ref)
+		}
 		image.value = ref
 		uses = append(uses, ImageUse{Service: e.key, Ref: ref, Binding: binding})
 	}

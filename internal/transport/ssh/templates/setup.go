@@ -28,11 +28,21 @@ const DefaultDeployRoot = "/srv/supermgmt"
 
 const maxDeployRootLength = 200
 
+const deployRootScript = `if [ -L "$1" ]; then exit 1; ` +
+	`elif [ -e "$1" ]; then [ -d "$1" ] && [ "$(stat -c %U "$1")" = "$2" ]; ` +
+	`else install -d -m 0750 -o "$2" -g "$2" "$1"; fi`
+
+// systemTrees are never a deploy_root, nor are their descendants.
+var systemTrees = []string{
+	"/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/root",
+	"/run", "/sbin", "/sys", "/usr", "/var/lib/docker",
+}
+
 var deployRootRE = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 
 // ValidateDeployRoot accepts an absolute, clean path outside the dedicated
 // user's home, below which root never acts (ADR-0009 d), and not the
-// filesystem root.
+// filesystem root or a system directory.
 func ValidateDeployRoot(p string) error {
 	switch {
 	case p == "" || len(p) > maxDeployRootLength:
@@ -45,8 +55,16 @@ func ValidateDeployRoot(p string) error {
 		return errors.New("deploy_root must not be the filesystem root")
 	case p == HomeDir || strings.HasPrefix(p, HomeDir+"/"):
 		return fmt.Errorf("deploy_root must be outside %s", HomeDir)
+	case underSystemTree(p):
+		return errors.New("deploy_root must not be a system directory")
 	}
 	return nil
+}
+
+func underSystemTree(p string) bool {
+	return slices.ContainsFunc(systemTrees, func(t string) bool {
+		return p == t || strings.HasPrefix(p, t+"/")
+	})
 }
 
 // StagingSuffix names the temporary file a setup file is written to before it
@@ -135,9 +153,11 @@ var privilegedSteps = []privilegedStep{
 		[]Param{paramMode, paramOwner, paramOwnGroup, paramDir},
 	},
 	{
-		// deploy_root (ADR-0030): owned by the dedicated user, 0750, never through a symlink.
+		// deploy_root (ADR-0030): created 0750 and owned by the dedicated user
+		// only when absent. An existing directory is never re-owned: it must
+		// already be a real directory of that user, or the step fails.
 		"setup.deploy_root",
-		"@ROOT@test ! -L {{path}} && @ROOT@install -d -m 0750 -o {{user}} -g {{user}} {{path}}",
+		"@ROOT@sh -c '" + deployRootScript + "' sh {{path}} {{user}}",
 		[]Param{paramUser, paramDeployDir},
 	},
 	{
