@@ -14,7 +14,7 @@ build=${SM_REPRO_BUILD:-goreleaser release --snapshot --clean}
 work=$(mktemp -d)
 cleanup() {
 	status=$?
-	chmod -R u+w "$work" 2>/dev/null
+	chmod -R u+w "$work" 2>/dev/null || true
 	rm -rf "$work" 2>/dev/null || true
 	exit "$status"
 }
