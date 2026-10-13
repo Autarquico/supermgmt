@@ -24,6 +24,7 @@ Available Commands:
   join        Enroll this node with a SuperMgmt server (run as root)
   login       Sign in to a remote server
   logout      Sign out: revoke the session on the server and forget the stored credential
+  mcp         Serve MCP over stdio as a registered MCP client
   nodes       List, add, inspect and probe nodes
   profile     Manage the servers sm talks to
   providers   List, inspect, refresh and check providers

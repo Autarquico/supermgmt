@@ -35,7 +35,7 @@ func defaultMCPClientsDeps(env []string) mcpClientsDeps {
 }
 
 // newMCPClientsCmd is `sm mcp clients` (spec §24, ADR-0032); `sm mcp` mounts it.
-func newMCPClientsCmd(env []string) *cobra.Command { //nolint:unused // mounted by `sm mcp` (T8)
+func newMCPClientsCmd(env []string) *cobra.Command {
 	return newMCPClientsCmdWith(env, defaultMCPClientsDeps(env))
 }
 

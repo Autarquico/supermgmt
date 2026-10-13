@@ -71,7 +71,7 @@ func awaiting(job string) *wire.Submission {
 func TestNoCommandTakesASecretOnItsCommandLine(t *testing.T) {
 	secretish := regexp.MustCompile(`(?i)pass|secret|password|token|code|value|key-material`)
 	flagName := regexp.MustCompile(`--([a-z][a-z0-9-]*)`)
-	allowed := map[string]bool{"token-stdin": true}
+	allowed := map[string]bool{"token-stdin": true, "token-file": true} // token-file names a file; the secret is never on the command line
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		for _, m := range flagName.FindAllStringSubmatch(c.LocalFlags().FlagUsages(), -1) {
