@@ -254,3 +254,24 @@ func RevokeOAuthTokensOfClient(ctx context.Context, q Querier, client domain.ID,
 	return affected(ctx, q, "oauth_access_tokens",
 		`UPDATE oauth_access_tokens SET revoked_at = ? WHERE mcp_client_id = ? AND revoked_at IS NULL`, millis(at), client)
 }
+
+// PendingMCPRegistration reports whether an unfinished mcp_client.register job
+// already claims name. The client of an unapproved registration does not exist
+// yet, so the clients table cannot show the clash. The registration created by
+// the caller's own Idempotency-Key (identity, key) is not a clash: its retry is
+// a replay.
+func PendingMCPRegistration(ctx context.Context, q Querier, name string, identity domain.ID, idempotencyKey string) (bool, error) {
+	var pending bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM jobs j JOIN plans p ON p.id = j.plan_id
+		WHERE p.action = 'mcp_client.register'
+		  AND j.state IN (?, ?, ?, ?)
+		  AND json_extract(p.plan_json, '$.parameters.name') = ?
+		  AND NOT EXISTS (SELECT 1 FROM idempotency_records r WHERE r.identity_id = ? AND r.key = ? AND r.job_id = j.id))`,
+		domain.JobAwaitingApproval, domain.JobQueued, domain.JobRunning, domain.JobInterrupted,
+		name, identity, idempotencyKey).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("find pending mcp registration: %w", err)
+	}
+	return pending, nil
+}

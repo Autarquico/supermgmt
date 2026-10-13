@@ -186,6 +186,9 @@ func (s *MCPClientService) Register(ctx context.Context, by Caller, r wire.Regis
 		if err := requireFreeMCPClientName(ctx, tx, p.Name); err != nil {
 			return DirectResult[wire.MCPClient]{}, err
 		}
+		if err := requireNoPendingMCPRegistration(ctx, tx, by, p.Name); err != nil {
+			return DirectResult[wire.MCPClient]{}, err
+		}
 		existing, found, err := mcpIdentityOf(ctx, tx, p)
 		if err != nil {
 			return DirectResult[wire.MCPClient]{}, err
@@ -228,6 +231,23 @@ func requireFreeMCPClientName(ctx context.Context, q database.Querier, name stri
 	}
 	if slices.ContainsFunc(all, func(c database.MCPClient) bool { return c.Name == name && c.State != database.MCPClientDeleted }) {
 		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("an MCP client named %q already exists", name))
+	}
+	return nil
+}
+
+// requireNoPendingMCPRegistration refuses a name that an unfinished
+// registration already claims.
+func requireNoPendingMCPRegistration(ctx context.Context, q database.Querier, by Caller, name string) error {
+	var key string
+	if by.Idempotency != nil {
+		key = by.Idempotency.Key
+	}
+	pending, err := database.PendingMCPRegistration(ctx, q, name, by.ID, key)
+	if err != nil {
+		return err
+	}
+	if pending {
+		return smerr.New(smerr.CodeConflict, smerr.ReasonResourceLocked, "an MCP client with this name is already awaiting approval")
 	}
 	return nil
 }

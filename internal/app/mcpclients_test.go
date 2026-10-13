@@ -200,6 +200,34 @@ func TestMCPClientsRegister_ADuplicateLiveNameIsRefused(t *testing.T) {
 	wantError(t, err, smerr.CodeConflict, "")
 }
 
+func TestMCPClientsRegister_ANameClaimedByAnUnfinishedRegistrationIsRefused(t *testing.T) {
+	m := newMCPClientsFixture(t)
+	_, err := m.svc.Register(context.Background(), m.caller(m.admin), mcpcLocal("claude-code"))
+	mustf(t, err, "first Register")
+
+	_, err = m.svc.Register(context.Background(), m.caller(m.admin), mcpcLocal("claude-code"))
+
+	wantError(t, err, smerr.CodeConflict, smerr.ReasonResourceLocked)
+}
+
+func TestMCPClientsRegister_TheCallersOwnKeyedRetryIsAReplayNotAClash(t *testing.T) {
+	m := newMCPClientsFixture(t)
+	keyed := func() Caller {
+		by := m.caller(m.admin)
+		by.Idempotency = &Idempotency{
+			Key: "register-1", Method: "POST", Path: "/api/v1/mcp-clients", RequestHash: "h",
+			Respond: func(any, error) (int, []byte) { return 202, []byte(`{"data":"submitted"}`) },
+		}
+		return by
+	}
+	_, err := m.svc.Register(context.Background(), keyed(), mcpcLocal("claude-code"))
+	mustf(t, err, "first Register")
+
+	_, err = m.svc.Register(context.Background(), keyed(), mcpcLocal("claude-code"))
+
+	_ = asReplay(t, err)
+}
+
 func TestMCPClientsRegister_ARemoteTripleWithALiveClientIsRefused(t *testing.T) {
 	m := newMCPClientsFixture(t)
 	m.register(mcpcRemote("web-a", "sub-1", "cid-1"))

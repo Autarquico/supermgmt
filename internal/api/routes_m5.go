@@ -6,7 +6,6 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
-	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 // ExemptMCP stands for the remote MCP endpoint and its two well-known
@@ -57,39 +56,7 @@ func (s *Server) registerMCPClient(ctx context.Context, by app.Caller, in input)
 	if err != nil {
 		return app.DirectResult[wire.MCPClient]{}, err
 	}
-	if err := s.requireNoPendingRegistration(ctx, by, req.Name); err != nil {
-		return app.DirectResult[wire.MCPClient]{}, err
-	}
 	return s.svc.MCPClients.Register(ctx, by, req)
-}
-
-// requireNoPendingRegistration refuses a name that an unfinished registration
-// already claims: the client of an unapproved registration does not exist yet,
-// so the application cannot see the clash. The registration the caller's own
-// Idempotency-Key created is not a clash: its retry is a replay.
-func (s *Server) requireNoPendingRegistration(ctx context.Context, by app.Caller, name string) error {
-	if s.db == nil {
-		return nil
-	}
-	var key string
-	if by.Idempotency != nil {
-		key = by.Idempotency.Key
-	}
-	var pending bool
-	err := s.db.Reader().QueryRowContext(ctx, `SELECT EXISTS (
-		SELECT 1 FROM jobs j JOIN plans p ON p.id = j.plan_id
-		WHERE p.action = 'mcp_client.register'
-		  AND j.state IN ('awaiting_approval', 'queued', 'running', 'interrupted')
-		  AND json_extract(p.plan_json, '$.parameters.name') = ?
-		  AND NOT EXISTS (SELECT 1 FROM idempotency_records r WHERE r.identity_id = ? AND r.key = ? AND r.job_id = j.id))`,
-		name, by.ID, key).Scan(&pending)
-	if err != nil {
-		return err
-	}
-	if pending {
-		return smerr.New(smerr.CodeConflict, smerr.ReasonResourceLocked, "an MCP client with this name is already awaiting approval")
-	}
-	return nil
 }
 
 // issueMCPToken answers with the client's token once. Like every credential
