@@ -62,7 +62,14 @@ lint: ## Run golangci-lint and the formatter check
 lint-workflows: ## Lint the workflow files with actionlint
 	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION) .github/workflows/*.yml
 
-vuln: ## Run govulncheck
+# The GitHub fakes link sigstore's test CA (x/crypto/openpgp, GO-2026-5932, no fix);
+# they are test-only and never reach the sm binary, so they are scanned by vuln-all only.
+VULN_PKGS = $(shell go list ./... | grep -vE '/providers/github/ghfake$$|/test/e2e/ghsim$$')
+
+vuln: ## Run govulncheck (everything except the test-only GitHub fakes)
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(VULN_PKGS)
+
+vuln-all: ## Run govulncheck over every package, test fakes included (informational)
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 generate: ## Regenerate files and fail on drift

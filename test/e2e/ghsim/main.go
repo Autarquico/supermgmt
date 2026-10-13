@@ -298,7 +298,7 @@ type checkRunRequest struct {
 
 func (s *sim) addCheckRun(w http.ResponseWriter, r *http.Request) {
 	guarded(s, func(q checkRunRequest) {
-		now := time.Now().UTC()
+		now := time.Now().UTC() //nolint:forbidigo // the fake GitHub host's own clock
 		run := ghfake.CheckRun{ID: q.ID, Name: q.Name, AppID: q.AppID, Status: q.Status, Conclusion: q.Conclusion, SuiteID: q.SuiteID, StartedAt: now.Add(-time.Minute)}
 		if q.Status == "completed" {
 			run.CompletedAt = now
@@ -413,7 +413,7 @@ func runApp() error {
 }
 
 func readTrim(path, fallback string) string {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // test image: fixed paths baked into the container
 	if err != nil {
 		return fallback
 	}
@@ -425,8 +425,12 @@ func probe(args []string) error {
 	if len(args) != 1 {
 		return errors.New("probe takes one URL")
 	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, args[0], nil) //nolint:gosec // test image HEALTHCHECK probes its own fixed URL
+	if err != nil {
+		return err
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(args[0])
+	resp, err := client.Do(req) //nolint:gosec // same fixed URL
 	if err != nil {
 		return err
 	}
