@@ -77,7 +77,7 @@ func TestPlanLocksFollowSpecSection20_5(t *testing.T) {
 }
 
 func TestPlanLocksOfAnUnknownJobTypeIsATypedError(t *testing.T) {
-	_, err := LockPlanner{}.PlanLocks(context.Background(), nil, jobs.Job{Type: "deployment.create"})
+	_, err := LockPlanner{}.PlanLocks(context.Background(), nil, jobs.Job{Type: "no.such.job"})
 
 	wantError(t, err, smerr.CodeInvalidArgument, smerr.ReasonUnknownAction)
 }
