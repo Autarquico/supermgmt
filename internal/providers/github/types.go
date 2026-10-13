@@ -3,30 +3,12 @@
 // verification, webhook signatures, GitHub Actions OIDC verification and
 // artifact-attestation verification. It touches no storage; internal/app turns
 // its results into rows, plans and jobs.
-//
-// Frozen in M4 W0. Implemented in this package by:
-//
-//	T5a  func New(apiURL string, caPEM []byte, token audit.Secret, opts ...Option) (Client, error)
-//	T5b  func VerifyChecks(ctx context.Context, c Client, r Repo, sha string, p CIPolicy) (CheckReport, error)
-//	T5b  func VerifyWebhook(secret audit.Secret, signature string, body []byte) (WebhookEvent, error)
-//	T6a  func NewOIDCVerifier(...) OIDCVerifier
-//	T6a  func MatchClaims(c Claims, p CIPolicy, commit string, env EnvRequirement) error
-//	T6b  func NewAttestationVerifier(...) (AttestationVerifier, error)
 package github
 
 import (
 	"context"
 	"encoding/json"
 	"time"
-
-	// Pinned for the OIDC (T6a) and attestation (T6b) verifiers: these imports
-	// keep go.mod complete for them until their files exist (ADR-0028).
-	_ "github.com/go-jose/go-jose/v4/jwt"
-	_ "github.com/sigstore/sigstore-go/pkg/bundle"
-	_ "github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
-	_ "github.com/sigstore/sigstore-go/pkg/root"
-	_ "github.com/sigstore/sigstore-go/pkg/tuf"
-	_ "github.com/sigstore/sigstore-go/pkg/verify"
 
 	"github.com/autarquico/supermgmt/internal/config"
 )

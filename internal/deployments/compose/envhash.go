@@ -22,10 +22,7 @@ import (
 // name set in both is hashed from the environment; Materialize refuses that
 // case before it can happen. A secret without a resolved value is omitted: the
 // node then reports a name nobody expected, which is a mismatch.
-//
-// vars is the plan's variable map. Variables were substituted into the public
-// model at freeze time, so nothing is read from it here.
-func ExpectedEnvHashes(f Frozen, values []ResolvedSecret, _ map[string]string) []EnvHash {
+func ExpectedEnvHashes(f Frozen, values []ResolvedSecret) []EnvHash {
 	resolved := envhashPublicEnvironment(f.Public)
 	byKey := make(map[materializeKey]audit.Secret, len(values))
 	for _, v := range values {

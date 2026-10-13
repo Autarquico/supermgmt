@@ -2,16 +2,6 @@
 // steps a deployment runs in each recovery mode and the rule that decides
 // whether a rollback is available (ADR-0029). It is pure: no storage, no
 // transport, no clock.
-//
-// Frozen in M4 W0. T7a implements, in this package:
-//
-//	func Transition(from, to State) error              // INVALID_TRANSITION outside the §20.1 table
-//	func (s State) Terminal() bool
-//	func (s State) Provisional() bool                  // created, waiting_ci
-//	func (s State) MutationStarted() bool              // deploying and later
-//	func CoarseJobState(s State) domain.JobState
-//	func RollbackAvailable(in RollbackInputs) (ok bool, cause string)
-//	func Steps(p plan.Plan, m RecoveryMode) []Step
 package deployments
 
 import (
