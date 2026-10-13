@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
 )
@@ -157,7 +158,7 @@ func TestUpgrade_NoDowngradeRecordForOtherUpgrades(t *testing.T) {
 }
 
 func TestDowngradeEventID_IsStablePerUpgradeAndValid(t *testing.T) {
-	st := upgradeState{OldSHA256: "a", NewSHA256: "b", UpdatedAt: testNow}
+	st := upgradeState{OldSHA256: "a", NewSHA256: "b", StartedAt: testNow}
 	id := downgradeEventID(st)
 	if _, err := domain.ParseID(id); err != nil {
 		t.Fatalf("%q: %v", id, err)
@@ -165,8 +166,57 @@ func TestDowngradeEventID_IsStablePerUpgradeAndValid(t *testing.T) {
 	if downgradeEventID(st) != id {
 		t.Error("the same upgrade got two ids")
 	}
+	st.UpdatedAt = testNow.Add(time.Minute)
+	if downgradeEventID(st) != id {
+		t.Error("a resume changed the id")
+	}
 	st.NewSHA256 = "c"
 	if downgradeEventID(st) == id {
 		t.Error("another upgrade got the same id")
 	}
 }
+
+func TestUpgradeState_StartedAtIsSetOnceAndSurvivesEveryLaterRecord(t *testing.T) {
+	h := newUHost(t)
+	clock := &steppingClock{now: testNow}
+	d := h.deps()
+	d.Clock = clock
+	u := &upgrader{d: d, t: upgradeTarget{l: applianceLayout()}}
+	h.dirs[u.t.l.DataDir] = true
+	if err := u.record(upPrepared); err != nil {
+		t.Fatal(err)
+	}
+	started := u.st.StartedAt
+	id := downgradeEventID(u.st)
+
+	clock.now = clock.now.Add(time.Hour)
+	if err := u.record(upBackedUp); err != nil {
+		t.Fatal(err)
+	}
+
+	if !u.st.StartedAt.Equal(started) || downgradeEventID(u.st) != id {
+		t.Errorf("a later record changed the upgrade's identity: started %v -> %v", started, u.st.StartedAt)
+	}
+	if !u.st.UpdatedAt.After(started) {
+		t.Error("UpdatedAt did not move")
+	}
+}
+
+func TestLoadState_AStateWithoutStartedAtFallsBackToUpdatedAt(t *testing.T) {
+	w := newAW(t)
+	u := &upgrader{d: w.deps(false), t: upgradeTarget{l: applianceLayout()}}
+	w.files[u.t.statePath()] = []byte(`{"phase":"backed_up","old_sha256":"a","new_sha256":"b","updated_at":"2026-01-02T03:04:05Z"}`)
+
+	st, found, err := u.loadState()
+
+	if err != nil || !found {
+		t.Fatalf("loadState = %v, %v", found, err)
+	}
+	if want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC); !st.StartedAt.Equal(want) {
+		t.Errorf("StartedAt = %v, want %v", st.StartedAt, want)
+	}
+}
+
+type steppingClock struct{ now time.Time }
+
+func (c *steppingClock) Now() time.Time { return c.now }

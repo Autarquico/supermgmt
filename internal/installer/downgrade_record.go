@@ -75,10 +75,11 @@ func (u *upgrader) pendingAuditOwner() Owner {
 	return Owner{User: u.t.runAs, Group: u.t.runAs}
 }
 
-// downgradeEventID derives a UUIDv7-shaped id from the upgrade's identity, so
-// the id survives a crash between writing the record and swapping.
+// downgradeEventID derives a UUIDv7-shaped id from the upgrade's identity (the
+// binaries and when it started, which no resume rewrites), so the id survives
+// a crash and a retaken backup.
 func downgradeEventID(st upgradeState) string {
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%d", st.OldSHA256, st.NewSHA256, st.UpdatedAt.UnixNano()))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%d", st.OldSHA256, st.NewSHA256, st.StartedAt.UnixNano()))
 	var id uuid.UUID
 	copy(id[:], sum[:])
 	id[6] = id[6]&0x0f | 0x70
