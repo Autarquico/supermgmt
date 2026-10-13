@@ -370,8 +370,8 @@ func (h deployHandler) backup(ctx context.Context, j *deployJob, fz frozenDeploy
 	if b := fz.policy.PreDeployBackup; b != nil {
 		req.Template, req.Args, req.Timeout = b.Template, b.Args, b.Timeout
 	}
-	step := backupStep{store: h.store, clock: h.cfg.Clock, ids: h.cfg.IDs, gate: h.backupGate(j)}
-	return step.run(ctx, j.ex, j.lease, req)
+	step := backupStep{ledger: deployLedger{h: h, lease: j.lease}, clock: h.cfg.Clock, ids: h.cfg.IDs, gate: h.backupGate(j)}
+	return step.run(ctx, j.ex, req)
 }
 
 // backupGate re-evaluates the plan's backup sub-action for the requester under
@@ -409,37 +409,70 @@ func (h deployHandler) backupGate(j *deployJob) backupSubActionGate {
 // pull fetches each distinct image under its own intent, so every pull has its
 // own proof on the node.
 func (h deployHandler) pull(ctx context.Context, j *deployJob, fz frozenDeployment, step deployments.Step) error {
+	if err := refuseForwardStep(step.Name, j.mode); err != nil {
+		return err
+	}
 	for _, ref := range distinctImageRefs(fz.frozen.Images) {
 		marker := h.cfg.IDs.NewID().String()
-		image := []compose.ImageUse{{Ref: ref}}
-		// compose.pull derives the node marker as "<marker>-<n>"; one image per
-		// call makes the intent's marker the node's exact one.
-		err := h.dispatch(ctx, j, step, "compose.pull", marker+"-0", nil, func() error {
-			return j.stage().Pull(ctx, j.mode, marker, image)
-		})
+		cmd, err := pullCommand(marker, ref)
+		if err != nil {
+			return stagingFailed("docker pull of "+ref+" cannot be rendered for the node", "")
+		}
+		res, err := h.dispatch(ctx, j, step, "compose.pull", marker, nil, cmd)
 		if err != nil {
 			return err
+		}
+		if res.ExitStatus != 0 {
+			return stagingFailed(fmt.Sprintf("docker pull of %s exited %d", ref, res.ExitStatus), "")
 		}
 	}
 	return nil
 }
 
 func (h deployHandler) materialize(ctx context.Context, j *deployJob, fz frozenDeployment, step deployments.Step) error {
-	if _, err := compose.Materialize(fz.frozen, j.dep.ID, fz.secrets); err != nil {
+	if err := refuseForwardStep(step.Name, j.mode); err != nil {
+		return err
+	}
+	stdin, err := materializeInput(fz.frozen, j.dep.ID, fz.secrets)
+	if err != nil {
 		return stagingFailed("the frozen model cannot be materialized", "")
 	}
 	marker := h.cfg.IDs.NewID().String()
+	cmd, err := materializeCommand(marker, j.dir(), stdin)
+	if err != nil {
+		return stagingFailed("materialize cannot be rendered for the node", "")
+	}
 	pre, _ := json.Marshal(map[string]string{"directory": j.dep.ID.String()})
-	return h.dispatch(ctx, j, step, "compose.materialize", marker, pre, func() error {
-		return j.stage().Materialize(ctx, j.mode, j.dir(), marker, fz.frozen, fz.secrets)
-	})
+	res, err := h.dispatch(ctx, j, step, "compose.materialize", marker, pre, cmd)
+	if err != nil {
+		return err
+	}
+	if res.ExitStatus != 0 {
+		return stagingFailed(fmt.Sprintf("materialize exited %d", res.ExitStatus), "")
+	}
+	return nil
 }
 
 func (h deployHandler) deploy(ctx context.Context, j *deployJob, step deployments.Step) error {
+	if err := refuseForwardStep(step.Name, j.mode); err != nil {
+		return err
+	}
 	marker := h.cfg.IDs.NewID().String()
-	return h.dispatch(ctx, j, step, "compose.up", marker, nil, func() error {
-		return deployRun{exec: j.ex}.Up(ctx, j.mode, j.dir(), marker)
-	})
+	cmd, err := upCommand(marker, j.dir())
+	if err != nil {
+		return smerr.New(smerr.CodeDeploymentFailed, "", "compose up cannot be rendered for the node")
+	}
+	res, err := h.dispatch(ctx, j, step, "compose.up", marker, nil, cmd)
+	if err != nil {
+		return err
+	}
+	switch res.ExitStatus {
+	case 0:
+		return nil
+	case templates.LockConflictExit:
+		return smerr.New(smerr.CodeConflict, smerr.ReasonResourceLocked, "another compose command holds the project lock")
+	}
+	return smerr.New(smerr.CodeDeploymentFailed, "", fmt.Sprintf("compose up exited %d", res.ExitStatus))
 }
 
 func (h deployHandler) verifyHealth(ctx context.Context, j *deployJob, fz frozenDeployment) error {
@@ -457,39 +490,137 @@ func (h deployHandler) healthVerifier(node transport.Executor) healthVerifier {
 	return healthVerifier{Node: node, HTTP: h.http, Sleep: h.sleep}
 }
 
-// dispatch records a durable intent, marks it dispatched, runs the command and
-// closes the intent. A command that ran and failed (the typed failures of the
-// step functions) is a definite failure; anything else after dispatch, a lost
-// connection or a cancelled context, leaves the intent recorded and the outcome
-// unknown (spec §20.4).
+// dispatch sends an already rendered forward command through the shared
+// dispatcher; the step function maps a non-zero exit status to its own error.
 func (h deployHandler) dispatch(ctx context.Context, j *deployJob, step deployments.Step, operation, marker string,
-	pre json.RawMessage, run func() error,
-) error {
-	intent, err := h.store.RecordIntent(ctx, j.lease, jobs.NewIntent{
-		Step: step.Name, Operation: operation, TargetType: string(domain.ResourceDeployment), TargetID: j.dep.ID.String(),
-		Marker: marker, PreState: pre, DeadlineAt: h.cfg.Clock.Now().Add(step.Deadline + templates.KillAfter),
+	pre json.RawMessage, cmd templates.Command,
+) (transport.Result, error) {
+	dispatcher := commandDispatcher{Node: j.ex, Ledger: deployLedger{h: h, lease: j.lease}, Clock: h.cfg.Clock}
+	return dispatcher.dispatch(ctx, nodeCommand{
+		Step: step.Name, Operation: operation, Deployment: j.dep.ID, Marker: marker, PreState: pre, Command: cmd,
 	})
-	if err != nil {
-		return err
-	}
-	if err := h.store.MarkDispatched(ctx, j.lease, intent.ID); err != nil {
-		return err
-	}
-	runErr := run()
-	switch {
-	case runErr == nil:
-		return h.closeIntent(ctx, j, intent.ID, jobs.OutcomeSucceeded)
-	case !commandFailed(runErr):
-		return restoreOutcomeUnknown(step.Name, runErr)
-	}
-	if err := h.closeIntent(ctx, j, intent.ID, jobs.OutcomeFailed); err != nil {
-		return err
-	}
-	return runErr
 }
 
-func (h deployHandler) closeIntent(ctx context.Context, j *deployJob, intent domain.ID, outcome string) error {
-	return h.store.CompleteIntent(ctx, j.lease, intent, outcome, commandExitEvidence(outcome, 0))
+// ---- node commands ------------------------------------------------------------------------------
+
+// The command builders render a mutating template. Forward and restore steps
+// call them before anything is recorded, so a refusal never leaves an intent.
+
+func pullCommand(marker, ref string) (templates.Command, error) {
+	return templates.RenderMutating("compose.pull", marker, map[string]string{"image": ref})
+}
+
+func materializeInput(f compose.Frozen, deployment domain.ID, values []compose.ResolvedSecret) ([]byte, error) {
+	bundle, err := compose.Materialize(f, deployment, values)
+	if err != nil {
+		return nil, err
+	}
+	return templates.EncodeMaterialization(stagedFiles(bundle))
+}
+
+func materializeCommand(marker string, dir deployDir, stdin []byte) (templates.Command, error) {
+	return templates.RenderMutatingInput("compose.materialize", marker, dir.args(), stdin, "")
+}
+
+func upCommand(marker string, dir deployDir) (templates.Command, error) {
+	return templates.RenderMutatingInput("compose.up", marker, dir.args(), nil, dir.Project)
+}
+
+// ---- the dispatcher -----------------------------------------------------------------------------
+
+// intentLedger is the lease-fenced record of the commands a run sends.
+type intentLedger interface {
+	RecordIntent(ctx context.Context, ni jobs.NewIntent) (domain.ID, error)
+	MarkDispatched(ctx context.Context, intent domain.ID) error
+	CompleteIntent(ctx context.Context, intent domain.ID, outcome string, evidence json.RawMessage) error
+}
+
+// nodeCommand is one rendered mutating command and the intent that proves it.
+// RunTimeout, when set, bounds the node run only: ledger writes keep the
+// caller's context.
+type nodeCommand struct {
+	Step       string
+	Operation  string
+	Deployment domain.ID
+	Marker     string
+	PreState   json.RawMessage
+	Command    templates.Command
+	RunTimeout time.Duration
+}
+
+// sentCommand is a command whose session ended with an exit status, or whose
+// run timeout expired. Its intent is still open.
+type sentCommand struct {
+	Intent   domain.ID
+	Result   transport.Result
+	TimedOut bool
+}
+
+// commandDispatcher is the one pipeline every mutating node command takes: the
+// intent is durable and marked dispatched before the command leaves, and
+// closed by its real exit status. A transport failure after dispatch leaves
+// the intent recorded and the outcome unknown (spec §20.4): the job is
+// interrupted and reconciliation decides.
+type commandDispatcher struct {
+	Node   transport.Executor
+	Ledger intentLedger
+	Clock  domain.Clock
+}
+
+// dispatch sends c and closes its intent by the exit status. A non-zero exit
+// is not an error here: the caller maps it to its own failure.
+func (d commandDispatcher) dispatch(ctx context.Context, c nodeCommand) (transport.Result, error) {
+	sent, err := d.send(ctx, c)
+	if err != nil {
+		return transport.Result{}, err
+	}
+	return sent.Result, d.close(ctx, sent.Intent, sent.Result.ExitStatus)
+}
+
+func (d commandDispatcher) send(ctx context.Context, c nodeCommand) (sentCommand, error) {
+	intent, err := d.Ledger.RecordIntent(ctx, jobs.NewIntent{
+		Step: c.Step, Operation: c.Operation, TargetType: string(domain.ResourceDeployment), TargetID: c.Deployment.String(),
+		Marker: c.Marker, PreState: c.PreState, DeadlineAt: d.Clock.Now().Add(c.Command.Deadline + templates.KillAfter),
+	})
+	if err != nil {
+		return sentCommand{}, err
+	}
+	if err := d.Ledger.MarkDispatched(ctx, intent); err != nil {
+		return sentCommand{}, err
+	}
+	runCtx, cancel := ctx, context.CancelFunc(func() {})
+	if c.RunTimeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, c.RunTimeout)
+	}
+	defer cancel()
+	res, runErr := d.Node.Run(runCtx, c.Command)
+	switch {
+	case runErr != nil && runCtx.Err() != nil && ctx.Err() == nil:
+		return sentCommand{Intent: intent, TimedOut: true}, nil
+	case runErr != nil:
+		return sentCommand{}, dispatchOutcomeUnknown(c.Step, runErr)
+	}
+	return sentCommand{Intent: intent, Result: res}, nil
+}
+
+// close ends an intent by its exit status: 0 is the proven success, anything
+// else a failure that proves nothing.
+func (d commandDispatcher) close(ctx context.Context, intent domain.ID, exit int) error {
+	if exit != 0 {
+		return d.closeFailed(ctx, intent, exit)
+	}
+	return d.Ledger.CompleteIntent(ctx, intent, jobs.OutcomeSucceeded, commandExitEvidence(jobs.OutcomeSucceeded, 0))
+}
+
+// closeFailed ends an intent as failed whatever the exit status said: a command
+// can exit 0 and still be refused by the step that reads its output.
+func (d commandDispatcher) closeFailed(ctx context.Context, intent domain.ID, exit int) error {
+	return d.Ledger.CompleteIntent(ctx, intent, jobs.OutcomeFailed, commandExitEvidence(jobs.OutcomeFailed, exit))
+}
+
+func dispatchOutcomeUnknown(step string, cause error) error {
+	return smerr.Wrap(fmt.Errorf("%w: %w", jobs.ErrOutcomeUnknown, cause), smerr.CodeNodeUnreachable, "",
+		step+" was dispatched but its outcome could not be established; check the node and resolve the job")
 }
 
 // commandExitEvidence is what the worker knows when a command's session ended:

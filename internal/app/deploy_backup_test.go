@@ -42,7 +42,7 @@ func newPredeployBackupFixture(t *testing.T) *predeployBackupFixture {
 	}
 	b := &predeployBackupFixture{t: t, f: f, lease: claimed.Lease, node: newFakeNode(t)}
 	b.step = backupStep{
-		store: f.store, clock: f.clock, ids: f.ids,
+		ledger: deployLedger{h: deployHandler{store: f.store}, lease: claimed.Lease}, clock: f.clock, ids: f.ids,
 		gate: func(_ context.Context, sub plan.SubAction) error {
 			b.gated = append(b.gated, sub)
 			return b.denial
@@ -62,7 +62,7 @@ func newPredeployBackupFixture(t *testing.T) *predeployBackupFixture {
 }
 
 func (b *predeployBackupFixture) run(ex transport.Executor) (string, error) {
-	return b.step.run(context.Background(), ex, b.lease, b.req)
+	return b.step.run(context.Background(), ex, b.req)
 }
 
 func (b *predeployBackupFixture) intents() []jobs.Intent {
@@ -226,7 +226,7 @@ func TestBackup_InterruptionKeepsTheIntentRecorded(t *testing.T) {
 			cancel()
 			return transport.Result{}, ctx.Err()
 		})
-		_, err := b.step.run(ctx, b.node, b.lease, b.req)
+		_, err := b.step.run(ctx, b.node, b.req)
 		if !errors.Is(err, jobs.ErrOutcomeUnknown) {
 			t.Fatalf("err = %v, want jobs.ErrOutcomeUnknown", err)
 		}

@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -20,7 +19,6 @@ import (
 const (
 	backupTemplate   = "postgres-dump" // the only backup template in M4 (ADR-0029)
 	backupTimeoutCap = time.Hour       // the node-side cap of the template
-	backupIntentKind = "deployment"
 )
 
 // backupSubActionGate re-evaluates the plan's backup sub-action under the
@@ -40,10 +38,10 @@ type backupRequest struct {
 
 // backupStep runs the pre-deploy backup (spec §19.1, ADR-0029).
 type backupStep struct {
-	store *jobs.Store
-	clock domain.Clock
-	ids   domain.IDGenerator
-	gate  backupSubActionGate
+	ledger intentLedger
+	clock  domain.Clock
+	ids    domain.IDGenerator
+	gate   backupSubActionGate
 }
 
 // run records a fenced intent, dispatches postgres-dump under the policy
@@ -56,7 +54,7 @@ type backupStep struct {
 //     closed as failed;
 //   - a lost connection or an interrupted run: the intent stays recorded and
 //     the error wraps jobs.ErrOutcomeUnknown, so the reconciler decides.
-func (b backupStep) run(ctx context.Context, ex transport.Executor, lease jobs.Lease, req backupRequest) (string, error) {
+func (b backupStep) run(ctx context.Context, ex transport.Executor, req backupRequest) (string, error) {
 	if err := b.authorize(ctx, req); err != nil {
 		return "", err
 	}
@@ -65,35 +63,28 @@ func (b backupStep) run(ctx context.Context, ex transport.Executor, lease jobs.L
 	if err != nil {
 		return "", backupFailed("the backup arguments were refused: %v", err)
 	}
-	intent, err := b.store.RecordIntent(ctx, lease, jobs.NewIntent{
-		Step: deployments.StepPreDeployBackup, Operation: policy.ActionNodeBackupTemplateRun,
-		TargetType: backupIntentKind, TargetID: req.Deployment.String(),
-		Marker: marker, DeadlineAt: b.clock.Now().Add(cmd.Deadline),
+	dispatcher := commandDispatcher{Node: ex, Ledger: b.ledger, Clock: b.clock}
+	sent, err := dispatcher.send(ctx, nodeCommand{
+		Step: deployments.StepPreDeployBackup, Operation: policy.ActionNodeBackupTemplateRun, Deployment: req.Deployment,
+		Marker: marker, Command: cmd, RunTimeout: req.Timeout,
 	})
 	if err != nil {
 		return "", err
 	}
-	if err := b.store.MarkDispatched(ctx, lease, intent.ID); err != nil {
-		return "", err
-	}
-	runCtx, cancel := context.WithTimeout(ctx, req.Timeout)
-	defer cancel()
-	res, runErr := ex.Run(runCtx, cmd)
+	res := sent.Result
 	switch {
-	case runErr != nil && runCtx.Err() != nil && ctx.Err() == nil:
-		return "", b.fail(ctx, lease, intent.ID, "the backup exceeded its timeout of %s", req.Timeout)
-	case runErr != nil:
-		return "", backupOutcomeUnknown(runErr)
+	case sent.TimedOut:
+		return "", b.fail(ctx, dispatcher, sent, "the backup exceeded its timeout of %s", req.Timeout)
 	case res.ExitStatus != 0:
-		return "", b.fail(ctx, lease, intent.ID, "the backup exited with status %d", res.ExitStatus)
+		return "", b.fail(ctx, dispatcher, sent, "the backup exited with status %d", res.ExitStatus)
 	case res.Truncated:
-		return "", b.fail(ctx, lease, intent.ID, "the backup output was cut before its last line")
+		return "", b.fail(ctx, dispatcher, sent, "the backup output was cut before its last line")
 	}
 	artifact, err := templates.ParseBackupPath(res.Stdout)
 	if err != nil {
-		return "", b.fail(ctx, lease, intent.ID, "the backup did not print a valid artifact path")
+		return "", b.fail(ctx, dispatcher, sent, "the backup did not print a valid artifact path")
 	}
-	if err := b.complete(ctx, lease, intent.ID, jobs.OutcomeSucceeded, backupDoneEvidence(artifact)); err != nil {
+	if err := b.ledger.CompleteIntent(ctx, sent.Intent, jobs.OutcomeSucceeded, backupDoneEvidence(artifact)); err != nil {
 		return "", err
 	}
 	return artifact, nil
@@ -122,38 +113,25 @@ func (b backupStep) authorize(ctx context.Context, req backupRequest) error {
 
 // fail closes the intent as failed and returns the typed deployment error.
 // The node's output is never part of the message: it is untrusted (spec §30).
-func (b backupStep) fail(ctx context.Context, lease jobs.Lease, intent domain.ID, format string, args ...any) error {
-	reason := fmt.Sprintf(format, args...)
-	if err := b.complete(ctx, lease, intent, jobs.OutcomeFailed, map[string]string{"reason": reason}); err != nil {
+func (b backupStep) fail(ctx context.Context, d commandDispatcher, sent sentCommand, format string, args ...any) error {
+	if err := d.closeFailed(ctx, sent.Intent, sent.Result.ExitStatus); err != nil {
 		return err
 	}
-	return backupFailed("%s", reason)
-}
-
-func (b backupStep) complete(ctx context.Context, lease jobs.Lease, intent domain.ID, outcome string, evidence any) error {
-	raw, err := json.Marshal(evidence)
-	if err != nil {
-		return fmt.Errorf("encode backup evidence: %w", err)
-	}
-	return b.store.CompleteIntent(ctx, lease, intent, outcome, raw)
+	return backupFailed(format, args...)
 }
 
 // backupDoneEvidence is the proven exit evidence of a finished backup plus the
 // artifact it printed.
-func backupDoneEvidence(artifact string) map[string]any {
+func backupDoneEvidence(artifact string) json.RawMessage {
 	var proven map[string]any
 	_ = json.Unmarshal(commandExitEvidence(jobs.OutcomeSucceeded, 0), &proven)
 	proven["artifact"] = artifact
-	return proven
+	raw, _ := json.Marshal(proven)
+	return raw
 }
 
 func backupFailed(format string, args ...any) error {
 	e := smerr.FromReason(smerr.ReasonStagingFailed, fmt.Sprintf(format, args...))
 	e.Details = map[string]any{"cause": deployments.CauseBackupFailed}
 	return e
-}
-
-func backupOutcomeUnknown(cause error) error {
-	return smerr.Wrap(errors.Join(jobs.ErrOutcomeUnknown, cause), smerr.CodeNodeUnreachable, "",
-		"the pre-deploy backup was dispatched but its outcome could not be established")
 }
