@@ -1,6 +1,6 @@
 # Architecture
 
-Source of truth: [`spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md). This page summarizes it and states what exists today. Markers: **[M0]** and **[M1]** exist in the repository now; **[planned Mx]** does not exist.
+Source of truth: [`spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md). This page summarizes it and states what exists today. Markers: **[M0]** to **[M4]** exist in the repository now; **[planned Mx]** does not exist.
 
 ## Process model (SPEC §2.1.1)
 
@@ -12,7 +12,7 @@ Laptop
 │   ├── API: Unix socket 0600                 [M1]   (server mode: HTTPS + admin socket, M2)
 │   ├── SQLite                                [M0 schema; M1 migration 000002]
 │   ├── job workers, reconciler, refresher    [M0 engine; M1 wired to SSH, systemd, Docker]
-│   └── connectors: SSH, local, Proxmox       [M1; Proxmox M3]   (GitHub M4)
+│   └── connectors: SSH, local, Proxmox       [M1; Proxmox M3]   [M4: GitHub]
 └── sm TUI / CLI: API clients                 [M1]   (MCP bridge: planned M5)
         │ interactive SSH only: the terminal is handed to the system `ssh`, which
         └ the daemon authorizes and audits but does not proxy
@@ -59,7 +59,9 @@ Dependencies point inward: adapters (CLI, API, TUI, MCP) call application servic
 | `internal/netguard` | outbound request filter | M2 |
 | `internal/join` | node enrollment (`sm join`) | M2 |
 | `internal/providers/proxmox` | Proxmox VE API client, UPID parsing, task correlation; `pvefake` is its test fake | M3 |
-| `internal/deployments/*`, `internal/health` | Compose pipeline, health checks | planned M4 |
+| `internal/providers/github` | GitHub connector: REST client, origin-pinned redirects, CI checks, contents, Actions OIDC verification, Sigstore attestation verification, webhook HMAC; `ghfake` is its test fake | M4 |
+| `internal/deployments`, `internal/deployments/compose`, `internal/deployments/manifest` | the §20.1 state table, step catalog and rollback rules; the closed Compose pipeline (raw and model schema passes, freeze, canonicalisation, env-file encoding, resolved-environment hash); the app manifest | M4 |
+| `internal/health` | health-check validation (manifest versus control-plane origin rules) and node-side checks | M4 |
 | `internal/mcp` | MCP transport, tools, resources | planned M5 |
 | `internal/installer`, `internal/backup` | installer logic, backup and restore | M2; Proxmox LXC appliance, upgrade and uninstall: M3 |
 
@@ -81,7 +83,7 @@ Repository ─► Application ─► Deployment ───┘
                   └──── Environment / Target
 ```
 
-M0 defines the cross-cutting entities and the tables for providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations and events. M1 adds the `secrets` table and the rows the SSH connector needs (migration `000002_m1`). Repository, Application and Deployment arrive with M4.
+M0 defines the cross-cutting entities and the tables for providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations and events. M1 adds the `secrets` table and the rows the SSH connector needs (migration `000002_m1`). Repository, Application, App target and Deployment arrived with M4 (migration `000005`).
 
 Configured state and observed state are kept apart (SPEC §6.4). Configured resources carry one `spec_revision`, which increments only when desired state changes and is used for optimistic concurrency. Observations (reachability, metrics, versions) live in separate records and never bump it. Consequence: periodic discovery does not invalidate approvals. **[M0]**
 
@@ -121,7 +123,7 @@ Key properties:
 - Job states follow [ADR-0013](adr/0013-generic-job-state-machine.md). The claim step re-checks everything the plan depended on, so a changed `spec_revision` fails the job with `PLAN_STALE`. **[M0]**
 - Retry classes (`idempotent`, `resumable`, `non_retryable`) come from the action catalog. Non-retryable remote mutations are observed, never repeated. **[M0]**
 - Locks are acquired at claim and held until the job is terminal, including while it is `interrupted` or requeued, so a retrying job cannot lose its resources to a rival (ADR-0013, SPEC §20.5). **[M0]**
-- The reconciler acts only on a quiescent job and only on confirmed evidence: the completion signal with exit status 0 plus a classification observed identically in two samples at least 30 seconds apart, collected until `deadline_at` + 5 minutes. Missing, contradictory or inconclusive evidence holds the job `interrupted`. Only fake evidence adapters exist in M0; real ones (SSH, Docker, systemd, Proxmox) arrive with their milestones. **[M0]**
+- The reconciler acts only on a quiescent job and only on confirmed evidence: the completion signal with exit status 0 plus a classification observed identically in two samples at least 30 seconds apart, collected until `deadline_at` + 5 minutes. Missing, contradictory or inconclusive evidence holds the job `interrupted`. Only fake evidence adapters exist in M0; real ones (SSH, Docker, systemd, Proxmox, deployments) arrived with their milestones. **[M0]**
 - A claim error that is a per-job data fault fails only that job, so one poison job cannot block the queue. **[M0]**
 - Human resolution of a held job (`job.resolve`) is an action in the catalog, served by `POST /api/v1/jobs/{id}/resolve` and `sm jobs resolve`. It needs the plan hash and an outcome. **[M1]**
 
@@ -136,6 +138,35 @@ How a service restart reaches a node (ADR-0009, ADR-0015):
 5. Reads (discovery, logs) never need setup, but a node without `node.setup` is read as `admin_user` and advertises no mutating capability.
 
 Nodes are never given a SuperMgmt binary. What `node.setup` creates on them is listed in [providers.md](providers.md).
+
+## Applications and deployments (M4)
+
+Sources: SPEC §18-§21; [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [0007](adr/0007-execution-snapshots.md), [0008](adr/0008-secret-versions.md), [0010](adr/0010-secret-env-file-encoding.md), [0011](adr/0011-provisional-deployment-api.md), [0028](adr/0028-github-connector.md), [0029](adr/0029-deployment-engine.md), [0030](adr/0030-node-setup-v2.md). Everything below ran against a **fake GitHub, a virtual Sigstore and a local registry**; see [compatibility.md](compatibility.md) and [manual-checks/m4-real-github.md](manual-checks/m4-real-github.md) for what was never run against the real services.
+
+```text
+GitHub (REST, OIDC, attestations, webhook)        providers/github        [M4, fake-verified]
+   │ CI checks for a commit, contents at that commit, attestation per digest
+   ▼
+create deployment (provisional, ADR-0011) ─► waiting_ci ─► finalize
+   │   server mode: webhook nudge + backstop poll at ci_poll_max; local mode: poll
+   ▼
+finalize: manifest + Compose read from the CI-passed commit (never branch head),
+          closed-schema checks, target-bound freeze, every image bound to a digest,
+          plan (App. C) with frozen rollback target, snapshots, policy ─► job
+   ▼
+preflight ► [snapshot] ► [pre-deploy backup] ► pull ► materialize ► verify ► compose up ► health
+   │ health fails and rollback is declared safe
+   ▼
+rolling_back ─► rolled_back | rollback_failed          (restore steps only)
+```
+
+- **Two machines, one transaction.** `deployments.state` holds the fine §20.1 machine (`internal/deployments/state.go`, an exhaustive table); the job keeps the coarse state, and `TypePolicy.Mirror` writes both in the same transaction (ADR-0029). Tests: `TestDeploymentState_TransitionTable`.
+- **Exact commit, exact digest.** Finalization reads the manifest and Compose from the commit CI passed; every image must be bound (`oidc_claims`, attestation or `pinned`) or the deployment fails `ARTIFACT_NOT_IMMUTABLE`. Tests: `TestFinalize_UsesCIPassedCommitNeverBranchHead`, `TestM4_DeployExactAttestedDigest`.
+- **Closed Compose pipeline.** A raw closed-schema pass before the loader, then a model pass after it (ADR-0006); `compose-go` v2.15.0 and Docker Compose CLI v5.5.1 are the only pair supported. Tests: `TestCheckRaw_RejectsSourceForms`, `TestM4_RepositoryComposePrivilegedRejected`, `TestComposeEquivalence_Corpus`.
+- **Secrets never reach the control plane's disk.** Env files are written on the node from stdin, byte-exact (`format: raw`), and the node compares the **resolved** environment hash only (ADR-0010; needs `jq` on the node). Tests: `TestM4_SecretNeverOnControlPlane`.
+- **Rollback and recovery.** Health failure rolls back only when the rollback is declared safe and a known-good deployment exists; otherwise the deployment fails with `ROLLBACK_UNAVAILABLE` and its cause. An interrupted deployment is reconciled from node evidence (`.done` marker, flock, labelled containers, two samples); a proven partial deploy escalates to a durable, fenced safety-recovery claim that only restores (ADR-0029). Tests: `TestM4_HealthFailureRollsBackToKnownGood`, `TestReconcileDeploy_KilledCLIHeldDespiteStableSamples`, `TestClaimRecovery_*`.
+- **Ownership and locks.** Compose projects, volumes and networks carry a `dev.supermgmt.owner` label; preflight refuses foreign projects and ports. A deployment holds exclusive locks on the target, the project and its host ports (the plan's and the frozen rollback target's). Tests: `TestPreflight_*`.
+- **Nodes.** A deploy-capable node needs `node.setup` v2 (`deploy_root`, default `/srv/supermgmt`), Compose CLI 5.5.1 exactly, and `flock`, `jq`, `bash`, `timeout`, `ss`, `sha256sum`, `base64`, `df`; discovery reports `docker.compose.deploy` as unavailable with the first unmet requirement (`internal/discovery/capabilities.go`). Local-provider nodes are never deploy targets.
 
 ## Further reading
 
