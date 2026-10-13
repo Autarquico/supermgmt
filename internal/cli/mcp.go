@@ -89,7 +89,7 @@ func newMCPClientsAddCmd(env []string, deps mcpClientsDeps) *cobra.Command {
 		Use:   "add <name> (--token-file FILE | --keychain NAME)",
 		Short: "Register a local MCP client and store its one-time token",
 		Long: "Register a local MCP client. When policy requires approval, this prints the job to approve and stops;\n" +
-			"run the same command again after `sm approvals approve <job>` to issue the token. The token goes straight\n" +
+			"run the same command again after `sm jobs approve <job> --plan-hash <hash>` to issue the token. The token goes straight\n" +
 			"into --token-file (created exclusively, mode 0600) or the OS keychain (--keychain). It is never printed\n" +
 			"and cannot be shown again.",
 		Args: cobra.ExactArgs(1),
@@ -149,8 +149,8 @@ func (a *mcpAdd) register(name string) error {
 		return smerr.New(smerr.CodeInternal, "", "daemon answered neither applied nor pending")
 	}
 	return emit(a.cmd, direct, func(w io.Writer) error {
-		_, err := fmt.Fprintf(w, "%s\napprove it with: sm approvals approve %s\nthen run this command again to receive the token\n",
-			describeSubmission(*direct.Pending), direct.Pending.Job.ID)
+		_, err := fmt.Fprintf(w, "%s\napprove it with: sm jobs approve %s --plan-hash %s\nthen run this command again to receive the token\n",
+			describeSubmission(*direct.Pending), direct.Pending.Job.ID, direct.Pending.Job.PlanHash)
 		return err
 	})
 }

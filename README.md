@@ -203,7 +203,7 @@ Register a client once (the registration may need human approval), then point th
 
 ```bash
 sm mcp clients add claude-desktop --token-file ~/.config/supermgmt/mcp-claude-desktop.token
-# if approval is pending: sm approvals approve <job>, then run the same command again
+# if approval is pending: sm jobs approve <job> --plan-hash <hash> (both printed), then run the same command again
 ```
 
 ```json

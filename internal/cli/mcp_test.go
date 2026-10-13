@@ -156,7 +156,7 @@ func TestMCPClientsAddRegistrationPending(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("code=%d stderr=%q", r.code, r.stderr)
 	}
-	for _, want := range []string{string(mcpJobID), "sm approvals approve " + string(mcpJobID)} {
+	for _, want := range []string{string(mcpJobID), "sm jobs approve " + string(mcpJobID) + " --plan-hash "} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, r.stdout)
 		}
