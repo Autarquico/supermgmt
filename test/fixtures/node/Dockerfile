@@ -1,3 +1,13 @@
+ARG TARGETARCH
+# Docker Compose CLI v5.5.1 (ADR-0006), verified against the release sha256 per architecture.
+FROM scratch AS compose-amd64
+ADD --checksum=sha256:db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 \
+    https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-x86_64 /docker-compose
+FROM scratch AS compose-arm64
+ADD --checksum=sha256:732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 \
+    https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-aarch64 /docker-compose
+FROM compose-${TARGETARCH} AS compose
+
 # SuperMgmt M1 node fixture (ADR-0009): Debian + systemd PID 1 + sshd + sudo + docker.
 # It has a bootstrap account `admin` with NOPASSWD sudo and NO `supermgmt` user:
 # `node.setup` must create that user. Host keys and authorized_keys are injected
@@ -9,7 +19,7 @@ ENV container=docker DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus openssh-server sudo docker.io docker-cli \
-      iproute2 procps ca-certificates \
+      iproute2 procps ca-certificates jq curl \
  && rm -rf /var/lib/apt/lists/* \
  && rm -f /etc/ssh/ssh_host_*
 
@@ -21,6 +31,7 @@ RUN useradd --create-home --shell /bin/bash admin \
  && chmod 0440 /etc/sudoers.d/admin \
  && visudo -cf /etc/sudoers.d/admin
 
+COPY --from=compose --chmod=0755 /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 COPY sshd_fixture.conf /etc/ssh/sshd_config.d/10-fixture.conf
 COPY units/ /etc/systemd/system/
 

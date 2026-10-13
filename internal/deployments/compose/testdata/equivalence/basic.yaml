@@ -1,0 +1,16 @@
+services:
+  app:
+    image: ghcr.io/acme/app:placeholder
+    restart: unless-stopped
+    depends_on:
+      cache:
+        condition: service_started
+    environment:
+      REGION: $REGION
+      GREETING: "hello"
+    user: "1000"
+    working_dir: /srv/app
+  cache:
+    image: docker.io/library/redis@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    init: true
+    read_only: true

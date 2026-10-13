@@ -7,10 +7,13 @@ Usage:
 Available Commands:
   admin       Administer a server through its admin socket (root or the service user)
   approvals   List jobs awaiting approval with the plan hash to approve against
+  apps        List, inspect and create applications and their targets
   backup      Create and list backups; restore one offline
   completion  Generate a shell completion script
   config      Inspect and validate configuration
   daemon      Run the SuperMgmt daemon (started on demand by the other commands)
+  deploy      Deploy a commit's images to an application's environment
+  deployments List, inspect, follow and cancel deployments
   docker      Open lazydocker on a node over SSH
   doctor      Diagnose configuration, paths and database health
   enrollments Issue join tokens for nodes that enroll themselves
@@ -24,6 +27,7 @@ Available Commands:
   nodes       List, add, inspect and probe nodes
   profile     Manage the servers sm talks to
   providers   List, inspect, refresh and check providers
+  rollback    Redeploy the last known-good deployment of an application's environment
   secrets     Import secrets and manage the master keys
   server      Run the SuperMgmt server (the systemd service)
   services    List services, read their logs and start, stop or restart them

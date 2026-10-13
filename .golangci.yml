@@ -100,7 +100,11 @@ linters:
               desc: api reaches nodes only through app services
             - pkg: github.com/autarquico/supermgmt/internal/runtimes
               desc: api reaches nodes only through app services
-            - pkg: github.com/autarquico/supermgmt/internal/providers
+            - pkg: github.com/autarquico/supermgmt/internal/providers/local
+              desc: api reaches nodes only through app services
+            - pkg: github.com/autarquico/supermgmt/internal/providers/ssh
+              desc: api reaches nodes only through app services
+            - pkg: github.com/autarquico/supermgmt/internal/providers/proxmox
               desc: api reaches nodes only through app services
         cli-uses-the-client:
           files:
@@ -147,6 +151,71 @@ linters:
           deny:
             - pkg: github.com/autarquico/supermgmt/internal/providers/proxmox/pvefake
               desc: the fake PVE API is for tests only (ADR-0023)
+        compose-pipeline-is-closed:
+          files:
+            - "**/internal/deployments/compose/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/compose-spec/compose-go/v2
+            - go.yaml.in/yaml/v3
+            - github.com/autarquico/supermgmt/internal/deployments/compose
+            - github.com/autarquico/supermgmt/internal/domain
+            - github.com/autarquico/supermgmt/internal/errors
+            - github.com/autarquico/supermgmt/internal/audit
+        compose-go-stays-in-the-pipeline:
+          files:
+            - "**/*.go"
+            - "!**/internal/deployments/compose/**"
+          deny:
+            - pkg: github.com/compose-spec/compose-go
+              desc: only internal/deployments/compose loads Compose files (ADR-0006)
+        github-provider-is-thin:
+          files:
+            - "**/internal/providers/github/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/autarquico/supermgmt/internal/providers/github
+            - github.com/autarquico/supermgmt/internal/netguard
+            - github.com/autarquico/supermgmt/internal/config
+            - github.com/autarquico/supermgmt/internal/domain
+            - github.com/autarquico/supermgmt/internal/errors
+            - github.com/autarquico/supermgmt/internal/audit
+            - github.com/sigstore/sigstore-go
+            - github.com/sigstore/protobuf-specs
+            - github.com/theupdateframework/go-tuf/v2
+            - github.com/secure-systems-lab/go-securesystemslib
+            - github.com/go-jose/go-jose/v4
+        sigstore-stays-in-the-github-provider:
+          files:
+            - "**/*.go"
+            - "!**/internal/providers/github/**"
+          deny:
+            - pkg: github.com/sigstore/sigstore-go
+              desc: only internal/providers/github verifies attestations (ADR-0028)
+            - pkg: github.com/sigstore/protobuf-specs
+              desc: only internal/providers/github verifies attestations (ADR-0028)
+            - pkg: github.com/theupdateframework/go-tuf/v2
+              desc: only internal/providers/github refreshes the trusted roots (ADR-0028)
+        sigstore-test-ca-stays-in-tests:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/providers/github/ghfake/**"
+            - "!**/test/**"
+          deny:
+            - pkg: github.com/sigstore/sigstore-go/pkg/testing
+              desc: the virtual Sigstore signs test attestations only (ADR-0028)
+        github-fake-stays-in-tests:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/providers/github/ghfake/**"
+            - "!**/test/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/providers/github/ghfake
+              desc: the fake GitHub API is for tests only (ADR-0028)
         oidc-libraries-stay-in-auth-oidc:
           files:
             - "**/*.go"

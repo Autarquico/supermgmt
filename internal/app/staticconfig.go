@@ -15,6 +15,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/providers/github"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 )
@@ -23,8 +24,8 @@ import (
 const configSource = "config"
 
 // StaticReconciler makes the database agree with the environments, SSH
-// providers and Proxmox providers declared in the configuration file (plan
-// Q5, Q9; ADR-0024), as the system
+// providers, Proxmox providers and GitHub providers declared in the
+// configuration file (plan Q5, Q9; ADR-0024, ADR-0028), as the system
 // actor, at daemon start. A changed environment or node endpoint bumps
 // spec_revision and is audited, so a plan made before the change goes stale
 // (spec §6.4, §20.4). A node whose provider left the file is retired. Nodes
@@ -92,6 +93,11 @@ func (s *StaticReconciler) apply(ctx context.Context, tx *database.Tx, envs []co
 			if err := s.proxmoxProvider(ctx, tx, *p.Proxmox); err != nil {
 				problems = append(problems, fmt.Errorf("provider %q: %w", p.Proxmox.Name, err))
 			}
+		case p.GitHub != nil:
+			wanted[p.GitHub.Name] = true
+			if err := s.githubProvider(ctx, tx, *p.GitHub); err != nil {
+				problems = append(problems, fmt.Errorf("provider %q: %w", p.GitHub.Name, err))
+			}
 		}
 	}
 	if err := errors.Join(problems...); err != nil {
@@ -100,7 +106,7 @@ func (s *StaticReconciler) apply(ctx context.Context, tx *database.Tx, envs []co
 	if err := s.retireRemoved(ctx, tx, wanted); err != nil {
 		return err
 	}
-	return s.stopRemovedProxmox(ctx, tx, wanted)
+	return s.stopRemovedProviders(ctx, tx, wanted)
 }
 
 func (s *StaticReconciler) storeSnapshot(ctx context.Context, tx *database.Tx, src ConfigSources) error {
@@ -317,16 +323,48 @@ func proxmoxProviderConfig(p config.ProxmoxProvider) map[string]any {
 // brings an existing one in line with the file. Its guests are not created
 // here: discovery finds them (ADR-0024).
 func (s *StaticReconciler) proxmoxProvider(ctx context.Context, q database.Querier, p config.ProxmoxProvider) error {
+	return s.staticProvider(ctx, q, "Proxmox", domain.Provider{
+		Type: proxmox.ProviderType, Name: p.Name,
+		Endpoint: p.Endpoint, CredentialRef: p.CredentialRef, Config: proxmoxProviderConfig(p),
+	})
+}
+
+// githubStaticConfig is what the GitHub client factory and the webhook read
+// besides the endpoint (the API URL) and the credential reference: the CA and
+// the webhook secret reference, each only when configured (the convention of
+// providers created through the API).
+func githubStaticConfig(p config.GitHubProvider) map[string]any {
+	conf := map[string]any{}
+	if p.CAFile != "" {
+		conf[providerConfigCAFile] = p.CAFile
+	}
+	if p.WebhookSecretRef != "" {
+		conf[providerConfigWebhookSecretRef] = p.WebhookSecretRef
+	}
+	return conf
+}
+
+// githubProvider creates the provider of a configured GitHub connector or
+// brings an existing one in line with the file (ADR-0028).
+func (s *StaticReconciler) githubProvider(ctx context.Context, q database.Querier, p config.GitHubProvider) error {
+	return s.staticProvider(ctx, q, "GitHub", domain.Provider{
+		Type: github.ProviderType, Name: p.Name,
+		Endpoint: p.APIURL, CredentialRef: p.CredentialRef, Config: githubStaticConfig(p),
+	})
+}
+
+// staticProvider creates the static provider want describes (identified by
+// Name), or brings the stored one in line: an unchanged one is left alone, a
+// changed one bumps spec_revision and is audited, and one that had left the
+// file returns to service. The observed status is never reset.
+func (s *StaticReconciler) staticProvider(ctx context.Context, q database.Querier, label string, want domain.Provider) error {
 	providers, err := database.ListProviders(ctx, q)
 	if err != nil {
 		return err
 	}
 	now := s.cfg.Clock.Now()
-	want := domain.Provider{
-		Type: proxmox.ProviderType, Name: p.Name, Origin: domain.ProviderStatic,
-		Endpoint: p.Endpoint, CredentialRef: p.CredentialRef, Config: proxmoxProviderConfig(p), UpdatedAt: now,
-	}
-	i := slices.IndexFunc(providers, func(x domain.Provider) bool { return x.Name == p.Name })
+	want.Origin, want.UpdatedAt = domain.ProviderStatic, now
+	i := slices.IndexFunc(providers, func(x domain.Provider) bool { return x.Name == want.Name })
 	if i < 0 {
 		want.ID, want.CreatedAt = s.cfg.IDs.NewID(), now
 		created, err := database.CreateProvider(ctx, q, want)
@@ -334,11 +372,11 @@ func (s *StaticReconciler) proxmoxProvider(ctx context.Context, q database.Queri
 			return err
 		}
 		return s.emit(ctx, q, systemActor, eventProviderAdd, providerRef(created.ID), domain.ResultSucceeded,
-			map[string]any{"name": p.Name, "type": proxmox.ProviderType, "origin": string(domain.ProviderStatic)})
+			map[string]any{"name": want.Name, "type": want.Type, "origin": string(domain.ProviderStatic)})
 	}
 	current := providers[i]
-	if current.Origin != domain.ProviderStatic || current.Type != proxmox.ProviderType {
-		return errors.New("a provider of that name exists and is not a static Proxmox provider; rename one of them")
+	if current.Origin != domain.ProviderStatic || current.Type != want.Type {
+		return fmt.Errorf("a provider of that name exists and is not a static %s provider; rename one of them", label)
 	}
 	if current.Status == ProviderStatusRemoved {
 		if err := database.SetProviderStatus(ctx, q, current.ID, "", nil); err != nil {
@@ -354,7 +392,7 @@ func (s *StaticReconciler) proxmoxProvider(ctx context.Context, q database.Queri
 		return err
 	}
 	return s.emit(ctx, q, systemActor, eventProviderUpdate, providerRef(stored.ID), domain.ResultSucceeded,
-		map[string]any{"name": p.Name, "spec_revision": stored.SpecRevision, "origin": string(domain.ProviderStatic)})
+		map[string]any{"name": want.Name, "spec_revision": stored.SpecRevision, "origin": string(domain.ProviderStatic)})
 }
 
 // revokeGuestPower withdraws proxmox.vm.power from every guest of a provider
@@ -379,24 +417,26 @@ func (s *StaticReconciler) revokeGuestPower(ctx context.Context, q database.Quer
 	return nil
 }
 
-// stopRemovedProxmox marks every static Proxmox provider that left the file as
-// removed, which stops its sync, stales the plans that used it and withdraws
-// power over its guests. Its nodes and observations stay: removing a provider
-// never deletes what it discovered (spec §29.4).
-func (s *StaticReconciler) stopRemovedProxmox(ctx context.Context, q database.Querier, wanted map[string]bool) error {
+// stopRemovedProviders marks every static Proxmox or GitHub provider that left
+// the file as removed. For Proxmox that stops its sync, stales the plans that
+// used it and withdraws power over its guests. Nodes and observations stay:
+// removing a provider never deletes what it discovered (spec §29.4).
+func (s *StaticReconciler) stopRemovedProviders(ctx context.Context, q database.Querier, wanted map[string]bool) error {
 	providers, err := database.ListProviders(ctx, q)
 	if err != nil {
 		return err
 	}
 	for _, p := range providers {
-		if p.Origin != domain.ProviderStatic || p.Type != proxmox.ProviderType || wanted[p.Name] || p.Status == ProviderStatusRemoved {
+		if p.Origin != domain.ProviderStatic || !markedOnRemoval(p.Type) || wanted[p.Name] || p.Status == ProviderStatusRemoved {
 			continue
 		}
 		if err := database.MarkProviderRemoved(ctx, q, p.ID, ProviderStatusRemoved); err != nil {
 			return err
 		}
-		if err := s.revokeGuestPower(ctx, q, p); err != nil {
-			return err
+		if p.Type == proxmox.ProviderType {
+			if err := s.revokeGuestPower(ctx, q, p); err != nil {
+				return err
+			}
 		}
 		err := s.emit(ctx, q, systemActor, eventProviderRemove, providerRef(p.ID), domain.ResultSucceeded,
 			map[string]any{"name": p.Name, "reason": "removed from the configuration file"})
@@ -405,4 +445,8 @@ func (s *StaticReconciler) stopRemovedProxmox(ctx context.Context, q database.Qu
 		}
 	}
 	return nil
+}
+
+func markedOnRemoval(providerType string) bool {
+	return providerType == proxmox.ProviderType || providerType == github.ProviderType
 }

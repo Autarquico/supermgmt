@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: XL
 issue: null
-prs: []
+prs: [15]
 related_issues: [4]
 depends_on: [m3-proxmox-installer]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-13
 ---
 
 # M4 — Apps, GitHub and deployments

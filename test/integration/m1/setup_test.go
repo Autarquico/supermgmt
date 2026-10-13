@@ -74,8 +74,8 @@ func TestM1Setup_DaemonKilledMidSetupRequeuesAndConverges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Setup == nil || got.Setup.SetupVersion != 1 || got.Setup.LogsMode != "journal-group" || got.Setup.DockerAccess || len(got.Setup.Units) != 1 {
-		t.Errorf("recorded setup = %+v, want version 1, journal-group, no docker access, 1 unit", got.Setup)
+	if got.Setup == nil || got.Setup.SetupVersion != 2 || got.Setup.LogsMode != "journal-group" || got.Setup.DockerAccess || len(got.Setup.Units) != 1 {
+		t.Errorf("recorded setup = %+v, want version 2, journal-group, no docker access, 1 unit", got.Setup)
 	}
 	if got := count(eventActions(t, in), "node.setup.completed"); got != 1 {
 		t.Errorf("%d node.setup.completed events, want exactly 1", got)

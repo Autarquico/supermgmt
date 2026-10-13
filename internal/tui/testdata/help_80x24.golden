@@ -2,6 +2,7 @@
 │                                                                              │
 │ Keys                                                                         │
 │ 1-7           Dashboard, Resources, Jobs, Approvals, Events, Providers, Set… │
+│ 8 9           Applications, Deployments                                      │
 │ j k / arrows  move; g top, G bottom                                          │
 │ enter         open the selected item                                         │
 │ esc           back                                                           │
@@ -17,7 +18,6 @@
 │ /             command palette                                                │
 │ q             quit                                                           │
 │                                                                              │
-│ Palette                                                                      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │ esc back  q quit                                                             │

@@ -1,0 +1,15 @@
+deployment:       0199d000-0000-7000-8000-000000000001
+kind:             deploy
+app:              web
+environment:      prod
+node:             0199d000-0000-7000-8000-000000000006
+compose project:  sm-web-prod
+commit:           0123456789abcdef0123456789abcdef01234567
+state:            waiting_ci
+plan hash:        - (set once CI is verified and the plan is frozen)
+
+images:
+SERVICE  DIGEST
+app      sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+follow it: sm deployments get 0199d000-0000-7000-8000-000000000001 --follow

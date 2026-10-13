@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/netip"
+	"slices"
+	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -35,6 +38,8 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"service.stop":              domain.LockExclusive,
 	"service.restart":           domain.LockExclusive,
 	"backup.create":             domain.LockExclusive,
+	deploymentCreateAction:      domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
+	deploymentRollbackAction:    domain.LockExclusive,
 }
 
 // ownLock is the lock on the job's own resource. A service is locked through
@@ -78,9 +83,9 @@ type LockPlanner struct{}
 var _ jobs.LockPlanner = LockPlanner{}
 
 // PlanLocks locks the job's resource in the mode its type needs and every
-// other plan input shared. Compose project and host port locks arrive with
-// deployments (M4). A job type without an entry is an error: a job that
-// cannot name its locks must not run.
+// other plan input shared. A deployment also takes its Compose project and
+// every host port it or its rollback target publishes exclusively (spec §20.5). A job type without an
+// entry is an error: a job that cannot name its locks must not run.
 func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.Job) ([]domain.LockSpec, error) {
 	mode, known := lockModeByJobType[job.Type]
 	if !known {
@@ -92,6 +97,9 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	}
 	specs := []domain.LockSpec{own}
 	if job.PlanID == nil {
+		if isDeploymentJob(job.Type) {
+			return nil, smerr.New(smerr.CodeInternal, "", "deployment job has no plan to take its locks from")
+		}
 		return specs, nil
 	}
 	rec, err := database.GetPlan(ctx, q, *job.PlanID)
@@ -102,9 +110,75 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	if err != nil {
 		return nil, err
 	}
+	if isDeploymentJob(job.Type) {
+		held, err := deploymentLocks(ctx, q, job, *stored)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, held...)
+	}
 	for _, in := range stored.Inputs {
 		ref := domain.ResourceRef{Type: domain.ResourceType(in.Type), ID: domain.ID(in.ID)}
 		specs = append(specs, domain.ResourceLock(ref, domain.LockShared))
 	}
 	return specs, nil
+}
+
+func isDeploymentJob(jobType string) bool {
+	return jobType == deploymentCreateAction || jobType == deploymentRollbackAction
+}
+
+// deploymentLocks are the exclusive locks of a deployment beyond its app
+// target: the Compose project and each host port on the target's node that
+// the plan or its frozen rollback target publishes. Both are known at
+// finalization, so the set is identical before and after a safety-recovery
+// claim, which redeploys that rollback target (ADR-0029).
+func deploymentLocks(ctx context.Context, q database.Querier, job jobs.Job, p plan.Plan) ([]domain.LockSpec, error) {
+	target, err := database.GetAppTarget(ctx, q, job.Resource.ID)
+	if err != nil {
+		return nil, err
+	}
+	ports, err := lockedHostPorts(ctx, q, p)
+	if err != nil {
+		return nil, err
+	}
+	specs := []domain.LockSpec{domain.ComposeProjectLock(target.NodeID, target.ComposeProject, domain.LockExclusive)}
+	seen := map[netip.AddrPort]bool{}
+	for _, published := range ports {
+		endpoint, err := netip.ParseAddrPort(strings.TrimSuffix(published, "/udp"))
+		if err != nil {
+			return nil, smerr.Wrap(err, smerr.CodeInternal, "", "plan names an unreadable host port "+published)
+		}
+		if seen[endpoint] {
+			continue
+		}
+		seen[endpoint] = true
+		specs = append(specs, domain.PortLock(target.NodeID, endpoint.Addr().String(), int(endpoint.Port()), domain.LockExclusive))
+	}
+	return specs, nil
+}
+
+// lockedHostPorts are the plan's host ports followed by those of its frozen
+// rollback target, if any.
+func lockedHostPorts(ctx context.Context, q database.Querier, p plan.Plan) ([]string, error) {
+	ports := slices.Clone(p.Content.HostPorts)
+	if p.Content.RollbackTarget == nil {
+		return ports, nil
+	}
+	good, err := database.GetDeployment(ctx, q, domain.ID(p.Content.RollbackTarget.DeploymentID))
+	if err != nil {
+		return nil, err
+	}
+	if good.PlanID == nil {
+		return nil, smerr.New(smerr.CodeInternal, "", "rollback target "+good.ID.String()+" has no plan to take its ports from")
+	}
+	rec, err := database.GetPlan(ctx, q, *good.PlanID)
+	if err != nil {
+		return nil, err
+	}
+	frozen, err := plan.Parse(rec.PlanJSON)
+	if err != nil {
+		return nil, err
+	}
+	return append(ports, frozen.Content.HostPorts...), nil
 }

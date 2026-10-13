@@ -1,0 +1,24 @@
+services:
+  app:
+    image: ghcr.io/acme/app:placeholder
+    networks:
+      backend:
+        aliases: [api]
+    volumes:
+      - {type: volume, source: data, target: /data}
+      - {type: volume, source: scratch, target: /scratch, read_only: true}
+      - {type: tmpfs, target: /tmp}
+  cache:
+    image: docker.io/library/redis@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    networks:
+      backend:
+    volumes:
+      - {type: volume, source: data, target: /data}
+volumes:
+  data:
+  scratch:
+    labels:
+      tier: scratch
+networks:
+  backend:
+    internal: true

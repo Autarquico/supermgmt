@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strconv"
@@ -56,8 +57,10 @@ type route struct {
 	// Idempotency-Key and is never stored as an idempotent answer.
 	credential bool
 	unixOnly   bool
-	maxBody    int64
-	do         endpoint
+	// httpsOnly routes are not served on the local-mode Unix socket.
+	httpsOnly bool
+	maxBody   int64
+	do        endpoint
 }
 
 func (rt route) isAction() bool { return rt.action != "" && !strings.HasPrefix(rt.action, "exempt:") }
@@ -90,6 +93,10 @@ func (s *Server) buildRoutes() []route {
 	r.jobs()
 	r.providers()
 	r.proxmox()
+	r.repositories()
+	r.apps()
+	r.deployments()
+	r.webhook()
 	r.nodes()
 	r.sessions()
 	r.services()
@@ -99,7 +106,9 @@ func (s *Server) buildRoutes() []route {
 	r.backups()
 	r.enrollment()
 	r.stream()
-	return slices.DeleteFunc(r.routes, func(rt route) bool { return rt.unixOnly && s.transport != viaUnixSocket })
+	return slices.DeleteFunc(r.routes, func(rt route) bool {
+		return rt.unixOnly && s.transport != viaUnixSocket || rt.httpsOnly && s.transport != viaHTTPS
+	})
 }
 
 type routeSet struct {
@@ -286,18 +295,31 @@ func (rs *routeSet) providers() {
 		}
 		return wire.Page[wire.Provider]{Items: providers}, err
 	}))
-	rs.write(http.MethodPost, wire.PathProviders, "provider.write", mutation(s,
-		func(ctx context.Context, by app.Caller, in input) (app.DirectResult[domain.Provider], error) {
-			req, err := decode[wire.CreateProviderRequest](in)
-			if err != nil {
-				return app.DirectResult[domain.Provider]{}, err
-			}
-			if req.Type != wire.ProviderLocal {
-				return app.DirectResult[domain.Provider]{}, invalid("only the %q provider can be registered", wire.ProviderLocal)
-			}
-			return s.svc.Inventory.RegisterLocal(ctx, by)
-		},
-		direct(http.StatusCreated, app.ProviderView)))
+	rs.write(http.MethodPost, wire.PathProviders, "provider.write", mutation(s, s.registerProvider, direct(http.StatusCreated, app.ProviderView)))
+}
+
+// registerProvider routes POST /providers by the body's type: local, or github
+// (approval-gated provider.write).
+func (s *Server) registerProvider(ctx context.Context, by app.Caller, in input) (app.DirectResult[domain.Provider], error) {
+	var kind wire.CreateProviderRequest
+	_ = json.Unmarshal(in.body, &kind) // a malformed body is reported by the strict decode below
+	switch kind.Type {
+	case wire.ProviderGitHub:
+		if s.svc.Apps == nil {
+			return app.DirectResult[domain.Provider]{}, invalid("the %q provider is not available", wire.ProviderGitHub)
+		}
+		req, err := decode[wire.CreateGitHubProviderRequest](in)
+		if err != nil {
+			return app.DirectResult[domain.Provider]{}, err
+		}
+		return s.svc.Apps.CreateGitHubProvider(ctx, by, req)
+	case wire.ProviderLocal:
+		if _, err := decode[wire.CreateProviderRequest](in); err != nil {
+			return app.DirectResult[domain.Provider]{}, err
+		}
+		return s.svc.Inventory.RegisterLocal(ctx, by)
+	}
+	return app.DirectResult[domain.Provider]{}, invalid("provider type must be %q or %q", wire.ProviderLocal, wire.ProviderGitHub)
 }
 
 // direct renders the outcome of a `direct` action: applied at once with

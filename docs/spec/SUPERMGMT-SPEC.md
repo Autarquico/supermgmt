@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.5-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.6-draft (changes in Appendix F)
 
 ---
 
@@ -830,6 +830,16 @@ environment: production
 tags: [docker]
 ```
 
+GitHub (1.4.6; ADR-0028). `api_url` defaults to `https://api.github.com`; GitHub Enterprise Server sets its own (e.g. `https://ghe.example.com/api/v3`) and may add `ca_file`. The token is a fine-grained, read-only personal access token (Contents, Checks, Actions, Attestations, Metadata: read). `webhook_secret_ref` is used in server mode only. Besides static configuration, a GitHub provider can be registered with `POST /api/v1/providers` (`provider.write`):
+
+```yaml
+type: github
+name: github
+api_url: https://api.github.com
+credential_ref: secret://providers/github/token
+webhook_secret_ref: secret://providers/github/webhook-secret
+```
+
 ## 8.4 Credential references
 
 `credential_ref` is a URI. Supported schemes (closed set; unknown schemes fail validation):
@@ -881,13 +891,15 @@ node_tags(node_id, tag)
 node_capabilities(node_id, capability, available, metadata_json, checked_at)
 runtimes(id, node_id, type, native_id, version, status, metadata_json, last_seen_at)
 services(id, runtime_id, node_id, native_id, name, kind, status, health, metadata_json, spec_revision, last_seen_at)
-repositories(id, provider_id, github_repository_id, github_owner_id, owner, name, url, default_branch, metadata_json, spec_revision)
-apps(id, name, repository_id, manifest_path, deployed_service, image_policy_json, compose_source, compose_content, compose_hash, compose_exceptions_json, variables_json, secret_refs_json, ci_policy_json, spec_revision, created_at, updated_at)
-app_targets(id, app_id, environment_id, node_id, compose_project, deployment_policy_json, spec_revision)
+repositories(id, provider_id, github_repository_id, github_owner_id, owner, name, url, default_branch, metadata_json, spec_revision, created_at, updated_at)
+apps(id, name, repository_id, manifest_path, deployed_service, image_policy_json, compose_source, compose_content, compose_source_hash, compose_exceptions_json, variables_json, secret_refs_json, ci_policy_json, automation_identity_id, spec_revision, created_at, updated_at)
+app_targets(id, app_id, environment_id, node_id, compose_project, deployment_policy_json, spec_revision, created_at, updated_at)
 artifacts(id, app_id, type, immutable_ref, digest, commit_sha, source_run_id, source_run_attempt, provenance_json, provenance_method, created_at)
 artifact_checks(artifact_id, check_name, app_id, workflow_path, run_id, run_attempt, conclusion, completed_at)
 plans(id, action, actor_id, credential_kind, credential_id, scopes_json, plan_json, plan_hash, finalized_at, created_at, expires_at, submitted_job_id)
-deployments(id, kind, app_id, app_target_id, environment_id, node_id, artifact_id, job_id, strategy, state, state_code, state_reason, requested_by, previous_deployment_id, rollback_of_deployment_id, known_good, compose_hash, plan_hash, created_at, updated_at, finished_at)
+deployments(id, kind, app_id, app_target_id, environment_id, node_id, artifact_id, job_id, plan_id, strategy, state, state_code, state_reason, requested_by, previous_deployment_id, rollback_of_deployment_id, known_good, compose_hash, plan_hash, commit_sha, requested_json, credential_kind, credential_id, scopes_json, credential_expires_at, ci_deadline_at, next_ci_check_at, mutation_started, recovery_mode, resume_step, recovery_reason, recovery_target_deployment_id, created_at, updated_at, finished_at)
+execution_snapshots(hash, kind, content, created_at)
+github_oidc_credentials(id, identity_id, repository_id, claims_json, issued_at, expires_at, revoked_at, created_at)
 deployment_steps(id, deployment_id, ordinal, name, state, attempt, started_at, finished_at, output_ref, error_json)
 jobs(id, type, resource_type, resource_id, actor_id, credential_kind, credential_id, scopes_json, state, risk, retry_class, idempotency_key, payload_json, plan_id, plan_hash, lease_owner, lease_generation, lease_until, heartbeat_at, attempts, max_attempts, scheduled_at, created_at, started_at, finished_at, error_json)
 job_approvals(id, job_id, plan_hash, approver_id, decision, reason, expires_at, renewed_at, created_at)
@@ -916,18 +928,25 @@ plans               UNIQUE(submitted_job_id); submit sets it with
 artifact_checks     PRIMARY KEY(artifact_id, check_name)
 operation_intents   UNIQUE(marker)
 webhook_deliveries  UNIQUE(provider, delivery_id)
-app_targets         UNIQUE(node_id, compose_project)
+app_targets         UNIQUE(node_id, compose_project); UNIQUE(app_id, environment_id)
+                    (one target per app and environment in V1); compose_project immutable
+repositories        UNIQUE(provider_id, github_repository_id)
+execution_snapshots PRIMARY KEY(hash); rows immutable (ADR-0007)
+github_oidc_credentials PRIMARY KEY(id) = sha256(issuer|jti); never holds the token (ADR-0028)
+deployments         recovery_target_deployment_id set iff recovery_mode = safety_recovery (ADR-0029)
 providers           UNIQUE(name)
 nodes               UNIQUE(provider_id, native_id)
 ```
 
-Enumerations (CHECK constraints): `identities.actor_type ∈ {human, automation, mcp, system}`; `artifacts.provenance_method ∈ {attestation, oidc_claims}`; `deployments.kind ∈ {deploy, rollback}`; `operation_intents.state ∈ {recorded, completed}`; `resource_locks.mode ∈ {exclusive, shared}`; `nodes.management_state ∈ {discovered, managed, retired}`; `nodes.reachability ∈ {reachable, unreachable, unknown}`.
+Enumerations (CHECK constraints): `identities.actor_type ∈ {human, automation, mcp, system}`; `artifacts.provenance_method ∈ {attestation, oidc_claims}`; `deployments.kind ∈ {deploy, rollback}`; `deployments.state` ∈ the §20.1 states; `deployments.recovery_mode ∈ {forward, safety_recovery}` or null; `execution_snapshots.kind ∈ {compose_model, health, deployment_policy, exceptions, manifest}`; `health_checks.type ∈ {http, https, tcp, docker-health}` and `scope ∈ {node, control_plane}` for app targets in V1; `operation_intents.state ∈ {recorded, completed}`; `resource_locks.mode ∈ {exclusive, shared}`; `nodes.management_state ∈ {discovered, managed, retired}`; `nodes.reachability ∈ {reachable, unreachable, unknown}`.
 
 Indexes MUST additionally cover node/service lookup, event timeline, job queue (`state, scheduled_at`), deployments by app/environment, and token/session hash lookup.
 
 Token and session values are stored only as SHA-256 hashes of high-entropy random tokens (≥256 bits). `idempotency_records` expire after 24h (§23).
 
 Events are append-only through application permissions; no ordinary delete API.
+
+**Compose hashes (1.4.6; ADR-0007).** `apps.compose_source_hash` is the SHA-256 of the control-plane source text and does not depend on any target. The public model is frozen per target at finalization (ownership labels and bind addresses are target-bound); its hash is `deployments.compose_hash` and the plan's `content.compose_hash`. **Provisional deployments (ADR-0011)** keep `commit_sha`, `requested_json` and the credential context on the row with `plan_id`, `plan_hash` and `job_id` null until finalization. The **recovery record** (`recovery_mode`, `resume_step`, `recovery_reason`, `recovery_target_deployment_id`) is written by the reconcile verdict that requeues a deployment job (ADR-0029).
 
 ---
 
@@ -959,6 +978,7 @@ A crash before commit leaves the old state intact; a crash after commit leaves t
 
 **Rules.**
 - Logs and errors never include secret plaintext. The API never returns secret plaintext after creation.
+- Secrets referenced by apps live under `apps/…`. `secret.write` on `apps/…` rejects values containing NUL, CR or LF, or invalid UTF-8 (`INVALID_ARGUMENT`), because they are written verbatim to `format: raw` env files (§20.3, ADR-0010). Historical versions are kept encrypted and cannot be deleted in V1 (ADR-0008).
 - `sm backup` includes encrypted secrets (they are rows in the database) but never KEK files.
 - Key backup is a separate, explicit `sm secrets export-key <kek_id>` that requires a passphrase (≥ 12 characters, read from a TTY or stdin, never from an argument). Export file format v1:
 
@@ -998,7 +1018,10 @@ human       local mode: the OS user of a socket connection that presents NO toke
             (identity "local:<uid>", created on first daemon start). server mode: an
             OIDC subject (issuer+subject) after login.
 automation  API token holder, or a verified GitHub Actions OIDC token (§18) mapped to a
-            pre-registered automation identity (issuer + repository_id + workflow ref).
+            pre-registered automation identity (issuer + repository_id + workflow ref):
+            issuer https://token.actions.githubusercontent.com, subject
+            repository_id:<id>:workflow:<deploy_workflow>. app.write creates or links it
+            with no role; an admin grants one explicitly (ADR-0028).
 mcp         a registered MCP client. Local: registered by a human with `sm mcp clients add
             <name>` (registration, then one-time token issuance, §11.2), which yields an MCP client token stored by the MCP bridge config in a
             0600 file or the OS keychain; `sm mcp` presents it on every socket request.
@@ -1018,6 +1041,8 @@ On the local socket, a request carrying an MCP client token is `mcp`; a request 
 - an expired API, MCP or OAuth token fails the job (`CREDENTIAL_EXPIRED`);
 - a session or GitHub OIDC token that expires naturally after submission does NOT fail the job, because the submission was valid and these credentials are short-lived by design, but revocation does;
 - scopes are always re-applied.
+
+A `github_oidc` credential has the implicit scopes `["deployment.create", "deployment.read"]` and is usable only on those two routes. Its status is durable (`github_oidc_credentials`, ADR-0028): it is **revoked** when its row is revoked, its identity is disabled, or the automation identity is unlinked from the app (unlinking revokes its open credentials); a missing row counts as revoked; otherwise it is **expired** from `expires_at`, which is natural expiry above. The raw token is never stored.
 
 ## 11.2 Roles, default policy and the action catalog
 
@@ -1126,7 +1151,7 @@ Notes on the catalog:
 - `**` **Credential-issuing** direct actions (`mcp_client.issue_token`, `token.create`, `enrollment.create`) return a secret exactly once and are **never approval-gated**. Two design rules make this consistent with §11.3 step 8:
   - Their risk is `operational` and their resources (identities, the instance) have no environment, so the automatic approval floors never apply to them. The only possible trigger is an explicit `require_approval: true` rule, which `sm config validate` rejects for these actions. At runtime such a request is denied (`POLICY_DENIED`, `APPROVAL_NOT_SUPPORTED`).
   - The decision that may need approval is separated from the secret: **registering** an MCP client (`mcp_client.register`, high) is approval-gated like any high-risk direct action and creates the identity in state `pending_token`. Afterwards, `mcp_client.issue_token` is allowed **once**, only to the identity that requested the registration, only while the client is `pending_token`, and within 24h of approval. It returns the token and moves the client to `active`. A lost token requires deletion and re-registration.
-- `secret.write` is approval-gated by the high-risk floor (§11.3 step 8). Its operations carry no secret in the plan: an import is sealed as a staged version that approval activates, and `export-key` is requested, approved, then executed once by the requester with the passphrase (§10).
+- `secret.write` is approval-gated by the high-risk floor (§11.3 step 8). Its operations carry no secret in the plan: an import is sealed as a staged version that approval activates, and `export-key` is requested, approved, then executed once by the requester with the passphrase (§10). Values under `apps/…` follow the env-file rule of §10.
 - A token can never carry scopes broader than the creator's own permissions at creation; scopes only narrow (§11.3 step 7).
 - `sub-action`: never invoked directly. It is authorized as part of a composite plan (§11.3).
 - Authentication operations (`/auth/*`, bootstrap exchange) are not actions. They are governed by §23.1 and §11.5.
@@ -1474,12 +1499,12 @@ The token maps to the pre-registered automation identity for that repository and
 
 Delivery of CI results by mode:
 
-- **Server mode:** a `check_run`/`check_suite`/`workflow_run` webhook triggers re-evaluation.
+- **Server mode:** a `check_run`/`check_suite`/`workflow_run` webhook triggers re-evaluation, and the daemon also polls deployments in `waiting_ci` as a backstop every `github.ci_poll_max`, so a lost webhook cannot strand a deployment until `github.ci_timeout` (1.4.6).
 - **Local mode:** no inbound webhooks (§2.1.1). The daemon polls check status for deployments in `waiting_ci` (`github.ci_poll_initial` doubling to `github.ci_poll_max`; after `github.ci_timeout` → `failed`, `CI_NOT_PASSED`).
 
 **Artifact ↔ commit binding.** A digest is accepted for a commit only if:
 
-- **(a) `provenance_method = attestation`:** a GitHub artifact attestation (SLSA provenance) for that digest verifies, and its subject digest, source repository ID, workflow path and commit SHA match the CI policy and commit; or
+- **(a) `provenance_method = attestation`:** a GitHub artifact attestation (SLSA provenance) for that digest verifies, and its subject digest, source repository ID, workflow path and commit SHA match the CI policy and commit. Verification (ADR-0028) uses Sigstore bundles against the Sigstore public-good and GitHub trusted roots (embedded, refreshed through TUF over the outbound filter, fail closed when stale); the certificate SAN must be `https://github.com/<owner>/<repo>/<workflow_path>@refs/heads/<branch>`, its issuer the Actions OIDC issuer, and the source repository ID and commit come from the Fulcio extensions; or
 - **(b) `provenance_method = oidc_claims`:** the digest was reported by an automation request whose verified OIDC claims (above) match the commit, run and workflow.
 
 Environments with `require_provenance: true` accept only (a). Every image digest in the plan (deployed service and sidecars, §20.3) must be bound by (a) or (b), or be listed in the app's `image_policy.pinned` set approved by an admin.
@@ -1550,6 +1575,8 @@ health:                        # optional; overrides manifest health
 ```
 
 `pre_deploy_backup` must exit 0 and print the path of the backup artifact on its last stdout line. The path is recorded in `deployment_steps.output_ref`. Any failure fails the deployment before services change. Proxmox snapshots are for manual recovery only: V1 never rolls back automatically to a snapshot.
+
+**Supported in M4 (1.4.6).** `pre_deploy_backup.template` is `postgres-dump`, the only backup template; `snapshot: true` is rejected with `INVALID_ARGUMENT` ("not supported in this version"); `health.type` is `http`, `tcp` or `docker-health` for `node` scope and `http`/`https` for `control_plane` scope; `command-template` and `systemd-active` are rejected for app targets. Deployments write under `deploy_root`, created by `node.setup` v2 (ADR-0030).
 
 ## 19.2 Compose source
 
@@ -1644,7 +1671,7 @@ Cancellation is impossible from `staging` onward. Every transition is persisted 
 5. `preparing`: read-only preflight. Checks:
    - the node is reachable at the pinned endpoint with the pinned host key;
    - Docker and Compose versions are in the compatibility matrix;
-   - free disk ≥ image sizes + 1 GiB;
+   - free disk ≥ image sizes + 1 GiB, on the Docker root dir and on `deploy_root`. Image sizes come from the node: `docker manifest inspect --verbose <repo>@<digest>` for the node's platform (layers plus config) for each image not already present; present images count 0. A size that cannot be established fails preflight (`PREFLIGHT_FAILED`, cause `IMAGE_SIZE_UNKNOWN`) (1.4.6; ADR-0029);
    - project ownership labels (§20.5);
    - host ports are free or owned by this project;
    - health-check capability (§21).
@@ -1750,13 +1777,15 @@ pinned: []                          # admin-approved repo@digest pairs (optional
 - After validation, the pipeline injects the deterministic **ownership labels** on every service, volume and network: `dev.supermgmt.owner=<app_target_id>` and `dev.supermgmt.project=<compose_project>`.
 - The model is serialized to canonical YAML (sorted keys, no anchors). That is the **public model**. `compose_hash` = SHA-256 of it.
 - **Per-deployment labels** (`dev.supermgmt.deployment=<deployment_id>`) and secret wiring are added only at materialization. They are excluded from `compose_hash` but are deterministic and checked in step 10.
-- On the node, SuperMgmt creates a new directory `<deploy_root>/<compose_project>/<deployment_id>/` (fails if it exists; `deploy_root` default `/srv/supermgmt`, root-owned 0755; project dirs owned by `supermgmt`, mode 0750). It then writes:
+- On the node, SuperMgmt creates a new directory `<deploy_root>/<compose_project>/<deployment_id>/` (fails if it exists; `deploy_root` default `/srv/supermgmt`, owned by `supermgmt` 0750 and created by root during node.setup (1.4.6; ADR-0030); project dirs owned by `supermgmt`, mode 0750). It then writes:
   - `compose.yaml`: the public model plus per-deployment labels plus, for each service with secrets, an `env_file: secrets/<service>.env` entry. Only the pipeline may emit `env_file`.
   - `secrets/` (mode 0700) containing `<service>.env` (mode 0600), with the decrypted values written from memory at staging. Values are never persisted unencrypted on the control plane.
 - Files are created with `O_CREAT|O_EXCL|O_NOFOLLOW` semantics through a fixed template, and `stat` verifies that no path component is a symlink.
 - Docker exposes container environment to anyone with Docker access. That is already root-equivalent and is documented.
 
 **10. On-node equivalence check** (in `staging`): `docker compose -f <file> -p <project> --project-directory <dir> config --format json` under `env -i`, with secret values masked by the template before comparison. The **entire** output is compared with the expected effective model produced by the pinned `compose-go`. The comparison ignores only fields in a fixture-tested CLI-defaults normalization table (`internal/deployments/compose/normalize.go`). Any other difference → `STAGING_FAILED`.
+
+Secret values are compared by their **resolved** form (1.4.6; ADR-0010): the template runs `config --format json` with environment resolution and fixed `jq` programs (jq has no SHA-256, so a bash loop with `base64` and `sha256sum` hashes each value; ADR-0010), and prints only the model with every `environment` value replaced by its SHA-256 plus the set `{service, env_name, sha256}`. The control plane compares that set with hashes it computes in memory from the bound secret versions and variables; values never leave the node. A hash of the env-file bytes is not an acceptable substitute. The only supported Compose CLI is the pinned version in `docs/compatibility.md` (ADR-0006); preflight refuses any other.
 
 **API views** of a Compose model always show the public model, with secret references and no secret values. Plans contain only `{secret_id, secret_version}`.
 
@@ -1829,6 +1858,8 @@ non_retryable   one-shot remote mutations; outcome is observed, never repeated
 - quorum: approvals already consumed at the first claim count only if no approver has since lost `approval.grant`.
 
 If revalidation fails before `deploying` was entered, the job fails with that reason. If it fails after `deploying` was entered, the only permitted continuation is **safety recovery**: the `system` actor rolls back to the previous known-good deployment when rollback is available (else `failed`, `ROLLBACK_UNAVAILABLE`). Safety recovery restores an already-approved prior state and is audited with the failed revalidation reason.
+
+**Safety recovery mechanics (1.4.6; ADR-0029).** The restoration target is the plan's frozen `rollback_target`, never "the newest known-good now". The requeueing reconcile verdict persists a durable recovery record on the deployment; the next claim reads it and, in safety recovery, replaces the requester revalidation with a restorability check (snapshot rows, secret versions, node endpoint and host-key pin): no requester credential, policy or quorum check, never `awaiting_approval`, same locks, actor `system`. A forward claim whose revalidation fails after `deploying` began is converted into safety recovery inside the claim transaction. A `kind: rollback` claim revalidates authorization inputs and the known-good snapshot, not the app's current Compose source (ADR-0007).
 
 **Reconciliation**, per job after takeover:
 
@@ -1921,6 +1952,8 @@ Every check has an execution `scope`.
 - **tcp** (capability `health.tcp` = `bash` and `timeout` present): `timeout <t> bash -c 'exec 3<>/dev/tcp/<addr>/<port>'`. Success is exit 0. It does not depend on curl.
 - A missing capability for the configured check type fails preflight (`PREFLIGHT_FAILED`).
 
+**Origin (1.4.6; ADR-0029).** Every check records where it was defined: `manifest` or `control_plane`. A manifest check may target only a port the frozen model publishes on exactly `127.0.0.1` or `::1`; a control-plane node check may also target a port published on an `allowed_bind_addresses` entry. The destination is always taken from the frozen model's published port, never from user input.
+
 **`control_plane` scope.** Executed by the daemon. Defined only in control-plane configuration. The URL passes the SSRF filter below.
 
 **`docker-health` / `systemd-active`.** Read through the runtime adapter on the node.
@@ -1940,8 +1973,8 @@ Every check has an execution `scope`.
    - the documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`).
 5. **Allowlists by caller:**
    - control-plane health checks: `health.allowed_private_cidrs`;
-   - provider endpoints (Proxmox, etc.): private ranges are allowed, because homelab endpoints are private. Provider endpoints are admin-only configuration (`provider.write`, high-impact, audited), never derived from repository content.
-6. **Redirects.** Disabled for health checks and provider APIs. For GitHub API calls, at most 3 redirects, each re-filtered, same scheme (no HTTPS→HTTP downgrade), and only to the configured GitHub API hosts.
+   - provider endpoints (Proxmox, a GitHub provider's `api_url`, etc.): private ranges are allowed, because homelab endpoints (and GitHub Enterprise Server) are private. Provider endpoints are admin-only configuration (`provider.write`, high-impact, audited), never derived from repository content.
+6. **Redirects.** Disabled for health checks and provider APIs. For GitHub API calls, at most 3 redirects, each re-filtered, same scheme (no HTTPS→HTTP downgrade), and only to the configured GitHub API hosts: the exact origin (scheme, host, effective port) of the provider's `api_url`. The API token is sent only to that origin; file contents are read through the JSON contents API, so no content host is contacted (1.4.6; ADR-0028).
 7. **Limits.** Response bodies are capped (health: 64 KiB; provider: per adapter); connect and total timeouts always apply.
 8. **Proxies.** The HTTP client never reads ambient proxy environment variables (`Transport.Proxy = nil`). If `outbound.proxy` is configured, the destination host is resolved and filtered by SuperMgmt first, then the request is sent via `CONNECT <pinned-ip>:<port>` with TLS verification against the original hostname. The proxy address itself must be configured by an admin.
 
@@ -2117,12 +2150,21 @@ GET    /api/v1/services/{id}/logs
 POST   /api/v1/services/{id}/actions/start    # literal routes, one per verb (service.start)
 POST   /api/v1/services/{id}/actions/stop     # (service.stop)
 POST   /api/v1/services/{id}/actions/restart  # (service.restart); any other verb is 404
+GET    /api/v1/providers/{id}/repositories  # GitHub repositories visible to the provider's token (provider.read)
 GET    /api/v1/apps
 POST   /api/v1/apps
+GET    /api/v1/apps/{id}
+PATCH  /api/v1/apps/{id}             # If-Match (app.write)
+GET    /api/v1/apps/{id}/targets
+POST   /api/v1/apps/{id}/targets     # (app_target.write)
+GET    /api/v1/app-targets/{id}
+PATCH  /api/v1/app-targets/{id}      # If-Match (app_target.write)
 GET    /api/v1/deployments
-POST   /api/v1/deployments
+POST   /api/v1/deployments           # provisional deployment, 202 (ADR-0011)
 GET    /api/v1/deployments/{id}
 POST   /api/v1/deployments/{id}/rollback
+POST   /api/v1/deployments/{id}/cancel  # job.cancel; the only action before finalization (ADR-0011)
+POST   /api/v1/github/webhook        # server mode; HMAC-authenticated (exempt:webhook, ADR-0028)
 GET    /api/v1/jobs
 GET    /api/v1/jobs/{id}
 POST   /api/v1/jobs/{id}/cancel
@@ -2761,7 +2803,10 @@ Client: macOS amd64/arm64, Linux amd64/arm64
 Server: Debian/Ubuntu-class systemd Linux amd64/arm64
 Proxmox: explicitly tested currently supported PVE major versions
 Nodes: common systemd Linux distributions with OpenSSH
-Docker: supported modern Docker Engine + Compose v2
+Docker: supported modern Docker Engine; deployments need the Compose CLI plugin at the
+        pinned version (v5.5.1 in M4, ADR-0006) and jq on the node (ADR-0010, ADR-0030)
+GitHub: github.com and GitHub Enterprise Server REST API (fake-verified until the manual
+        real-GitHub checklist runs, ADR-0028)
 ```
 
 Do not claim unsupported versions. Maintain `docs/compatibility.md` once implementation begins.
@@ -3078,17 +3123,21 @@ These items have fixed constraints here, but their concrete mechanism is decided
 
 | ADR | Milestone | Decision | Constraints the ADR must satisfy |
 |---|---|---|---|
-| ADR-0007 Execution snapshots | M4 | Where the executable contents behind plan hashes live (public Compose model, effective health config, deployment policy) and how long they are kept | Immutable, content-addressed by the hashes in Appendix C; stored in SQLite; retained at least while the deployment is a rollback candidate (`known_good` chain) and for the plan's job lifetime; workers read only these records (§20.2) |
-| ADR-0008 Secret versions | M4 | Whether historical secret versions are kept (encrypted) or rollback fails when a referenced version is gone | Plans reference `{secret_id, version}`; values never stored unencrypted on the control plane; if a required version is unavailable, rollback fails with `ROLLBACK_UNAVAILABLE` (reason `SECRET_VERSION_GONE`) rather than using a newer value silently |
+| ADR-0006 Pinned compose-go and CLI equivalence ([file](../adr/0006-pinned-compose-go-and-cli-equivalence.md)) | M4 | compose-go and Compose CLI versions, loader options, how source forms the loader rewrites are still checked, the normalization table | One supported CLI version per fixture row; preflight refuses others; a raw closed-schema pass runs before the loader; equivalence corpus in CI |
+| ADR-0007 Execution snapshots ([file](../adr/0007-execution-snapshots.md)) | M4 | Where the executable contents behind plan hashes live (public Compose model, effective health config, deployment policy) and how long they are kept | Immutable, content-addressed by the hashes in Appendix C; stored in SQLite; retained at least while the deployment is a rollback candidate (`known_good` chain) and for the plan's job lifetime; workers read only these records (§20.2) |
+| ADR-0008 Secret versions ([file](../adr/0008-secret-versions.md)) | M4 | Whether historical secret versions are kept (encrypted) or rollback fails when a referenced version is gone | Plans reference `{secret_id, version}`; values never stored unencrypted on the control plane; if a required version is unavailable, rollback fails with `ROLLBACK_UNAVAILABLE` (reason `SECRET_VERSION_GONE`) rather than using a newer value silently |
 | ADR-0009 Node provisioning | M1 | The approved setup operation that creates `/var/lib/supermgmt/markers`, `/run/supermgmt/locks` (tmpfiles.d), `deploy_root`, the broker and sudoers drop-in, and the capabilities it advertises | A `node.setup` job (high risk, approval-gated, idempotent); nodes lacking it do not advertise `docker.compose.deploy` or any `non_retryable` mutating capability; marker-based recovery (§20.4) applies only to SSH templates. Proxmox recovery uses task correlation only, and missing evidence never implies safe re-dispatch |
-| ADR-0010 Secret env-file encoding | M4 | How secret values are written to `secrets/<service>.env` so Compose reads them byte-exact | Must round-trip every value in a test corpus (`$`, quotes, `#`, spaces, unicode). Values with NUL or newline are rejected at `secret.write` time unless the ADR proves support (e.g. a pinned Compose version with `format: raw`). The node-side check compares resolved values privately (hash-only output) before masking |
-| ADR-0011 Provisional deployment API | M4 | Request/response shape of a deployment before its final plan exists | `plan_hash: null` while provisional; persisted in `deployments` with commit, requested digest(s) and credential context; only `job.cancel` applies before finalization; approve/reject accepted only once a final hash exists; finalization emits a `deployment.finalized` event carrying the hash |
-| ADR-0012 Route metadata | M2 | OpenAPI extension marking every route with exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`, `exempt:self` | CI fails on unmapped routes; exempt routes are listed explicitly; key-management CLI commands map to `secret.write` (rotate/retire/export) or are offline-only (`import-key`); enrollment consumption is `exempt:auth`; planning on resource types without a read action (secrets, repositories) requires `config.read` |
+| ADR-0010 Secret env-file encoding ([file](../adr/0010-secret-env-file-encoding.md)) | M4 | How secret values are written to `secrets/<service>.env` so Compose reads them byte-exact | Must round-trip every value in a test corpus (`$`, quotes, `#`, spaces, unicode). Values with NUL or newline are rejected at `secret.write` time unless the ADR proves support (e.g. a pinned Compose version with `format: raw`). The node-side check compares resolved values privately (hash-only output) before masking |
+| ADR-0011 Provisional deployment API ([file](../adr/0011-provisional-deployment-api.md)) | M4 | Request/response shape of a deployment before its final plan exists | `plan_hash: null` while provisional; persisted in `deployments` with commit, requested digest(s) and credential context; only `job.cancel` applies before finalization; approve/reject accepted only once a final hash exists; finalization emits a `deployment.finalized` event carrying the hash |
+| ADR-0012 Route metadata | M2 | OpenAPI extension marking every route with exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`, `exempt:self`, `exempt:webhook` (1.4.6: the GitHub webhook, authenticated by HMAC) | CI fails on unmapped routes; exempt routes are listed explicitly; key-management CLI commands map to `secret.write` (rotate/retire/export) or are offline-only (`import-key`); enrollment consumption is `exempt:auth`; planning on resource types without a read action (secrets, repositories) requires `config.read` |
 | ADR-0023 Proxmox identity and compatibility | M3 | Identities, privilege sets, supported versions, fake fidelity | Per-install identities only; read and power privilege sets separate; nothing destructive by default; matrix rows marked fake- or real-verified |
 | ADR-0024 Proxmox discovery | M3 | Node rows, sync loop, on-demand refresh, absent vs inaccessible | Guests stay `discovered`; power state is not reachability; rows are never deleted |
 | ADR-0025 Proxmox power jobs | M3 | Dispatch, UPID persistence, correlation, quiescence | UPID persisted before polling; uncertain dispatch never retried; quiescence needs a stopped task or an audited override |
 | ADR-0026 Appliance installer | M3 | Steps, journal, commit, token transfer | Undo only provably owned resources; token never in argv/env/logs/journal; service not enabled before the credential is imported |
 | ADR-0027 Upgrade and uninstall | M3 | Phase state, backup, swap, failure policy, appliance delegation | Backup never migrates; no automatic data restore; data deletion separately confirmed |
+| ADR-0028 GitHub connector | M4 | Provider config and credential, redirects, check verification, Actions OIDC and its durable credential status, attestations, webhooks, fake fidelity | Read-only token; token only to the `api_url` origin; never "unverified" provenance; webhooks only nudge; every unproven GitHub behaviour is a manual checklist row |
+| ADR-0029 Deployment engine | M4 | Fine/coarse state mirroring, steps, preflight, backup, evidence, reconciliation, recovery claim, rollback, health execution | Proven completion before any automatic action; safety recovery restores only the plan's frozen target and never re-authorizes the requester; mirror in the same transaction |
+| ADR-0030 node.setup v2 | M4 | `deploy_root` and the gating of `docker.compose.deploy`, `health.http`, `health.tcp` | Capability only with setup ≥ 2, Docker access, a matrix Compose CLI, `flock` and `jq` |
 
 Each ADR lives in `docs/adr/` and is referenced from this table once accepted.
 
@@ -3506,6 +3555,42 @@ App. C  Plan v3: sorted inputs, secret bindings (refs), sub-actions, credential 
 §29.3   Stop and verify before an offline read-only backup; binary revert only when the schema is unchanged,
         otherwise stay stopped with restore instructions (exit 9); appliance delegation.
 §46     ADR-0023..0027 (M3).
+```
+
+## F.10 Changes from 1.4.5-draft to 1.4.6-draft
+
+```text
+§8.3    GitHub provider example (api_url, credential_ref, webhook_secret_ref, ca_file); read-only fine-grained
+        token; registration by static config or POST /providers.
+§9      execution_snapshots, github_oidc_credentials; apps.compose_source_hash (target-independent) vs
+        deployments.compose_hash (target-bound); provisional columns and recovery record on deployments;
+        UNIQUE(app_id, environment_id) on app_targets; repositories UNIQUE(provider_id, github_repository_id).
+§10     secret.write on apps/… rejects NUL, CR, LF and invalid UTF-8; historical versions kept (ADR-0008).
+§11.1   automation identity subject repository_id:<id>:workflow:<deploy_workflow>, created with no role;
+        github_oidc implicit scopes and durable credential status (revoked/expired, missing row = revoked).
+§11.2   secret.write note for apps/… values.
+§18     server-mode backstop poll at ci_poll_max; attestation verification and identity rules.
+§19.1   M4 support: postgres-dump only backup template, snapshot: true rejected, health types; deploy_root.
+§20.2   step 5: image sizes from docker manifest inspect --verbose on the node; unknown size fails closed.
+§20.3   step 10: resolved-environment hash check (config --format json + fixed jq); no file-hash fallback;
+        one supported Compose CLI version.
+§20.4   safety recovery: frozen rollback target, durable recovery record, recovery claim without requester
+        revalidation; rollback claims compare the known-good snapshot, not the current Compose source.
+§21     health check origin (manifest vs control_plane) and destination rules.
+§21.1   GitHub api_url is a provider endpoint; redirects pinned to its exact origin; token origin-scoped.
+§23     apps/{id}, apps/{id}/targets, app-targets/{id}, providers/{id}/repositories, deployments/{id}/cancel,
+        github/webhook.
+§35     Compose CLI v5.5.1 and jq for deploying nodes; GitHub fake-verified.
+§46     exempt:webhook in ADR-0012; rows for ADR-0006..0011 link their files; ADR-0028..0030 (M4).
+Decisions (M4 W0, user-approved option (a) for every question): compose-go v2.15.0 with Compose CLI v5.5.1;
+        sigstore-go v1.3.0 attestation verification, fail closed; fine-grained read-only PAT per github
+        provider; static config and POST /providers for github (Proxmox POST /providers stays deferred);
+        automation identity created with no role, unlinking revokes its OIDC credentials; exempt:webhook;
+        webhook plus backstop poll; format: raw env files with NUL/CR/LF rejected; M3 deferrals and Proxmox
+        snapshots deferred to M6, snapshot: true rejected; http/tcp/docker-health (node) and http(s)
+        (control plane) health, postgres-dump backup only; one target per (app, environment); jq required
+        on deploying nodes; rollbacks verified with the known-good health and policy snapshots; image sizes
+        from the node, no safety factor.
 ```
 
 ---

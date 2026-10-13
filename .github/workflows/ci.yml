@@ -85,6 +85,19 @@ jobs:
       - name: node fixtures (systemd + sshd + docker in privileged containers)
         run: make integration-fixtures
 
+  compose-equivalence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: loader against the pinned Docker Compose CLI (v5.5.1 in the node fixture)
+        run: make compose-equivalence
+
   daemon-linux-peer:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -287,3 +300,16 @@ jobs:
           go-version-file: go.mod
       - name: upgrade from the previous release, failure boundaries, kill and rerun, uninstall
         run: make e2e-upgrade
+
+  e2e-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: CI-gated deployments (fake GitHub, virtual Sigstore, local registry), rollback, rejection, secret-leak scan
+        run: make e2e-deploy

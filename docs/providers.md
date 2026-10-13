@@ -1,6 +1,6 @@
 # Providers
 
-A provider is a source of nodes. There are three: **ssh** (a Linux machine reached over SSH), **local** (the machine running `sm`) and, since M3, **proxmox** (a Proxmox VE cluster, [below](#proxmox)). Sources: SPEC §6.4, §12, §14, §15; [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md), [ADR-0024](adr/0024-proxmox-discovery.md), [ADR-0025](adr/0025-proxmox-power-jobs-task-correlation.md); [ADR-0009](adr/0009-node-provisioning.md), [ADR-0015](adr/0015-ssh-transport-and-command-templates.md).
+A provider is a source of nodes. There are four: **ssh** (a Linux machine reached over SSH), **local** (the machine running `sm`) and, since M3, **proxmox** (a Proxmox VE cluster, [below](#proxmox)) and, since M4, **github** (a source of repositories, CI results and attestations, not of nodes; [below](#github)). Sources: SPEC §6.4, §12, §14, §15; [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md), [ADR-0024](adr/0024-proxmox-discovery.md), [ADR-0025](adr/0025-proxmox-power-jobs-task-correlation.md); [ADR-0009](adr/0009-node-provisioning.md), [ADR-0015](adr/0015-ssh-transport-and-command-templates.md).
 
 ## SSH nodes (agentless)
 
@@ -197,6 +197,34 @@ sm jobs resolve <job-id> --plan-hash <hash> --outcome succeeded|failed --note "c
 ```
 
 `--assume-quiescent` is your statement that nothing of the task is still running (SPEC §20.4); it is recorded and audited with your note. Without it, `resolve` of a task-tracked job without stop evidence is refused with `CONFLICT`.
+
+## GitHub
+
+> **Verification status.** The GitHub connector is exercised against a **fake** GitHub API (`internal/providers/github/ghfake`, hand-written from the GitHub documentation), a virtual Sigstore and a local registry, end to end by `TestM4_*` (CI job `e2e-deploy`). **It was never run against github.com, GHCR, real attestations or real Actions OIDC tokens.** See [compatibility.md](compatibility.md#github-provider-github-internalprovidersgithub) and [manual-checks/m4-real-github.md](manual-checks/m4-real-github.md). Sources: SPEC §8.3, §18; [ADR-0028](adr/0028-github-connector.md).
+
+The GitHub provider is read-only. It lists repositories, reads a manifest and Compose file at one commit, checks that the required CI checks passed for that commit, verifies image attestations and verifies GitHub Actions OIDC tokens. It never writes to GitHub.
+
+```yaml
+providers:
+  - type: github
+    name: github
+    api_url: https://api.github.com             # https, no query, fragment or trailing slash
+    credential_ref: secret://providers/github/token
+    webhook_secret_ref: secret://providers/github/webhook   # optional; server mode
+    ca_file: /etc/supermgmt/github-ca.pem       # optional, absolute path
+```
+
+(`internal/config/github.go`; the fields and checks are the ones that file validates.) A provider can also be registered with `POST /api/v1/providers` for `type: github` (a high-risk `provider.write`: it needs approval); registering a Proxmox provider that way is still not built.
+
+- **Credential.** A fine-grained, read-only personal access token in `credential_ref`. GitHub App installation tokens are not supported. Private repositories work only if the token can read them (not verified against real GitHub).
+- **One origin.** The exact origin of `api_url` is the only host the connector talks to and the only redirect target it follows (at most 3 hops, same scheme, host and port); the token is never sent anywhere else. GitHub Enterprise Server uses its own `api_url` (for example `https://ghe.example.com/api/v3`); it is not verified.
+- **CI delivery.** In server mode a signed webhook (`POST /api/v1/github/webhook`, `X-Hub-Signature-256`, needs `webhook_secret_ref`) nudges re-evaluation, and a backstop poll at `github.ci_poll_max` covers lost deliveries. In local mode there is no webhook endpoint; CI is polled from `github.ci_poll_initial` up to `github.ci_poll_max`.
+- **Attestations.** Verified with Sigstore (public good and GitHub trusted roots, refreshed over TUF through the outbound filter, last-good cached, fail closed when stale). Required only for environments with `require_provenance: true`.
+- **Actions OIDC.** A workflow's token is limited to the `deployment.create` and `deployment.read` actions (every other route refuses it), and is accepted only if its repository id, repository owner id and workflow match the linked automation identity. That identity is created with **no role**; an administrator grants `deployer` (or a narrower rule) explicitly.
+
+## Docker Compose apps on SSH nodes
+
+An application is deployed to an SSH node that completed `node.setup` v2. The node needs Docker with Compose CLI **5.5.1 exactly**, `jq`, `flock` and the other tools listed in [compatibility.md](compatibility.md#docker-compose-and-node-tools); `deploy_root` (default `/srv/supermgmt`) is created and owned by the dedicated user. Discovery reports the capability `docker.compose.deploy` as unavailable, with the first unmet requirement as reason, when any of this is missing. The local provider and Proxmox guests without SSH are never deploy targets. The deployment flow is described in [architecture.md](architecture.md#applications-and-deployments-m4) and operated in [deployments.md](deployments.md).
 
 ## Not in M1
 

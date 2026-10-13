@@ -2,7 +2,7 @@
 
 Authoritative sources: SPEC §30 (threat model), §11 (policy and approvals), §2.1.1 (local trust boundary), §12 and §16 (nodes). Vulnerability reporting: [`../SECURITY.md`](../SECURITY.md).
 
-SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI; M2 adds server mode over HTTPS with sessions, tokens and OIDC, the full secret store, backup and restore, and a signed-release installer. There is still no MCP endpoint, nothing has been released, and there is no independent security audit. **[M0]**, **[M1]** and **[M2]** mark what is implemented in the repository now; **[planned Mx]** is not implemented. Statements about M2 were read against the code; what ran only in CI with test keys, a Dex container or fakes is said so, and the production signing key, a real VM, a real Cloudflare and any identity provider other than Dex were not exercised ([manual checks](manual-checks/m2-handoff.md)).
+SuperMgmt is **pre-alpha**. M0 delivered the controls below as libraries; M1 puts them behind a local daemon, an SSH connector and a TUI; M2 adds server mode over HTTPS with sessions, tokens and OIDC, the full secret store, backup and restore, and a signed-release installer; M3 adds Proxmox and the appliance installer; M4 adds apps, a GitHub connector and Compose deployments. There is still no MCP endpoint, nothing has been released, and there is no independent security audit. **[M0]** to **[M4]** mark what is implemented in the repository now; **[planned Mx]** is not implemented. Statements about M2 were read against the code; what ran only in CI with test keys, a Dex container or fakes is said so, and the production signing key, a real VM, a real Cloudflare and any identity provider other than Dex were not exercised ([manual checks](manual-checks/m2-handoff.md)).
 
 ## Trust boundaries in one page
 
@@ -10,7 +10,7 @@ Read this before you point SuperMgmt at a machine you care about.
 
 1. **The local boundary is the OS user.** The daemon listens on a Unix socket and accepts connections from its own UID only. Anything running as you can drive SuperMgmt, approve its own plans (`security.allow_self_approval` defaults to `true` in local mode) and use the instance SSH identity. Local mode does not defend against malicious software under your user. **[M1]**
 2. **The node credential can read all logs in `journal-group` mode.** That mode puts `supermgmt` in `systemd-journal` (or `adm`), so a stolen node credential reads the node's entire system journal, not only selected units. Mediation by the API limits what clients see, not what the credential can read. `broker` mode avoids the group: see [Log modes](#log-modes-on-a-node).
-3. **Docker access is root.** The `docker` group is equivalent to root on the node. Setup asks for `docker_access` explicitly, has no default, and shows this warning.
+3. **Docker access is root.** The `docker` group is equivalent to root on the node. Setup asks for `docker_access` explicitly, has no default, and shows this warning. Compose deployments (M4) need it: see [Apps, GitHub and deployments](#apps-github-and-deployments-m4).
 4. **A unit grant is a trust profile, not a proof.** Granting restart on a unit trusts everything that unit executes.
 5. **The KEK files are separate from the database and from backup archives and must be backed up separately.** `sm secrets export-key` produces a passphrase-protected copy ([operations.md](operations.md#key-management)).
 6. **Setup needs root once.** Afterwards SuperMgmt holds no standing root on the node.
@@ -209,7 +209,7 @@ With the device grant, **Dex echoes the client secret into the verification URL 
 
 ### Outbound filter **[M2]**
 
-`internal/netguard` (SPEC §21.1) resolves a name once, normalizes IPv4-mapped, IPv4-compatible and NAT64 forms, refuses cloud-metadata, loopback, link-local, multicast and reserved ranges for every caller, refuses private and special ranges unless the caller's allowlist names them, then dials the vetted address while TLS verifies the original hostname. Redirects are off by default, bodies are capped, and ambient proxy variables are never read (`outbound.proxy` is the only proxy). In M2 only the identity-provider client uses it (private ranges allowed). 6to4 and Teredo are not unwrapped.
+`internal/netguard` (SPEC §21.1) resolves a name once, normalizes IPv4-mapped, IPv4-compatible and NAT64 forms, refuses cloud-metadata, loopback, link-local, multicast and reserved ranges for every caller, refuses private and special ranges unless the caller's allowlist names them, then dials the vetted address while TLS verifies the original hostname. Redirects are off by default, bodies are capped, and ambient proxy variables are never read (`outbound.proxy` is the only proxy). In M2 the identity-provider client uses it (private ranges allowed); in M4 so do the GitHub connector (exact `api_url` origin only, redirects pinned to that origin) and control-plane health checks (only `health.allowed_private_cidrs`). 6to4 and Teredo are not unwrapped.
 
 ### Secrets and keys **[M2]**
 
@@ -246,13 +246,42 @@ Verified against fakes only; the real-host checks are in [manual-checks/m3-real-
 
 Not verified on a real Proxmox host: the privilege model, the permission propagation rules, the task API shapes and the installer's host commands.
 
+## Apps, GitHub and deployments **[M4]**
+
+Verified against a fake GitHub, a virtual Sigstore and a Docker fixture node only; nothing was run against real GitHub, GHCR or Sigstore. The real-GitHub checks are in [manual-checks/m4-real-github.md](manual-checks/m4-real-github.md) and are **DEFERRED**. Operating details: [deployments.md](deployments.md).
+
+### Docker access is root-equivalent, and deployments use it
+
+A deployment runs `docker compose up` as the `supermgmt` user, which is in the `docker` group. Anyone who can make SuperMgmt run a Compose file can therefore get root on that node. The controls below reduce what SuperMgmt asks for; they do not change what the credential could do.
+
+- Compose files go through a closed pipeline (two allowlist passes around the pinned `compose-go` loader, ADR-0006). `privileged`, bind mounts, host networking, devices and every key not on the allowlist are rejected (`COMPOSE_REJECTED`); `cap_add`, `sysctls`, `extra_hosts` and `shm_size` pass only as exact, admin-approved per-service exceptions, with a fixed capability set. Tests: `TestCheckRaw_*`, `TestCheckModel_RejectsDeniedServiceKeys`, `TestExceptions_ExactAndNonExemptible`, e2e `TestM4_RepositoryComposePrivilegedRejected`.
+- The control plane freezes the model and the node's `docker compose config` must match it (**5.5.1** is the only Compose CLI accepted; the equivalence corpus was run for that version only).
+- **Repository Compose is refused in production.** A Compose file read from the repository is code from a repository whose CI passed; production targets take their Compose text only from the control plane (V1; `TestAppsUpdate_RefusesARepositorySourceWhileAProductionTargetExists`).
+- Published ports must bind `127.0.0.1`, `::1` or an address in the target's `allowed_bind_addresses`. Preflight refuses a project, volume or network that lacks `dev.supermgmt.owner=<app_target_id>` and ports held by something else.
+- `deploy_root` is owned by the `supermgmt` user (0750) so the dedicated user can create project directories; it is not root-owned. It must be outside `/var/lib/supermgmt`, and a symlink there is refused.
+- Nothing is pulled by tag: the node pulls `<repository>@<digest>` and a digest must be bound to the commit by an attestation, verified Actions claims, or the app's pinned list.
+
+### GitHub connector
+
+- **Token scope.** The provider token is read-only. It is attached only to requests whose origin equals `api_url`; a redirect to any other origin, scheme or port is refused before a request is made, at most three hops (`TestRedirect_OriginPinned`, `TestClient_TokenNeverOffOrigin`, `TestTokenNeverAppearsInErrors`). File contents are read through the JSON contents API, so no content host is contacted. How real GitHub redirects is **not verified**.
+- **Actions OIDC.** Tokens are verified against the Actions JWKS (RS256, issuer, audience, age of at most 5 minutes, `jti` accepted once, restricted to the claims of the app's CI policy; pull-request and fork-style events never match). Tests: `TestOIDC_*`, `TestMatchClaims`. The token proves who asks, not that tests passed: SuperMgmt checks the required checks itself. The automation identity has no role until an admin grants one, and its credentials carry only `deployment.create` and `deployment.read`.
+- **No environment claim.** No environment requires the token's `environment` claim: the spec defines no field for it. An Actions job in any environment of the configured repository, workflow and branch that is entitled by the role you grant can request a deployment. Use `approvals_required` on production to add a human.
+- **Webhooks.** `POST /api/v1/github/webhook` is served on the HTTPS listener only (not on the local socket), is an `exempt:webhook` route with no bearer token (ADR-0012), and acts only after an HMAC-SHA256 check of the raw body (constant time). Bodies over 1 MiB are refused; deliveries are de-duplicated by `X-GitHub-Delivery`; requests are rate-limited per client; the payload only nudges a re-check, so a forged or replayed delivery cannot approve anything (`TestWebhookForgedDeliveriesAreRefusedAndActOnNothing`, `TestWebhookReplayedDeliveryIsAcknowledgedAndNotReevaluated`, `TestWebhookOversizeBodyIsRefused`, `TestWebhookIsRateLimitedPerClient`, `TestTheWebhookIsNotServedOnTheLocalSocket`).
+- **Attestations.** Verified with `sigstore-go` against the Sigstore public-good and GitHub trusted roots, refreshed through TUF via the outbound filter with the last good copy cached; a stale or unreachable root fails closed, never "unverified" (`internal/providers/github/trustroot.go`). **The GitHub TUF trust anchor (version 1 `root.json` of `tuf-repo.github.com`) was fetched once by hand on 2026-10-12 and has not been independently verified**; it is on the manual checklist. The real TUF refresh walk is untested (tests stub the fetch), and attestations were verified only against a virtual Sigstore.
+- **Provenance requirement.** `require_provenance: true` on an environment accepts only an attestation for the deployed service.
+
+### Approvals, recovery and secrets in deployments
+
+- App, target and GitHub-provider writes go through the approval path; an approved write is validated again and applied exactly as planned (`TestApplyApproved_AppComposeEditProduction`, `TestApplyApproved_GitHubProvider`). A deployment's plan hash binds the frozen Compose model, digests, secret versions, health and policy snapshots, so an approval cannot be reused for different content (`TestRevalidateDeploy_StaleInputs`).
+- A job interrupted while changing a node is never re-run blind. Recovery after a partial update restores only the plan's frozen rollback target, as the `system` actor, without asking the requester's credential or quorum again (`TestClaimRecovery_StalePlanRevokedRequesterLostQuorum`). That is intentional: the recovery target was approved with the plan.
+- Secret values reach the node over stdin, are written to `secrets/<service>.env` on the node, are compared there only as hashes, and are never in plans, API views, events, logs or control-plane backups (`TestM4_SecretNeverOnControlPlane`, `TestFixtures_EnvHashResolvedPrecedenceAndTamper`). The e2e scan does not cover the node and CLI stdout. Old secret versions are kept encrypted so rollbacks can restore them; there is no deletion API in V1.
+- Pre-deploy database dumps are written on the node under `/var/lib/supermgmt/db-backups` (0700) and are not encrypted.
+
 ## Planned controls
 
 Not implemented; listed so nothing is mistaken for shipped.
 
 - SSH CA trust and per-node keys (not scheduled)
-- Outbound request filter for health URLs and the closed-schema Compose pipeline (M4)
-- Webhook signature and replay protection (M4)
 - MCP registration, tokens, OAuth protected-resource layer and security tests (M5)
 - Fuzzing and security scans across all parsers (M6)
 
@@ -271,4 +300,10 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Node setup is verified in CI on Debian only. Other distributions are an assumption.
 - The `curl | bash` installer path trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that (SPEC §3.2). The installer requires OpenSSH 8.2 or newer (`valid-after` in `allowed_signers`).
 - No release exists and the production signing key has not been generated; the placeholder trust root makes real installs fail closed.
+- Deployments need a root-equivalent `docker` group; a Compose file that passes the allowlist can still run any image whose digest was bound.
+- Production Compose content comes only from the control plane; a repository Compose source is refused there. No exception mechanism exists.
+- Actions OIDC tokens are not required to carry an `environment` claim.
+- The GitHub TUF trust anchor is not independently verified; real attestations, real Actions tokens, redirect behavior and GHCR pulls are unverified.
+- Health check bounds (timeout 30s, interval 1m, 60 attempts) and the Compose CLI pin (5.5.1) are V1 choices, not spec text.
+- Old deployment directories are garbage-collected after a success (newest 5 kept, never the current one, a known-good or the rollback target); a GC failure only emits `deployment.gc_failed`.
 - No independent security audit has been performed.

@@ -78,6 +78,7 @@ const (
 	ParamDockerAccess = "docker_access"
 	ParamLogsMode     = "logs_mode"
 	ParamGrants       = "grants"
+	ParamDeployRoot   = "deploy_root"
 )
 
 var catalogIndex = sync.OnceValue(func() map[string]ActionSpec {
@@ -229,6 +230,7 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamDockerAccess, Type: ParamString, Required: true, Values: []string{"true", "false"}},
 		{Name: ParamLogsMode, Type: ParamString, Values: []string{"journal-group", "broker"}},
 		{Name: ParamGrants, Type: ParamStringList},
+		{Name: ParamDeployRoot, Type: ParamString},
 	}
 
 	return []ActionSpec{

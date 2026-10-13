@@ -6,7 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases) and M3 (Proxmox and the appliance installer). Pre-alpha: nothing is released.
+Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer) and M4 (applications, GitHub and deployments). Pre-alpha: nothing is released.
+
+### Added in M4
+
+- GitHub connector (`internal/providers/github`, ADR-0028): read-only fine-grained token, required CI checks for a commit, file contents at one commit, repositories, origin-pinned redirects (at most 3 hops, the token never leaves the `api_url` origin), webhook HMAC verification, GitHub Actions OIDC verification with replay protection, Sigstore attestation verification (sigstore-go v1.3.0, TUF-refreshed trusted roots through the outbound filter, fail closed when stale). Provider type `github` in the configuration and `POST /api/v1/providers` for it.
+- Applications and targets: repositories, apps, app targets (one per application and environment), automation identity for Actions OIDC created with no role, execution snapshots (ADR-0007), secret versions (ADR-0008); migration `000005_m4`. CLI `sm apps list|get|create`, `sm apps target add`.
+- Manifest and closed Compose pipeline (ADR-0006): raw and model schema passes, target-bound freeze, compose-go v2.15.0 equivalence with Compose CLI 5.5.1, byte-exact secret env files with a node-side resolved-environment hash check (ADR-0010; needs `jq`).
+- Deployments (ADR-0011, ADR-0029): provisional create, wait for CI (webhook plus backstop poll in server mode, polling in local mode), finalization from the CI-passed commit, digest binding (`oidc_claims`, attestation, `pinned`), preflight (ownership of project, volumes and networks, ports, disk space), pre-deploy backup (`postgres-dump`), staging, `compose up` under `flock`, health verification, automatic rollback to the last known-good deployment when declared safe, manual `sm rollback`, durable safety recovery of interrupted deployments. CLI `sm deploy`, `sm rollback`, `sm deployments list|get|cancel`. Route `POST /api/v1/github/webhook` (`exempt:webhook`).
+- `node.setup` v2 (ADR-0030): `deploy_root` (default `/srv/supermgmt`) and the capability `docker.compose.deploy`, gated on Compose CLI 5.5.1, `flock`, `jq`, `bash`, `timeout`, `ss`, `sha256sum`, `base64` and `df`.
+- TUI: Applications, Deployments, deployment timeline, creation wizard with plan review, palette `deploy` and `rollback`.
+- Test infrastructure: `ghfake` (GitHub REST fake with `test/fixtures/github/PROVENANCE.md`), `ghsim` (fake GitHub, virtual Sigstore, webhook sender), a local TLS registry, `make e2e-deploy`, `make compose-equivalence`, the example workflow `examples/github-actions.yml` checked against SPEC §28.
+- Documentation: `docs/architecture.md`, `docs/compatibility.md` (deployments matrix), `docs/providers.md` (GitHub), and the deferred real-GitHub checklist `docs/manual-checks/m4-real-github.md`.
+
+### Changed in M4
+
+- `node.setup` accepts `deploy_root`; nodes set up before M4 must re-run setup to become deploy targets.
+- `jq` is a required node tool for deployments.
+- The outbound request filter also serves control-plane health URLs and the GitHub `api_url`.
+
+### Known limits in M4
+
+- **No real GitHub was used.** GitHub REST, GHCR, attestations, Actions OIDC, the GitHub TUF anchor and redirect behaviour are verified against fakes only; the real-GitHub run (`docs/manual-checks/m4-real-github.md`) is deferred.
+- Docker Compose CLI 5.5.1 is the only supported version. One target per application and environment. `compose_source: repository` is refused for production. No `environment` claim can be required. Only `postgres-dump` backups; `deployment_policy.snapshot: true` is refused. See [ROADMAP.md](ROADMAP.md) for the full list.
 
 ### Added in M3
 

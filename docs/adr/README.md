@@ -11,12 +11,12 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0003](0003-aes-gcm-envelope.md) | AES-256-GCM envelope encryption | Accepted (envelope + file KEKs in M1, [ADR-0016](0016-m1-secrets-slice-and-ssh-identity.md); rotation, export and import in M2, [ADR-0021](0021-key-and-identity-management.md)) | M0 |
 | [0004](0004-openssh-release-signatures.md) | OpenSSH release signatures | Accepted (implemented in M2) | M0 |
 | [0005](0005-daemon-process-model.md) | Single-daemon process model | Accepted (implemented in M1) | M0 |
-| 0006 | Pinned compose-go version | Reserved | M4 |
-| 0007 | Execution snapshots | Reserved (§46) | M4 |
-| 0008 | Secret versions | Reserved (§46) | M4 |
+| [0006](0006-pinned-compose-go-and-cli-equivalence.md) | Pinned compose-go and CLI equivalence | Proposed | M4 |
+| [0007](0007-execution-snapshots.md) | Execution snapshots | Proposed | M4 |
+| [0008](0008-secret-versions.md) | Secret versions | Proposed | M4 |
 | [0009](0009-node-provisioning.md) | Node provisioning (`node.setup`) and the dedicated `supermgmt` user | Accepted | M1 |
-| 0010 | Secret env-file encoding | Reserved (§46) | M4 |
-| 0011 | Provisional deployment API | Reserved (§46) | M4 |
+| [0010](0010-secret-env-file-encoding.md) | Secret env-file encoding and the node-side resolved check | Proposed | M4 |
+| [0011](0011-provisional-deployment-api.md) | Provisional deployment API | Proposed | M4 |
 | [0012](0012-route-metadata.md) | Route metadata | Proposed | M2 |
 | [0013](0013-generic-job-state-machine.md) | Generic job state machine | Accepted | M0 |
 | [0014](0014-local-api-and-daemon-lifecycle.md) | Local API transport and daemon lifecycle | Accepted | M1 |
@@ -33,3 +33,6 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0025](0025-proxmox-power-jobs-task-correlation.md) | Proxmox power jobs, task correlation and quiescence | Proposed | M3 |
 | [0026](0026-appliance-installer.md) | Appliance installer (`proxmox-lxc`, `auto`) | Proposed | M3 |
 | [0027](0027-upgrade-and-uninstall.md) | Upgrade and uninstall | Proposed | M3 |
+| [0028](0028-github-connector.md) | GitHub connector | Proposed | M4 |
+| [0029](0029-deployment-engine.md) | Deployment engine | Proposed | M4 |
+| [0030](0030-node-setup-v2.md) | `node.setup` v2: `deploy_root` and `docker.compose.deploy` (extends 0009) | Proposed | M4 |

@@ -17,8 +17,10 @@ import (
 
 // readActionFor is the read permission a plan creator needs on a target (spec §23).
 var readActionFor = map[domain.ResourceType]string{
-	domain.ResourceNode:    "node.read",
-	domain.ResourceService: "service.read",
+	domain.ResourceNode:      "node.read",
+	domain.ResourceService:   "service.read",
+	domain.ResourceApp:       "app.read",
+	domain.ResourceAppTarget: "app_target.read",
 }
 
 // Plans creates and submits plans (spec §23 "Plans").

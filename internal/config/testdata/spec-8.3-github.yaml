@@ -1,0 +1,5 @@
+type: github
+name: github
+api_url: https://api.github.com
+credential_ref: secret://providers/github/token
+webhook_secret_ref: secret://providers/github/webhook-secret

@@ -6,7 +6,7 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](ROADMAP.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) and M3 (Proxmox discovery and power actions, the Proxmox appliance installer, upgrade and uninstall) are implemented on the integration branch and await release-level review. **Proxmox was verified against fakes only: nothing has run on a real Proxmox VE host** ([checklist](docs/manual-checks/m3-real-pve.md)). There is no MCP endpoint. No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
+> **Status: pre-alpha, under construction. Nothing is released.** Milestones M0 (core libraries), M1 (local daemon, agentless SSH nodes, TUI) M2 (server mode over HTTPS with OIDC, secrets and keys, backup and restore, signed-release installer, join) M3 (Proxmox discovery and power actions, the Proxmox appliance installer, upgrade and uninstall) and M4 (applications, the GitHub connector and CI-gated Docker Compose deployments with health checks and rollback) are implemented on the integration branch and await release-level review. **Proxmox was verified against fakes only: nothing has run on a real Proxmox VE host** ([checklist](docs/manual-checks/m3-real-pve.md)). **GitHub was verified against a fake only: no real GitHub, GHCR, attestation or Actions OIDC token has been used** ([checklist](docs/manual-checks/m4-real-github.md)). There is no MCP endpoint. No signed release exists and the production release key has not been generated, so the installer cannot install anything real yet. Every capability below that is not marked "Implemented" is a plan, not a product. See the [feature matrix](#feature-matrix) and the [roadmap](ROADMAP.md).
 
 SuperMgmt is a local-first, terminal-first control plane for developers. Connect Linux machines, Proxmox, Docker, systemd, GitHub repositories and deployments in one place; manage them from a fast TUI/CLI, or expose the same policy-controlled operations to AI agents through MCP.
 
@@ -47,7 +47,7 @@ The target architecture (SPEC §2, §6). One daemon owns state; every other surf
      (agentless)  VE API      systemd       API          optional)
 ```
 
-What exists today (M0 to M3): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer, and (M3) Proxmox discovery of nodes, VMs, containers and storages, power actions as non-retryable jobs correlated by Proxmox task id, the `proxmox-lxc` appliance installer with a rollback journal, and upgrade and uninstall. Not present: GitHub, deployments, MCP. Details: [docs/architecture.md](docs/architecture.md).
+What exists today (M0 to M4): the M0 core (domain model, configuration, audit and redaction, SQLite, plan hashing, policy engine, application services, durable job engine), the local daemon with its Unix-socket API and typed client, the SSH connector with systemd and Docker discovery, the encrypted secret store, `node.setup`, the TUI and the CLI, and (M2) the HTTPS server with sessions, tokens and OIDC, remote client profiles, backup and restore, join and the installer, and (M3) Proxmox discovery of nodes, VMs, containers and storages, power actions as non-retryable jobs correlated by Proxmox task id, the `proxmox-lxc` appliance installer with a rollback journal, and upgrade and uninstall. and (M4) the GitHub connector (CI checks, contents at one commit, Sigstore attestations, Actions OIDC, webhook), applications and targets, and Compose deployments through a closed pipeline with preflight, health verification and rollback. Not present: MCP. Details: [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
@@ -128,7 +128,7 @@ Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doc
 | OIDC login (PKCE loopback and device grant), tested against Dex only | Implemented (M2) | §23.1, ADR-0018 |
 | Remote client profiles, `sm login`, credential store (macOS keychain, `secret-tool`, 0600 file), remote TUI | Implemented (M2); real keychain and `secret-tool` are manual checks | Appendix B |
 | Secrets CLI and API, master-key rotate, retire, export and import, instance SSH-key rotation, host-key re-pin, approvals for `secret.write` | Implemented (M2) | §10, ADR-0021 |
-| Outbound request filter (identity-provider endpoints) | Implemented (M2); health URLs M4 | §21.1 |
+| Outbound request filter (identity-provider endpoints) | Implemented (M2); control-plane health URLs and the GitHub `api_url` origin use it in M4 | §21.1 |
 | Backup and offline restore with journal, crash-injection tests and restore hold | Implemented (M2); no real-VM run | §29, ADR-0020 |
 | Join and enrollment (`sm enrollments create`, `sm join`, `join.sh`) | Implemented (M2) | §13, ADR-0022 |
 | Signed release pipeline (GoReleaser, OpenSSH signatures, SBOM, provenance), `install.sh`, `sm install local\|server\|client\|restore` | Implemented (M2); verified with a CI test key only, the production key and provenance are unverified | §3, §36, ADR-0019 |
@@ -142,11 +142,20 @@ Running `sm` with no arguments in an interactive terminal opens the TUI. `sm doc
 | `sm install proxmox-lxc`: unprivileged LXC, self-signed appliance TLS, token transfer, rollback journal with crash recovery | Implemented (M3); fake-verified (`TestM3_Appliance*`, job `e2e-appliance`), real host DEFERRED | §3.5, ADR-0026 |
 | `install.sh` mode `auto` (Proxmox host, desktop, or server prompt) | Implemented (M3) | §3.4 |
 | `sm install upgrade` (read-only backup, phase state, automatic revert only when the schema did not move) and `sm install uninstall` (data kept unless separately confirmed; per-appliance purge) | Implemented (M3); `TestM3_Upgrade*` and `TestM3_Uninstall*` (job `e2e-upgrade`); no real-host run | §29.3, §29.4, ADR-0027 |
-| Proxmox snapshots, backups, console, task-history listings; `POST /providers`; promoting discovered guests to managed | Not built (M4 or later) | §15.1 |
-| GitHub connector, apps, deployments, Applications, Deployments and Wizard screens, rollback | Planned (M4) | §18-§21 |
+| Proxmox snapshots, backups, console, task-history listings; `POST /providers` for Proxmox; promoting discovered guests to managed | Not built (deferred to M6) | §15.1 |
+| GitHub connector: repositories, required CI checks and contents at one commit, webhook (server mode) with backstop polling, Actions OIDC credentials, Sigstore attestation verification; read-only fine-grained token | Implemented (M4); fake-verified only (`ghfake`, virtual Sigstore), real GitHub DEFERRED | §18, ADR-0028 |
+| Applications and targets (`sm apps list\|get\|create`, `sm apps target add`), manifest and closed Compose pipeline (compose-go v2.15.0, Compose CLI 5.5.1 only) | Implemented (M4); loader-versus-CLI corpus on the fixture node | §19, §20.3, ADR-0006 |
+| Deployments (`sm deploy`, `sm deployments list\|get\|cancel`): the exact CI-passed commit and attested digest, preflight, pre-deploy backup (`postgres-dump`), health verification (http, tcp, docker-health), automatic or manual rollback, interrupted-deployment recovery | Implemented (M4); `TestM4_*` (job `e2e-deploy`) on a fake GitHub, virtual Sigstore and local registry | §20, §21, ADR-0029 |
+| Rollback (`sm rollback`) to a known-good deployment's frozen versions | Implemented (M4) | §20.4, ADR-0007 |
+| TUI: Applications, Deployments, deployment timeline, creation wizard with plan review; palette `deploy` and `rollback` | Implemented (M4) | §22 |
+| Secret env files for apps (byte-exact, resolved-hash check on the node, needs `jq`) | Implemented (M4); fixture-verified | §10, ADR-0010 |
+| Several targets per environment, GitHub App tokens, Proxmox snapshot policy, `command-template` and `systemd-active` health, other backup templates | Not built | §19, §21 |
+| Deployments against real GitHub, GHCR and real attestations | DEFERRED ([checklist](docs/manual-checks/m4-real-github.md)) | App. E |
 | MCP server (read tools, plan submission) | Planned (M5) | §24 |
 | Metrics endpoint, automated node teardown | Planned (not scheduled) | §33 |
 | Fuzzing, security scans, packaging, E2E on all modes | Planned (M6) | §31, §36 |
+
+M4 compatibility matrix ([docs/compatibility.md](docs/compatibility.md#deployments-m4)): Docker Compose CLI 5.5.1 and `jq` on the node, and every GitHub behaviour the code relies on, are "verified" against a fixture node or a fake and "not verified" against real GitHub.
 
 M3 compatibility matrix ([docs/compatibility.md](docs/compatibility.md)): every Proxmox behaviour the code relies on is "fake-verified" and "not verified" on a real host. The row "Proxmox auto-LXC install works" of SPEC Appendix E stays unchecked until [docs/manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md) passes. Supported: Proxmox VE 9.x on amd64 only.
 
@@ -176,8 +185,8 @@ Summary only; see [SECURITY.md](SECURITY.md) and [docs/security.md](docs/securit
 | Managed nodes: generic Linux over SSH | Implemented (M1). Verified in CI on Debian only; other distributions are an untested assumption |
 | systemd and Docker discovery, service actions | Implemented (M1) |
 | Proxmox VE | Implemented (M3) for 9.x on amd64 only, against fakes; real host DEFERRED ([docs/compatibility.md](docs/compatibility.md)). 8.x is unsupported (upstream end of life 2026-08) |
-| Docker Compose deployments | Planned (M4) |
-| GitHub | Planned (M4) |
+| Docker Compose deployments | Implemented (M4) on SSH nodes with `node.setup` v2, Docker Compose CLI 5.5.1 exactly and `jq`; fixture node and fake GitHub only |
+| GitHub | Implemented (M4) for github.com-style APIs against a fake; real GitHub and GitHub Enterprise Server not verified |
 | MCP clients | Planned (M5) |
 | Cloudflare | Optional, guide only ([docs/cloudflare.md](docs/cloudflare.md)); not verified against a real account |
 
@@ -220,7 +229,7 @@ make cross-build   # linux/darwin x amd64/arm64, CGO disabled
 
 ## Roadmap
 
-M0 core, M1 local daemon, SSH and TUI, M2 server and releases, and M3 Proxmox and the appliance installer (all implemented, pending release-level review; M3 pending a real-host run), then M4 deployments, M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
+M0 core, M1 local daemon, SSH and TUI, M2 server and releases, M3 Proxmox and the appliance installer, and M4 apps and deployments (all implemented, pending release-level review; M3 pending a real-host run, M4 a real-GitHub run), then M5 MCP, M6 hardening. See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing and security
 

@@ -29,7 +29,7 @@ const ProbeFormatVersion = 1
 //	docker     "path=<docker binary>", and when present "server=<version>"
 //	           (empty when the daemon is unreachable or access is denied) and
 //	           "compose=<version>" (empty when the plugin is missing)
-//	tools      one name per line, from: lazydocker btop tmux
+//	tools      one name per line, from: lazydocker btop tmux curl bash timeout flock jq ss sha256sum base64 df
 //	sudo       "yes" when "sudo -n true" succeeds, otherwise "no"
 //	setup      "user=<id -un>", "home=exists|absent" for /var/lib/supermgmt,
 //	           "markers=writable|unwritable|absent" for the markers directory
@@ -73,7 +73,7 @@ if [ -n "$d" ]; then
   echo "compose=$(t docker compose version --short 2>/dev/null | head -n 1)"
 fi
 s tools
-for p in lazydocker btop tmux; do command -v "$p" >/dev/null 2>&1 && echo "$p"; done
+for p in lazydocker btop tmux curl bash timeout flock jq ss sha256sum base64 df; do command -v "$p" >/dev/null 2>&1 && echo "$p"; done
 s sudo; if t sudo -n true >/dev/null 2>&1; then echo yes; else echo no; fi
 s setup
 echo "user=$(id -un 2>/dev/null)"

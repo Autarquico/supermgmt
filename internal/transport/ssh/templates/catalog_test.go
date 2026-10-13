@@ -192,3 +192,97 @@ func TestDeadlinesRoundUpToWholeSeconds(t *testing.T) {
 		}
 	}
 }
+
+func isDeploymentTemplate(name string) bool {
+	return strings.HasPrefix(name, "compose.") || strings.HasPrefix(name, "health.") || name == "postgres-dump"
+}
+
+// deploymentTemplates are the M4 groups: every parameter of theirs is fuzzed.
+func deploymentTemplates(t *testing.T) []Template {
+	t.Helper()
+	all, err := Templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Template
+	for _, tpl := range all {
+		if isDeploymentTemplate(tpl.Name) {
+			out = append(out, tpl)
+		}
+	}
+	return out
+}
+
+var validDeploymentArgs = map[string]string{
+	"root": "/srv/supermgmt", "project": "sm-shop-prod", "deployment": testDeployment,
+	"image": "ghcr.io/acme/api@sha256:" + strings.Repeat("a", 64), "path": "/srv/x", "database": "app",
+	"container": "db", "addr": "127.0.0.1", "port": "8080", "timeout": "3",
+}
+
+var injectionPayloads = []string{
+	"x;id", "$(id)", "`id`", "a b", "a\nb", "a\rb", "a\tb", "a'b", `a"b`, "a|b", "a&b", "a>b", "a<b", "a*b", "a?b",
+	`a\b`, "a{b}", "a(b)", "a!b", "a$b", "a#b", "a%b", "a=b", "a,b", "a[b]", "../x", "-rf", "--help", "", "a\x00b", "a\xffb",
+	"${IFS}", "&&id", "||id", ";", "'", `\`, "x y", "ünï",
+}
+
+func validArgsOf(tpl Template) map[string]string {
+	args := map[string]string{}
+	for _, p := range tpl.Params {
+		args[p.Name] = validDeploymentArgs[p.Name]
+	}
+	return args
+}
+
+func TestEveryDeploymentParameterRejectsInjectionPayloads(t *testing.T) {
+	templates := deploymentTemplates(t)
+	if len(templates) != 19 {
+		t.Fatalf("only %d deployment templates found", len(templates))
+	}
+	for _, tpl := range templates {
+		if _, err := tpl.bind(validArgsOf(tpl)); err != nil {
+			t.Errorf("%s: the valid arguments were rejected: %v", tpl.Name, err)
+		}
+		for _, p := range tpl.Params {
+			if _, known := validDeploymentArgs[p.Name]; !known {
+				t.Fatalf("%s: no valid value known for parameter %q", tpl.Name, p.Name)
+			}
+			for _, payload := range injectionPayloads {
+				args := validArgsOf(tpl)
+				args[p.Name] = payload
+				if _, err := tpl.bind(args); err == nil {
+					t.Errorf("%s: parameter %s accepted %q", tpl.Name, p.Name, payload)
+				}
+			}
+		}
+	}
+}
+
+// FuzzDeploymentValidatorsAdmitNoShellMetacharacters: whatever a validator of
+// the M4 groups accepts is made of characters that mean nothing to a shell.
+func FuzzDeploymentValidatorsAdmitNoShellMetacharacters(f *testing.F) {
+	for _, s := range injectionPayloads {
+		f.Add(s)
+	}
+	for _, s := range validDeploymentArgs {
+		f.Add(s)
+	}
+	f.Add("/health")
+	f.Add("::1")
+	safe := regexp.MustCompile(`^[A-Za-z0-9._:/@~-]*$`)
+	all, err := Templates()
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		for _, tpl := range all {
+			if !isDeploymentTemplate(tpl.Name) {
+				continue
+			}
+			for _, p := range tpl.Params {
+				if admissible(s) == nil && p.Validate(s) == nil && !safe.MatchString(s) {
+					t.Fatalf("%s/%s accepted %q", tpl.Name, p.Name, s)
+				}
+			}
+		}
+	})
+}

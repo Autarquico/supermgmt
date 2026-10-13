@@ -69,7 +69,13 @@ type Docker struct {
 // Reachable reports whether the probing user can talk to a Docker daemon.
 func (d Docker) Reachable() bool { return d.ServerVersion != "" }
 
-type Tools struct{ Lazydocker, Btop, Tmux bool }
+// Tools are the node binaries the probe looked for. The first three are
+// interactive helpers; the rest back deployments (ADR-0030).
+type Tools struct {
+	Lazydocker, Btop, Tmux         bool
+	Curl, Bash, Timeout, Flock, Jq bool
+	Ss, Sha256sum, Base64, Df      bool
+}
 
 // ProbedAs is the setup state seen from the probing session.
 type ProbedAs struct {

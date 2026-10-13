@@ -1,0 +1,21 @@
+# Application manifest (spec §19): read from the exact commit that passed CI.
+# Copy it to the repository root as `.supermgmt.yaml`. It carries hints only;
+# images, targets, secrets, CI policy and backups live in the control plane.
+apiVersion: supermgmt.dev/v1
+kind: Application
+metadata:
+  name: myapp
+spec:
+  deployment:
+    strategy: docker-compose
+    composeFile: compose.yaml # used only when the app's compose_source is "repository"
+    service: web              # must equal the app's deployed_service
+  health:                     # used only when the target defines no health check
+    type: http
+    port: 8080                # must be a host port published by the Compose model
+    path: /health
+    timeout: 3s
+    interval: 5s
+    attempts: 12
+  rollback:
+    mode: automatic           # "manual" can only tighten what the target allows

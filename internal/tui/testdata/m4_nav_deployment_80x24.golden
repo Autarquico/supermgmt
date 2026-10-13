@@ -1,0 +1,24 @@
+┌ SuperMgmt · Deployment ───────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ DEPLOYMENT 00001003                                                          │
+│ state         failed (HEALTH_CHECK_FAILED: STATEFUL)                         │
+│ kind          deploy                                                         │
+│ commit        2222222222222222222222222222222222222222                       │
+│ plan          sha256:99999                                                   │
+│ known good    no                                                             │
+│ created       10-10 11:00:00                                                 │
+│ finished      10-10 11:02:00                                                 │
+│ image         web sha256:cccccccccccccccccccccccccccccccccccccccccccccccccc… │
+│                                                                              │
+│ STEPS                                                                        │
+│  ✓ preflight             succeeded                                           │
+│  ✓ compose_up            succeeded                                           │
+│  ✗ health                failed     HEALTH_FAILED/TIMEOUT (no 200 in 30s)    │
+│  - finalize              skipped                                             │
+│                                                                              │
+│ EVENTS                                                                       │
+│  10-10 11:01:00  deployment.plan_frozen    success  0000000a                 │
+│  10-10 11:01:30  deployment.step_failed    failure  0000000b                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ r refresh  esc back  / command  ? help  q quit                               │
+└──────────────────────────────────────────────────────────────────────────────┘

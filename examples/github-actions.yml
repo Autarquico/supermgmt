@@ -1,0 +1,94 @@
+# Conceptual CI workflow that asks SuperMgmt to deploy the image it just built
+# (spec §28). Copy it to .github/workflows/ci.yml and replace the placeholders.
+#
+# How the deploy request is authenticated: the `deploy` job asks GitHub for an
+# OIDC token whose audience is your SuperMgmt server (github.oidc_audience,
+# default server.public_url). SuperMgmt verifies it against GitHub's JWKS and
+# maps repository, ref, workflow and run to the automation identity registered
+# for this app. The token proves who is asking; it is not evidence that tests
+# passed. SuperMgmt checks the required checks itself through the GitHub API
+# and deploys the commit and digest that passed, never the head of the branch.
+#
+# Pin third-party actions to a commit SHA, as below.
+name: ci
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # artifact attestation signing only
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    env:
+      IMAGE: ghcr.io/acme/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Push the image and read its digest
+        id: push
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+          docker build -t "$IMAGE:$GITHUB_SHA" .
+          docker push "$IMAGE:$GITHUB_SHA"
+          digest="$(docker inspect --format '{{ index .RepoDigests 0 }}' "$IMAGE:$GITHUB_SHA")"
+          echo "digest=${digest#*@}" >>"$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/acme/api
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  deploy:
+    needs: build
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for SuperMgmt, this job only
+    env:
+      SUPERMGMT_URL: ${{ vars.SUPERMGMT_URL }}               # e.g. https://supermgmt.example.com
+      SUPERMGMT_APP_TARGET_ID: ${{ vars.SUPERMGMT_APP_TARGET_ID }}
+      DEPLOYED_SERVICE: web
+      IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+    steps:
+      - name: Request the SuperMgmt deployment
+        run: |
+          set -euo pipefail
+          token="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$SUPERMGMT_URL" | jq -r .value)"
+          body="$(jq -n \
+            --arg target "$SUPERMGMT_APP_TARGET_ID" --arg sha "$GITHUB_SHA" \
+            --arg service "$DEPLOYED_SERVICE" --arg digest "$IMAGE_DIGEST" \
+            '{app_target_id: $target, kind: "deploy", commit_sha: $sha,
+              images: [{service: $service, digest: $digest}]}')"
+          curl -fsS -X POST "$SUPERMGMT_URL/api/v1/deployments" \
+            -H "Authorization: Bearer $token" \
+            -H "Idempotency-Key: $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            -H 'Content-Type: application/json' \
+            -d "$body"

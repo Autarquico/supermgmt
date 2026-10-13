@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/autarquico/supermgmt/internal/api"
-	"github.com/autarquico/supermgmt/internal/auth"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 )
@@ -81,8 +80,12 @@ func (b *builder) serverServers(services api.Services) (*api.Server, *api.AdminS
 	if err != nil {
 		return nil, nil, err
 	}
+	resolver, err := b.bearerResolver()
+	if err != nil {
+		return nil, nil, err
+	}
 	remote, err := api.New(api.Options{
-		Services: services, IDs: b.o.IDs, Resolver: auth.DBResolver{DB: b.db, Clock: b.o.Clock}, Proxy: proxy,
+		Services: services, IDs: b.o.IDs, Resolver: resolver, GitHubWebhook: b.githubWebhook(), Proxy: proxy,
 		DB: b.db, Clock: b.o.Clock, RequestTimeout: b.cfg.Server.RequestTimeout, Log: b.o.Log, Ready: b.ready(),
 	})
 	if err != nil {

@@ -21,9 +21,10 @@ const (
 	DefaultAdminCredentialRef = "ssh-agent://default"  //nolint:gosec // names the agent socket, holds no key
 )
 
-// providerBranches maps the `type` discriminator to its branch struct. M0
-// accepts only these two types (spec §8.3).
+// providerBranches maps the `type` discriminator to its branch struct (spec
+// §8.3).
 var providerBranches = map[string]reflect.Type{
+	ProviderGitHub:  reflect.TypeFor[GitHubProvider](),
 	ProviderProxmox: reflect.TypeFor[ProxmoxProvider](),
 	ProviderSSH:     reflect.TypeFor[SSHProvider](),
 }
@@ -35,11 +36,12 @@ func selectProviderBranch(n *yaml.Node) (reflect.Type, string) {
 	if branch, ok := providerBranches[kind]; ok {
 		return branch, ""
 	}
-	return nil, fmt.Sprintf("unsupported provider type %q (supported: proxmox, ssh)", kind)
+	return nil, fmt.Sprintf("unsupported provider type %q (supported: github, proxmox, ssh)", kind)
 }
 
 // Provider is the provider union: exactly one branch is non-nil.
 type Provider struct {
+	GitHub  *GitHubProvider
 	Proxmox *ProxmoxProvider
 	SSH     *SSHProvider
 }
@@ -77,6 +79,8 @@ type SSHEndpoint struct {
 
 func (p Provider) Type() string {
 	switch {
+	case p.GitHub != nil:
+		return ProviderGitHub
 	case p.Proxmox != nil:
 		return ProviderProxmox
 	case p.SSH != nil:
@@ -87,6 +91,8 @@ func (p Provider) Type() string {
 
 func (p Provider) Name() string {
 	switch {
+	case p.GitHub != nil:
+		return p.GitHub.Name
 	case p.Proxmox != nil:
 		return p.Proxmox.Name
 	case p.SSH != nil:
@@ -97,6 +103,8 @@ func (p Provider) Name() string {
 
 func (p Provider) CredentialRef() string {
 	switch {
+	case p.GitHub != nil:
+		return p.GitHub.CredentialRef
 	case p.Proxmox != nil:
 		return p.Proxmox.CredentialRef
 	case p.SSH != nil:
@@ -111,6 +119,12 @@ func (p Provider) CredentialRef() string {
 func (p *Provider) UnmarshalYAML(n *yaml.Node) error {
 	kind := scalarField(n, "type")
 	switch kind {
+	case ProviderGitHub:
+		b := GitHubProvider{APIURL: DefaultGitHubAPIURL}
+		if err := n.Decode(&b); err != nil {
+			return fmt.Errorf("decode github provider: %w", err)
+		}
+		*p = Provider{GitHub: &b}
 	case ProviderProxmox:
 		b := ProxmoxProvider{VerifyTLS: true, SyncInterval: 30 * time.Second}
 		if err := n.Decode(&b); err != nil {
@@ -124,7 +138,7 @@ func (p *Provider) UnmarshalYAML(n *yaml.Node) error {
 		}
 		*p = Provider{SSH: &b}
 	default:
-		return fmt.Errorf("line %d: unsupported provider type %q (supported: proxmox, ssh)", n.Line, kind)
+		return fmt.Errorf("line %d: unsupported provider type %q (supported: github, proxmox, ssh)", n.Line, kind)
 	}
 	return nil
 }

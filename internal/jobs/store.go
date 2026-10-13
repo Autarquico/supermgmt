@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,6 +54,10 @@ type Config struct {
 	// whose stop must be proven before its intent may be reconciled or resolved
 	// (ADR-0025). Default: operations prefixed "proxmox.".
 	TaskTracked func(operation string) bool
+
+	// TypePolicies refines reconciliation and claims per job type (ADR-0029).
+	// A type without a policy behaves exactly as before.
+	TypePolicies map[string]TypePolicy
 }
 
 // DefaultTaskTracked marks Proxmox operations as task-tracked.
@@ -74,6 +79,7 @@ type Store struct {
 	reconcileGrace time.Duration
 	sampleGap      time.Duration
 	taskTracked    func(operation string) bool
+	policies       map[string]TypePolicy
 
 	restoreHold atomic.Bool
 
@@ -96,6 +102,11 @@ func NewStore(cfg Config) (*Store, error) {
 	case cfg.LockPlanner == nil:
 		return nil, errors.New("jobs: lock planner is required")
 	}
+	for jobType, policy := range cfg.TypePolicies {
+		if policy == nil {
+			return nil, fmt.Errorf("jobs: type policy for %q is nil", jobType)
+		}
+	}
 	s := &Store{
 		db:          cfg.DB,
 		clock:       cfg.Clock,
@@ -111,6 +122,7 @@ func NewStore(cfg Config) (*Store, error) {
 		sampleGap:      orDefault(cfg.SampleGap, defaultSampleGap),
 		samples:        map[sampleKey]sample{},
 		held:           map[domain.ID]string{},
+		policies:       maps.Clone(cfg.TypePolicies),
 	}
 	s.taskTracked = DefaultTaskTracked
 	if cfg.TaskTracked != nil {
@@ -379,6 +391,7 @@ type move struct {
 	assign  []assignment
 	failure *Failure
 	data    map[string]any
+	mode    ClaimMode // how the job's type policy mirrors the transition
 }
 
 // move applies m as a single UPDATE guarded by the expected from-state, releases
@@ -425,10 +438,26 @@ func (s *Store) move(ctx context.Context, q database.Querier, m move) (Job, erro
 	if err != nil {
 		return Job{}, err
 	}
+	if err := s.mirror(ctx, q, job, m); err != nil {
+		return Job{}, err
+	}
 	if err := s.emitTransition(ctx, q, m.actor, job, m.from, m.data); err != nil {
 		return Job{}, err
 	}
 	return job, nil
+}
+
+// mirror lets the job type's policy follow the transition in the same
+// transaction; its error aborts the move.
+func (s *Store) mirror(ctx context.Context, q database.Querier, job Job, m move) error {
+	policy := s.policies[job.Type]
+	if policy == nil {
+		return nil
+	}
+	if err := policy.Mirror(ctx, q, job, m.from, m.to, m.mode, m.failure); err != nil {
+		return fmt.Errorf("mirror job %s %s -> %s: %w", job.ID, m.from, m.to, err)
+	}
+	return nil
 }
 
 // explainMissedMove turns a zero-row UPDATE into NOT_FOUND or INVALID_TRANSITION.

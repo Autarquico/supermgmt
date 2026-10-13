@@ -15,6 +15,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/providers/github"
 	"github.com/autarquico/supermgmt/internal/providers/local"
 	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 )
@@ -185,7 +186,7 @@ func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, 
 // runApproved executes a control_plane.apply job. Key operations manage their
 // own transactions (rotation rewraps every secret in one), so they cannot run
 // inside the fenced transaction the other direct actions use.
-func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease) error {
+func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease, apps *Apps) error {
 	action, err := i.approvedAction(ctx, lease)
 	if err != nil {
 		return err
@@ -204,6 +205,9 @@ func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease) error {
 		actor, err := loadActor(ctx, tx, job.ActorID, credentialOf(job))
 		if err != nil {
 			return err
+		}
+		if apps.handles(action, job) {
+			return apps.applyApproved(ctx, tx, actor, action, job)
 		}
 		return i.applyApproved(ctx, tx, actor, action, job)
 	})
@@ -276,4 +280,126 @@ func payloadOf[T any](job jobs.Job) (T, error) {
 		return out, smerr.Wrap(err, smerr.CodeInternal, "", fmt.Sprintf("job %s has an unreadable payload", job.ID))
 	}
 	return out, nil
+}
+
+// ---- approved changes of the apps catalog -------------------------------------
+
+// handles reports whether the approved change belongs to the apps catalog: app
+// and app target writes, and the registration of a GitHub provider.
+func (a *Apps) handles(action string, job jobs.Job) bool {
+	switch {
+	case a == nil:
+		return false
+	case action == appWriteAction, action == appTargetWriteAction:
+		return true
+	case action == actionProviderWite:
+		return payloadHasKey(job, githubAPIURLKey)
+	}
+	return false
+}
+
+func payloadHasKey(job jobs.Job, key string) bool {
+	var keys map[string]json.RawMessage
+	return json.Unmarshal(job.Payload, &keys) == nil && keys[key] != nil
+}
+
+// applyApproved performs the approved change of an app, an app target or a
+// GitHub provider. Each apply function validates again what it stores, because
+// the world may have moved while the request waited; a change to an existing
+// app or target also refuses while a deployment holds it.
+func (a *Apps) applyApproved(ctx context.Context, q database.Querier, actor domain.Actor, action string, job jobs.Job) error {
+	switch action {
+	case appWriteAction:
+		return a.applyApprovedApp(ctx, q, actor, job)
+	case appTargetWriteAction:
+		return a.applyApprovedTarget(ctx, q, actor, job)
+	case actionProviderWite:
+		p, err := payloadOf[githubProviderParams](job)
+		if err != nil {
+			return err
+		}
+		_, err = a.applyCreateGitHubProvider(ctx, q, actor, p)
+		return err
+	}
+	return smerr.New(smerr.CodeInternal, "", "control_plane.apply: unsupported action "+action)
+}
+
+func (a *Apps) applyApprovedApp(ctx context.Context, q database.Querier, actor domain.Actor, job jobs.Job) error {
+	if !payloadHasKey(job, expectedRevisionKey) {
+		p, err := payloadOf[appCreateParams](job)
+		if err != nil {
+			return err
+		}
+		_, err = a.applyCreate(ctx, q, actor, p)
+		return err
+	}
+	p, err := payloadOf[appUpdateParams](job)
+	if err != nil {
+		return err
+	}
+	if err := requireNotLockedByJobs(ctx, q, appRef(p.AppID)); err != nil {
+		return err
+	}
+	_, err = a.applyUpdate(ctx, q, actor, p)
+	return err
+}
+
+func (a *Apps) applyApprovedTarget(ctx context.Context, q database.Querier, actor domain.Actor, job jobs.Job) error {
+	if !payloadHasKey(job, expectedRevisionKey) {
+		p, err := payloadOf[appTargetCreateParams](job)
+		if err != nil {
+			return err
+		}
+		_, err = a.applyCreateTarget(ctx, q, actor, p)
+		return err
+	}
+	p, err := payloadOf[appTargetUpdateParams](job)
+	if err != nil {
+		return err
+	}
+	if err := requireNotLockedByJobs(ctx, q, appTargetRef(p.TargetID)); err != nil {
+		return err
+	}
+	_, err = a.applyUpdateTarget(ctx, q, actor, p)
+	return err
+}
+
+// applyCreateGitHubProvider stores the provider with the convention the GitHub
+// client factory reads (api_url in Endpoint, the token reference in
+// CredentialRef, ca_file and webhook_secret_ref in Config). It converges: a
+// provider already stored under the id is returned unchanged.
+func (a *Apps) applyCreateGitHubProvider(ctx context.Context, q database.Querier, actor domain.Actor, p githubProviderParams) (domain.Provider, error) {
+	if err := p.validate(); err != nil {
+		return domain.Provider{}, err
+	}
+	if existing, err := database.GetProvider(ctx, q, p.ProviderID); err == nil {
+		return existing, nil
+	} else if smerr.CodeOf(err) != smerr.CodeNotFound {
+		return domain.Provider{}, err
+	}
+	if err := requireFreeProviderName(ctx, q, p.Name); err != nil {
+		return domain.Provider{}, err
+	}
+	now := a.cfg.Clock.Now()
+	provider, err := database.CreateProvider(ctx, q, domain.Provider{
+		ID: p.ProviderID, Type: github.ProviderType, Name: p.Name, Origin: domain.ProviderAPI,
+		Endpoint: p.APIURL, CredentialRef: p.CredentialRef, Config: githubProviderConfig(p),
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return domain.Provider{}, err
+	}
+	return provider, a.emit(ctx, q, actor, actionProviderWite, domain.ResourceRef{Type: domain.ResourceProvider, ID: provider.ID},
+		domain.ResultSucceeded, map[string]any{"type": github.ProviderType, "name": provider.Name, "api_url": provider.Endpoint})
+}
+
+func githubProviderConfig(p githubProviderParams) map[string]any {
+	config := map[string]any{}
+	if p.CAFile != "" {
+		config[providerConfigCAFile] = p.CAFile
+	}
+	if p.WebhookSecretRef != "" {
+		config[providerConfigWebhookSecretRef] = p.WebhookSecretRef
+	}
+	return config
 }

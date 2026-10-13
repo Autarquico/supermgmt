@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/database"
+
 	"github.com/autarquico/supermgmt/test/e2e/harness"
 )
 
 // Spec docs/specs/m3-proxmox-installer.md (upgrade) and ADR-0027, PLAN §9 row "Upgrade N-1 -> N".
 // N-1 is the M2 merge commit built as v0.2.0 (schema 3); N is the tree under test built as v0.3.0
-// (schema 4). The failure boundaries use a stand-in for the new release (faultWrapper) that is the
+// (the latest schema). The failure boundaries use a stand-in for the new release (faultWrapper) that is the
 // real build except where a test injects a fault.
 
 const (
@@ -23,7 +25,7 @@ const (
 
 // TestM3_UpgradeNMinus1ToN
 //
-// Then: the service runs the new version and the schema moved 3 -> 4, the data made before is
+// Then: the service runs the new version and the schema moved from 3 to the latest version, the data made before is
 // intact, the automatic pre-upgrade archive has schema 3 and restores with the previous release,
 // the previous binary is kept, and rerunning or downgrading changes nothing.
 func TestM3_UpgradeNMinus1ToN(t *testing.T) {
@@ -41,12 +43,12 @@ func TestM3_UpgradeNMinus1ToN(t *testing.T) {
 	archive, archiveSchema := preUpgradeArchive(t, res.Output())
 	h.srv.WaitReady(h.ctx())
 
-	t.Run("the service runs the new version on schema 4", func(t *testing.T) {
+	t.Run("the service runs the new version on the latest schema", func(t *testing.T) {
 		if got := h.installedVersion(h.ctx()); got != nextVersion {
 			t.Errorf("installed version %q, want %s", got, nextVersion)
 		}
-		if got := h.schema(harness.ServerBinary); got != 4 {
-			t.Errorf("schema %d after the upgrade, want 4", got)
+		if got := h.schema(harness.ServerBinary); got != latestSchema(t) {
+			t.Errorf("schema %d after the upgrade, want %d", got, latestSchema(t))
 		}
 	})
 
@@ -178,8 +180,8 @@ func TestM3_UpgradeFailedMigrationStaysStoppedWithInstructions(t *testing.T) {
 	if h.serviceActive() {
 		t.Error("the service runs although the schema advanced and nothing was restored")
 	}
-	if got := h.schema(harness.ServerBinary); got != 4 {
-		t.Errorf("schema %d, want 4 (the migration ran)", got)
+	if got := h.schema(harness.ServerBinary); got != latestSchema(t) {
+		t.Errorf("schema %d, want %d (the migration ran)", got, latestSchema(t))
 	}
 
 	steps := printedStep.FindAllStringSubmatch(res.Output(), -1)
@@ -218,8 +220,8 @@ func TestM3_UpgradeKilledAtEachPhase(t *testing.T) {
 		if got := h.installedVersion(h.ctx()); got != nextVersion {
 			t.Errorf("installed version %q after the rerun, want %s", got, nextVersion)
 		}
-		if got := h.schema(harness.ServerBinary); got != 4 {
-			t.Errorf("schema %d after the rerun, want 4", got)
+		if got := h.schema(harness.ServerBinary); got != latestSchema(t) {
+			t.Errorf("schema %d after the rerun, want %d", got, latestSchema(t))
 		}
 		if phase := h.upgradePhase(); phase != "done" && phase != "" {
 			t.Errorf("upgrade state %q after the rerun, want done", phase)
@@ -259,4 +261,14 @@ func TestM3_UpgradeKilledAtEachPhase(t *testing.T) {
 		h.srv.C.MustExec(h.ctx(), "systemctl", "restart", "supermgmt")
 		converged(t, h)
 	})
+}
+
+// latestSchema is the schema version the binary under test migrates to.
+func latestSchema(t *testing.T) int {
+	t.Helper()
+	v, err := database.LatestSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }
