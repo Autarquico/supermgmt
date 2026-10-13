@@ -68,6 +68,9 @@ const (
 	screenEvents
 	screenProviders
 	screenSettings
+	screenApps
+	screenDeployments
+	screenDeployment
 	screenHelp
 )
 
@@ -76,6 +79,7 @@ var screenTitles = map[screen]string{
 	screenService: "Service", screenLogs: "Logs", screenJobs: "Jobs", screenJob: "Job",
 	screenApprovals: "Approvals", screenEvents: "Events", screenProviders: "Providers",
 	screenSettings: "Settings", screenHelp: "Help",
+	screenApps: "Applications", screenDeployments: "Deployments", screenDeployment: "Deployment",
 }
 
 // Model is the Bubble Tea model. It is only ever touched by Update and View;
@@ -112,6 +116,10 @@ type Model struct {
 	apprCur   int
 	events    []wire.Event
 	providers []wire.Provider
+
+	apps        appsScreen
+	deployments deploymentsScreen
+	timeline    timelineScreen
 
 	// followState is where the live event stream stands, for the Settings
 	// screen: "" when no stream was asked for.
@@ -285,6 +293,16 @@ func (m *Model) screenLoaders() []loader {
 		return append(always, loader{keyEvents, m.loadEvents})
 	case screenProviders:
 		return append(always, loader{keyProviders, m.loadProviders})
+	case screenApps:
+		return append(always, loader{keyApps, func() tea.Cmd { return m.apps.load(m) }})
+	case screenDeployments:
+		return append(always,
+			loader{keyApps, func() tea.Cmd { return m.apps.load(m) }},
+			loader{keyDeployments, func() tea.Cmd { return m.deployments.load(m) }})
+	case screenDeployment:
+		return append(always,
+			loader{keyDeployment, func() tea.Cmd { return m.timeline.loadDetail(m) }},
+			loader{keyDeploymentEvents, func() tea.Cmd { return m.timeline.loadEvents(m) }})
 	case screenResources, screenApprovals, screenSettings, screenHelp:
 		return always
 	}
@@ -347,6 +365,10 @@ func (m *Model) onKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jump(screenProviders)
 	case "7":
 		return m.jump(screenSettings)
+	case "8":
+		return m.jump(screenApps)
+	case "9":
+		return m.jump(screenDeployments)
 	case "r":
 		return m.reload(true, m.screenLoaders()...)
 	case "esc":
@@ -373,10 +395,25 @@ func (m *Model) screenKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jobKey(key)
 	case screenApprovals:
 		return m.approvalsKey(key)
-	case screenDashboard, screenEvents, screenProviders, screenSettings, screenHelp:
+	case screenApps:
+		return m.apps.key(key)
+	case screenDeployments:
+		return m.deploymentsKey(key)
+	case screenDashboard, screenDeployment, screenEvents, screenProviders, screenSettings, screenHelp:
 		return nil
 	}
 	return nil
+}
+
+// deploymentsKey moves the cursor and opens the selected deployment on Enter.
+func (m *Model) deploymentsKey(key tea.KeyPressMsg) tea.Cmd {
+	m.deployments.key(key)
+	if key.String() != "enter" || m.deployments.cur >= len(m.deployments.items) {
+		return nil
+	}
+	m.timeline.open(m.deployments.items[m.deployments.cur])
+	m.state(keyDeployment).loaded, m.state(keyDeploymentEvents).loaded = false, false
+	return m.push(screenDeployment)
 }
 
 // moveCursor applies j/k/arrows/home/end to a cursor over n rows.

@@ -20,5 +20,5 @@
 │                                                                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ / ssh web                                                                    │
-│ ssh · logs · services · setup · probe · power · refresh   (? arguments)      │
+│ ssh · logs · services · setup · probe · power · refresh · deploy · rollback… │
 └──────────────────────────────────────────────────────────────────────────────┘
