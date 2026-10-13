@@ -100,7 +100,11 @@ linters:
               desc: api reaches nodes only through app services
             - pkg: github.com/autarquico/supermgmt/internal/runtimes
               desc: api reaches nodes only through app services
-            - pkg: github.com/autarquico/supermgmt/internal/providers
+            - pkg: github.com/autarquico/supermgmt/internal/providers/local
+              desc: api reaches nodes only through app services
+            - pkg: github.com/autarquico/supermgmt/internal/providers/ssh
+              desc: api reaches nodes only through app services
+            - pkg: github.com/autarquico/supermgmt/internal/providers/proxmox
               desc: api reaches nodes only through app services
         cli-uses-the-client:
           files:
