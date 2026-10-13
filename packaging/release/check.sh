@@ -2,6 +2,8 @@
 # Assert a finalized release directory is complete and verifiable (make release-check, release.yml).
 # Usage: check.sh DIST TRUST      (TRUST: see verify-asset.sh)
 # Also needs go, jq and the module cache (notices.sh, sbom-check.sh).
+# SM_RELEASE_CHECK_STRUCTURE_ONLY=1 skips the notices/SBOM comparison against the compiled sm; it exists
+# for the install tamper matrix, whose fake releases ship a stub sm that has no Go build info.
 set -eu
 
 [ $# -eq 2 ] || { echo "usage: check.sh DIST TRUST" >&2; exit 2; }
@@ -46,6 +48,6 @@ for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
 	done
 	tar -tzf "$dist/$archive" | grep -qx 'sm' || fail "$archive does not contain sm"
 	grep -q '"spdxVersion"' "$dist/$archive.spdx.json" || fail "$archive.spdx.json is not an SPDX document"
-	assert_supply_chain "$dist/$archive" "$dist/$archive.spdx.json"
+	[ -n "${SM_RELEASE_CHECK_STRUCTURE_ONLY:-}" ] || assert_supply_chain "$dist/$archive" "$dist/$archive.spdx.json"
 done
 echo "release-check: $dist ok ($version)"

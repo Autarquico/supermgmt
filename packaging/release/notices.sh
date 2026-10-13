@@ -138,6 +138,7 @@ generate() {
 	tmp=$(mktemp)
 	trap 'rm -f "$tmp"' EXIT
 	render "$1" >"$tmp"
+	mkdir -p "$(dirname "$2")"
 	mv "$tmp" "$2"
 	trap - EXIT
 }

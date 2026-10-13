@@ -92,7 +92,8 @@ OUT=$("$REL/verify-asset.sh" "$W/rel/v1.0.0/install.sh" "$INSTALL" 2>&1); RC=$?;
 OUT=$("$REL/verify-asset.sh" "$W/rel/v1.0.0/checksums.txt" "$REPO/install.sh" 2>&1); RC=$?; expect_rc "placeholder trust root verifies nothing" 5
 
 echo "== release plumbing"
-world; OUT=$("$REL/check.sh" "$W/rel/v1.0.0" "$W/trusted/allowed_signers" 2>&1); RC=$?; expect_rc "release-check accepts a finalized release" 0
+world; OUT=$(SM_RELEASE_CHECK_STRUCTURE_ONLY=1 "$REL/check.sh" "$W/rel/v1.0.0" "$W/trusted/allowed_signers" 2>&1); RC=$?; expect_rc "release-check accepts a finalized release" 0
+OUT=$("$REL/check.sh" "$W/rel/v1.0.0" "$W/trusted/allowed_signers" 2>&1); RC=$?; expect_rc "release-check rejects archives without notices for the compiled sm" 1
 rm "$W/rel/v1.0.0/sm_1.0.0_linux_arm64.tar.gz.spdx.json"
 OUT=$("$REL/check.sh" "$W/rel/v1.0.0" "$W/trusted/allowed_signers" 2>&1); RC=$?; expect_rc "release-check rejects a missing SBOM" 1
 OUT=$("$REL/check.sh" "$W/rel/v1.0.1" "$W/other/allowed_signers" 2>&1); RC=$?; expect_rc "release-check rejects an unexpected signer" 1
