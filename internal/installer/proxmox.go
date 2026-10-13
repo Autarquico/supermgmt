@@ -50,12 +50,6 @@ type EntryInfo struct {
 	Mode    fs.FileMode // permission bits only
 }
 
-// entryStatter is kept only for journal.go (not T10b-owned), which still
-// asserts it on Files; Files.Lstat satisfies it.
-type entryStatter interface {
-	Lstat(path string) (EntryInfo, error)
-}
-
 // provisionHooks are the timing and fault-injection seams of one run.
 type provisionHooks struct {
 	crash     func(point string) error // crashpoints builds only
@@ -125,8 +119,7 @@ type provision struct {
 	o    Options
 	h    provisionHooks
 	pve  PVE
-	host Files // proxmox_rollback.go (not T10b-owned) still reads p.host/p.stat
-	stat Files
+	host Files
 	plan appliancePlan
 
 	id string
@@ -176,7 +169,7 @@ func (in *Installer) newProvision(o Options, h provisionHooks) (*provision, erro
 	case o.Binary == "":
 		return nil, fail(ExitInvalid, "the running sm binary is unknown")
 	}
-	return &provision{in: in, d: d, o: o, h: h, pve: d.PVE, host: d.Files, stat: d.Files}, nil
+	return &provision{in: in, d: d, o: o, h: h, pve: d.PVE, host: d.Files}, nil
 }
 
 func (p *provision) say(format string, args ...any) { p.in.say(format, args...) }
