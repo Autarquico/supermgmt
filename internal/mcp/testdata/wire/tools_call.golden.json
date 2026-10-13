@@ -1,0 +1,105 @@
+{
+  "_comment": "Hand-written from the MCP specification (tools/call: a tool failure is a result with isError, a protocol failure is a JSON-RPC error). Matching rules as in initialize.golden.json.",
+  "cases": [
+    {
+      "name": "success carries content and structuredContent",
+      "headers": {"MCP-Protocol-Version": "2025-11-25"},
+      "request": {
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+        "params": {"name": "infra_get_node", "arguments": {"ref": "web-1"}}
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 5,
+        "result": {
+          "content": [{"type": "text", "text": "$string"}],
+          "structuredContent": {
+            "id": "0190a5c3-7b1e-7c3a-9d2e-1a2b3c4d5e01",
+            "name": "web-1",
+            "environment": "production",
+            "reachability": "reachable"
+          }
+        }
+      }
+    },
+    {
+      "name": "success under 2025-06-18",
+      "headers": {"MCP-Protocol-Version": "2025-06-18"},
+      "request": {
+        "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+        "params": {"name": "infra_get_node", "arguments": {"ref": "web-1"}}
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 7,
+        "result": {
+          "content": [{"type": "text", "text": "$string"}],
+          "structuredContent": {"name": "web-1"}
+        }
+      }
+    },
+    {
+      "name": "a tool failure is a result with isError, not a JSON-RPC error",
+      "headers": {"MCP-Protocol-Version": "2025-11-25"},
+      "request": {
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+        "params": {"name": "infra_get_node", "arguments": {"ref": "db-9"}}
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 6,
+        "result": {
+          "content": [{"type": "text", "text": "$string"}],
+          "isError": true
+        }
+      }
+    },
+    {
+      "name": "a write tool is unknown while writes are off",
+      "headers": {"MCP-Protocol-Version": "2025-11-25"},
+      "request": {
+        "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+        "params": {"name": "infra_reboot_node", "arguments": {"ref": "web-1"}}
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 10,
+        "error": {"code": -32602, "message": "$string"}
+      }
+    },
+    {
+      "name": "success under 2026-07-28 (per-request version and standard headers)",
+      "transports": ["http"],
+      "headers": {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "infra_get_node"},
+      "request": {
+        "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+        "params": {
+          "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}},
+          "name": "infra_get_node", "arguments": {"ref": "web-1"}
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 8,
+        "result": {
+          "content": [{"type": "text", "text": "$string"}],
+          "structuredContent": {"name": "web-1"}
+        }
+      }
+    },
+    {
+      "name": "failure under 2026-07-28",
+      "transports": ["http"],
+      "headers": {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "infra_get_node"},
+      "request": {
+        "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+        "params": {
+          "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}},
+          "name": "infra_get_node", "arguments": {"ref": "db-9"}
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 9,
+        "result": {
+          "content": [{"type": "text", "text": "$string"}],
+          "isError": true
+        }
+      }
+    }
+  ]
+}
