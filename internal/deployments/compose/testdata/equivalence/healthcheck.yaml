@@ -1,0 +1,18 @@
+services:
+  app:
+    image: ghcr.io/acme/app:placeholder
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+  cache:
+    image: docker.io/library/redis@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+    depends_on:
+      app:
+        condition: service_healthy
