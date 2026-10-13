@@ -117,8 +117,8 @@ func TestMigrationsM2ToM3KeepsIntents(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 5 {
-		t.Errorf("schema version = %d, want 5", v)
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != latestSchema(t) {
+		t.Errorf("schema version = %d, want %d", v, latestSchema(t))
 	}
 	if got := count(t, db, `SELECT COUNT(*) FROM operation_intents WHERE id = '`+m2IntentID+`' AND external_ref IS NULL AND dispatched_at = 1500`); got != 1 {
 		t.Errorf("existing intent lost or given an external ref by the migration")
@@ -152,8 +152,8 @@ func TestMigrationsM3ToM4KeepsData(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != 5 {
-		t.Errorf("schema version = %d, want 5", v)
+	if v := count(t, db, `SELECT MAX(version) FROM schema_migrations`); v != latestSchema(t) {
+		t.Errorf("schema version = %d, want %d", v, latestSchema(t))
 	}
 	for table, want := range map[string]int{
 		"instances": 1, "identities": 2, "providers": 1, "nodes": 1, "jobs": 1, "secrets": 1,
@@ -249,4 +249,14 @@ func count(t *testing.T, db *database.DB, query string) int {
 		t.Fatalf("%s: %v", query, err)
 	}
 	return n
+}
+
+// latestSchema is the schema version this build migrates to.
+func latestSchema(t *testing.T) int {
+	t.Helper()
+	v, err := database.LatestSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }

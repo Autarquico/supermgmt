@@ -10,8 +10,9 @@ import (
 
 // mcpForbiddenActions are denied to an mcp actor on top of every action that
 // issues a credential: an MCP bearer must never mint or reshape an identity
-// whose lifecycle is independent of its source client (ADR-0032).
-var mcpForbiddenActions = []string{"mcp_client.register", "mcp_client.delete", "identity.write", "role_binding.write"}
+// whose lifecycle is independent of its source client (ADR-0032), nor open an
+// interactive node session (no exec tools in V1, spec §24).
+var mcpForbiddenActions = []string{"mcp_client.register", "mcp_client.delete", "identity.write", "role_binding.write", "node.connect"}
 
 // mcpGate is the check that runs before policy for an mcp actor: the forbidden
 // set holds whatever the policy grants, and while writes are disabled only
