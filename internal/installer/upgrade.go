@@ -355,15 +355,55 @@ func (u *upgrader) retakeArchive(ctx context.Context) error {
 		return err
 	}
 	u.say("the unfinished upgrade's backup is retaken; the earlier one is removed")
+	if superseded != "" && superseded != u.st.Archive {
+		u.st.Superseded = append(u.st.Superseded, superseded)
+	}
 	if err := u.record(upBackedUp); err != nil {
 		return err
 	}
-	if superseded != "" && superseded != u.st.Archive {
-		if err := u.d.Files.RemoveAll(superseded); err != nil {
-			return fmt.Errorf("remove the superseded backup %s: %w", superseded, err)
-		}
+	if err := u.removeSuperseded(); err != nil {
+		return err
 	}
 	return u.hit("U:backup:retaken")
+}
+
+// removeSuperseded deletes the archives the state lists as replaced, then forgets them. The
+// list is durable before the new archive is named, so a crash never orphans one. The state is
+// writable by the service account, so a path is only removed when it is a regular file named
+// like a backup archive, in the directory of the current archive; anything else is kept.
+func (u *upgrader) removeSuperseded() error {
+	if len(u.st.Superseded) == 0 {
+		return nil
+	}
+	for _, path := range u.st.Superseded {
+		if !u.isSiblingArchive(path) {
+			u.say("keeping %s: it is not a backup archive next to %s", path, u.st.Archive)
+			continue
+		}
+		if err := u.d.Files.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove the superseded backup %s: %w", path, err)
+		}
+	}
+	u.st.Superseded = nil
+	return u.record(u.st.Phase)
+}
+
+var reArchiveName = regexp.MustCompile(`^supermgmt-.+-\d{8}T\d{6}Z\.tar\.zst$`)
+
+// isSiblingArchive: path is a regular file (not a symlink or directory) with a backup
+// archive's name, and lives in the same canonical directory as the current archive.
+func (u *upgrader) isSiblingArchive(path string) bool {
+	files := u.d.Files
+	if u.st.Archive == "" || !reArchiveName.MatchString(filepath.Base(path)) {
+		return false
+	}
+	info, err := files.Lstat(path)
+	if err != nil || !info.Regular {
+		return false
+	}
+	dir, errDir := files.Canonical(path)
+	current, errCurrent := files.Canonical(u.st.Archive)
+	return errDir == nil && errCurrent == nil && filepath.Dir(dir) == filepath.Dir(current)
 }
 
 // abandon drops an upgrade that never replaced the binary and brings the old service back.
@@ -371,6 +411,9 @@ func (u *upgrader) abandon(ctx context.Context) error {
 	live, err := u.d.Files.Hash(u.t.l.Binary)
 	if err != nil || live != u.st.OldSHA256 {
 		return fail(ExitConfiguration, "cannot abandon the unfinished upgrade: %s is not the old binary", u.t.l.Binary)
+	}
+	if err := u.removeSuperseded(); err != nil {
+		return err
 	}
 	if err := u.forgetBackup(); err != nil {
 		return err
@@ -445,12 +488,6 @@ func (u *upgrader) stopAndVerify(ctx context.Context) error {
 	return u.record(upStopped)
 }
 
-// serviceHolder is a ServiceManager that can keep a unit from starting by any route (manual,
-// dependency, boot) until Register lifts the hold. Uninstall keeps using plain Disable.
-type serviceHolder interface {
-	Hold(ctx context.Context, unit Unit) error
-}
-
 // quiesce holds the service, stops it, verifies it terminated and that nobody holds the
 // database. Every offline sm command takes the database lock itself, so the lock is proven
 // free here (taken and released) rather than held across them.
@@ -482,11 +519,7 @@ func (u *upgrader) quiesce(ctx context.Context) error {
 // only way a version is brought back.
 func (u *upgrader) holdService(ctx context.Context) error {
 	t := u.t
-	hold := t.services.Disable
-	if h, ok := t.services.(serviceHolder); ok {
-		hold = h.Hold
-	}
-	if err := hold(ctx, *t.unit); err != nil {
+	if err := t.services.Hold(ctx, *t.unit); err != nil {
 		return fmt.Errorf("keep %s from starting during the upgrade: %w", t.unit.Name, err)
 	}
 	return nil

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const staleArchive = "/var/lib/supermgmt/backups/pre-0.tar.zst"
+const staleArchive = "/var/lib/supermgmt/backups/supermgmt-pre-0-20260101T000000Z.tar.zst"
 
 func TestUpgrade_ResumeRetakesArchive(t *testing.T) {
 	tests := []struct {

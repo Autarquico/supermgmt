@@ -52,7 +52,9 @@ type uhost struct {
 	lockHeld     bool
 	noDisk       bool
 	symlinks     map[string]string // directory -> where it really is, for Canonical
-	dbLocks      int               // database locks held right now
+	linkedFiles  map[string]bool   // files that are symlinks for Lstat
+	holdErr      error
+	dbLocks      int // database locks held right now
 	// renamedUnderDBLock: the new binary was renamed into place while the database lock was held.
 	renamedUnderDBLock bool
 
@@ -280,6 +282,8 @@ func (h *uhost) FileSize(p string) (int64, error) { return int64(len(h.content(p
 
 func (h *uhost) Lstat(p string) (EntryInfo, error) {
 	switch _, isFile := h.inodes[p]; {
+	case h.linkedFiles[p]:
+		return EntryInfo{Mode: 0o777}, nil
 	case h.dirs[p]:
 		return EntryInfo{Dir: true, Mode: 0o700}, nil
 	case isFile:
@@ -334,6 +338,9 @@ func (s usvc) Stop(_ context.Context, u Unit) error {
 
 func (s usvc) Hold(_ context.Context, u Unit) error {
 	s.h.record("hold %s", u.Name)
+	if s.h.holdErr != nil {
+		return s.h.holdErr
+	}
 	s.h.enabled, s.h.held = false, true
 	return nil
 }
@@ -433,7 +440,7 @@ func (h *uhost) doctor(c Command, f map[string]string) ([]byte, error) {
 func (h *uhost) liveArchives() int {
 	n := 0
 	for p := range h.inodes {
-		if strings.HasPrefix(p, applianceLayout().BackupsDir+"/pre-") {
+		if strings.HasPrefix(p, applianceLayout().BackupsDir+"/supermgmt-pre-") {
 			n++
 		}
 	}
@@ -449,7 +456,7 @@ func (h *uhost) backup(c Command, f map[string]string) ([]byte, error) {
 		return nil, h.backupErr
 	}
 	h.archives++
-	archive := fmt.Sprintf("%s/pre-%d.tar.zst", applianceLayout().BackupsDir, h.archives)
+	archive := fmt.Sprintf("%s/supermgmt-pre-%d-20260101T000000Z.tar.zst", applianceLayout().BackupsDir, h.archives)
 	h.put(archive, "archive")
 	schema := h.dbSchema
 	if h.backupSchema != 0 {

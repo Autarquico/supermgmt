@@ -43,6 +43,7 @@ type upgradeState struct {
 	NewSHA256      string       `json:"new_sha256"`
 	SchemaBefore   int          `json:"schema_before,omitempty"`
 	Archive        string       `json:"archive,omitempty"`
+	Superseded     []string     `json:"superseded,omitempty"` // replaced archives not yet removed
 	AllowDowngrade bool         `json:"allow_downgrade,omitempty"`
 	StartedAt      time.Time    `json:"started_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`

@@ -63,6 +63,9 @@ type ServiceManager interface {
 	Start(ctx context.Context, unit Unit) error
 	Stop(ctx context.Context, unit Unit) error
 	Disable(ctx context.Context, unit Unit) error
+	// Hold keeps the unit from starting by any route (manual, dependency, boot) until
+	// Register lifts it. An upgrade needs it; there is no weaker fallback.
+	Hold(ctx context.Context, unit Unit) error
 	// WaitStopped returns once the unit is inactive and its main process is
 	// gone, or an error after timeout (ADR-0027).
 	WaitStopped(ctx context.Context, unit Unit, timeout time.Duration) error

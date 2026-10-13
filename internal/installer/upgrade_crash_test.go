@@ -366,3 +366,26 @@ func TestUpgrade_CrashBeforeSwapLeavesTheDowngradeRecordOnce(t *testing.T) {
 		t.Errorf("after the rerun: records %d, live %q; want 1 record (resume must not duplicate) and the new binary", pending(), h.live())
 	}
 }
+
+func TestUpgrade_CrashAtTheRetakeRecordLeaksNoArchive(t *testing.T) {
+	h := newUHost(t)
+	h.seedUpgrade(t, upgradeState{Phase: upBackedUp, Archive: staleArchive}, binV2)
+	h.put(staleArchive, "stale")
+	h.put(applianceLayout().Binary+".new", binV2)
+	hooks := defaultHooks()
+	hooks.crash = func(point string) error {
+		if point == "U:backed_up:recorded" {
+			return errCrashed
+		}
+		return nil
+	}
+	if err := h.upgrade(hooks); !errors.Is(err, errCrashed) {
+		t.Fatalf("crash err = %v", err)
+	}
+	if err := h.rerun(); err != nil {
+		t.Fatalf("rerun: %v\n%s", err, h.out.String())
+	}
+	if h.liveArchives() != 1 || h.Exists(staleArchive) {
+		t.Errorf("%d live archives, first one present: %t", h.liveArchives(), h.Exists(staleArchive))
+	}
+}

@@ -43,6 +43,7 @@ func (h *stubHost) Start(context.Context, installer.Unit) error             { re
 func (h *stubHost) Load(context.Context, installer.Unit) error              { return nil }
 func (h *stubHost) Stop(context.Context, installer.Unit) error              { return nil }
 func (h *stubHost) Disable(context.Context, installer.Unit) error           { return nil }
+func (h *stubHost) Hold(context.Context, installer.Unit) error              { return nil }
 func (h *stubHost) WaitStopped(context.Context, installer.Unit, time.Duration) error {
 	return nil
 }
