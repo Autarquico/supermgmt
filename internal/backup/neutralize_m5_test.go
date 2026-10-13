@@ -2,6 +2,7 @@ package backup_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/autarquico/supermgmt/internal/backup"
@@ -48,6 +49,9 @@ func TestRestoreRevokesMCPCredentials(t *testing.T) {
 	}
 	if got := scalar[int64](t, db, `SELECT revoked_at FROM oauth_access_tokens WHERE id = 'oat-1'`); got != restoredAt {
 		t.Errorf("oauth access token revoked_at = %d, want the restore time %d", got, restoredAt)
+	}
+	if got := scalar[string](t, db, `SELECT value_json FROM settings WHERE key = 'credentials_not_before'`); got != strconv.FormatInt(restoredAt, 10) {
+		t.Errorf("credentials_not_before = %s, want the restore time %d", got, restoredAt)
 	}
 	for _, id := range []string{"mcpc-remote", "mcpc-pending"} {
 		if n := scalar[int](t, db, `SELECT count(*) FROM mcp_clients WHERE id = ? AND revoked_at IS NULL AND state <> 'deleted'`, id); n != 1 {

@@ -190,6 +190,13 @@ func (r *OAuthResolver) admit(ctx context.Context, hash string, c accessClaims) 
 	if c.IssuedAt.Before(client.CreatedAt.Add(-oauthClockSkew)) {
 		return app.Caller{}, invalidOAuthToken("token predates the client registration")
 	}
+	floor, err := database.CredentialsNotBefore(ctx, r.db.Reader())
+	if err != nil {
+		return app.Caller{}, fmt.Errorf("read credentials floor: %w", err)
+	}
+	if c.IssuedAt.Before(floor) {
+		return app.Caller{}, invalidOAuthToken("token predates a restore")
+	}
 	stored, err := r.record(ctx, hash, client, c)
 	if err != nil {
 		return app.Caller{}, err

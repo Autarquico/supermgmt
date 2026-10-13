@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -312,11 +313,43 @@ func ClaimOIDCJTI(ctx context.Context, q Querier, issuer, jti string, expiresAt 
 
 // ---- bulk operations -------------------------------------------------------
 
+// credentialsNotBeforeKey is the settings key holding the instant before which
+// no OAuth access token may have been issued.
+const credentialsNotBeforeKey = "credentials_not_before"
+
+// CredentialsNotBefore returns the floor on OAuth access token issue times a
+// restore set, or the zero time when none was set. A remote access token is
+// issued outside SuperMgmt, so a token the database never recorded can only be
+// refused by when it was issued.
+func CredentialsNotBefore(ctx context.Context, q Querier) (time.Time, error) {
+	s, err := GetSetting(ctx, q, credentialsNotBeforeKey)
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	var ms int64
+	if err := json.Unmarshal(s.Value, &ms); err != nil {
+		return time.Time{}, fmt.Errorf("decode %s: %w", credentialsNotBeforeKey, err)
+	}
+	return domain.FromUnixMillis(ms), nil
+}
+
+func setCredentialsNotBefore(ctx context.Context, q Querier, at time.Time) error {
+	return PutSetting(ctx, q, Setting{Key: credentialsNotBeforeKey, Value: json.RawMessage(strconv.FormatInt(at.UnixMilli(), 10)), UpdatedAt: at})
+}
+
 // RevokeAllCredentials revokes every session, API token, MCP token and OAuth
 // access token that is still active, as a restore does (spec §29.2, ADR-0020),
 // and returns how many. A remote MCP client holds no token of its own, so its
-// row stays as it is; its access tokens are what die.
+// row stays as it is; its access tokens are what die. It also raises the
+// credentials-not-before floor to at, which kills the access tokens no row
+// records (see CredentialsNotBefore).
 func RevokeAllCredentials(ctx context.Context, q Querier, at time.Time) (int64, error) {
+	if err := setCredentialsNotBefore(ctx, q, at); err != nil {
+		return 0, err
+	}
 	var total int64
 	for _, target := range []struct{ table, active string }{
 		{"sessions", `revoked_at IS NULL`},

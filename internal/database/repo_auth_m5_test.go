@@ -194,3 +194,17 @@ func TestRevokeAllCredentialsCoversMCPAndOAuthTokens(t *testing.T) {
 		}
 	})
 }
+
+func TestRevokeAllCredentialsRaisesTheCredentialsNotBeforeFloor(t *testing.T) {
+	f := newFixture(t)
+	f.tx(func(ctx context.Context, q Querier) {
+		if got := must(CredentialsNotBefore(ctx, q)); !got.IsZero() {
+			t.Fatalf("floor before any restore = %s, want none", got)
+		}
+		at := testEpoch.Add(time.Hour)
+		must(RevokeAllCredentials(ctx, q, at))
+		if got := must(CredentialsNotBefore(ctx, q)); !got.Equal(at) {
+			t.Errorf("floor = %s, want the restore time %s", got, at)
+		}
+	})
+}
