@@ -803,3 +803,66 @@ func TestHandlers_ApprovedAppWritesReachTheAppsCatalog(t *testing.T) {
 		t.Error("the control_plane.apply handler was built without the apps catalog; approved app writes would fail")
 	}
 }
+
+func TestDeployHandler_SucceededCommandsAreClosedWithProvenExitEvidence(t *testing.T) {
+	w := newDeployWorld(t)
+	dep := w.queued()
+	mustf(t, w.run(), "run")
+
+	closed := 0
+	for _, in := range w.intents(*dep.JobID) {
+		if in.Outcome != jobs.OutcomeSucceeded {
+			continue
+		}
+		var ev jobs.Evidence
+		mustf(t, json.Unmarshal(in.Evidence, &ev), "decode evidence")
+		if !ev.Proven() || ev.Classification != jobs.ClassComplete || ev.Proof != "ssh_exit" {
+			t.Errorf("intent %s evidence %+v is not proven exit evidence", in.Step, ev)
+		}
+		closed++
+	}
+	if closed == 0 {
+		t.Fatal("no succeeded intent was inspected")
+	}
+}
+
+func TestCommandExitEvidence_FailureProvesNothing(t *testing.T) {
+	var ev jobs.Evidence
+	mustf(t, json.Unmarshal(commandExitEvidence(jobs.OutcomeFailed, 3), &ev), "decode evidence")
+	if ev.Proven() || ev.ExitStatus != 3 {
+		t.Fatalf("evidence %+v: a failed command must record its status without proving anything", ev)
+	}
+}
+
+func TestReconcileDeploy_CrashAfterLongComposeUpReconcilesFromTheHandlersOwnEvidence(t *testing.T) {
+	w := newReconcileWorld(t)
+	next, good := w.afterKnownGood()
+	w.remote.down("compose.up", errors.New("connection lost"))
+	claimed, ok := w.claim()
+	if !ok {
+		t.Fatal("no deployment job to claim")
+	}
+	if err := w.handler.Run(context.Background(), claimed.Lease); !errors.Is(err, jobs.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want an unknown outcome", err)
+	}
+	w.remote.exit("compose.up", 0)
+	w.clock.Advance(31 * time.Second)
+	taken, err := w.store.Takeover(context.Background(), "test")
+	if err != nil || len(taken) != 1 {
+		t.Fatalf("Takeover = %v, %v", taken, err)
+	}
+	w.pastEveryDeadline(taken[0]) // the test writes no evidence of its own
+	w.markerIs(w.intentOf(taken[0], deployments.StepDeploy), "done 0")
+	half := w.containersOf(w.planOf(next.ID).Content, next.ID)
+	half[0].Config.Image = "ghcr.io/acme/other@sha256:" + strings.Repeat("f", 64)
+	w.projectIs(half)
+
+	w.settle()
+
+	if got := w.job(taken[0]).State; got != domain.JobQueued {
+		t.Fatalf("job = %s, want queued for the recovery: the earlier steps' evidence must already be proven", got)
+	}
+	if record := w.recovery(next.ID); record == nil || record.Target == nil || *record.Target != good.ID {
+		t.Fatalf("recovery record %+v, want a safety recovery toward %s", record, good.ID)
+	}
+}

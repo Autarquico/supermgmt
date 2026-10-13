@@ -93,7 +93,7 @@ func (b backupStep) run(ctx context.Context, ex transport.Executor, lease jobs.L
 	if err != nil {
 		return "", b.fail(ctx, lease, intent.ID, "the backup did not print a valid artifact path")
 	}
-	if err := b.complete(ctx, lease, intent.ID, jobs.OutcomeSucceeded, map[string]string{"artifact": artifact}); err != nil {
+	if err := b.complete(ctx, lease, intent.ID, jobs.OutcomeSucceeded, backupDoneEvidence(artifact)); err != nil {
 		return "", err
 	}
 	return artifact, nil
@@ -136,6 +136,15 @@ func (b backupStep) complete(ctx context.Context, lease jobs.Lease, intent domai
 		return fmt.Errorf("encode backup evidence: %w", err)
 	}
 	return b.store.CompleteIntent(ctx, lease, intent, outcome, raw)
+}
+
+// backupDoneEvidence is the proven exit evidence of a finished backup plus the
+// artifact it printed.
+func backupDoneEvidence(artifact string) map[string]any {
+	var proven map[string]any
+	_ = json.Unmarshal(commandExitEvidence(jobs.OutcomeSucceeded, 0), &proven)
+	proven["artifact"] = artifact
+	return proven
 }
 
 func backupFailed(format string, args ...any) error {
