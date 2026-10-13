@@ -22,8 +22,10 @@ func brewChecksums(version, channel string, drop string) string {
 	lines := []string{"version: " + version, "channel: " + channel}
 	bare := strings.TrimPrefix(version, "v")
 	entries := []struct{ digest, target string }{
-		{brewDarwinArm, "darwin_arm64"}, {brewDarwinAmd, "darwin_amd64"},
-		{brewLinuxArm, "linux_arm64"}, {brewLinuxAmd, "linux_amd64"},
+		{brewDarwinArm, "darwin_arm64"},
+		{brewDarwinAmd, "darwin_amd64"},
+		{brewLinuxArm, "linux_arm64"},
+		{brewLinuxAmd, "linux_amd64"},
 	}
 	for _, e := range entries {
 		if e.target == drop {
@@ -41,7 +43,7 @@ func renderBrewFormula(t *testing.T, checksums string) (string, error) {
 	if err := os.WriteFile(path, []byte(checksums), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", brewScript, path)
+	cmd := exec.CommandContext(t.Context(), "sh", brewScript, path)
 	cmd.Env = append(os.Environ(), "SM_RELEASE_BASE_URL=https://example.test/dl")
 	out, err := cmd.Output()
 	return string(out), err
@@ -107,7 +109,7 @@ func TestBrewFormulaIsValidRuby(t *testing.T) {
 	if err := os.WriteFile(formula, []byte(wantBrewFormula), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(ruby, "-c", formula).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), ruby, "-c", formula).CombinedOutput(); err != nil {
 		t.Fatalf("ruby -c: %v\n%s", err, out)
 	}
 }
@@ -145,7 +147,7 @@ func TestBrewFormulaRefusesBadSignature(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if out, err := exec.Command("sh", brewScript, checksums, trust).Output(); err == nil {
+	if out, err := exec.CommandContext(t.Context(), "sh", brewScript, checksums, trust).Output(); err == nil {
 		t.Fatalf("expected signature failure, got:\n%s", out)
 	}
 }
