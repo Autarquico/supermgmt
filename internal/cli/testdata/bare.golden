@@ -7,6 +7,7 @@ Usage:
 Available Commands:
   admin       Administer a server through its admin socket (root or the service user)
   approvals   List jobs awaiting approval with the plan hash to approve against
+  apps        List, inspect and create applications and their targets
   backup      Create and list backups; restore one offline
   completion  Generate a shell completion script
   config      Inspect and validate configuration
