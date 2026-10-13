@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.7-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.8-draft (changes in Appendix F)
 
 ---
 
@@ -286,7 +286,7 @@ Secure credential transfer (steps 12–13):
 
 The token value never appears in process arguments, environment, logs or the journal.
 
-Failure behavior: if creation fails before SuperMgmt becomes usable, installer prints exact failure and offers/executes safe rollback of resources it created. It MUST NOT delete pre-existing resources. Rollback operations are tracked in a local transaction journal under `/var/tmp/supermgmt-installer-*` and cleaned after success. A Proxmox template downloaded in step 6 is a shared cache and is kept (and reported) on rollback. A resource is undone only when it provably carries this install's identifier; anything uncertain is kept and reported for manual recovery. On success the installer records the appliance (`/var/lib/supermgmt-installer/appliances/<vmid>.json`) before it discards the journal; that record is the ownership proof §29.4 refers to (ADR-0026).
+Failure behavior: if creation fails before SuperMgmt becomes usable, installer prints exact failure and offers/executes safe rollback of resources it created. It MUST NOT delete pre-existing resources. Rollback operations are tracked in a local transaction journal under `/var/lib/supermgmt-installer/journals/<install_id>/` (root-only; created without following symlinks and checked before the first write; journals left under `/var/tmp/supermgmt-installer-*` by older installers are still recovered) and cleaned after success (1.4.8; ADR-0026). A Proxmox template downloaded in step 6 is a shared cache and is kept (and reported) on rollback. A resource is undone only when it provably carries this install's identifier; anything uncertain is kept and reported for manual recovery. On success the installer records the appliance (`/var/lib/supermgmt-installer/appliances/<vmid>.json`) before it discards the journal; that record is the ownership proof §29.4 refers to (ADR-0026).
 
 Non-interactive example:
 
@@ -412,7 +412,8 @@ supermgmt/
 │   │   ├── ci.yml
 │   │   ├── release.yml
 │   │   ├── codeql.yml
-│   │   └── dependency-review.yml
+│   │   ├── dependency-review.yml
+│   │   └── nightly.yml      # fuzzing, race stress, flake loops (ADR-0034)
 │   ├── dependabot.yml
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── cmd/
@@ -441,8 +442,7 @@ supermgmt/
 │   │   ├── local/
 │   │   ├── ssh/             # statically registered SSH nodes; uses transport/ssh
 │   │   ├── proxmox/
-│   │   ├── github/
-│   │   └── cloudflare/      # optional connector (M2 guide/hooks only)
+│   │   └── github/          # Cloudflare: a guide only in V1 (docs/cloudflare.md, §25)
 │   ├── runtimes/
 │   │   ├── docker/
 │   │   └── systemd/
@@ -459,8 +459,8 @@ supermgmt/
 │   └── join.sh              # same bootstrap+verify shape as install.sh, then `sm join`
 ├── packaging/
 │   ├── systemd/supermgmt.service
-│   ├── homebrew/README.md
-│   └── nfpm.yaml
+│   ├── homebrew/          # README.md (tap plan) + supermgmt.rb.tmpl (ADR-0036)
+│   └── release/           # signing, notices, SBOM, reproducibility and gate scripts
 ├── examples/
 │   ├── config.yaml
 │   ├── app.supermgmt.yaml
@@ -503,7 +503,7 @@ supermgmt/
 
 No business logic in `cmd/`, HTTP handlers, Bubble Tea models or MCP handlers. They adapt requests to application services.
 
-Directories for features scheduled after the current milestone are not created (§0). Post-V1 packages (`providers/vercel`, `deployments/systemd`, `deployments/shell`) are added only when their milestone starts.
+Directories for features scheduled after the current milestone are not created (§0). V1 ships no `.deb`/`.rpm` packages: a package manager's upgrade would bypass the §29.3 protocol (1.4.8; ADR-0036). Post-V1 packages (`providers/vercel`, `deployments/systemd`, `deployments/shell`) are added only when their milestone starts.
 
 ---
 
@@ -1368,6 +1368,8 @@ When SuperMgmt runs locally it may register the current machine as `local` provi
 ## 15.1 Scope
 
 Discover cluster nodes, QEMU VMs, LXCs, status, configured CPU/RAM/storage, selected metrics, storage metadata, tasks and snapshots/backups where authorized.
+
+**V1 scope (1.4.8).** V1 discovers nodes, guests, status, configured resources and storage metadata, and reads tasks only to correlate power jobs (ADR-0025). Snapshot, backup and task-history listings and handlers (§15.4), guest promotion to managed nodes and Proxmox registration through `POST /providers` are post-V1 (§44).
 
 ## 15.2 Authentication
 
@@ -2575,6 +2577,15 @@ The live database is never opened during Phase B.
 - If the new binary fails and the schema version is unchanged, restore the prior binary and start it. If the schema has advanced, leave the service stopped and print the exact restore commands (pre-upgrade archive plus prior binary); database rollback uses backup, not down migrations, and is never automatic. Both cases exit 9.
 - A Proxmox host with an appliance record delegates the upgrade into the LXC after verifying ownership (§29.4).
 
+Hardening (1.4.8; ADR-0035, ADR-0027):
+
+- **Hold.** Before stopping the service the upgrader holds it: on systemd a drop-in that refuses every activation (`RefuseManualStart=yes` plus an always-false condition) and `disable`; on launchd `launchctl disable`. Only the upgrader's own start lifts the hold, so a manual start, a dependency or a reboot cannot run either version mid-upgrade.
+- **Stale archive.** A resumed upgrade that has not swapped the binary yet retakes the pre-upgrade backup under the database lock and removes the superseded archive.
+- **Schema versions.** `sm doctor --offline --json` carries `format_version` (1), `database_schema_version` (integer or null) and `binary_schema_version`. The upgrader reads them, and parses the schema check's text only for binaries without `format_version`.
+- **Version audit.** On start, before serving, the daemon compares its version with `settings.instance.binary_version` and records `instance.version_changed` (`system`, data `{from, to, direction}`) on a change.
+- **Offline downgrade audit.** `--allow-downgrade` writes a pending record `<data_dir>/audit-pending/<event_id>.json` (0600, fsynced) before the swap; the next daemon start of a version that knows the format inserts it as `instance.downgrade_authorized` once (`event_id` is unique) and deletes it. A downgrade to a binary that predates the format leaves the record pending until a newer binary starts.
+- **Crash points.** Every upgrade phase boundary is a named crash point; ADR-0035 fixes the rerun outcome of each one, and an end-to-end test kills a real process at each (`crashpoints` builds only).
+
 ## 29.4 Uninstall
 
 Software removal and data deletion are separate confirmations. Proxmox appliance uninstall may remove the LXC only when installer metadata proves it owns that VMID and user explicitly confirms. Never delete provider resources merely because provider is removed from SuperMgmt.
@@ -2750,6 +2761,12 @@ Deliver:
 
 Acceptance: clean machine install/upgrade/restore/uninstall E2E across all modes and documented release process.
 
+Acceptance details (1.4.8; ADR-0034..0036):
+
+- **Clean machine** means a fresh GitHub-hosted runner VM (Ubuntu 24.04 amd64/arm64, macOS arm64), a Debian 13 systemd container on a CI runner, or the Proxmox simulator. A row is *supported* only when install, upgrade, backup plus restore and uninstall each run in CI on it; otherwise it is labelled container-verified, fake-verified or manual, or is not claimed (§35).
+- **Beta migration tests** use databases and archives written by real binaries built from each milestone's merge commit on `main` (synthetic versions; no release tag exists before the first release), with recorded provenance. Upgrades from signed releases are tested from the first tag on.
+- **Human-gated items** are an explicit unchecked checklist with an owner, never facts: the production signing key and its embedding, name/trademark/repository checks (§42), the licence decision and a legal read of the notices, the Homebrew tap and its first publish, GitHub repository settings (secret scanning, push protection, required checks, release environment reviewers), real Proxmox, real GitHub/GHCR/Sigstore, real MCP clients and authorization servers, a real Debian VM and Intel macOS.
+
 ---
 
 # 32. Testing strategy
@@ -2783,6 +2800,15 @@ Command injection payloads, malicious ANSI logs, changed SSH host key, invalid T
 
 CI MUST run formatting, vet, golangci-lint, unit/integration tests, race tests where practical, govulncheck, dependency review, CodeQL/static analysis and secret scanning. Release requires all gates green.
 
+Mechanics (1.4.8; ADR-0034):
+
+- **Fuzzing.** Every parser of untrusted or persisted input has a fuzz target or a reasoned exemption in an inventory that a source-discovery test keeps complete. Pull requests run the seed corpora and the inventory/reachability check; mutation runs nightly.
+- **Race.** Unit tests run with `-race` on Linux and macOS; a stress suite runs nightly.
+- **Secret scanning.** gitleaks over the full history, plus GitHub secret scanning and push protection.
+- **Licences.** A licence gate over the compiled module set and third-party notices in every archive.
+- **Flakes.** No retries in pull-request gates. A flake is fixed only with failing-before/passing-after proof; a quarantined flake keeps replacement coverage on pull requests and is reported unresolved.
+- **Release gate.** The release workflow refuses to build unless every CI check and a nightly run succeeded on the exact tag commit.
+
 ---
 
 # 33. Observability
@@ -2801,7 +2827,7 @@ supermgmt_api_requests_total
 supermgmt_deployments_total
 ```
 
-Metrics endpoint disabled or private by default.
+Metrics endpoint disabled or private by default. The metrics endpoint is post-V1 (1.4.8); V1 ships structured logs only.
 
 ---
 
@@ -2839,7 +2865,7 @@ GitHub: github.com and GitHub Enterprise Server REST API (fake-verified until th
         real-GitHub checklist runs, ADR-0028)
 ```
 
-Do not claim unsupported versions. Maintain `docs/compatibility.md` once implementation begins.
+Do not claim unsupported versions. Maintain `docs/compatibility.md` once implementation begins. From 1.4.8 (ADR-0036) every row there is labelled *supported* (CI runs install, upgrade, backup plus restore and uninstall on it, cited per operation), *container-verified*, *fake-verified*, *manual* or *not claimed*.
 
 ---
 
@@ -2861,6 +2887,14 @@ provenance attestation    # Sigstore/SLSA, for auditors
 ```
 
 Use GoReleaser or equivalent. Builds should be reproducible where practical, include version/commit/build date, and generate SBOM/provenance. GitHub release workflow uses minimal permissions and protected release environment.
+
+Supply-chain checks (1.4.8; ADR-0034, ADR-0036):
+
+- every archive ships `THIRD_PARTY_LICENSES`, generated from the compiled binary's build info, with full licence texts and `NOTICE` files;
+- every module in the build info appears in the SBOM with the same version;
+- two builds of the real release configuration from independent clean roots are byte-identical;
+- the provenance statement is verified (subjects, source commit, builder) before publishing;
+- the Homebrew formula is a derived artifact rendered from the signed `checksums.txt` and published by the owner to the project's tap.
 
 `sm version` prints version, commit, build date, Go version and platform.
 
@@ -3062,7 +3096,7 @@ Prefer standard library and mature dependencies. Pin versions through `go.mod`. 
 - YAML library with strict decoding.
 - UUID library if needed.
 
-Before first release, produce dependency/license inventory and vulnerability scan. No dependency may silently phone home.
+Before first release, produce dependency/license inventory and vulnerability scan. No dependency may silently phone home. `docs/dependencies.md` lists every outbound destination with its trigger and off-switch (1.4.8; ADR-0036).
 
 ---
 
@@ -3113,7 +3147,9 @@ Potential modules, not V1 promises:
 
 - Hetzner/OVH provider APIs.
 - Vercel API deployments/status as API-only resources, not SSH nodes.
-- Cloudflare DNS/Tunnel management.
+- Cloudflare DNS/Tunnel management (V1 ships the guide only; no `providers/cloudflare` package).
+- Proxmox snapshot/backup/task-history listings, guest promotion and `POST /providers` registration (§15.1).
+- The §33 metrics endpoint.
 - AWS/GCP/Azure connectors.
 - Podman.
 - Kubernetes read-only/context integration.
@@ -3173,6 +3209,9 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0031 MCP server ([file](../adr/0031-mcp-server-sdk-transports-tools.md)) | M5 | SDK version, transports, tool list and contracts, output views, redaction guarantee | No database handle or connector credential; every tool is API calls; write tools only when enabled; remote output marked untrusted, scrubbed and bounded; the redaction limit stated |
 | ADR-0032 MCP clients and identity ([file](../adr/0032-mcp-clients-tokens-identity.md)) | M5 | Client state, one-time token, re-registration, socket admission, credential status, MCP floors, writes gate | No inherited roles; token issued once to the requester within 24h of approval; MCP never mints credentials or approves; writes disabled means denied at the application layer |
 | ADR-0033 Remote MCP protected resource ([file](../adr/0033-remote-mcp-oauth-protected-resource.md)) | M5 | MCP authorization spec version checked and deviations, resource identity, metadata, token validation, rate-limit order, fake fidelity | Protected resource only; audience bound to `<origin>/mcp`; OAuth tokens never accepted on `/api/v1`; per-address limit before any token work; real authorization servers are a manual checklist |
+| ADR-0034 Release hardening gates ([file](../adr/0034-release-hardening-gates.md)) | M6 | Fuzz inventory and budget, race and stress, flake policy, secret and licence scans, release gate, notices, SBOM completeness, reproducibility, provenance verification | Every parser mapped or exempted with a reason; no retries in pull-request gates; release only from a commit whose gates all passed |
+| ADR-0035 Upgrade paths and migration fixtures ([file](../adr/0035-upgrade-paths-migration-fixtures-crash-points.md)) | M6 | Supported upgrade paths, fixture provenance, doctor JSON contract, version and downgrade audit, service hold, stale-archive rule, crash points and recovery | Fixtures written by real older binaries pinned to full commits on `main`; no automatic data rollback; hold before stop |
+| ADR-0036 Distribution and platform claims ([file](../adr/0036-distribution-notices-platform-claims.md)) | M6 | Platform claim vocabulary, host-mutating test guard, Homebrew tap, Linux packages, notices, egress inventory | No claim without a test per operation; tests never mutate a developer machine; no package-manager upgrade path in V1 |
 
 Each ADR lives in `docs/adr/` and is referenced from this table once accepted.
 
@@ -3660,6 +3699,40 @@ Decisions (M5 W0, user-approved option (a) for every question): JWT and RFC 7662
         2025-06-18); SDK client plus wire goldens, real clients a manual checklist; strict
         RFC 9068 at+jwt; resource = <origin>/mcp with root metadata as a recorded deviation; MCP
         can never perform credential or identity actions.
+```
+
+## F.12 Changes from 1.4.7-draft to 1.4.8-draft
+
+```text
+§3.5    installer journal under /var/lib/supermgmt-installer/journals/<install_id>/ (root-only);
+        legacy /var/tmp journals still recovered.
+§5      no providers/cloudflare (guide only); packaging/nfpm.yaml removed (no .deb/.rpm in V1);
+        packaging/homebrew holds the tap plan and formula template; packaging/release; nightly.yml.
+§15.1   V1 scope: snapshot/backup/task-history listings, guest promotion and Proxmox POST /providers
+        are post-V1.
+§29.3   service hold before stop; stale-archive retake on resume; doctor --offline --json schema
+        fields; version-transition audit; offline downgrade audit; crash points (ADR-0035).
+§31 M6  clean machine defined; supported vs container-verified rows; beta migration tests from
+        milestone merge commits on main; human-gated items listed.
+§32     fuzz inventory and nightly budget; race on Linux and macOS plus stress; gitleaks and GitHub
+        secret scanning; licence gate; flake policy; release gate on the exact tag commit.
+§33     metrics endpoint post-V1.
+§35     claim vocabulary in docs/compatibility.md (supported, container-verified, fake-verified,
+        manual, not claimed).
+§36     THIRD_PARTY_LICENSES from build info, SBOM completeness, reproducibility, provenance
+        verification, Homebrew formula as a derived artifact.
+§41     egress inventory in docs/dependencies.md.
+§44     Cloudflare package, Proxmox listings/promotion/registration and the metrics endpoint.
+§46     ADR-0034..0036 (M6); ADR-0006..0033 accepted.
+Decisions (M6 W0, user-approved option (a) for every question): Ubuntu 24.04 supported, Debian 13
+        container-verified, Intel macOS manual; any milestone build upgrades to N, fixtures from
+        milestone merge commits; first release after the owner's key ceremony; own Homebrew tap,
+        formula supermgmt; no Linux packages; gitleaks plus GitHub secret scanning; go-licenses
+        notices; Q8 deferrals post-V1; doctor TLS expiry check, renewal post-V1; SEC-7 roles and
+        SEC-9 documented residuals; installer ports promoted; GitHub-hosted runners as clean
+        machines; seeds per PR and nightly fuzzing; owner runs name/trademark checks; Apache-2.0;
+        no PR retries; release gated on CI and nightly; durable offline downgrade audit; real
+        service hold; archive retaken on resume.
 ```
 
 ---

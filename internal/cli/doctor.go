@@ -35,9 +35,15 @@ type check struct {
 	Detail string `json:"detail"`
 }
 
+// doctorReport is the --json contract (ADR-0035). The installer reads the
+// schema versions when format_version is present and falls back to parsing
+// the schema check's text only for binaries that predate it.
 type doctorReport struct {
-	OK     bool    `json:"ok"`
-	Checks []check `json:"checks"`
+	FormatVersion         int     `json:"format_version,omitempty"`
+	OK                    bool    `json:"ok"`
+	DatabaseSchemaVersion *int    `json:"database_schema_version,omitempty"`
+	BinarySchemaVersion   int     `json:"binary_schema_version,omitempty"`
+	Checks                []check `json:"checks"`
 }
 
 func newDoctorCmd(env []string) *cobra.Command {

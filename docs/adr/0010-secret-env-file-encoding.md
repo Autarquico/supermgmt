@@ -1,6 +1,6 @@
 # ADR-0010: Secret env-file encoding and the node-side resolved check
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §10, §11.2 (`secret.write`), §20.3 steps 9–10, §46; ADR-0006, ADR-0008
 
 ## Context

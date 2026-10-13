@@ -1,6 +1,6 @@
 # ADR-0006: Pinned compose-go and CLI equivalence
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §20.3 steps 1–6 and 10, §35; ADR-0007, ADR-0010
 
 ## Context

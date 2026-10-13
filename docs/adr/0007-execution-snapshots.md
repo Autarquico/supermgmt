@@ -1,6 +1,6 @@
 # ADR-0007: Execution snapshots
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §20.2 ("execution reads only the plan snapshot"), §20.4 (claim and resume revalidation), §46, App. C; ADR-0008, ADR-0029
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-0033: Remote MCP as an OAuth 2.0 protected resource
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §8.2, §21.1, §23, §24; RFC 6750, RFC 7662, RFC 8707, RFC 9068, RFC 9728; ADR-0031, ADR-0032
 
 ## Context

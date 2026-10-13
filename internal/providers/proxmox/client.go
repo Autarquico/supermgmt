@@ -20,9 +20,12 @@ import (
 	"github.com/autarquico/supermgmt/internal/netguard"
 )
 
+// DefaultTimeout bounds every request of a client built without
+// WithHTTPTimeout. Task correlation widens its window by it (CorrelationWindow).
+const DefaultTimeout = 30 * time.Second
+
 const (
 	apiPrefix        = "/api2/json"
-	defaultTimeout   = 30 * time.Second
 	defaultMaxBody   = 16 << 20
 	taskPageSize     = 100
 	maxTaskPages     = 1000
@@ -87,7 +90,7 @@ func New(endpoint string, caPEM []byte, token audit.Secret, opts ...Option) (Cli
 	if !strings.Contains(value, "!") || !strings.Contains(value, "=") {
 		return nil, errors.New("proxmox: token must look like user@realm!tokenid=secret")
 	}
-	s := settings{timeout: defaultTimeout, maxBody: defaultMaxBody}
+	s := settings{timeout: DefaultTimeout, maxBody: defaultMaxBody}
 	for _, opt := range opts {
 		opt(&s)
 	}

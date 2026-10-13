@@ -1,6 +1,6 @@
 # ADR-0032: MCP clients, tokens and the MCP identity
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §9, §11.1, §11.2, §11.3, §20.4, §23, §29.2; ADR-0012, ADR-0017, ADR-0031, ADR-0033
 
 ## Context

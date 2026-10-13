@@ -1,6 +1,6 @@
 # ADR-0030: node.setup v2 — `deploy_root` and `docker.compose.deploy`
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §12, §17, §20.3 step 9, §21, §46 (ADR-0009 row); extends ADR-0009, ADR-0006, ADR-0010
 
 ## Context

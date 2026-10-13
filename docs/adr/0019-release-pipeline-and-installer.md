@@ -1,6 +1,6 @@
 # ADR-0019: Release pipeline and installer
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §3, §3.2, §3.4, §3.6, §3.7, §13, §36, Appendix A; ADR-0004
 
 ## Context

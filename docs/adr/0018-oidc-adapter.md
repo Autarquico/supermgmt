@@ -1,6 +1,6 @@
 # ADR-0018: OIDC adapter
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §8.2, §11.5, §21.1, §23, §23.1 (1.4.3: discovery trust), §30, §32
 
 ## Context

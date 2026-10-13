@@ -1,6 +1,6 @@
 # ADR-0027: Upgrade and uninstall
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §3.2 (downgrade protection), §29.1, §29.3, §29.4; ADR-0020, ADR-0026
 
 ## Context
@@ -15,15 +15,17 @@
 
 ### Order
 
-1. Version check: a lower version is refused unless `--allow-downgrade`, which is audited.
+1. Version check: a lower version is refused unless `--allow-downgrade`. The authorization is audited offline through a pending-audit record written before the swap (ADR-0035).
 2. Free-disk check.
 3. Stage `sm.new` (fsync); hard-link the current binary as `sm.prev` (copy + fsync if linking fails). The live path is never removed.
-4. Stop the service, verify termination (unit inactive, main PID gone) and take the database lock.
-5. Pre-upgrade backup with `sm backup create --offline`: read-only open, never migrates, never activates; the archive's `schema_version` must equal the pre-upgrade schema.
+4. Hold the service, then stop it, verify termination (unit inactive, main PID gone) and take the database lock. The hold comes before the stop (M6, SEC-4): on systemd a drop-in refusing every activation plus `disable`; on launchd `launchctl disable`. Only `startService` lifts it (ADR-0035 "Service hold").
+5. Pre-upgrade backup with `sm backup create --offline`: read-only open, never migrates, never activates; the archive's `schema_version` must equal the pre-upgrade schema. A resume in phase `backed_up` always retakes it under the database lock and removes the superseded archive (M6, SEC-5; ADR-0035 "Stale archive").
 6. Release the lock; `rename(sm.new, sm)`; directory fsync.
 7. Start; the daemon applies forward migrations; wait for readiness.
 
 The spec's order (backup, then stop) becomes stop, then backup: the archive is taken with the database quiescent and the lock held.
+
+Schema versions are read from `sm doctor --offline --json` (`database_schema_version`, ADR-0035). Text parsing of the `schema` check remains only for binaries without `format_version` (M5 and earlier).
 
 ### Failure policy
 
@@ -34,7 +36,7 @@ The spec's order (backup, then stop) becomes stop, then backup: the archive is t
 
 ### Appliances
 
-On a Proxmox host, `sm install upgrade` requires the appliance record and a matching `install_id` in the container's description and the `supermgmt` tag. With several appliances `--vmid` is required. It pushes the verified binary and runs `pct exec <vmid> -- sm install upgrade --binary <path>`.
+On a Proxmox host, `sm install upgrade` requires the appliance record and a matching `install_id` in the container's description and the `supermgmt` tag. With several appliances `--vmid` is required. It pushes the verified binary into `/var/lib/supermgmt-stage/sm` inside the container (the directory is removed, recreated `0700` by root and checked to be `root:700` before the push; outside `/tmp`, so no other user can swap what root runs) and runs `pct exec <vmid> -- sm install upgrade --binary <path>`. The staging directory is removed afterwards unless the VMID no longer belongs to the record.
 
 ### Uninstall
 

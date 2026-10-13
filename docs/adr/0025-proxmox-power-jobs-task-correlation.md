@@ -1,6 +1,6 @@
 # ADR-0025: Proxmox power jobs, task correlation and quiescence
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §11.2 (`proxmox.vm.power`), §15.4, §20.4; ADR-0009 (recovery by task correlation only), ADR-0013
 
 ## Context
@@ -45,6 +45,11 @@ Deadlines are handler constants: start, reboot and shutdown 5m; stop 2m. The PVE
 | running / uncorrelated | — error (no evidence yet) | | | | |
 
 `ExitStatus 0` means "evidence was collected"; the reconciler maps `not_started` to failed. Tests run the real `Store.Reconcile` with two samples across `SampleGap`.
+
+### Residuals (M6)
+
+- **Clock skew.** The window assumes the PVE host's clock and the control plane's agree within the 120s margins. Each sync records the skew from the PVE `Date` header (`SyncReport.ClockSkew`), and doctor's `providers` check warns above 60s.
+- **SEC-9.** Dispatch re-checks the guest's type, VMID, name and non-template state against `/cluster/resources`, and a guest that reappears after being absent gets a new incarnation. A guest destroyed and recreated with the same type, VMID and name with no sync in between still receives an approved power operation. Only an actor holding `VM.Allocate` can cause that; it is a documented residual and a row of `docs/manual-checks/m3-real-pve.md`.
 
 ## Consequences
 

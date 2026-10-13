@@ -1,6 +1,6 @@
 # ADR-0028: GitHub connector
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §8.3, §11.1, §18, §21.1, §23; ADR-0011, ADR-0012, ADR-0018
 
 ## Context

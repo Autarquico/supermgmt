@@ -1,6 +1,6 @@
 # ADR-0023: Proxmox identity, privileges, compatibility matrix and fake fidelity
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §15.2, §35, §3.5 steps 2 and 12; ADR-0016
 
 ## Context

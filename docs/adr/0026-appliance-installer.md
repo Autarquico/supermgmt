@@ -1,6 +1,6 @@
 # ADR-0026: Appliance installer (`proxmox-lxc`, `auto`)
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §2.3, §3.3–3.7, §8.1; ADR-0019, ADR-0020, ADR-0023, ADR-0024
 
 ## Context
@@ -46,11 +46,14 @@ Every offline command inside the container except S11 runs as `supermgmt` (`runu
 
 ### Journal
 
-- `/var/tmp/supermgmt-installer-<install_id>/journal.jsonl`, directory 0700, file 0600. Each append is followed by `fsync(file)`; the directory is fsynced on creation.
+- `/var/lib/supermgmt-installer/journals/<install_id>/journal.jsonl` (amended in M6, SEC-22). `journals/` is root 0700. The journal directory is created with `Mkdir` (it must not exist; no symlink is followed) and checked with `Lstat` (a root-owned 0700 directory, not a link) before the first append; the file is 0600. Each append is followed by `fsync(file)`; the directory is fsynced on creation.
+- Journals that M3 builds left under `/var/tmp/supermgmt-installer-<install_id>/` are still found and recovered by the same rules.
 - Entries `{seq, step, phase: pending|done|undone, resource, name}`. A torn last line is discarded.
 - Rollback runs in reverse, journals its own progress and is idempotent: every undo reads back existence first.
 - A `pending` entry is undone only when readback shows a resource carrying our `install_id` (in its name, or in the LXC description). Otherwise the entry is kept and reported for manual recovery (exit 7).
-- Token recovery revokes the token by name if it exists, removes the host temp dir, and removes `/run/supermgmt-bootstrap` in the container.
+- A create whose outcome is unknown (it failed, yet the object exists afterwards) is marked ambiguous: rollback keeps that object and reports it.
+- The token is created with `--comment "supermgmt install <install_id>"` (M6, SEC-7). Token recovery revokes the token by name only when it exists **and** carries that comment, removes the host temp dir, and removes `/run/supermgmt-bootstrap` in the container.
+- Residual (SEC-7): PVE roles have no comment field. A crash between journaling a role and creating it, followed by another PVE user-admin creating a role with this install's random name, would let rollback remove that role. The actor needed already holds more power than the bug grants; the residual is a row of `docs/manual-checks/m3-real-pve.md`.
 - PVE CLIs run without a kill deadline during create, start and template download. If a CLI fails with the state uncertain (guest `lock: create`, task still running), rollback waits for the task to stop, bounded; if it is still uncertain the journal is kept and the run reports "pending recovery" (exit 6).
 
 ### Commit

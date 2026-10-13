@@ -82,6 +82,9 @@ type SyncReport struct {
 	Nodes    int    `json:"nodes"`
 	Guests   int    `json:"guests"`
 	Storages int    `json:"storages"`
+	// ClockSkew is the PVE answer's Date header minus the local clock (ADR-0025:
+	// task correlation tolerates 120s).
+	ClockSkew time.Duration `json:"clock_skew_ns"`
 }
 
 // StorageObservation is one storage in the provider's proxmox.storage

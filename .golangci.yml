@@ -4,6 +4,7 @@ run:
   timeout: 5m
   build-tags:
     - fixtures
+    - stress
 
 linters:
   default: none
@@ -264,6 +265,24 @@ linters:
           deny:
             - pkg: github.com/klauspost/compress
               desc: only internal/backup reads and writes archives (ADR-0020)
+        fuzz-inventory-reads-source-only:
+          files:
+            - "**/test/fuzzinv/**"
+          list-mode: strict
+          allow:
+            - $gostd
+        stress-stays-in-process:
+          files:
+            - "**/test/stress/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/installer
+              desc: stress tests hammer in-process concurrency seams; the installer mutates the host (ADR-0036)
+            - pkg: github.com/autarquico/supermgmt/test/e2e
+              desc: stress tests run in process, without Docker or real hosts (ADR-0034)
+            - pkg: github.com/autarquico/supermgmt/test/fixtures
+              desc: stress tests run in process, without Docker or real hosts (ADR-0034)
+            - pkg: github.com/autarquico/supermgmt/internal/tui
+              desc: stress tests drive services and fakes, not the terminal UI
         cmd-only-imports-cli:
           files:
             - "**/cmd/**"

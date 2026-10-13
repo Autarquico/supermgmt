@@ -1,6 +1,6 @@
 # ADR-0021: Key and identity management
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §8.4, §10 (1.4.3: export transport; 1.4.4: approval), §12, §29.2, §46; extends ADR-0003 and ADR-0016 (does not replace them)
 
 ## Context
