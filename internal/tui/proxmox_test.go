@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -244,4 +245,76 @@ func TestAnUnansweredProxmoxClusterNeverFreezesTheTUI(t *testing.T) {
 			_ = h.view()
 		})
 	}
+}
+
+func TestGuestsAreCountedApartFromNodesInTheHeaderAndDashboard(t *testing.T) {
+	h := newHarness(t, withProxmox(newFake()), 120, 30)
+	h.start()
+	// pve1 and pve2 are cluster nodes; web, db, base and cache are guests.
+	guests := 4
+	nodes := len(h.m.nodes) - guests
+
+	view := h.view()
+
+	contains(t, view, plural(nodes, "node")+" · "+plural(guests, "guest"))
+	contains(t, view, fmt.Sprintf("%d total · %d guests", nodes, guests))
+}
+
+func TestWithoutGuestsTheHeaderNamesNoGuests(t *testing.T) {
+	h := newHarness(t, newFake(), 120, 30)
+	h.start()
+
+	lacks(t, h.view(), "guest")
+}
+
+func TestSessionKeysAreRefusedOnAGuestAndStartNothing(t *testing.T) {
+	for _, key := range []string{"s", "d", "p"} {
+		t.Run(key, func(t *testing.T) {
+			api := withProxmox(newFake())
+			h := newHarness(t, api, 120, 30)
+			h.start()
+			h.press("2")
+			h.selectNode("web")
+
+			h.press(key)
+
+			contains(t, h.view(), "is a Proxmox guest")
+			if api.count("OpenSession") != 0 || api.count("ProbeNode") != 0 {
+				t.Errorf("key %q on a guest reached the API", key)
+			}
+		})
+	}
+}
+
+func TestSessionKeysAreRefusedOnTheGuestNodeScreenToo(t *testing.T) {
+	api := withProxmox(newFake())
+	h := newHarness(t, api, 120, 30)
+	h.start()
+	h.press("2")
+	h.selectNode("web")
+	h.press("enter", "p")
+
+	contains(t, h.view(), "is a Proxmox guest")
+	if api.count("ProbeNode") != 0 {
+		t.Error("probe reached the API for a guest")
+	}
+}
+
+func TestKeyHintsOfAGuestOfferNoSessionKeys(t *testing.T) {
+	h := newHarness(t, withProxmox(newFake()), 120, 30)
+	h.start()
+	h.press("2")
+
+	h.selectNode("web")
+	lacks(t, h.m.keyHints(), "s ssh")
+
+	h.press("g")
+	h.selectNode("pve1")
+	contains(t, h.m.keyHints(), "s ssh")
+}
+
+func TestGoldenDashboardWithGuests(t *testing.T) {
+	h := newHarness(t, withProxmox(newFake()), 120, 30)
+	h.start()
+	assertGolden(t, "dashboard_guests_120x30", h.view(), 120, 30)
 }

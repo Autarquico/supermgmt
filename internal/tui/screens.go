@@ -25,7 +25,11 @@ func isActive(s domain.JobState) bool {
 func (m *Model) dashboardBody(bw int) []string {
 	var attention []wire.Node
 	reachable := 0
+	nodes, guests := m.countNodesAndGuests()
 	for _, n := range m.nodes {
+		if isGuest(n) {
+			continue
+		}
 		if n.Reachability == domain.ReachabilityReachable {
 			reachable++
 		}
@@ -41,7 +45,7 @@ func (m *Model) dashboardBody(bw int) []string {
 	}
 	lines := []string{
 		"",
-		m.kv("NODES", fmt.Sprintf("%d total · %d reachable · %d need attention", len(m.nodes), reachable, len(attention)), bw),
+		m.kv("NODES", nodesSummary(nodes, guests, reachable, len(attention)), bw),
 		m.kv("APPROVALS", fmt.Sprintf("%d awaiting", len(m.approvals)), bw),
 		m.kv("JOBS", fmt.Sprintf("%d active", len(active)), bw),
 		"",
@@ -68,6 +72,14 @@ func (m *Model) dashboardBody(bw int) []string {
 		lines = append(lines, m.th.dim.Render("   no active jobs"))
 	}
 	return lines
+}
+
+func nodesSummary(nodes, guests, reachable, attention int) string {
+	text := fmt.Sprintf("%d total", nodes)
+	if guests > 0 {
+		text += fmt.Sprintf(" · %d guests", guests)
+	}
+	return text + fmt.Sprintf(" · %d reachable · %d need attention", reachable, attention)
 }
 
 func attentionDetail(n wire.Node) string {
@@ -111,9 +123,24 @@ func (m *Model) nodeTree(w, h int) []string {
 	return append(lines[:2:2], window(lines[2:], cursorRow-2, max(h-2, 1))...)
 }
 
+// isGuest reports whether n is a Proxmox VM or container: it has no SSH
+// endpoint, so sessions and probes do not apply to it.
+func isGuest(n wire.Node) bool {
+	return n.Proxmox != nil && n.Proxmox.Type != proxmoxClusterNode
+}
+
+func (m *Model) countNodesAndGuests() (nodes, guests int) {
+	for _, n := range m.nodes {
+		if isGuest(n) {
+			guests++
+		}
+	}
+	return len(m.nodes) - guests, guests
+}
+
 // treeIndent nests a Proxmox guest under its cluster node.
 func treeIndent(n wire.Node) string {
-	if n.Proxmox != nil && n.Proxmox.Type != proxmoxClusterNode {
+	if isGuest(n) {
 		return "    "
 	}
 	return "  "
@@ -265,6 +292,10 @@ func (m *Model) resourcesKey(key tea.KeyPressMsg) tea.Cmd {
 
 // nodeShortcuts are the keys shared by the tree and the node screen.
 func (m *Model) nodeShortcuts(n wire.Node, key tea.KeyPressMsg, fromTree bool) tea.Cmd {
+	if k := key.String(); isGuest(n) && (k == "s" || k == "d" || k == "p") {
+		m.notice = notice{text: safe(n.Name) + " is a Proxmox guest: it has no SSH endpoint (use the power command)", isErr: true}
+		return nil
+	}
 	switch key.String() {
 	case "enter":
 		if fromTree {
