@@ -1,0 +1,19 @@
+                                                                              
+ Deploy shop to production                                                    
+                                                                              
+ App:     shop                                                                
+ Target:  production on node 0000d001                                         
+ Commit:  abababababababababababababababababababab                            
+ Image:   web sha256:ccccccccccccccccccccccccccccccccccccccccccccccccccccccc… 
+                                                                              
+ Nothing runs yet. Confirming records the deployment; the daemon then         
+ verifies CI for this commit, freezes the plan and, when policy asks          
+ for it, waits for approval.                                                  
+                                                                              
+                                                                              
+                                                                              
+                                                                              
+                                                                              
+                                                                              
+                                                                              
+                                                                              
