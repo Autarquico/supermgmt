@@ -49,10 +49,13 @@ func newProvisionedLab(t *testing.T, o instanceOptions, grants ...string) *lab {
 }
 
 // rotateHostKey replaces sshd's host key and restarts sshd.
+// rotateHostKey also kills the established sessions. OpenSSH before 9.8 (Ubuntu
+// 24.04) has no sshd-session binary: its sessions are titled "sshd: user@...",
+// and the listener ("sshd: /usr/sbin/sshd ...") is excluded by the leading slash.
 func (n *node) rotateHostKey(t *testing.T) {
 	t.Helper()
 	n.sh(t, "rm -f /etc/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key.pub && "+
-		"ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key && systemctl restart ssh.service && { pkill -f '[s]shd-session' || true; }")
+		"ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key && systemctl restart ssh.service && { pkill -f '^sshd(-session)?: [^/ ]' || true; }")
 }
 
 func (n *node) acceptedLogins(t *testing.T) int {

@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"os"
 	"slices"
 	"testing"
 
@@ -10,6 +11,14 @@ import (
 	"github.com/autarquico/supermgmt/internal/discovery"
 	"github.com/autarquico/supermgmt/test/fixtures/fixture"
 )
+
+// discoveryOSID is the /etc/os-release ID of a SM_FIXTURE_DISTRO value (empty = debian13).
+func discoveryOSID(distro string) string {
+	if distro == "ubuntu2404" {
+		return "ubuntu"
+	}
+	return "debian"
+}
 
 func TestFixturesDiscovery_ProbeOfANodeBeforeSetupIsReadOnly(t *testing.T) {
 	n := startNode(t, fixture.Options{})
@@ -22,9 +31,9 @@ func TestFixturesDiscovery_ProbeOfANodeBeforeSetupIsReadOnly(t *testing.T) {
 	}
 	snap.TakenAt = fixtureEpoch
 
-	t.Run("the snapshot describes the Debian node", func(t *testing.T) {
-		if snap.OS.ID != "debian" || snap.Kernel == "" || snap.Hostname == "" {
-			t.Errorf("os/kernel/hostname = %+v %q %q; want a Debian host", snap.OS, snap.Kernel, snap.Hostname)
+	t.Run("the snapshot describes the selected distro node", func(t *testing.T) {
+		if want := discoveryOSID(os.Getenv(fixture.DistroEnv)); snap.OS.ID != want || snap.Kernel == "" || snap.Hostname == "" {
+			t.Errorf("os/kernel/hostname = %+v %q %q; want a %s host", snap.OS, snap.Kernel, snap.Hostname, discoveryOSID(os.Getenv(fixture.DistroEnv)))
 		}
 		if !snap.Systemd.Active || snap.Systemd.SystemctlPath == "" || snap.Systemd.Version == "" {
 			t.Errorf("systemd = %+v; want active with a path and version", snap.Systemd)
