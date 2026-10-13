@@ -90,16 +90,17 @@ func TestM1_DaemonKilledMidRestartReconciles(t *testing.T) {
 	}
 }
 
-// evidenceInvocationIDs reads the InvocationIDs the job's intent recorded
-// before (pre_state) and observed after (evidence) the operation.
+// evidenceInvocationIDs reads the InvocationID the job's intent recorded
+// before (pre_state) and the one the reconciler observed after
+// (evidence.fingerprint) the operation.
 func evidenceInvocationIDs(t *testing.T, d wire.JobDetail) (pre, post string) {
 	t.Helper()
 	for _, in := range d.Intents {
 		if !strings.Contains(in.Operation, "restart") && !strings.Contains(in.Operation, "service") {
 			continue
 		}
-		pre = findString(in.PreState, "invocation_id")
-		post = findString(in.Evidence, "invocation_id")
+		pre = invocationIDIn(in.PreState)
+		post = invocationIDIn(observedFingerprint(in.Evidence))
 		if pre != "" || post != "" {
 			return pre, post
 		}
@@ -108,32 +109,42 @@ func evidenceInvocationIDs(t *testing.T, d wire.JobDetail) (pre, post string) {
 	return "", ""
 }
 
-// findString returns the first string value stored under key anywhere in raw.
-func findString(raw json.RawMessage, key string) string {
-	var doc any
-	if json.Unmarshal(raw, &doc) != nil {
+func observedFingerprint(evidence json.RawMessage) json.RawMessage {
+	var doc struct {
+		Fingerprint json.RawMessage `json:"fingerprint"`
+	}
+	if json.Unmarshal(evidence, &doc) != nil {
+		return nil
+	}
+	return doc.Fingerprint
+}
+
+func invocationIDIn(unitState json.RawMessage) string {
+	var doc struct {
+		InvocationID string `json:"invocation_id"`
+	}
+	if json.Unmarshal(unitState, &doc) != nil {
 		return ""
 	}
-	var walk func(any) string
-	walk = func(v any) string {
-		switch x := v.(type) {
-		case map[string]any:
-			if s, ok := x[key].(string); ok {
-				return s
-			}
-			for _, child := range x {
-				if s := walk(child); s != "" {
-					return s
-				}
-			}
-		case []any:
-			for _, child := range x {
-				if s := walk(child); s != "" {
-					return s
-				}
-			}
+	return doc.InvocationID
+}
+
+// The reconciler's evidence carries both the observed state (fingerprint) and
+// the pre-state it was judged against, each with an invocation_id. The post
+// InvocationID must come from the fingerprint, never from whichever of the two
+// a map walk visits first.
+func TestS4EvidenceInvocationIDsIgnoreThePreStateEchoedInEvidence(t *testing.T) {
+	detail := wire.JobDetail{Intents: []wire.Intent{{
+		Operation: "service.restart",
+		PreState:  json.RawMessage(`{"invocation_id":"old","active_state":"active"}`),
+		Evidence: json.RawMessage(`{"done":true,"classification":"complete",` +
+			`"fingerprint":{"invocation_id":"new","active_state":"active"},` +
+			`"pre":{"invocation_id":"old","active_state":"active"}}`),
+	}}}
+	for range 200 {
+		pre, post := evidenceInvocationIDs(t, detail)
+		if pre != "old" || post != "new" {
+			t.Fatalf("evidenceInvocationIDs = (%q, %q), want (old, new)", pre, post)
 		}
-		return ""
 	}
-	return walk(doc)
 }
