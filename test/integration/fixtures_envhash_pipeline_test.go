@@ -86,7 +86,7 @@ func TestFixtures_EnvHashThroughThePipeline(t *testing.T) {
 		t.Fatalf("Freeze: %v", err)
 	}
 	values := composeEqResolved(frozen)
-	expected := compose.ExpectedEnvHashes(frozen, values, nil)
+	expected := compose.ExpectedEnvHashes(frozen, values)
 
 	// check stages a fresh deployment, lets tamper change it on the node, and
 	// reports how the node's report differs from the control plane's expectation.

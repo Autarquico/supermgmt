@@ -193,7 +193,7 @@ func composeEqCompare(t *testing.T, n *fixtureNode, project string, src compose.
 		t.Fatalf("Materialize: %v", err)
 	}
 	cliModel, cliSet := composeEqStage(t, n, project, deployment, bundle)
-	hashes := compose.ExpectedEnvHashes(frozen, values, nil)
+	hashes := compose.ExpectedEnvHashes(frozen, values)
 	if len(cliSet) != len(hashes) {
 		t.Errorf("node reported %d environment entries; the loader expects %d", len(cliSet), len(hashes))
 	}
