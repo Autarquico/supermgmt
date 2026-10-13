@@ -31,6 +31,10 @@ jobs:
         with:
           languages: go
           build-mode: autobuild
+          # Test harnesses and simulators (test/) never ship; they talk to URLs the tests choose.
+          config: |
+            paths-ignore:
+              - test/**
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: /language:go
