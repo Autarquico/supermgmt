@@ -132,6 +132,18 @@ func (m *Model) onHandoffOpened(msg handoffOpenedMsg) tea.Cmd {
 	return tea.ExecProcess(h.Cmd, returned)
 }
 
+// dropInterruptWhileHandingOff drops the SIGINT bubbletea queues when Ctrl-C
+// reaches the whole foreground process group: during a handoff it is meant for
+// the child, and delivered after the child exits it would kill the TUI.
+func dropInterruptWhileHandingOff(m tea.Model, msg tea.Msg) tea.Msg {
+	if _, interrupt := msg.(tea.InterruptMsg); interrupt {
+		if model, ok := m.(*Model); ok && model.handingOff {
+			return nil
+		}
+	}
+	return msg
+}
+
 // exitOutcome maps the ExecProcess error to Handoff.Done's arguments.
 func exitOutcome(err error) (code int, launchErr error) {
 	var exited *exec.ExitError

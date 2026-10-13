@@ -174,7 +174,7 @@ func Run(ctx context.Context, api API, o Options) error {
 	if o.Follow != nil {
 		model.followState = followLive
 	}
-	program := tea.NewProgram(model, tea.WithContext(ctx))
+	program := tea.NewProgram(model, tea.WithContext(ctx), tea.WithFilter(dropInterruptWhileHandingOff))
 	if o.Follow != nil {
 		go follow(ctx, o.Follow, program.Send)
 	}
