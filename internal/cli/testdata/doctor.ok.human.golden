@@ -5,5 +5,5 @@ ok      data_dir       <tmp>/data (mode 0700)
 ok      socket         <tmp>/run/sm.sock: directory is created by the daemon
 ok      database_file  <tmp>/data/supermgmt.db (mode 0600)
 ok      database_lock  no other process holds <tmp>/data/supermgmt.db.lock
-ok      schema         version 5 matches this binary
+ok      schema         version 6 matches this binary
 ok      integrity      PRAGMA integrity_check: ok
