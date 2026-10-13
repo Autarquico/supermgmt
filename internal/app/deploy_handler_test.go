@@ -892,3 +892,28 @@ func TestReconcileDeploy_CrashAfterLongComposeUpReconcilesFromTheHandlersOwnEvid
 		t.Fatalf("recovery record %+v, want a safety recovery toward %s", record, good.ID)
 	}
 }
+
+func TestCommandDispatcher_TimedOutCommandIsNeverClosedAsSucceeded(t *testing.T) {
+	f := newFixture(t)
+	node := newFakeNode(t)
+	node.on("compose.pull", func(templates.Command) (transport.Result, error) {
+		time.Sleep(200 * time.Millisecond)
+		return transport.Result{}, context.DeadlineExceeded
+	})
+	ledger := newRestoreRecorder()
+
+	_, err := commandDispatcher{Node: node, Ledger: ledger, Clock: f.clock}.dispatch(context.Background(), nodeCommand{
+		Step: "pull", Operation: "compose.pull", Marker: "marker-1",
+		Command: templates.Command{Template: "compose.pull", Mutating: true}, RunTimeout: 20 * time.Millisecond,
+	})
+
+	if err == nil {
+		t.Fatal("a timed-out command was reported as done")
+	}
+	if got := ledger.completed[0]; got != jobs.OutcomeFailed {
+		t.Errorf("intent outcome = %q, want %q", got, jobs.OutcomeFailed)
+	}
+	if ev := string(ledger.evidence[0]); strings.Contains(ev, `"exit_status"`) || !strings.Contains(ev, `"timed_out":true`) {
+		t.Errorf("evidence = %s, want a timed_out marker and no exit status", ev)
+	}
+}
