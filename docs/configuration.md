@@ -2,7 +2,7 @@
 
 SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox providers (M3) are read by the daemon; GitHub and deployments: M4, MCP: M5.
+> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox providers (M3) and GitHub providers and `github.*` (M4) are read by the daemon; MCP: M5.
 
 ## File location
 
@@ -28,6 +28,8 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 - `refresh.*`, `jobs.*`, `server.shutdown_timeout`
 - `environments` and SSH `providers`, applied when the daemon starts
 - Proxmox `providers` (M3), applied when the daemon starts and then synced every `sync_interval`; see [providers.md](providers.md#proxmox)
+- GitHub `providers` (M4), applied when the daemon starts; see [GitHub](#github)
+- `github.oidc_audience`, `github.ci_poll_initial`, `github.ci_poll_max`, `github.ci_timeout`, and `health.allowed_private_cidrs` (control-plane health checks only); environment keys `require_provenance` and `allow_automatic_rollback` (`internal/daemon/assemble.go`, `internal/app/staticconfig.go`)
 
 ### Server (M2), read by `sm server`
 
@@ -45,7 +47,7 @@ Reading was checked by searching the code for each key; a key not listed has no 
 
 - `ssh.host_key_policy` (must be `strict`) and `ssh.logs_mode`: the log mode of a node comes from the `logs_mode` parameter of its `node.setup` plan.
 - `ui.theme`, `server.public_url` (only the installer and the default of `github.oidc_audience` use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
-- `health.*`, `github.*`, `mcp.*`
+- `mcp.*`
 
 ## How a value is resolved
 
@@ -240,6 +242,39 @@ providers:
 ```
 
 An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`, M3) is applied the same way and then synced; its keys, `verify_tls: true` (required) and `ca_file` are described in [providers.md](providers.md#proxmox).
+
+## GitHub
+
+A GitHub provider and the `github:` block configure the GitHub connector used by apps and deployments ([deployments.md](deployments.md)). Applications and their targets are **not** in this file; they are created with `sm apps` or the API.
+
+```yaml
+providers:
+  - type: github
+    name: github
+    api_url: https://api.github.com            # default; the exact origin is the only host contacted
+    credential_ref: secret://providers/github/token
+    webhook_secret_ref: secret://providers/github/webhook   # server mode only
+    ca_file: ""                                 # optional absolute path (GitHub Enterprise Server)
+
+github:
+  oidc_audience: ""     # default: server.public_url; required `aud` of GitHub Actions tokens
+  ci_poll_initial: 15s
+  ci_poll_max: 2m       # server mode: also the backstop poll next to webhooks
+  ci_timeout: 2h
+
+environments:
+  - name: production
+    risk_level: production
+    require_provenance: true         # only an attestation binds the deployed digest
+    allow_automatic_rollback: false  # default false
+```
+
+- `api_url` must be https without userinfo, query, fragment or trailing slash; `credential_ref` and `webhook_secret_ref` must be `secret://`; `ca_file` must be absolute (`internal/config/github.go`, tests `TestGitHubProviderRejections`, `TestGitHubProviderAcceptsEnterpriseServer`). The credential is a read-only fine-grained token; whether the permission set listed in [deployments.md](deployments.md#register-github) is exactly sufficient is **not verified against real GitHub**.
+- Redirects from the GitHub API are followed only up to three hops and only to the exact origin (scheme, host and port) of `api_url`; the token is attached only to requests to that origin (`TestRedirect_OriginPinned`, `TestClient_TokenNeverOffOrigin`). Real GitHub's redirect behavior is **not verified**.
+- Setting `github.oidc_audience` (or `server.public_url`, its default) enables Actions OIDC bearers on the HTTPS listener. With neither set, Actions tokens are not accepted (`TestGitHubActionsTokensAreAcceptedOnlyWithAnAudience`).
+- The webhook is `POST /api/v1/github/webhook`, HTTPS listener only, authenticated by HMAC-SHA256 over the body with the secret behind `webhook_secret_ref`. Local mode has no webhook and only polls.
+- `require_provenance` and `allow_automatic_rollback` are read from the file at start like the other environment keys. A `GitHub` provider can also be registered by `POST /api/v1/providers`; **that route accepts only `type: local` in this build**, so use the file.
+- `github.ci_poll_*` and `ci_timeout` are read by the CI watcher (`internal/daemon/assemble.go`); the generated table above lists their environment variables.
 
 ## Policy
 
