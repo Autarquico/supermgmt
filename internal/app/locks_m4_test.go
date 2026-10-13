@@ -139,3 +139,32 @@ func TestDeploymentLocks_ADeploymentJobWithoutAPlanCannotNameItsLocks(t *testing
 
 	wantError(t, err, smerr.CodeInternal, "")
 }
+
+func TestDeploymentLocks_TheRollbackTargetsPortsAreLockedToo(t *testing.T) {
+	w := newDeployWorld(t)
+	next, good := w.afterKnownGood()
+	w.exec(`UPDATE plans SET plan_json = json_set(plan_json, '$.content.host_ports', json('["127.0.0.1:9999","127.0.0.1:8080"]')) WHERE id = ?`, *good.PlanID)
+	job := jobs.Job{Type: deploymentCreateAction, Resource: domain.ResourceRef{Type: domain.ResourceAppTarget, ID: w.target.ID}}
+
+	specs, err := deploymentLocks(context.Background(), w.db.Reader(), job, w.planOf(next.ID))
+
+	mustf(t, err, "deploymentLocks")
+	want := []domain.LockSpec{
+		domain.ComposeProjectLock(w.node.ID, "sm-web-dev", domain.LockExclusive),
+		domain.PortLock(w.node.ID, "127.0.0.1", 8080, domain.LockExclusive),
+		domain.PortLock(w.node.ID, "127.0.0.1", 9999, domain.LockExclusive),
+	}
+	if !slices.Equal(specs, want) {
+		t.Errorf("locks = %v, want %v", specs, want)
+	}
+}
+
+func TestDeploymentLocks_ARollbackTargetThatIsGoneCannotNameItsLocks(t *testing.T) {
+	w := newDeployWorld(t)
+	job := jobs.Job{Type: deploymentCreateAction, Resource: domain.ResourceRef{Type: domain.ResourceAppTarget, ID: w.target.ID}}
+	p := plan.Plan{Content: plan.Content{RollbackTarget: &plan.RollbackTarget{DeploymentID: "missing"}}}
+
+	_, err := deploymentLocks(context.Background(), w.db.Reader(), job, p)
+
+	wantError(t, err, smerr.CodeNotFound, "")
+}
