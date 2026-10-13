@@ -97,6 +97,8 @@ var schemaTypes = map[string]reflect.Type{
 	"DeploymentStep":    reflect.TypeFor[wire.DeploymentStep](),
 	"StepError":         reflect.TypeFor[wire.StepError](),
 	"WebhookAck":        reflect.TypeFor[webhookAck](),
+	"MCPClient":         reflect.TypeFor[wire.MCPClient](),
+	"MCPTokenIssued":    reflect.TypeFor[wire.MCPTokenIssued](),
 
 	"CreateProviderRequest":       reflect.TypeFor[wire.CreateProviderRequest](),
 	"CreateGitHubProviderRequest": reflect.TypeFor[wire.CreateGitHubProviderRequest](),
@@ -125,6 +127,8 @@ var schemaTypes = map[string]reflect.Type{
 	"ImportSecretRequest":         reflect.TypeFor[wire.ImportSecretRequest](),
 	"EnrollmentRequest":           reflect.TypeFor[wire.EnrollmentRequest](),
 	"EnrollRequest":               reflect.TypeFor[wire.EnrollRequest](),
+	"RegisterMCPClientRequest":    reflect.TypeFor[wire.RegisterMCPClientRequest](),
+	"IssueMCPTokenRequest":        reflect.TypeFor[wire.IssueMCPTokenRequest](),
 
 	"PageOfEvent":      reflect.TypeFor[wire.Page[wire.Event]](),
 	"PageOfApproval":   reflect.TypeFor[wire.Page[wire.Approval]](),
@@ -139,6 +143,7 @@ var schemaTypes = map[string]reflect.Type{
 	"PageOfAppTarget":  reflect.TypeFor[wire.Page[wire.AppTarget]](),
 	"PageOfRepository": reflect.TypeFor[wire.Page[wire.Repository]](),
 	"PageOfDeployment": reflect.TypeFor[wire.Page[wire.Deployment]](),
+	"PageOfMCPClient":  reflect.TypeFor[wire.Page[wire.MCPClient]](),
 
 	"DirectOfProvider":         reflect.TypeFor[wire.Direct[wire.Provider]](),
 	"DirectOfNode":             reflect.TypeFor[wire.Direct[wire.Node]](),
@@ -149,6 +154,7 @@ var schemaTypes = map[string]reflect.Type{
 	"DirectOfEmpty":            reflect.TypeFor[wire.Direct[struct{}]](),
 	"DirectOfApp":              reflect.TypeFor[wire.Direct[wire.App]](),
 	"DirectOfAppTarget":        reflect.TypeFor[wire.Direct[wire.AppTarget]](),
+	"DirectOfMCPClient":        reflect.TypeFor[wire.Direct[wire.MCPClient]](),
 }
 
 // scalarSchemas are shared primitives with no wire struct behind them.
@@ -207,8 +213,9 @@ func serverRoutes(t *testing.T) map[string]Route {
 	t.Helper()
 	out := map[string]Route{}
 	// The local harness serves the M1-M3 routes; the M4 fixture adds the app,
-	// deployment and webhook routes, which exist only with their services.
-	for _, rt := range slices.Concat(newHarness(t).server.Routes(), newM4Fixture(t).server.Routes()) {
+	// deployment and webhook routes, and the M5 fixture the MCP client routes;
+	// each exists only with its service.
+	for _, rt := range slices.Concat(newHarness(t).server.Routes(), newM4Fixture(t).server.Routes(), newM5Fixture(t).server.Routes()) {
 		out[rt.Method+" "+rt.Pattern] = rt
 	}
 	return out

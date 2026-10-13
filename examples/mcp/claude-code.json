@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "supermgmt": {
+      "type": "stdio",
+      "command": "sm",
+      "args": ["mcp", "--keychain", "supermgmt-mcp-claude-code"]
+    }
+  }
+}

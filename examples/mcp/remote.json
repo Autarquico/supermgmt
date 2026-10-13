@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "supermgmt": {
+      "type": "http",
+      "url": "https://supermgmt.example.com/mcp"
+    }
+  }
+}
