@@ -5,8 +5,8 @@ info:
   summary: The /api/v1 contract of the SuperMgmt daemon.
   description: |
     Hand-written and authoritative (spec section 23, ADR-0012). Every operation carries
-    `x-supermgmt-route`, exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`
-    or `exempt:self`. `make api-check` fails when this document and the Go route table differ.
+    `x-supermgmt-route`, exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`,
+    `exempt:self` or `exempt:webhook`. `make api-check` fails when this document and the Go route table differ.
 
     Every success is `{"data": ..., "meta": {...}}`; every failure is `{"error": {...}}`.
     Over HTTPS callers send `Authorization: Bearer <token>`. On the local-mode Unix socket the
@@ -54,6 +54,10 @@ tags:
     description: Backups.
   - name: enrollment
     description: Join tokens and node enrollment.
+  - name: apps
+    description: Applications and their environment targets.
+  - name: deployments
+    description: Deployments, rollbacks and the GitHub webhook.
 paths:
   /health/live:
     get:
@@ -338,7 +342,8 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createProvider
-      summary: Register a provider; only type `local` is accepted.
+      summary: Register a provider; `local` or `github`.
+      description: The body is discriminated by `type`. A GitHub provider holds `secret://` references, never token values.
       tags: [providers]
       x-supermgmt-route: action:provider.write
       parameters:
@@ -347,7 +352,15 @@ paths:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/CreateProviderRequest'}
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/CreateProviderRequest'
+                - $ref: '#/components/schemas/CreateGitHubProviderRequest'
+              discriminator:
+                propertyName: type
+                mapping:
+                  local: '#/components/schemas/CreateProviderRequest'
+                  github: '#/components/schemas/CreateGitHubProviderRequest'
       responses:
         '201':
           description: Registered at once.
@@ -973,6 +986,298 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Enrolled'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/providers/{id}/repositories:
+    get:
+      operationId: listProviderRepositories
+      summary: The repositories a GitHub provider's credential can see.
+      description: Entries not yet referenced by an app have a null `id`.
+      tags: [providers]
+      x-supermgmt-route: action:provider.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of repositories.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfRepository'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/apps:
+    get:
+      operationId: listApps
+      summary: The applications.
+      tags: [apps]
+      x-supermgmt-route: action:app.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of apps.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfApp'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createApp
+      summary: Create an application.
+      tags: [apps]
+      x-supermgmt-route: action:app.write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAppRequest'}
+      responses:
+        '201':
+          description: Created at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfApp'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfApp'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/apps/{id}:
+    get:
+      operationId: getApp
+      summary: An application with its targets.
+      tags: [apps]
+      x-supermgmt-route: action:app.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The app.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/App'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateApp
+      summary: Change an application; absent fields are unchanged.
+      description: Name, repository and deployed service are fixed at creation.
+      tags: [apps]
+      x-supermgmt-route: action:app.write
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AppPatch'}
+      responses:
+        '200':
+          description: Updated at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfApp'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfApp'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/apps/{id}/targets:
+    get:
+      operationId: listAppTargets
+      summary: The targets of an application.
+      tags: [apps]
+      x-supermgmt-route: action:app_target.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: All targets of the app; the page has no cursor.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfAppTarget'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAppTarget
+      summary: Bind an application to an environment and a node.
+      description: The Compose project is derived, `sm-<app>-<environment>`.
+      tags: [apps]
+      x-supermgmt-route: action:app_target.write
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAppTargetRequest'}
+      responses:
+        '201':
+          description: Created at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfAppTarget'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfAppTarget'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/app-targets/{id}:
+    get:
+      operationId: getAppTarget
+      summary: One application target.
+      tags: [apps]
+      x-supermgmt-route: action:app_target.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The target.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/AppTarget'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateAppTarget
+      summary: Change the deployment policy of a target.
+      description: Environment, node and Compose project never change.
+      tags: [apps]
+      x-supermgmt-route: action:app_target.write
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AppTargetPatch'}
+      responses:
+        '200':
+          description: Updated at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfAppTarget'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfAppTarget'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/deployments:
+    get:
+      operationId: listDeployments
+      summary: Deployments, newest first, optionally filtered.
+      tags: [deployments]
+      x-supermgmt-route: action:deployment.read
+      parameters:
+        - {name: app_id, in: query, required: false, description: Only deployments of this app., schema: {$ref: '#/components/schemas/ID'}}
+        - {name: app_target_id, in: query, required: false, description: Only deployments of this target., schema: {$ref: '#/components/schemas/ID'}}
+        - {name: environment_id, in: query, required: false, description: Only deployments to this environment., schema: {$ref: '#/components/schemas/ID'}}
+        - {name: state, in: query, required: false, description: Only deployments in this state., schema: {type: string}}
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of deployments.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfDeployment'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createDeployment
+      summary: Request a deployment of a commit and its image digests to one target.
+      description: >-
+        Callable by a person or by a GitHub Actions OIDC credential. The deployment starts provisional
+        (`created`, then `waiting_ci`); SuperMgmt verifies the required checks and the artifact provenance
+        itself before it becomes a plan, so the request is no evidence that tests passed.
+      tags: [deployments]
+      x-supermgmt-route: action:deployment.create
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDeploymentRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/Deployment'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/deployments/{id}:
+    get:
+      operationId: getDeployment
+      summary: A deployment with its steps.
+      tags: [deployments]
+      x-supermgmt-route: action:deployment.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': {$ref: '#/components/responses/Deployment'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/deployments/{id}/rollback:
+    post:
+      operationId: rollbackDeployment
+      summary: Roll the target back to a known-good deployment.
+      description: The body is optional; without `to_deployment_id` the newest known-good deployment of the same target older than `{id}` is used.
+      tags: [deployments]
+      x-supermgmt-route: action:deployment.rollback
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RollbackRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/Deployment'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/deployments/{id}/cancel:
+    post:
+      operationId: cancelDeployment
+      summary: Cancel a deployment that has not started changing the node.
+      tags: [deployments]
+      x-supermgmt-route: action:job.cancel
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': {$ref: '#/components/responses/Deployment'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/webhook:
+    post:
+      operationId: receiveGitHubWebhook
+      summary: Receive a GitHub webhook delivery.
+      description: >-
+        Server mode, HTTPS only; local mode polls CI instead. Carries no bearer token: the caller is
+        authenticated by the HMAC-SHA256 of the raw body under a GitHub provider's webhook secret. A delivery
+        only triggers a re-evaluation of the deployments waiting on a commit; the GitHub API stays the source
+        of truth. A bad signature is UNAUTHENTICATED whatever the reason. Takes no `Idempotency-Key`; a repeated
+        `X-GitHub-Delivery` is acknowledged as `duplicate`.
+      tags: [deployments]
+      x-supermgmt-route: exempt:webhook
+      security: []
+      parameters:
+        - {name: X-Hub-Signature-256, in: header, required: true, description: 'sha256=<hex HMAC of the body>.', schema: {type: string}}
+        - {name: X-GitHub-Delivery, in: header, required: true, description: 'Delivery id: at most 128 printable bytes.', schema: {type: string, minLength: 1, maxLength: 128}}
+        - {name: X-GitHub-Event, in: header, required: false, description: The GitHub event name., schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true, description: The GitHub event payload.}
+      responses:
+        '200':
+          description: The delivery was verified.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/WebhookAck'}}}]}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     bearer:
@@ -1057,6 +1362,11 @@ components:
       content:
         application/json:
           schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Submission'}}}]}
+    Deployment:
+      description: The deployment.
+      content:
+        application/json:
+          schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Deployment'}}}]}
     Job:
       description: The job.
       content:
@@ -1760,4 +2070,289 @@ components:
       required: [applied, pending]
       properties:
         applied: {oneOf: [{$ref: '#/components/schemas/Empty'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    CreateGitHubProviderRequest:
+      type: object
+      description: The body of POST /providers when `type` is `github`. Credentials are `secret://` references, never values.
+      required: [type, name, api_url, credential_ref, webhook_secret_ref, ca_file]
+      properties:
+        type: {type: string, enum: [github]}
+        name: {type: string}
+        api_url: {type: string, description: GitHub API base URL; empty means github.com.}
+        credential_ref: {type: string, description: secret:// reference to the API token.}
+        webhook_secret_ref: {type: string, description: secret:// reference to the webhook signing secret.}
+        ca_file: {type: string, description: PEM bundle trusted for a GitHub Enterprise server; empty means the system roots.}
+    WebhookAck:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [nudged, ignored, duplicate]}
+    Repository:
+      type: object
+      description: A stored repository row (`id` set) or a listing entry not yet referenced by an app (`id` null).
+      required: [id, provider_id, github_repository_id, github_owner_id, owner, name, url, default_branch, private]
+      properties:
+        id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        provider_id: {$ref: '#/components/schemas/ID'}
+        github_repository_id: {type: integer, format: int64}
+        github_owner_id: {type: integer, format: int64}
+        owner: {type: string}
+        name: {type: string}
+        url: {type: string}
+        default_branch: {type: string}
+        private: {type: boolean}
+    ImagePolicy:
+      type: object
+      required: [deployed, sidecars, pinned]
+      properties:
+        deployed: {type: string, description: Image repository of the deployed service.}
+        sidecars: {type: object, additionalProperties: {type: string}, description: Service name to image repository.}
+        pinned: {type: array, items: {type: string}, description: Digests an admin approved without provenance.}
+    ServiceExceptions:
+      type: object
+      required: [cap_add, sysctls, extra_hosts, shm_size]
+      properties:
+        cap_add: {type: array, items: {type: string}}
+        sysctls: {type: object, additionalProperties: {type: string}}
+        extra_hosts: {type: array, items: {type: string}}
+        shm_size: {type: string}
+    ComposeExceptions:
+      type: object
+      description: Admin-approved exact values per service.
+      required: [services]
+      properties:
+        services: {type: object, additionalProperties: {$ref: '#/components/schemas/ServiceExceptions'}}
+    RequiredCheck:
+      type: object
+      required: [name, app_id, workflow_path]
+      properties:
+        name: {type: string}
+        app_id: {type: integer, format: int64, description: The GitHub App that must have produced the check run.}
+        workflow_path: {type: string}
+    CIPolicy:
+      type: object
+      description: GitHub ids are numeric; names are display only.
+      required: [repository_id, owner_id, branch, allowed_events, required_checks, deploy_workflow, deploy_reusable_workflow]
+      properties:
+        repository_id: {type: integer, format: int64}
+        owner_id: {type: integer, format: int64}
+        branch: {type: string}
+        allowed_events: {type: array, items: {type: string}}
+        required_checks: {type: array, items: {$ref: '#/components/schemas/RequiredCheck'}}
+        deploy_workflow: {type: string}
+        deploy_reusable_workflow: {type: string}
+    BackupPolicy:
+      type: object
+      required: [template, args, timeout]
+      properties:
+        template: {type: string, enum: [postgres-dump]}
+        args: {type: object, additionalProperties: {type: string}}
+        timeout: {type: string, description: 'Go duration, e.g. 10m.'}
+    HealthCheck:
+      type: object
+      description: Node scope names a port and a path; control_plane scope names a URL.
+      required: [type, scope, port, path, url, timeout, interval, attempts]
+      properties:
+        type: {type: string, enum: [http, https, tcp, docker-health]}
+        scope: {type: string, enum: [node, control_plane]}
+        port: {type: integer}
+        path: {type: string}
+        url: {type: string}
+        timeout: {type: string, description: Go duration.}
+        interval: {type: string, description: Go duration.}
+        attempts: {type: integer}
+    DeploymentPolicy:
+      type: object
+      required: [rollback, stateful, pre_deploy_backup, snapshot, allowed_bind_addresses, health]
+      properties:
+        rollback: {type: string, enum: [automatic, manual]}
+        stateful: {type: boolean, description: True forces manual rollback.}
+        pre_deploy_backup: {oneOf: [{$ref: '#/components/schemas/BackupPolicy'}, {type: 'null'}]}
+        snapshot: {type: boolean, description: True is refused in this version.}
+        allowed_bind_addresses: {type: array, items: {type: string}}
+        health: {oneOf: [{$ref: '#/components/schemas/HealthCheck'}, {type: 'null'}]}
+    AppTarget:
+      type: object
+      required: [id, app_id, environment_id, environment, node_id, compose_project, deployment_policy, spec_revision, created_at, updated_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        app_id: {$ref: '#/components/schemas/ID'}
+        environment_id: {$ref: '#/components/schemas/ID'}
+        environment: {type: string}
+        node_id: {$ref: '#/components/schemas/ID'}
+        compose_project: {type: string}
+        deployment_policy: {$ref: '#/components/schemas/DeploymentPolicy'}
+        spec_revision: {type: integer, format: int64}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+    App:
+      type: object
+      description: Compose content may hold `${secret:<ref>}` references, never a secret value.
+      required: [id, name, repository, manifest_path, deployed_service, image_policy, compose_source, compose_content, compose_source_hash, compose_exceptions, variables, secret_refs, ci_policy, automation_identity_id, targets, spec_revision, created_at, updated_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        repository: {oneOf: [{$ref: '#/components/schemas/Repository'}, {type: 'null'}]}
+        manifest_path: {type: string}
+        deployed_service: {type: string}
+        image_policy: {$ref: '#/components/schemas/ImagePolicy'}
+        compose_source: {type: string, enum: [control-plane, repository]}
+        compose_content: {type: string}
+        compose_source_hash: {type: string}
+        compose_exceptions: {$ref: '#/components/schemas/ComposeExceptions'}
+        variables: {type: object, additionalProperties: {type: string}}
+        secret_refs: {type: object, additionalProperties: {type: string}, description: Reference name to secret:// path.}
+        ci_policy: {oneOf: [{$ref: '#/components/schemas/CIPolicy'}, {type: 'null'}]}
+        automation_identity_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        targets: {type: array, items: {$ref: '#/components/schemas/AppTarget'}}
+        spec_revision: {type: integer, format: int64}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+    CreateAppRequest:
+      type: object
+      required: [name, provider_id, repository_id, manifest_path, deployed_service, image_policy, compose_source, compose_content, compose_exceptions, variables, secret_refs, ci_policy, automation_identity]
+      properties:
+        name: {type: string}
+        provider_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        repository_id: {type: [integer, 'null'], format: int64, description: The GitHub repository id under provider_id.}
+        manifest_path: {type: string}
+        deployed_service: {type: string}
+        image_policy: {$ref: '#/components/schemas/ImagePolicy'}
+        compose_source: {type: string, enum: [control-plane, repository]}
+        compose_content: {type: string}
+        compose_exceptions: {$ref: '#/components/schemas/ComposeExceptions'}
+        variables: {type: object, additionalProperties: {type: string}}
+        secret_refs: {type: object, additionalProperties: {type: string}}
+        ci_policy: {oneOf: [{$ref: '#/components/schemas/CIPolicy'}, {type: 'null'}]}
+        automation_identity: {type: boolean, description: Link the GitHub Actions identity for the deploy workflow (no role).}
+    AppPatch:
+      type: object
+      description: Absent fields are unchanged. Sent with `If-Match`, the app's `spec_revision`.
+      properties:
+        manifest_path: {type: string}
+        image_policy: {$ref: '#/components/schemas/ImagePolicy'}
+        compose_source: {type: string, enum: [control-plane, repository]}
+        compose_content: {type: string}
+        compose_exceptions: {$ref: '#/components/schemas/ComposeExceptions'}
+        variables: {type: object, additionalProperties: {type: string}}
+        secret_refs: {type: object, additionalProperties: {type: string}}
+        ci_policy: {$ref: '#/components/schemas/CIPolicy'}
+        automation_identity: {type: boolean, description: False unlinks the identity and revokes its OIDC credentials.}
+    CreateAppTargetRequest:
+      type: object
+      required: [environment, node_id, deployment_policy]
+      properties:
+        environment: {type: string}
+        node_id: {$ref: '#/components/schemas/ID'}
+        deployment_policy: {$ref: '#/components/schemas/DeploymentPolicy'}
+    AppTargetPatch:
+      type: object
+      description: Sent with `If-Match`, the target's `spec_revision`.
+      properties:
+        deployment_policy: {$ref: '#/components/schemas/DeploymentPolicy'}
+    RequestedImage:
+      type: object
+      required: [service, digest]
+      properties:
+        service: {type: string}
+        digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    StepError:
+      type: object
+      required: [code, reason, cause, message]
+      properties:
+        code: {type: string}
+        reason: {type: string}
+        cause: {type: string, description: 'details.cause, e.g. SECRET_VERSION_GONE or IMAGE_SIZE_UNKNOWN.'}
+        message: {type: string}
+    DeploymentStep:
+      type: object
+      required: [ordinal, name, state, attempt, started_at, finished_at, output_ref, error]
+      properties:
+        ordinal: {type: integer}
+        name: {type: string}
+        state: {type: string, enum: [pending, running, succeeded, failed, skipped]}
+        attempt: {type: integer}
+        started_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        output_ref: {type: string}
+        error: {oneOf: [{$ref: '#/components/schemas/StepError'}, {type: 'null'}]}
+    Deployment:
+      type: object
+      description: '`plan_id`, `plan_hash` and `job_id` are null while the deployment is provisional (`created`, `waiting_ci`).'
+      required: [id, kind, app_id, app_target_id, environment_id, node_id, commit_sha, images, artifact_id, plan_id, plan_hash, job_id, state, state_code, state_reason, requested_by, previous_deployment_id, rollback_of_deployment_id, known_good, compose_hash, steps, created_at, updated_at, finished_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [deploy, rollback]}
+        app_id: {$ref: '#/components/schemas/ID'}
+        app_target_id: {$ref: '#/components/schemas/ID'}
+        environment_id: {$ref: '#/components/schemas/ID'}
+        node_id: {$ref: '#/components/schemas/ID'}
+        commit_sha: {type: string}
+        images: {type: array, items: {$ref: '#/components/schemas/RequestedImage'}}
+        artifact_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        plan_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        plan_hash: {type: [string, 'null']}
+        job_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        state: {type: string}
+        state_code: {type: string}
+        state_reason: {type: string}
+        requested_by: {$ref: '#/components/schemas/ID'}
+        previous_deployment_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        rollback_of_deployment_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+        known_good: {type: boolean}
+        compose_hash: {type: [string, 'null']}
+        steps: {type: array, items: {$ref: '#/components/schemas/DeploymentStep'}}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+        finished_at: {type: [string, 'null'], format: date-time}
+    CreateDeploymentRequest:
+      type: object
+      required: [app_target_id, kind, commit_sha, images]
+      properties:
+        app_target_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [deploy], description: 'Rollbacks use POST /deployments/{id}/rollback.'}
+        commit_sha: {type: string}
+        images: {type: array, items: {$ref: '#/components/schemas/RequestedImage'}}
+    RollbackRequest:
+      type: object
+      required: [to_deployment_id]
+      properties:
+        to_deployment_id: {oneOf: [{$ref: '#/components/schemas/ID'}, {type: 'null'}]}
+    PageOfApp:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/App'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfAppTarget:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AppTarget'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfRepository:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Repository'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfDeployment:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Deployment'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    DirectOfApp:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/App'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    DirectOfAppTarget:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/AppTarget'}, {type: 'null'}]}
         pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}

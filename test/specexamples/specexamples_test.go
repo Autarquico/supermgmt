@@ -8,16 +8,26 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/autarquico/supermgmt/internal/config"
+	"github.com/autarquico/supermgmt/internal/deployments/manifest"
 	"github.com/autarquico/supermgmt/internal/policy"
 )
 
 const (
 	localDoc  = "version: 1\ninstance:\n  mode: local\n"
 	serverDoc = "version: 1\ninstance:\n  mode: server\n"
+)
+
+const (
+	appManifestExample = "app.supermgmt.yaml"
+	actionsExample     = "github-actions.yml"
 )
 
 func repoRoot(t *testing.T) string {
@@ -167,6 +177,9 @@ func TestExamplesDirectoryValidates(t *testing.T) {
 		t.Fatalf("no examples/*.yaml found (err %v)", err)
 	}
 	for _, file := range files {
+		if filepath.Base(file) == appManifestExample {
+			continue // a repository manifest, checked by TestSpecExamples_AppManifestParses
+		}
 		t.Run(filepath.Base(file), func(t *testing.T) {
 			if strings.HasPrefix(filepath.Base(file), "policies") {
 				raw, err := os.ReadFile(file)
@@ -220,5 +233,78 @@ func assertErrorMentions(t *testing.T, err error, want string) {
 	}
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("error does not name %q: %v", want, err)
+	}
+}
+
+func readExample(t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "examples", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestSpecExamples_AppManifestParses(t *testing.T) {
+	m, err := manifest.Parse(readExample(t, appManifestExample))
+	if err != nil {
+		t.Fatalf("examples/%s does not validate: %v", appManifestExample, err)
+	}
+	if m.Spec.Deployment.Strategy != manifest.StrategyCompose {
+		t.Errorf("strategy = %q, want %q", m.Spec.Deployment.Strategy, manifest.StrategyCompose)
+	}
+}
+
+func TestSpecExamples_AppManifestRejectsControlPlaneFields(t *testing.T) {
+	raw := string(readExample(t, appManifestExample)) + "  stateful: true\n"
+	if _, err := manifest.Parse([]byte(raw)); err == nil {
+		t.Fatal("a manifest carrying control-plane-only fields was accepted")
+	}
+}
+
+type actionsWorkflow struct {
+	On          map[string]any `yaml:"on"`
+	Permissions map[string]string
+	Jobs        map[string]struct {
+		Permissions map[string]string `yaml:"permissions"`
+		Steps       []struct {
+			Uses string `yaml:"uses"`
+		} `yaml:"steps"`
+	} `yaml:"jobs"`
+}
+
+var pinnedAction = regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
+
+// idTokenJobs are the only jobs of the example that may hold id-token: write
+// (spec §28): build signs the attestation, deploy asks for the OIDC token.
+var idTokenJobs = []string{"build", "deploy"}
+
+func TestSpecExamples_GitHubActionsPermissions(t *testing.T) {
+	var wf actionsWorkflow
+	if err := yaml.Unmarshal(readExample(t, actionsExample), &wf); err != nil {
+		t.Fatalf("examples/%s is not valid YAML: %v", actionsExample, err)
+	}
+	if want := (map[string]string{"contents": "read"}); !reflect.DeepEqual(wf.Permissions, want) {
+		t.Errorf("workflow permissions = %v, want %v", wf.Permissions, want)
+	}
+	for _, trigger := range []string{"pull_request", "pull_request_target"} {
+		if _, found := wf.On[trigger]; found {
+			t.Errorf("trigger %s can never obtain deployment authority", trigger)
+		}
+	}
+	for _, name := range idTokenJobs {
+		if wf.Jobs[name].Permissions["id-token"] != "write" {
+			t.Errorf("job %s must hold id-token: write", name)
+		}
+	}
+	for name, job := range wf.Jobs {
+		if _, holds := job.Permissions["id-token"]; holds && !slices.Contains(idTokenJobs, name) {
+			t.Errorf("job %s holds id-token but only %v need it", name, idTokenJobs)
+		}
+		for _, s := range job.Steps {
+			if s.Uses != "" && !pinnedAction.MatchString(s.Uses) {
+				t.Errorf("job %s: %q is not pinned to a commit SHA", name, s.Uses)
+			}
+		}
 	}
 }

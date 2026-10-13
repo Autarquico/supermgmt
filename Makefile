@@ -24,7 +24,7 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
-	integration-fixtures cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade snapshot release-check install-test
+	integration-fixtures compose-equivalence cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade e2e-deploy snapshot release-check install-test
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -75,6 +75,9 @@ integration: ## Run integration tests
 integration-fixtures: ## Run the Docker node-fixture tests (-tags fixtures; needs a local Docker daemon)
 	go test -tags=fixtures -p 1 -count=1 -timeout 25m ./test/fixtures/... ./test/integration/...
 
+compose-equivalence: ## Run the loader-vs-Compose-CLI equivalence corpus against the pinned CLI (-tags fixtures; needs Docker)
+	go test -tags=fixtures -p 1 -count=1 -timeout 25m -run ComposeEquivalence ./test/integration/...
+
 cross-build: ## Compile for linux/darwin x amd64/arm64 with CGO disabled
 	@set -e; for target in $(CROSS_TARGETS); do \
 		echo "build $$target"; \
@@ -100,6 +103,9 @@ e2e-appliance: ## e2e: appliance on a simulated Proxmox host (pvesim); on arm64 
 
 e2e-upgrade: ## e2e: upgrade from the M2 release (commit e6d5577; needs the full history), failure boundaries, uninstall
 	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_(Upgrade|Uninstall)' ./test/e2e/
+
+e2e-deploy: ## e2e: CI-gated deployments against a fake GitHub, a virtual Sigstore and a local registry, server and local mode, secret-leak scan
+	go test -tags 'e2e fixtures' -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM4_' ./test/e2e/
 
 snapshot: ## Build a snapshot release into dist/ signed with a throwaway key (needs goreleaser v2 and syft)
 	packaging/release/snapshot.sh
