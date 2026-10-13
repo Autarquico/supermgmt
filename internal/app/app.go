@@ -26,6 +26,10 @@ import (
 	"github.com/autarquico/supermgmt/internal/runtimes"
 )
 
+// MCPTokenKind is the kind byte of a local MCP client token ("smm_...",
+// ADR-0032); internal/auth.Kind uses the same letter.
+const MCPTokenKind byte = 'm'
+
 const (
 	defaultPlanTTL     = 24 * time.Hour
 	defaultApprovalTTL = 15 * time.Minute
@@ -47,6 +51,10 @@ type Config struct {
 	// DefaultLogsMode is ssh.logs_mode: the logs_mode a node.setup plan gets
 	// when it names none. Default journal-group.
 	DefaultLogsMode runtimes.LogsMode
+
+	// MCPWritesEnabled is mcp.write_tools_enabled. While false, an mcp actor is
+	// denied every action that is not a query (MCP_WRITES_DISABLED, ADR-0032).
+	MCPWritesEnabled bool
 }
 
 func (c Config) validated() (Config, error) {

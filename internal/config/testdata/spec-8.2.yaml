@@ -90,14 +90,16 @@ github:
 
 mcp:
   enabled: true
-  remote_enabled: false
+  remote_enabled: false            # server mode only (§24)
   oauth:                           # required when remote_enabled (§24)
     issuer: ""
-    resource: ""                   # canonical MCP resource URL; token audience
+    resource: ""                   # exactly <server.public_url origin>/mcp; token audience
     jwks_url: ""                   # or introspection_url
     introspection_url: ""
+    introspection_client_id: ""    # required with introspection_url (RFC 7662 client auth)
+    introspection_client_secret_ref: ""  # secret://...; required with introspection_url
     required_scopes: ["supermgmt:mcp"]
-  allow_interactive_exec: false
+  allow_interactive_exec: false    # true is refused in V1 (no MCP tool runs commands)
   write_tools_enabled: false
 
 providers: []

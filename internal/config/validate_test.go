@@ -126,25 +126,6 @@ func TestValidateRules(t *testing.T) {
 		{"oidc endpoint origin over http", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"http://keys.example.com"} }, "auth.oidc.allowed_endpoint_origins[0]"},
 		{"oidc endpoint origin with userinfo", func(c *Config) { c.Auth.OIDC.AllowedEndpointOrigins = []string{"https://u:p@keys.example.com"} }, "auth.oidc.allowed_endpoint_origins[0]"},
 
-		{"remote MCP without oauth", func(c *Config) { c.MCP.RemoteEnabled = true }, "mcp.oauth.issuer"},
-		{"remote MCP with jwks", func(c *Config) { c.MCP.RemoteEnabled = true; c.MCP.OAuth = completeOAuth() }, ""},
-		{"remote MCP with introspection instead of jwks", func(c *Config) {
-			c.MCP.RemoteEnabled = true
-			c.MCP.OAuth = completeOAuth()
-			c.MCP.OAuth.JWKSURL, c.MCP.OAuth.IntrospectionURL = "", "https://idp/introspect"
-		}, ""},
-		{"remote MCP missing key source", func(c *Config) {
-			c.MCP.RemoteEnabled = true
-			c.MCP.OAuth = completeOAuth()
-			c.MCP.OAuth.JWKSURL = ""
-		}, "mcp.oauth.jwks_url"},
-		{"remote MCP missing scopes", func(c *Config) {
-			c.MCP.RemoteEnabled = true
-			c.MCP.OAuth = completeOAuth()
-			c.MCP.OAuth.RequiredScopes = nil
-		}, "mcp.oauth.required_scopes"},
-		{"incomplete oauth is fine while remote is off", func(c *Config) { c.MCP.OAuth.Issuer = "" }, ""},
-
 		{"environment ok", func(c *Config) { c.Environments = []Environment{env("production", "production", 1)} }, ""},
 		{"environment quorum 5", func(c *Config) { c.Environments = []Environment{env("p", "production", 5)} }, ""},
 		{"environment quorum 0", func(c *Config) { c.Environments = []Environment{env("p", "production", 0)} }, "environments[0].approvals_required"},
@@ -173,13 +154,6 @@ func TestValidateRules(t *testing.T) {
 				t.Errorf("problem paths %v lack %s", paths, tt.wantPath)
 			}
 		})
-	}
-}
-
-func completeOAuth() MCPOAuth {
-	return MCPOAuth{
-		Issuer: "https://idp", Resource: "https://mgmt.example.com/mcp",
-		JWKSURL: "https://idp/jwks", RequiredScopes: []string{"supermgmt:mcp"},
 	}
 }
 

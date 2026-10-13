@@ -146,6 +146,8 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_MCP_OAUTH_RESOURCE` | `mcp.oauth.resource` | string |
 | `SUPERMGMT_MCP_OAUTH_JWKS_URL` | `mcp.oauth.jwks_url` | string |
 | `SUPERMGMT_MCP_OAUTH_INTROSPECTION_URL` | `mcp.oauth.introspection_url` | string |
+| `SUPERMGMT_MCP_OAUTH_INTROSPECTION_CLIENT_ID` | `mcp.oauth.introspection_client_id` | string |
+| `SUPERMGMT_MCP_OAUTH_INTROSPECTION_CLIENT_SECRET_REF` | `mcp.oauth.introspection_client_secret_ref` | string |
 | `SUPERMGMT_MCP_OAUTH_REQUIRED_SCOPES` | `mcp.oauth.required_scopes` | list (comma-separated) |
 | `SUPERMGMT_MCP_ALLOW_INTERACTIVE_EXEC` | `mcp.allow_interactive_exec` | bool |
 | `SUPERMGMT_MCP_WRITE_TOOLS_ENABLED` | `mcp.write_tools_enabled` | bool |

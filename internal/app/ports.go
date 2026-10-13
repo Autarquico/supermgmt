@@ -74,3 +74,15 @@ type Enrollments interface {
 	// request digest returns the first result; a different digest is CONFLICT.
 	Enroll(ctx context.Context, source netip.Addr, r wire.EnrollRequest) (wire.Enrolled, error)
 }
+
+// MCPClients registers, lists and deletes MCP clients and issues a local
+// client's one token (spec §11.1, §11.2, ADR-0032). Register and Delete are
+// high-risk direct actions: Pending (a control_plane.apply job awaiting
+// approval) unless policy says otherwise. IssueToken is a credential route and
+// never takes an Idempotency-Key.
+type MCPClients interface {
+	List(ctx context.Context, by Caller) ([]wire.MCPClient, error)
+	Register(ctx context.Context, by Caller, r wire.RegisterMCPClientRequest) (DirectResult[wire.MCPClient], error)
+	IssueToken(ctx context.Context, by Caller, id domain.ID, r wire.IssueMCPTokenRequest) (wire.MCPTokenIssued, error)
+	Delete(ctx context.Context, by Caller, id domain.ID) (DirectResult[wire.MCPClient], error)
+}

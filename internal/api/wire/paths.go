@@ -88,6 +88,22 @@ const (
 	PathDeploymentRollback   = Prefix + "/deployments/{id}/rollback"
 	PathDeploymentCancel     = Prefix + "/deployments/{id}/cancel"
 	PathGitHubWebhook        = Prefix + "/github/webhook"
+
+	// MCP clients (ADR-0032).
+	PathMCPClients     = Prefix + "/mcp/clients"
+	PathMCPClient      = Prefix + "/mcp/clients/{id}"
+	PathMCPClientToken = Prefix + "/mcp/clients/{id}/token"
+)
+
+// Remote MCP (spec §24, ADR-0033): served on the HTTPS listener in server
+// mode when mcp.remote_enabled, outside /api/v1 and outside the OpenAPI
+// document (exempt:mcp). WellKnownProtectedResourceMCP is the RFC 9728 §3.1
+// path-suffixed metadata of the resource <origin>/mcp; the root document is
+// the spec §24 alias.
+const (
+	MCPPath                       = "/mcp"
+	WellKnownProtectedResource    = "/.well-known/oauth-protected-resource"
+	WellKnownProtectedResourceMCP = WellKnownProtectedResource + MCPPath
 )
 
 // Admin-socket routes (spec §23.1): exactly these four, outside /api/v1 and
