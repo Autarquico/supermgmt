@@ -273,7 +273,7 @@ environments:
 - Redirects from the GitHub API are followed only up to three hops and only to the exact origin (scheme, host and port) of `api_url`; the token is attached only to requests to that origin (`TestRedirect_OriginPinned`, `TestClient_TokenNeverOffOrigin`). Real GitHub's redirect behavior is **not verified**.
 - Setting `github.oidc_audience` (or `server.public_url`, its default) enables Actions OIDC bearers on the HTTPS listener. With neither set, Actions tokens are not accepted (`TestGitHubActionsTokensAreAcceptedOnlyWithAnAudience`).
 - The webhook is `POST /api/v1/github/webhook`, HTTPS listener only, authenticated by HMAC-SHA256 over the body with the secret behind `webhook_secret_ref`. Local mode has no webhook and only polls.
-- `require_provenance` and `allow_automatic_rollback` are read from the file at start like the other environment keys. A `GitHub` provider can also be registered by `POST /api/v1/providers`; **that route accepts only `type: local` in this build**, so use the file.
+- `require_provenance` and `allow_automatic_rollback` are read from the file at start like the other environment keys. A `GitHub` provider can also be registered by `POST /api/v1/providers` with `type: github`; the request is gated by `provider.write` and may park for approval (`TestPostProvidersAcceptsAGitHubProvider`).
 - `github.ci_poll_*` and `ci_timeout` are read by the CI watcher (`internal/daemon/assemble.go`); the generated table above lists their environment variables.
 
 ## Policy
