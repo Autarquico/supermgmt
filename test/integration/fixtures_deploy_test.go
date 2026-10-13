@@ -39,11 +39,11 @@ type deployNode struct {
 
 // startDeployNode provisions a fixture node the way the setup handler does
 // (dedicated user, docker group, tmpfiles, markers, db-backups) and creates
-// deploy_root as root through the same template ensureDeployRoot uses.
+// deploy_root (owned by the dedicated user) through the same template ensureDeployRoot uses.
 func startDeployNode(t *testing.T) *deployNode {
 	t.Helper()
 	p := provision(t, fixture.Options{}, func(p *systemd.SetupParams) { p.DockerAccess = true })
-	cmd, err := templates.RenderSetup("setup.deploy_root"+templates.SudoVariantSuffix, map[string]string{"path": templates.DefaultDeployRoot}, nil)
+	cmd, err := templates.RenderSetup("setup.deploy_root"+templates.SudoVariantSuffix, map[string]string{"user": p.params.User, "path": templates.DefaultDeployRoot}, nil)
 	if err != nil {
 		t.Fatalf("render setup.deploy_root: %v", err)
 	}
