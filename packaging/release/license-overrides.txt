@@ -1,0 +1,8 @@
+# Reviewed licence overrides for modules whose LICENSE go-licenses reports as Unknown (ADR-0034).
+# Columns, tab separated: module, version, SPDX id, licence file (relative to the module root), sha256 of that file.
+# Each entry was read in the module cache: the file is the module's own LICENSE and carries the Apache-2.0 notice
+# ("Licensed under the Apache License, Version 2.0"). The hash pins the reviewed text: a changed file fails notices.sh.
+# A version bump needs a new entry, which forces a new review.
+github.com/in-toto/attestation	v1.2.0	Apache-2.0	LICENSE	b3a6ac899861c2c28a1abd5c7ea8733fefaed6938d730e099c42671386032aeb
+github.com/in-toto/in-toto-golang	v0.11.0	Apache-2.0	LICENSE	b5c26c8a2ad6dd7cac6646e470a32ee42d23c36124caac4e66c989b6545b2a44
+github.com/cyberphone/json-canonicalization	v0.0.0-20241213102144-19d51d7fe467	Apache-2.0	LICENSE	6821faaddedf2d78c95bb6d98b127e9e616097afd2f6bcc34389f000d13ab12d
