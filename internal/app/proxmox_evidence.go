@@ -15,10 +15,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 )
 
-// defaultProxmoxHTTPTimeout is the request timeout of clients built without
-// proxmox.WithHTTPTimeout; the correlation window is computed from it.
-const defaultProxmoxHTTPTimeout = proxmox.DefaultTimeout
-
 const (
 	pveExitOK        = "OK"
 	pveStatusStopped = "stopped"
@@ -117,7 +113,7 @@ func NewProxmoxEvidence(cfg Config, sync *ProxmoxSync, httpTimeout time.Duration
 	if sync == nil {
 		return nil, errors.New("app: a proxmox sync is required")
 	}
-	return &ProxmoxEvidence{core: c, sync: sync, httpTimeout: orDefaultDuration(httpTimeout, defaultProxmoxHTTPTimeout)}, nil
+	return &ProxmoxEvidence{core: c, sync: sync, httpTimeout: orDefaultDuration(httpTimeout, proxmox.DefaultTimeout)}, nil
 }
 
 // Collect observes the task behind one dispatched intent.

@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -73,7 +74,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	if o.Proxmox != nil {
 		h.power = &proxmoxPowerHandler{
 			core: c, store: o.Store, sync: o.Proxmox, settle: o.Settle.withDefaults(),
-			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, defaultProxmoxHTTPTimeout),
+			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, proxmox.DefaultTimeout),
 		}
 	}
 	if o.Deploy != nil {
