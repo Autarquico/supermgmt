@@ -34,7 +34,7 @@ const (
 	composeEqRedisRef  = composeEqRedis + "@sha256:3333333333333333333333333333333333333333333333333333333333333333"
 )
 
-var composeEqFiles = []string{"basic", "ports_long", "healthcheck", "volumes_networks", "secrets_envfile"}
+var composeEqFiles = []string{"basic", "ports_long", "healthcheck", "volumes_networks", "secrets_envfile", "unused_resources"}
 
 var composeEqSecretValues = map[string]string{
 	"apps/eq/database_url":   `postgres://u:p$w${X}@db/app?x=1`,
@@ -238,10 +238,8 @@ func TestComposeEquivalence_Corpus(t *testing.T) {
 		})
 	}
 
-	t.Run("a declared network or volume no service uses is omitted by the CLI", func(t *testing.T) {
-		src := composeEqSource(t, "basic")
-		src.Raw = append(src.Raw, "volumes:\n  idle:\nnetworks:\n  idle:\n"...)
-		_, cliModel, diffs := composeEqCompare(t, n, "eq-unused", src)
+	t.Run("a declared network or volume no service uses is omitted by the CLI and pruned from the expected model", func(t *testing.T) {
+		_, cliModel, diffs := composeEqCompare(t, n, "eq-unused", composeEqSource(t, "unused_resources"))
 		var cli struct {
 			Networks map[string]any `json:"networks"`
 			Volumes  map[string]any `json:"volumes"`
@@ -249,9 +247,18 @@ func TestComposeEquivalence_Corpus(t *testing.T) {
 		if err := json.Unmarshal(cliModel, &cli); err != nil {
 			t.Fatalf("model: %v", err)
 		}
-		_, network := cli.Networks["idle"]
-		_, volume := cli.Volumes["idle"]
-		t.Logf("CLI keeps unused network: %v, unused volume: %v; Equivalent reports: %v", network, volume, diffs)
+		if _, ok := cli.Networks["idle"]; ok {
+			t.Error("the CLI kept the unused network; the premise of the pruning is gone")
+		}
+		if _, ok := cli.Volumes["idle"]; ok {
+			t.Error("the CLI kept the unused volume; the premise of the pruning is gone")
+		}
+		if _, ok := cli.Volumes["used"]; !ok {
+			t.Error("the CLI dropped the used volume")
+		}
+		if len(diffs) > 0 {
+			t.Errorf("unused resources still diverge:\n  %s", strings.Join(diffs, "\n  "))
+		}
 	})
 
 	t.Run("config drops env_file wiring and resolves its names into environment", func(t *testing.T) {
