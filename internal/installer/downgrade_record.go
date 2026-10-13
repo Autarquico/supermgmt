@@ -1,6 +1,8 @@
 package installer
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -50,12 +52,8 @@ func (u *upgrader) recordDowngrade() error {
 	if err != nil {
 		return fmt.Errorf("render the downgrade record: %w", err)
 	}
-	owner := u.pendingAuditOwner()
 	dir := filepath.Dir(path)
-	if err := files.MkdirAll(dir, 0o700, owner); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-	if err := files.WriteFile(path, append(data, '\n'), 0o600, owner); err != nil {
+	if err := u.writePendingAudit(dir, filepath.Base(path), append(data, '\n')); err != nil {
 		return fmt.Errorf("write the downgrade record: %w", err)
 	}
 	for _, d := range []string{dir, dataDir} {
@@ -66,13 +64,39 @@ func (u *upgrader) recordDowngrade() error {
 	return nil
 }
 
-// pendingAuditOwner lets the service account, which imports and deletes the
-// record, read it; a local install runs as the caller.
-func (u *upgrader) pendingAuditOwner() Owner {
+// writePendingAuditScript runs as the account that owns the data directory, so
+// a path that account controls is never created, chmodded or chowned by root
+// (SEC-1). It also refuses a symlinked directory, and noclobber makes the
+// final create exclusive.
+const writePendingAuditScript = `set -eu
+umask 077
+dir=$1 name=$2
+[ ! -L "$dir" ] || { echo "$dir is a symlink" >&2; exit 1; }
+[ -d "$dir" ] || mkdir -- "$dir"
+[ ! -L "$dir" ] || { echo "$dir is a symlink" >&2; exit 1; }
+rm -f -- "$dir/$name.tmp"
+( set -C; cat > "$dir/$name.tmp" )
+mv -- "$dir/$name.tmp" "$dir/$name"
+sync`
+
+// writePendingAudit stores the record as the service account. A local install
+// has no separate account: the caller owns the data directory already.
+func (u *upgrader) writePendingAudit(dir, name string, data []byte) error {
 	if u.t.runAs == "" {
-		return Owner{}
+		return u.writePendingAuditAsCaller(dir, filepath.Join(dir, name), data)
 	}
-	return Owner{User: u.t.runAs, Group: u.t.runAs}
+	_, err := u.d.Runner.Run(context.Background(), Command{
+		Name: "/bin/sh", Args: []string{"-c", writePendingAuditScript, "sh", dir, name},
+		User: u.t.runAs, Stdin: bytes.NewReader(data),
+	})
+	return err
+}
+
+func (u *upgrader) writePendingAuditAsCaller(dir, path string, data []byte) error {
+	if err := u.d.Files.MkdirAll(dir, 0o700, Owner{}); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	return u.d.Files.WriteFile(path, data, 0o600, Owner{})
 }
 
 // downgradeEventID derives a UUIDv7-shaped id from the upgrade's identity (the
