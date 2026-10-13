@@ -173,6 +173,10 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 		return appWriteTarget(ctx, q, ref, params)
 	case appTargetWriteAction:
 		return appTargetWriteTarget(ctx, q, ref, params)
+	case actionMCPClientRegister:
+		return mcpRegisterTarget(ref, params)
+	case actionMCPClientDelete:
+		return mcpDeleteTarget(ctx, q, ref, params)
 	case actionSecretWrite:
 		p, err := fromParams[secretWriteParams](params)
 		if err != nil {
