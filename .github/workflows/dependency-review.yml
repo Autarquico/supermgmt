@@ -21,4 +21,7 @@ jobs:
           # (LicenseRef-scancode-google-patent-license-golang). opencontainers/go-digest is Apache-2.0 code;
           # its CC-BY-SA-4.0 covers documentation only. modelcontextprotocol/go-sdk code is Apache-2.0 or
           # MIT (relicensing transition); its CC-BY-4.0 covers documentation only.
-          allow-dependencies-licenses: pkg:golang/golang.org/x/sys, pkg:golang/golang.org/x/crypto, pkg:golang/golang.org/x/sync, pkg:golang/golang.org/x/oauth2, pkg:golang/golang.org/x/net, pkg:golang/golang.org/x/term, pkg:golang/google.golang.org/protobuf, pkg:golang/github.com/opencontainers/go-digest, pkg:golang/golang.org/x/time, pkg:golang/github.com/modelcontextprotocol/go-sdk
+          # The website's self-hosted fonts (@fontsource packages) are SIL OFL-1.1: free to embed and
+          # redistribute. They are exempted by package, so OFL-1.1 stays out of allow-licenses; the
+          # licence texts ship with the site and are listed in docs/dependencies.md.
+          allow-dependencies-licenses: pkg:golang/golang.org/x/sys, pkg:golang/golang.org/x/crypto, pkg:golang/golang.org/x/sync, pkg:golang/golang.org/x/oauth2, pkg:golang/golang.org/x/net, pkg:golang/golang.org/x/term, pkg:golang/google.golang.org/protobuf, pkg:golang/github.com/opencontainers/go-digest, pkg:golang/golang.org/x/time, pkg:golang/github.com/modelcontextprotocol/go-sdk, pkg:npm/%40fontsource/instrument-serif, pkg:npm/%40fontsource/geist-sans, pkg:npm/%40fontsource/geist-mono, pkg:npm/%40fontsource-variable/geist, pkg:npm/%40fontsource-variable/geist-mono

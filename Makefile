@@ -39,7 +39,7 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 	integration-fixtures compose-equivalence cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade e2e-deploy e2e-mcp snapshot release-check install-test \
 	fuzz fuzz-inventory race-stress secrets-scan licenses \
 	reproducible migration-fixtures migration-test e2e-lifecycle-container e2e-lifecycle-vm e2e-lifecycle-macos \
-	e2e-crash e2e-chain brew-formula docs-check
+	e2e-crash e2e-chain brew-formula docs-check site site-check site-audit
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -206,3 +206,12 @@ brew-formula: ## Render the Homebrew formula on stdout: make -s brew-formula CHE
 
 docs-check: ## Check that the docs cite existing tests and jobs and that their links resolve
 	go test -count=1 -shuffle=on ./test/docs/...
+
+site: ## Build the website into site/dist (production base)
+	cd site && npm ci --ignore-scripts && npm run build
+
+site-check: site ## Website sync tests, then crawl the built HTML: links, fragments, assets, no runtime third parties
+	cd site && npm test && node scripts/crawl.mjs dist
+
+site-audit: ## Verify npm registry signatures and fail on high advisories in the site's runtime tree
+	cd site && npm ci --ignore-scripts && npm audit signatures && npm audit --omit=dev --audit-level=high
