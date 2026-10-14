@@ -36,6 +36,8 @@ build_in_clean_root() {
 		GIT_AUTHOR_NAME=repro GIT_AUTHOR_EMAIL=repro@invalid GIT_AUTHOR_DATE=$stamp \
 			GIT_COMMITTER_NAME=repro GIT_COMMITTER_EMAIL=repro@invalid GIT_COMMITTER_DATE=$stamp \
 			git -c commit.gpgsign=false commit -q -m "reproducibility build of $commit"
+		# Without a remote GoReleaser's snapshot discards the commit and stamps wall-clock mtimes.
+		git remote add origin https://github.com/autarquico/supermgmt.git
 		git tag v0.0.0
 		GOCACHE=$root/gocache GOMODCACHE=$root/gomodcache GOPATH=$root/gopath TMPDIR=$root/tmp \
 			sh -c "$build" >"$root/build.log" 2>&1 || { cat "$root/build.log" >&2; exit 1; }
