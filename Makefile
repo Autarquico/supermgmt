@@ -173,7 +173,7 @@ migration-fixtures: ## Regenerate test/fixtures/migrations with the real milesto
 	go run -tags fixturegen,fixtures ./test/fixtures/migrations/gen $(FIXTURE_ARGS)
 
 migration-test: ## Migrate and restore the committed M1-M5 fixtures and check their provenance (needs the full history)
-	go test -race -count=1 -shuffle=on -run '^Test(MigrationFixtures|FixtureProvenanceRules|ParseProvenance)' ./test/integration/
+	go test -tags migrationfixtures -race -count=1 -shuffle=on -run '^Test(MigrationFixtures|FixtureProvenanceRules|ParseProvenance)' ./test/integration/
 	go test -tags fixturegen,fixtures -count=1 -shuffle=on ./test/fixtures/migrations/gen/
 
 e2e-lifecycle-container: ## e2e: install, upgrade, backup, restore, uninstall, purge in one Debian systemd container (needs Docker)
