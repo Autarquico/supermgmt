@@ -1,0 +1,78 @@
+---
+import EditLink from 'virtual:starlight/components/EditLink';
+import LastUpdated from 'virtual:starlight/components/LastUpdated';
+import Pagination from 'virtual:starlight/components/Pagination';
+import { REPO_BLOB_URL } from '../../../scripts/sync-docs.mjs';
+
+const repoUrl = 'https://github.com/autarquico/supermgmt';
+const licenseUrl = `${REPO_BLOB_URL}LICENSE`;
+const version = process.env.SITE_VERSION?.trim();
+---
+
+<footer class="sl-flex">
+	<div class="meta sl-flex">
+		<EditLink />
+		<LastUpdated />
+	</div>
+	<Pagination />
+
+	<div class="site-footer sl-flex">
+		<p>
+			SuperMgmt is pre-alpha. {version ? `Documentation built from ${version}.` : 'Documentation built from source, not from a release.'}
+		</p>
+		<ul class="sl-flex">
+			<li><a href={repoUrl}>GitHub</a></li>
+			<li><a href={licenseUrl}>Apache-2.0</a></li>
+		</ul>
+		<p class="fonts">Set in Instrument Serif, Geist and Geist Mono (SIL OFL 1.1).</p>
+	</div>
+</footer>
+
+<style>
+	@layer starlight.core {
+		footer {
+			flex-direction: column;
+			gap: 1.5rem;
+		}
+		.meta {
+			gap: 0.75rem 3rem;
+			justify-content: space-between;
+			flex-wrap: wrap;
+			margin-top: 3rem;
+			font-size: var(--sl-text-sm);
+			color: var(--sl-color-gray-3);
+		}
+		.meta > :global(p:only-child) {
+			margin-inline-start: auto;
+		}
+	}
+
+	.site-footer {
+		flex-direction: column;
+		gap: var(--sm-space-2);
+		margin-top: var(--sm-space-5);
+		padding-top: var(--sm-space-5);
+		border-top: 1px solid var(--sl-color-hairline);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.site-footer p {
+		margin: 0;
+	}
+	.site-footer ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		gap: var(--sm-space-5);
+		flex-wrap: wrap;
+	}
+	.site-footer a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+		color: var(--sl-color-gray-2);
+	}
+	.site-footer a:hover {
+		color: var(--sm-accent);
+	}
+</style>
