@@ -73,8 +73,14 @@ jobs:
         run: make test-pty
 
   integration-fixtures:
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [debian13, ubuntu2404]
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      SM_FIXTURE_DISTRO: ${{ matrix.distro }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,7 +88,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: node fixtures (systemd + sshd + docker in privileged containers)
+      - name: node fixtures (systemd + sshd + docker in privileged containers), one node distro per leg
         run: make integration-fixtures
 
   compose-equivalence:
@@ -370,3 +376,155 @@ jobs:
           go-version-file: go.mod
       - name: every parser mapped to a fuzz target, and reached by its seeds
         run: make fuzz-inventory
+
+  reproducible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          syft-version: v1.52.0
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          install-only: true
+      - name: two clean roots, 4 binaries and 4 archives byte-identical
+        run: make reproducible
+
+  migration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # fixture provenance checks that each milestone commit is an ancestor of HEAD
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: M1-M5 fixtures migrate and restore with the current binary, provenance holds
+        run: make migration-test
+
+  docs-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: docs cite existing tests and jobs, links resolve
+        run: make docs-check
+
+  e2e-lifecycle-container:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the previous release is built from its milestone commit
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: install, upgrade, backup, restore, uninstall and purge in a systemd container
+        run: make e2e-lifecycle-container
+
+  # Each leg is a fresh GitHub-hosted VM: the host-mutating tests refuse to run anywhere else and
+  # refuse a second lifecycle on the same machine (ADR-0036).
+  e2e-lifecycle-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        mode: [server, local-client]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      SM_E2E_VM: "1"
+      LIFECYCLE_MODE: ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: root runs git on this checkout
+        if: matrix.mode == 'server'
+        run: sudo git config --system --add safe.directory "$GITHUB_WORKSPACE"
+      - name: systemd user session for the resident daemon
+        if: matrix.mode == 'local-client'
+        run: |
+          sudo loginctl enable-linger "$USER"
+          uid="$(id -u)"
+          for _ in $(seq 1 30); do
+            [ -S "/run/user/$uid/bus" ] && break
+            sleep 1
+          done
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >>"$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >>"$GITHUB_ENV"
+      - name: real host lifecycle (install.sh or sm install, held upgrade, backup, restore, uninstall, purge)
+        run: make e2e-lifecycle-vm
+
+  e2e-lifecycle-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [local-client]
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      SM_E2E_VM: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: real launchd lifecycle (resident daemon, held upgrade, backup, restore, uninstall, purge, client login)
+        run: make e2e-lifecycle-macos
+
+  e2e-crash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: installer killed at every upgrade crash point, then rerun
+        run: make e2e-crash
+
+  e2e-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the M2 release is built from its milestone commit
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: M2 fixture world upgraded to the latest release in one jump
+        run: make e2e-chain

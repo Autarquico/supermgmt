@@ -14,7 +14,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Nothing is built or signed unless every check in packaging/release/required-checks.txt (all of
+  # ci.yml plus the nightly run) succeeded on this exact commit. The only job that reads checks.
+  gates:
+    if: github.repository == 'autarquico/supermgmt'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: required checks succeeded on the tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" >"$RUNNER_TEMP/check-runs.json"
+          packaging/release/require-checks.sh packaging/release/required-checks.txt "$RUNNER_TEMP/check-runs.json"
+
   build:
+    needs: gates
     if: github.repository == 'autarquico/supermgmt'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -69,6 +92,9 @@ jobs:
           persist-credentials: false
       - name: tag must point into main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -92,13 +118,25 @@ jobs:
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$SM_RELEASE_SIGNING_KEY" >"$key"
           SM_SIGNING_KEY_FILE="$key" packaging/release/finalize.sh dist "$TAG"
-      - name: verify against the trust root embedded in install.sh
+      - name: module cache for the notices and SBOM comparison
+        run: go mod download
+      - name: verify against the trust root embedded in install.sh, notices and SBOMs against the compiled modules
         run: packaging/release/check.sh dist install.sh
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: attest
         with:
           subject-path: |
             dist/sm_*.tar.gz
             dist/checksums.txt
+      - name: provenance names exactly what is published, built from this commit by this workflow
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          statement="$RUNNER_TEMP/provenance.json"
+          jq -r '.dsseEnvelope.payload' "$BUNDLE" | base64 -d >"$statement"
+          packaging/release/verify-provenance.sh "$statement" dist "$GITHUB_SHA" "$REPO" "$TAG"
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}

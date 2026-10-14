@@ -127,11 +127,43 @@ jobs:
           path: ${{ runner.temp }}/flake-logs
           if-no-files-found: ignore
 
-  # The body arrives with the Homebrew formula work (T25b); until then the job only holds the name
-  # the release gate will require.
+  # The formula is rendered from placeholder digests (nothing is downloaded); the audit judges its
+  # structure and style, not the published archives.
   brew-audit:
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_FROM_API: "1"
     steps:
-      - name: not implemented yet
-        run: echo "brew audit is wired by T25b"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: render the formula from placeholder checksums
+        run: |
+          zeros="$(printf '%064d' 0)"
+          {
+            printf 'version: v0.1.0\nchannel: stable\n'
+            for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+              printf '%s  sm_0.1.0_%s.tar.gz\n' "$zeros" "$target"
+            done
+          } >"$RUNNER_TEMP/checksums.txt"
+          make -s brew-formula CHECKSUMS="$RUNNER_TEMP/checksums.txt" >"$RUNNER_TEMP/supermgmt.rb"
+      - name: brew audit --strict in a throwaway tap
+        run: |
+          brew tap-new local/audit
+          cp "$RUNNER_TEMP/supermgmt.rb" "$(brew --repository local/audit)/Formula/supermgmt.rb"
+          brew audit --strict local/audit/supermgmt
+
+  # The release gate (packaging/release/required-checks.txt) requires this one check: it succeeds only
+  # when every gate above did. The owner dispatches the workflow on the release candidate before tagging.
+  nightly:
+    if: always()
+    needs: [fuzz, race-stress, flake-loop, brew-audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every nightly gate succeeded
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: echo "$RESULTS" | jq -e 'length == 4 and all(. == "success")'
