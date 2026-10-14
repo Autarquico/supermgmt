@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: L
 issue: null
-prs: []
+prs: [17]
 related_issues: [6]
 depends_on: [m5-mcp]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-13
+updated: 2026-10-14
 ---
 
 # M6 — Hardening and release
