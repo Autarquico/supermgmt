@@ -21,6 +21,10 @@ STRESS_COUNT ?= 20
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 E2E_DIST ?=
 E2E_TIMEOUT ?= 40m
+FIXTURE_ARGS ?= -ref main
+LIFECYCLE_MODE ?= server
+CHECKSUMS ?=
+TRUST ?=
 
 PEER_USER ?= smpeer
 PEER_BIN_DIR ?= /tmp/sm-peer
@@ -33,7 +37,9 @@ IF_GO := @[ -z "$(HAS_GO)" ] && echo "no Go packages yet; skipping" ||
 .DEFAULT_GOAL := help
 .PHONY: help build test test-race test-pty test-daemon-peer lint lint-workflows vuln generate integration \
 	integration-fixtures compose-equivalence cross-build api-check e2e e2e-server e2e-install e2e-appliance e2e-upgrade e2e-deploy e2e-mcp snapshot release-check install-test \
-	fuzz fuzz-inventory race-stress secrets-scan licenses
+	fuzz fuzz-inventory race-stress secrets-scan licenses \
+	reproducible migration-fixtures migration-test e2e-lifecycle-container e2e-lifecycle-vm e2e-lifecycle-macos \
+	e2e-crash e2e-chain brew-formula docs-check
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -114,8 +120,8 @@ e2e-install: ## e2e: curl|bash install on a clean Debian host, tamper matrix (ex
 	SM_E2E_DIST="$(if $(E2E_DIST),$(abspath $(E2E_DIST)))" go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) \
 		-run 'TestM2_(CurlBashInstallsServer|TamperedReleaseFailsWithExit5|ReviewFirstDetectsModifiedScripts)$$' ./test/e2e/
 
-e2e-appliance: ## e2e: appliance on a simulated Proxmox host (pvesim); on arm64 set SM_E2E_PVE_HOST_PLATFORM=linux/amd64
-	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Appliance' ./test/e2e/...
+e2e-appliance: ## e2e: appliance on a simulated Proxmox host (pvesim), release-boundary lifecycle and journal; on arm64 set SM_E2E_PVE_HOST_PLATFORM=linux/amd64
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_Appliance|TestM6_Appliance' ./test/e2e/...
 
 e2e-upgrade: ## e2e: upgrade from the M2 release (commit e6d5577; needs the full history), failure boundaries, uninstall
 	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run 'TestM3_(Upgrade|Uninstall)' ./test/e2e/
@@ -157,3 +163,48 @@ licenses: ## Check the licences of the modules compiled into sm against the allo
 	go run github.com/google/go-licenses/v2@$(GO_LICENSES_VERSION) check ./cmd/sm \
 		--allowed_licenses=$(ALLOWED_LICENSES) \
 		--ignore "$$(awk -F'\t' '!/^#/ && NF >= 3 { print $$1 }' $(LICENSE_OVERRIDES) | paste -sd, -)"
+
+reproducible: ## Build the release twice from two clean roots and require byte-identical binaries and archives (needs goreleaser v2, syft)
+	packaging/release/reproducible.sh
+
+# Regenerates the committed M1-M5 fixtures with the real milestone binaries (needs Docker and the full history);
+# the result is reviewed and committed by hand, never produced in CI.
+migration-fixtures: ## Regenerate test/fixtures/migrations with the real milestone binaries (FIXTURE_ARGS, e.g. -only m4,m5)
+	go run -tags fixturegen,fixtures ./test/fixtures/migrations/gen $(FIXTURE_ARGS)
+
+migration-test: ## Migrate and restore the committed M1-M5 fixtures and check their provenance (needs the full history)
+	go test -race -count=1 -shuffle=on -run '^Test(MigrationFixtures|FixtureProvenanceRules|ParseProvenance)' ./test/integration/
+	go test -tags fixturegen,fixtures -count=1 -shuffle=on ./test/fixtures/migrations/gen/
+
+e2e-lifecycle-container: ## e2e: install, upgrade, backup, restore, uninstall, purge in one Debian systemd container (needs Docker)
+	go test -tags e2e -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run '^TestM6_LifecycleServerContainer$$' ./test/e2e/
+
+# The two host targets mutate the machine they run on. Only they compile the host-mutating tests, and
+# the guard (ADR-0036) refuses anything but a disposable runner. The caller must export SM_E2E_VM=1.
+e2e-lifecycle-vm: ## e2e on a DISPOSABLE Linux runner: real host lifecycle, LIFECYCLE_MODE=server (root) or local-client
+	@[ "$$SM_E2E_VM" = 1 ] || { echo "e2e-lifecycle-vm mutates this machine: export SM_E2E_VM=1 on a disposable runner"; exit 1; }
+	@case "$(LIFECYCLE_MODE)" in \
+	server) sudo -E env "PATH=$$PATH" "GOCACHE=$$(go env GOCACHE)" "GOMODCACHE=$$(go env GOMODCACHE)" \
+		go test -tags 'e2e hostlifecycle' -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run '^TestLifecycleVM_Server$$' -v ./test/e2e/ ;; \
+	local-client) go test -tags 'e2e hostlifecycle' -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run '^TestLifecycleVM_LocalClient$$' -v ./test/e2e/ ;; \
+	*) echo "LIFECYCLE_MODE must be server or local-client"; exit 1 ;; \
+	esac
+
+e2e-lifecycle-macos: ## e2e on a DISPOSABLE macOS runner: real launchd lifecycle in local-client mode
+	@[ "$$SM_E2E_VM" = 1 ] || { echo "e2e-lifecycle-macos mutates this machine: export SM_E2E_VM=1 on a disposable runner"; exit 1; }
+	go test -tags 'e2e hostlifecycle' -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run '^TestLifecycleMacOS_LocalClient$$' -v ./test/e2e/
+
+e2e-crash: ## e2e: kill the installer at all 20 upgrade crash points and rerun (needs Docker; about 11 minutes)
+	go test -tags e2e -p 1 -count=1 -timeout 90m -run 'TestM6_CrashUpgrade' ./test/e2e/
+
+e2e-chain: ## e2e: upgrade the M2 fixture world to the latest release in one jump (needs Docker and the full history)
+	go test -tags 'e2e fixtures' -p 1 -count=1 -timeout $(E2E_TIMEOUT) -run '^TestM6_UpgradeChain' ./test/e2e/
+
+brew-formula: ## Render the Homebrew formula on stdout: make -s brew-formula CHECKSUMS=dist/checksums.txt [TRUST=dist/allowed_signers]
+	@[ -n "$(CHECKSUMS)" ] || { echo "usage: make -s brew-formula CHECKSUMS=checksums.txt [TRUST=allowed_signers]"; exit 1; }
+	@packaging/release/brew-formula.sh "$(CHECKSUMS)" $(TRUST)
+
+# The suite arrives with the docs task (T26); until test/docs exists the target says so instead of passing silently.
+docs-check: ## Check that the docs cite existing tests and jobs and that their links resolve
+	@if [ -d test/docs ]; then go test -count=1 -shuffle=on ./test/docs/...; \
+	else echo "docs-check: test/docs does not exist yet (T26); nothing was checked"; fi

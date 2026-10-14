@@ -1,0 +1,46 @@
+# Check runs that must have succeeded on the exact tag commit before release.yml builds anything
+# (require-checks.sh, ADR-0034 / Q17). One name per line, as GitHub reports it: a job id, plus the
+# matrix values in parentheses for matrix jobs. TestWorkflowPolicy_RequiredChecksMatchCI keeps this
+# list equal to the jobs of ci.yml; `nightly` is the aggregate job of nightly.yml, which the owner
+# dispatches on the release candidate before tagging.
+fmt
+vet
+lint
+test (ubuntu-latest)
+test (macos-latest)
+integration-fixtures (debian13)
+integration-fixtures (ubuntu2404)
+compose-equivalence
+daemon-linux-peer
+race (ubuntu-latest)
+race (macos-latest)
+tidy
+generate
+cross-build
+govulncheck
+release-snapshot
+install-sh
+api-check
+workflow-policy
+e2e-server
+e2e-install
+e2e-appliance
+e2e-upgrade
+e2e-deploy
+e2e-mcp
+secret-scan
+licenses
+fuzz-inventory
+reproducible
+migration-test
+docs-check
+e2e-lifecycle-container (ubuntu-24.04)
+e2e-lifecycle-container (ubuntu-24.04-arm)
+e2e-lifecycle-linux (ubuntu-24.04, server)
+e2e-lifecycle-linux (ubuntu-24.04, local-client)
+e2e-lifecycle-linux (ubuntu-24.04-arm, server)
+e2e-lifecycle-linux (ubuntu-24.04-arm, local-client)
+e2e-lifecycle-macos (local-client)
+e2e-crash
+e2e-chain
+nightly

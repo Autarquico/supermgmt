@@ -52,6 +52,11 @@ type workflow struct {
 }
 
 type job struct {
+	Name     string `yaml:"name"`
+	Needs    any    `yaml:"needs"`
+	Strategy struct {
+		Matrix yaml.Node `yaml:"matrix"`
+	} `yaml:"strategy"`
 	Environment any               `yaml:"environment"`
 	Permissions any               `yaml:"permissions"`
 	Env         map[string]string `yaml:"env"`
@@ -545,5 +550,481 @@ jobs:
 `
 	if got := violations(map[string]string{"release.yml": compliant}); len(got) != 0 {
 		t.Fatalf("unexpected violations: %q", got)
+	}
+}
+
+// ---- release gate (ADR-0034, Q17) ----
+
+const (
+	ciWorkflow       = "ci.yml"
+	releaseWorkflow  = "release.yml"
+	gatesJob         = "gates"
+	nightlyAggregate = "nightly"
+	requiredChecks   = "../../packaging/release/required-checks.txt"
+	hostLifecycleTag = "hostlifecycle"
+)
+
+// hostTargets are the only Make targets allowed to compile the host-mutating tests (ADR-0036).
+var hostTargets = set("e2e-lifecycle-vm", "e2e-lifecycle-macos")
+
+func parseWorkflow(t *testing.T, source string) workflow {
+	t.Helper()
+	var wf workflow
+	if err := yaml.Unmarshal([]byte(source), &wf); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	return wf
+}
+
+// needsOf normalizes `needs:` (scalar or list) to job ids.
+func needsOf(needs any) []string {
+	switch v := needs.(type) {
+	case string:
+		return []string{v}
+	case []any:
+		var out []string
+		for _, item := range v {
+			if name, ok := item.(string); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// reaches reports whether job `from` depends, directly or through other jobs, on job `target`.
+func reaches(jobs map[string]job, from, target string) bool {
+	seen := map[string]bool{}
+	var walk func(string) bool
+	walk = func(id string) bool {
+		for _, dep := range needsOf(jobs[id].Needs) {
+			if dep == target || (!seen[dep] && walk(dep)) {
+				return true
+			}
+			seen[dep] = true
+		}
+		return false
+	}
+	return walk(from)
+}
+
+func readsChecks(permissions any) bool {
+	granted, _ := permissions.(map[string]any)
+	return granted["checks"] == "read"
+}
+
+func TestWorkflowPolicy_ReleaseNeedsGates(t *testing.T) {
+	wf := parseWorkflow(t, repoWorkflows(t)[releaseWorkflow])
+
+	gates, ok := wf.Jobs[gatesJob]
+	if !ok {
+		t.Fatalf("%s has no %s job", releaseWorkflow, gatesJob)
+	}
+	if granted, _ := gates.Permissions.(map[string]any); granted["checks"] != "read" || hasWrite(granted) {
+		t.Errorf("%s must declare checks: read and nothing writable, got %v", gatesJob, gates.Permissions)
+	}
+	if environmentName(gates.Environment) != "" || jobMentionsSecret(gates) || runsGoreleaser(gates) {
+		t.Errorf("%s must hold no environment, no signing key and build nothing", gatesJob)
+	}
+	if len(needsOf(gates.Needs)) != 0 {
+		t.Errorf("%s must not wait for other jobs, got %v", gatesJob, needsOf(gates.Needs))
+	}
+	for _, producer := range []string{"build", "sign-publish"} {
+		if !reaches(wf.Jobs, producer, gatesJob) {
+			t.Errorf("%s must depend on %s, directly or through other jobs", producer, gatesJob)
+		}
+	}
+	if !slicesContain(needsOf(wf.Jobs["build"].Needs), gatesJob) {
+		t.Errorf("build must list %s in needs so nothing is built before the gate", gatesJob)
+	}
+	if !strings.Contains(runScripts(gates), "require-checks.sh packaging/release/required-checks.txt") {
+		t.Errorf("%s must run require-checks.sh over packaging/release/required-checks.txt", gatesJob)
+	}
+}
+
+func TestWorkflowPolicy_OnlyGatesReadsChecks(t *testing.T) {
+	for name, source := range repoWorkflows(t) {
+		wf := parseWorkflow(t, source)
+		if readsChecks(wf.Permissions) {
+			t.Errorf("%s: checks: read at the top level", name)
+		}
+		for _, id := range sortedKeys(wf.Jobs) {
+			allowed := name == releaseWorkflow && id == gatesJob
+			if readsChecks(wf.Jobs[id].Permissions) && !allowed {
+				t.Errorf("%s: job %s reads checks; only %s/%s may", name, id, releaseWorkflow, gatesJob)
+			}
+		}
+	}
+}
+
+func TestWorkflowPolicy_SignPublishVerifiesSuppliesBeforePublishing(t *testing.T) {
+	wf := parseWorkflow(t, repoWorkflows(t)[releaseWorkflow])
+	steps := wf.Jobs["sign-publish"].Steps
+	position := func(fragment string) int {
+		for i, s := range steps {
+			if strings.Contains(s.Run, fragment) {
+				return i
+			}
+		}
+		return -1
+	}
+	publish := position("gh release create")
+	for _, fragment := range []string{"check.sh dist install.sh", "verify-provenance.sh"} {
+		if at := position(fragment); at < 0 || at > publish {
+			t.Errorf("sign-publish must run %s before publish (at %d, publish at %d)", fragment, at, publish)
+		}
+	}
+}
+
+func runScripts(j job) string {
+	var out strings.Builder
+	for _, s := range j.Steps {
+		out.WriteString(s.Run)
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+func slicesContain(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+// checkNames returns the check-run names GitHub reports for a workflow's jobs: the job name (or id)
+// and, for a matrix job, the matrix values in declaration order, one name per leg.
+func checkNames(wf workflow) ([]string, error) {
+	var names []string
+	for _, id := range sortedKeys(wf.Jobs) {
+		j := wf.Jobs[id]
+		if strings.Contains(j.Name, expression) {
+			return nil, fmt.Errorf("job %s: a job name with an expression cannot be checked against required-checks.txt", id)
+		}
+		base := id
+		if j.Name != "" {
+			base = j.Name
+		}
+		legs, err := matrixLegs(j.Strategy.Matrix)
+		if err != nil {
+			return nil, fmt.Errorf("job %s: %w", id, err)
+		}
+		if legs == nil {
+			names = append(names, base)
+			continue
+		}
+		for _, leg := range legs {
+			names = append(names, base+" ("+strings.Join(leg, ", ")+")")
+		}
+	}
+	return names, nil
+}
+
+// matrixLegs expands a plain list-valued matrix (no include/exclude) into its combinations.
+func matrixLegs(matrix yaml.Node) ([][]string, error) {
+	if matrix.Kind == 0 {
+		return nil, nil
+	}
+	if matrix.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("matrix is not a mapping")
+	}
+	legs := [][]string{{}}
+	for i := 0; i+1 < len(matrix.Content); i += 2 {
+		key, values := matrix.Content[i].Value, matrix.Content[i+1]
+		if key == "include" || key == "exclude" {
+			return nil, fmt.Errorf("matrix %s is not supported by the required-checks drift test", key)
+		}
+		if values.Kind != yaml.SequenceNode {
+			return nil, fmt.Errorf("matrix %s is not a plain list", key)
+		}
+		var next [][]string
+		for _, leg := range legs {
+			for _, value := range values.Content {
+				next = append(next, append(append([]string{}, leg...), value.Value))
+			}
+		}
+		legs = next
+	}
+	return legs, nil
+}
+
+func readRequiredChecks(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(requiredChecks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			names = append(names, line)
+		}
+	}
+	return names
+}
+
+// diffNames describes how got deviates from want, both treated as sets; duplicates in got are reported.
+func diffNames(got, want []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range got {
+		if seen[name] {
+			out = append(out, "listed twice: "+name)
+		}
+		seen[name] = true
+	}
+	wanted := set(want...)
+	for _, name := range sortedKeys(wanted) {
+		if !seen[name] {
+			out = append(out, "missing: "+name)
+		}
+	}
+	for _, name := range sortedKeys(seen) {
+		if !wanted[name] {
+			out = append(out, "unknown: "+name)
+		}
+	}
+	return out
+}
+
+func TestWorkflowPolicy_RequiredChecksMatchCI(t *testing.T) {
+	files := repoWorkflows(t)
+	want, err := checkNames(parseWorkflow(t, files[ciWorkflow]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parseWorkflow(t, files[nightlyWorkflow]).Jobs[nightlyAggregate]; !ok {
+		t.Fatalf("%s has no %s job for the release gate to require", nightlyWorkflow, nightlyAggregate)
+	}
+	want = append(want, nightlyAggregate)
+	for _, drift := range diffNames(readRequiredChecks(t), want) {
+		t.Errorf("packaging/release/required-checks.txt: %s", drift)
+	}
+}
+
+func TestWorkflowPolicy_NightlyAggregateWaitsForEveryOtherJob(t *testing.T) {
+	wf := parseWorkflow(t, repoWorkflows(t)[nightlyWorkflow])
+	aggregate := wf.Jobs[nightlyAggregate]
+	needs := set(needsOf(aggregate.Needs)...)
+	for _, id := range sortedKeys(wf.Jobs) {
+		if id != nightlyAggregate && !needs[id] {
+			t.Errorf("%s does not wait for %s, so a red %s would not stop the release", nightlyAggregate, id, id)
+		}
+	}
+}
+
+func TestCheckNames_ExpandsMatricesTheWayGitHubNamesThem(t *testing.T) {
+	const source = `
+jobs:
+  plain: {runs-on: x}
+  named: {name: custom, runs-on: x}
+  grid:
+    strategy:
+      matrix:
+        runner: [a, b]
+        mode: [server, client]
+    runs-on: x
+`
+	got, err := checkNames(parseWorkflow(t, source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"custom", "grid (a, server)", "grid (a, client)", "grid (b, server)", "grid (b, client)", "plain"}
+	if drift := diffNames(got, want); len(drift) != 0 {
+		t.Fatalf("names differ from GitHub's: %q\ngot %q", drift, got)
+	}
+}
+
+func TestCheckNames_RefusesWhatItCannotExpand(t *testing.T) {
+	tests := map[string]string{
+		"include":         "jobs:\n  j:\n    strategy: {matrix: {os: [a], include: [{os: b}]}}\n    runs-on: x\n",
+		"exclude":         "jobs:\n  j:\n    strategy: {matrix: {os: [a], exclude: [{os: a}]}}\n    runs-on: x\n",
+		"expression list": "jobs:\n  j:\n    strategy: {matrix: {os: '${{ fromJSON(needs.x.outputs.os) }}'}}\n    runs-on: x\n",
+		"templated name":  "jobs:\n  j:\n    name: 'j ${{ matrix.os }}'\n    runs-on: x\n",
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := checkNames(parseWorkflow(t, source)); err == nil {
+				t.Fatal("want an error: the drift test must not silently skip legs")
+			}
+		})
+	}
+}
+
+func TestDiffNames_ReportsDriftBothWays(t *testing.T) {
+	got := diffNames([]string{"a", "b", "b", "stale"}, []string{"a", "b", "new"})
+	want := []string{"listed twice: b", "missing: new", "unknown: stale"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// ---- host-mutating tests stay out of every generic target (ADR-0036) ----
+
+type makeRule struct {
+	prereqs []string
+	lines   []string // the rule line and its recipe lines
+}
+
+// makeRules splits a Makefile into rules; recipe lines start with a tab.
+func makeRules(source string) map[string]*makeRule {
+	rules := map[string]*makeRule{}
+	var current *makeRule
+	for _, line := range strings.Split(source, "\n") {
+		switch {
+		case strings.HasPrefix(line, "\t") && current != nil:
+			current.lines = append(current.lines, line)
+		case ruleLine.MatchString(line):
+			m := ruleLine.FindStringSubmatch(line)
+			current = &makeRule{prereqs: strings.Fields(strings.SplitN(m[2], "##", 2)[0]), lines: []string{line}}
+			rules[m[1]] = current
+		default:
+			current = nil
+		}
+	}
+	return rules
+}
+
+var ruleLine = regexp.MustCompile(`^([a-z0-9][a-z0-9-]*):([^=].*|)$`)
+
+// hostTagViolations lists every place the host-mutating tag appears outside the host targets, and
+// every generic target that runs a host target.
+func hostTagViolations(makefile string, workflows map[string]string) []string {
+	var out []string
+	owner := ""
+	for _, line := range strings.Split(makefile, "\n") {
+		switch {
+		case strings.HasPrefix(line, "\t") && owner != "":
+		case ruleLine.MatchString(line):
+			owner = ruleLine.FindStringSubmatch(line)[1]
+		default:
+			owner = ""
+		}
+		switch {
+		case !strings.Contains(line, hostLifecycleTag) || hostTargets[owner]:
+		case owner == "":
+			out = append(out, "Makefile: "+hostLifecycleTag+" outside a recipe: "+strings.TrimSpace(line))
+		default:
+			out = append(out, fmt.Sprintf("Makefile: target %s mentions %s", owner, hostLifecycleTag))
+		}
+	}
+	rules := makeRules(makefile)
+	for _, name := range sortedKeys(rules) {
+		for _, host := range sortedKeys(hostTargets) {
+			if !hostTargets[name] && closureHas(rules, name, host) {
+				out = append(out, fmt.Sprintf("Makefile: target %s runs %s", name, host))
+			}
+		}
+	}
+	for _, file := range sortedKeys(workflows) {
+		if strings.Contains(workflows[file], hostLifecycleTag) {
+			out = append(out, file+": mentions "+hostLifecycleTag+"; workflows call the Make targets")
+		}
+	}
+	return out
+}
+
+// closureHas reports whether target is among the prerequisites of from, transitively.
+func closureHas(rules map[string]*makeRule, from, target string) bool {
+	seen := map[string]bool{}
+	var walk func(string) bool
+	walk = func(name string) bool {
+		rule := rules[name]
+		if rule == nil {
+			return false
+		}
+		for _, dep := range rule.prereqs {
+			if dep == target || (!seen[dep] && walk(dep)) {
+				return true
+			}
+			seen[dep] = true
+		}
+		return false
+	}
+	return walk(from)
+}
+
+func TestWorkflowPolicy_HostLifecycleTagStaysInTheHostTargets(t *testing.T) {
+	makefile, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range hostTagViolations(string(makefile), repoWorkflows(t)) {
+		t.Error(v)
+	}
+	rules := makeRules(string(makefile))
+	for _, name := range sortedKeys(hostTargets) {
+		rule := rules[name]
+		if rule == nil || !strings.Contains(strings.Join(rule.lines, "\n"), hostLifecycleTag) {
+			t.Errorf("Makefile: host target %s must exist and compile the %s tag", name, hostLifecycleTag)
+		}
+	}
+}
+
+func TestWorkflowPolicy_MakeE2EHasNoHostTarget(t *testing.T) {
+	makefile, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := makeRules(string(makefile))
+	if rules["e2e"] == nil {
+		t.Fatal("Makefile has no e2e target")
+	}
+	for _, host := range sortedKeys(hostTargets) {
+		if closureHas(rules, "e2e", host) {
+			t.Errorf("make e2e reaches %s", host)
+		}
+	}
+}
+
+func TestHostTagViolations_CatchesALeakIntoGenericTargets(t *testing.T) {
+	tests := []struct {
+		name      string
+		makefile  string
+		workflows map[string]string
+		want      string
+	}{
+		{"clean", "e2e: e2e-server\ne2e-server:\n\tgo test -tags e2e ./x\ne2e-lifecycle-vm:\n\tgo test -tags 'e2e hostlifecycle' ./x\n", nil, ""},
+		{"tag in a generic recipe", "e2e-server:\n\tgo test -tags 'e2e hostlifecycle' ./x\n", nil, "target e2e-server mentions"},
+		{"tag in a variable", "E2E_TAGS := e2e hostlifecycle\ne2e-server:\n\tgo test ./x\n", nil, "outside a recipe"},
+		{"e2e depends on a host target", "e2e: e2e-lifecycle-vm\ne2e-lifecycle-vm:\n\tgo test -tags hostlifecycle ./x\n", nil, "target e2e runs e2e-lifecycle-vm"},
+		{"transitive dependency", "e2e: e2e-all\ne2e-all: e2e-lifecycle-macos\ne2e-lifecycle-macos:\n\tgo test -tags hostlifecycle ./x\n", nil, "target e2e-all runs e2e-lifecycle-macos"},
+		{"workflow with the tag", "e2e-server:\n\techo\n", map[string]string{"ci.yml": "run: go test -tags hostlifecycle ./..."}, "ci.yml: mentions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hostTagViolations(tt.makefile, tt.workflows)
+			if tt.want == "" && len(got) != 0 {
+				t.Fatalf("unexpected violations: %q", got)
+			}
+			if tt.want != "" && !strings.Contains(strings.Join(got, "\n"), tt.want) {
+				t.Fatalf("want a violation containing %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestWorkflowPolicy_ReleaseGateRejectsABuildThatDoesNotWaitForIt(t *testing.T) {
+	const source = `
+jobs:
+  gates: {runs-on: x}
+  build: {runs-on: x}
+  sign-publish: {needs: build, runs-on: x}
+`
+	wf := parseWorkflow(t, source)
+	if reaches(wf.Jobs, "sign-publish", gatesJob) {
+		t.Fatal("sign-publish reaches gates without build needing it")
+	}
+	const chained = `
+jobs:
+  gates: {runs-on: x}
+  build: {needs: gates, runs-on: x}
+  sign-publish: {needs: [build], runs-on: x}
+`
+	if !reaches(parseWorkflow(t, chained).Jobs, "sign-publish", gatesJob) {
+		t.Fatal("sign-publish must reach gates through build")
 	}
 }
