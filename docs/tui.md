@@ -161,4 +161,5 @@ The full set is in [`internal/tui/testdata/`](../internal/tui/testdata). The nam
 
 - Keys and screens: `internal/tui/model.go` (global keys and screen list), `internal/tui/view.go` (key line, header and status line), `internal/tui/screens.go` (each screen and the Help screen), `internal/tui/action.go` (palette, plans and confirmation), `internal/tui/wizard.go` (deploy and rollback), `internal/tui/handoff.go` (sessions).
 - Launch: `internal/cli/tui.go`.
+- Related pages: [Getting started](getting-started.md), [Concepts](concepts.md), [CLI reference](cli.md), [Policies and approvals](policies.md).
 - Tests: `TestGoldenViews`, `TestM4ScreenGoldens`, `TestGoldenProvidersAndSettings`, `TestKeyboardNavigation`, `TestQuitKeys`, `TestPaletteCommands`, `TestServiceActionNeedsAPlanAndAConfirmation`, `TestPlanDeniedByPolicyCannotBeSubmitted`, `TestApproveSendsThePlanHashOnce`, `TestRejectNeedsAReason`, `TestSetupViaPaletteWarnsAboutDockerAccess`, `TestSessionKeysAreRefusedOnAGuestAndStartNothing`, `TestDeployWizardNeverCreatesWithoutReview`, `TestSmallTerminalExplainsInsteadOfBreaking`.
