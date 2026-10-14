@@ -6,7 +6,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments) and M5 (MCP). Pre-alpha: nothing is released.
+Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: nothing is released.
+
+### Added in M6
+
+- Fuzzing: a fuzz target for every parser of untrusted input, 55 targets mapped in `scripts/fuzz-inventory.txt` (`sh scripts/fuzz.sh count`). `test/fuzzinv` finds parser candidates from the syntax tree and fails on an unmapped one; `scripts/fuzz.sh reach` proves the seeds execute each mapped function. Seeds run in every `go test`; mutation runs in the new `nightly.yml` (6 shards, 5 minutes per target). 25 known parsers are exempt as `gap` rows with no target.
+- A stress suite (`test/stress`, build tag `stress`, `make race-stress`) for job claim and lease, the SSE broker, the SSH pool, Proxmox sync, lock exclusion and MCP token issuance; `-race` unit tests now run on Ubuntu and macOS.
+- Scans and gates in CI: gitleaks over the full history (`secret-scan`), a licence allowlist over the compiled modules (`licenses`), `fuzz-inventory`, `reproducible` (the real GoReleaser configuration built twice from clean roots), `migration-test`, `docs-check`.
+- Release gates (ADR-0034): `release.yml` runs a `gates` job that requires every check named in `packaging/release/required-checks.txt`, and a `nightly` run, to have succeeded on the exact tag commit before anything is built; `sign-publish` checks the notices and SBOM against each compiled binary and verifies the provenance statement before publishing. Every archive ships `THIRD_PARTY_LICENSES`.
+- Homebrew: formula template and a renderer from the signed `checksums.txt` (`packaging/homebrew/`, `make brew-formula`). Linux packages are not shipped.
+- Upgrade (ADR-0035): the service is held before `Stop` (a systemd drop-in with `RefuseManualStart`, or `launchctl disable`) and released only when the new service starts; a resumed upgrade retakes the pre-upgrade backup before the swap; `SUPERMGMT_CRASH_AT=<point>` (builds with the `crashpoints` tag only) kills the installer at any of the 20 upgrade crash points; `--allow-downgrade` writes a pending audit record in `<DataDir>/audit-pending/` that the daemon imports as `instance.downgrade_authorized` on its next start; the daemon records `instance.version_changed` when its version changes.
+- `sm doctor --offline --json` carries `format_version`, `database_schema_version` and `binary_schema_version`; the upgrader reads them and keeps the text parser only for binaries that predate them. `sm doctor` has a `tls` check (warns 30 days before expiry, fails when expired) and warns when the Proxmox clock differs from the appliance's by more than 60 seconds.
+- Tests: migration fixtures written by real binaries built from the M1 to M5 merge commits, restored and migrated with provenance enforced in CI; install, upgrade, backup and restore, and uninstall in a Debian 13 systemd container, and on disposable Ubuntu 24.04 and macOS 15 runners behind a host-mutation guard; the appliance across a release boundary; a real-process crash at each upgrade point; an upgrade from the M2 build to the current tree; an Ubuntu 24.04 node fixture.
+- Docs: platform and operation matrix, troubleshooting, releasing, dependencies and egress inventory, the [release checklist](docs/release-checklist.md) and [m6-release.md](docs/manual-checks/m6-release.md), contribution rules for fuzzing, stress and flaky tests. ADRs 0034 to 0036; ADRs 0006 to 0008, 0010 to 0012 and 0017 to 0033 accepted; master specification 1.4.8.
+
+### Changed in M6
+
+- Appliance-installer journals live in a root-only directory, `/var/lib/supermgmt-installer/journals/<id>`; journals left in `/var/tmp` by earlier builds are still recovered.
+- The Proxmox token created by the installer carries the comment `supermgmt install <id>`, and rollback revokes a token of that name only if it carries it.
+- `sm providers check` reads the effective privileges of `/` and requires `Sys.Audit` there; the whole-tree permissions call was removed.
+- The installer reaches the host through typed ports (`Lock`, `Canonical`, `FreeBytes`, `ListDir`, `Lstat`, bridge address) instead of optional-interface assertions, and a path that cannot be canonicalised is now an error.
+- The TUI header and dashboard count nodes and guests separately, and start, stop and probe keys are refused on guests. A handoff command that cannot start no longer wedges the terminal.
+
+### Known limits in M6
+
+- Nothing is released, and the production release key, the Homebrew tap, the licence decision and the name checks are human steps that have not been done.
+- Proxmox, GitHub and MCP remain verified against fakes only. The new Proxmox assumptions (the token comment field, the task-list filters, clock skew) are rows of [m3-real-pve.md](docs/manual-checks/m3-real-pve.md).
+- The new lifecycle, crash and chain jobs were written without a GitHub run; arm64 and macOS legs have never run.
+- Unresolved flake: the daemon-restart test (`TestM1_DaemonKilledMidRestartReconciles`) has a second failure mode that was seen once and not explained. A downgrade to a build older than M6 leaves its audit record pending until an M6 or newer binary starts. See the [release checklist](docs/release-checklist.md#unresolved-items-and-stated-limitations) for the full list.
 
 ### Added in M5
 

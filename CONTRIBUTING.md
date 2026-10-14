@@ -35,6 +35,12 @@ Common targets (`make help` lists all):
 | `make integration-fixtures` | Docker node fixtures (`-tags fixtures`); needs a local Docker daemon |
 | `make test-pty` | terminal handoff tests under a pseudo-terminal |
 | `make cross-build` | linux/darwin x amd64/arm64 with `CGO_ENABLED=0` |
+| `make fuzz-inventory` | every parser of untrusted input is mapped to a fuzz target, and the seeds reach it |
+| `make fuzz` | mutate the fuzz targets (`FUZZTIME`, `FUZZ_SHARD`, `FUZZ_SHARDS`); slow, runs nightly in CI |
+| `make race-stress` | the concurrency suite under `-race` (build tag `stress`, `STRESS_COUNT` runs) |
+| `make secrets-scan`, `make licenses` | gitleaks over the full history; licence allowlist over the compiled modules |
+| `make migration-test` | migrate and restore the committed M1 to M5 fixtures (needs the full history) |
+| `make docs-check` | docs cite existing tests and jobs, links resolve, the platform matrix and the human checklist follow their rules |
 
 `make api-check` checks `api/openapi.yaml` against the route table, `make snapshot` builds a signed snapshot release into `dist/`, and `make release-check` verifies it.
 
@@ -61,7 +67,31 @@ Prefer boring, auditable code. Let abstractions emerge from two or three real us
 - Every exported behavior has a test, and every error path that matters has a negative test.
 - Tests must pass with `-race` and `-shuffle=on`.
 - Security-relevant code (policy, approvals, plan hashing, redaction, host keys, command templates) needs negative tests: what must be refused.
+- Behaviour that only real software can confirm (Proxmox, GitHub, MCP clients, signing keys) is covered by a fake in the tests and by a row in [`docs/manual-checks/`](docs/manual-checks/m6-release.md). Add the row in the same change, state the assumption, and never describe the fake-verified behaviour as verified.
 - Anything that touches the terminal handoff (`internal/tui/handoff.go`, `internal/client/interactive.go`) also needs a run of [`docs/manual-checks/m1-handoff.md`](docs/manual-checks/m1-handoff.md) on a real terminal; the PTY tests do not replace it.
+
+## Fuzzing
+
+Every function that parses untrusted or persisted input (node output, API answers, files, archives, tokens, request bodies) has a fuzz target, or an exemption with a reason, in `scripts/fuzz-inventory.txt`.
+
+- `test/fuzzinv` finds parser candidates in the syntax tree of `internal/` (names such as `parse*`, `decode*`, `read*`, `load*`, or a call to a JSON, YAML, tar or zstd decoder). A new candidate that is not in the inventory fails `make fuzz-inventory`, and so does a row that names no function or no target.
+- Seed every target with `f.Add` from existing fixtures. The seeds run in every `go test`, so a pull request never mutates; mutation runs in the nightly workflow, 5 minutes per target.
+- A crasher is a bug. Do not skip it: keep the failing input under `testdata/fuzz/<Target>/`, fix the parser in the same change, and say what the input was.
+- A row marked `exempt: gap:` is a parser with no target yet. Replacing it with a target is welcome; adding a new one needs a reason in the pull request.
+
+## Race and stress tests
+
+- `make test-race` runs the unit tests under `-race` on Ubuntu and macOS.
+- Concurrency seams (job claim and lease, the SSE broker, the SSH pool, Proxmox sync, deployment locks, MCP token issuance) have tests under `test/stress`, behind the build tag `stress`, repeated many times under `-race` by `make race-stress`. A race is a production defect until proven otherwise: fix it in a separate change and keep the reproduction.
+- Tests that change the machine they run on (`hostlifecycle` tag) refuse to start unless `SM_E2E_VM=1` and the runner is a disposable CI machine. Never run them on a development machine.
+
+## Flaky tests
+
+There are no automatic retries in the pull-request gates, and a flake is never fixed by adding one.
+
+1. Classify it: a **test synchronization defect** (the test races the code under test: a sleep, an unordered map, a shared port) or a **production defect** (the code is wrong under timing).
+2. Fix the cause. A fix needs a proof that it failed before and passes after: a deterministic reproduction, or at least 200 runs under `-cpu 1,2,4` with load, before and after.
+3. A flake you cannot fix may be moved to the nightly workflow only with an issue, an owner, an expiry date, and pull-request coverage of the behaviour it guarded. It stays reported as **unresolved** in the [release checklist](docs/release-checklist.md#unresolved-items-and-stated-limitations); moving it never counts as fixing it.
 
 ## Generated files
 

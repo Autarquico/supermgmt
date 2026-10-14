@@ -47,7 +47,7 @@ Describe the shape instead ("a 64-character token") and give a minimal reproduct
 
 ## Security model and limits
 
-The threat model is summarized in [docs/security.md](docs/security.md) and specified in `docs/spec/SUPERMGMT-SPEC.md` §30. Defaults: deny by default, least privilege, strict host-key and TLS verification, approvals bound to an exact plan hash, append-only audit, secret redaction. As of M2 these sit behind a local daemon and an HTTPS server mode (sessions, API tokens, OIDC, approvals, encrypted secrets, signed-release installer). Nothing is released, none of it has had an independent audit, and part of M2 was verified only in CI with test keys and a Dex test identity provider ([docs/security.md](docs/security.md) says which).
+The threat model is summarized in [docs/security.md](docs/security.md) and specified in `docs/spec/SUPERMGMT-SPEC.md` §30. Defaults: deny by default, least privilege, strict host-key and TLS verification, approvals bound to an exact plan hash, append-only audit, secret redaction. These sit behind a local daemon and an HTTPS server mode (sessions, API tokens, OIDC, approvals, encrypted secrets, signed-release installer), the Proxmox, GitHub and MCP integrations (M3 to M5), and an upgrade protocol with a service hold and a pre-upgrade backup. Nothing is released and none of it has had an independent audit. Proxmox, GitHub and MCP were verified against fakes only, and the installer and release pipeline with test keys ([docs/security.md](docs/security.md) says which); the open human checks are in the [release checklist](docs/release-checklist.md).
 
 Explicit statements:
 
@@ -55,7 +55,23 @@ Explicit statements:
 - **Local mode trusts code running as the same OS user** (SPEC §2.1.1). Peer credentials prove the OS user, not which program is speaking. Any process running as that user can already read its SSH keys and agent, so local mode does not defend against malicious code running as the same user. Users who need isolation from a compromised MCP client run it under a different OS user, or use server mode with per-client OAuth (both planned).
 - **`curl | bash` has a trust root.** The installer path trusts the repository's `main` branch: whoever can change `install.sh` there can replace both the verifier and the embedded key, so a repository compromise defeats that path. For users who need independence, every release attaches `install.sh` and `install.sh.sig`, and the release key fingerprint is published out-of-band (this file at a signed tag, the project website, release notes), so the script can be verified with `ssh-keygen -Y verify` before it is run (SPEC §3.1, §3.2, [docs/installation.md](docs/installation.md)). The installer needs OpenSSH 8.2 or newer on the machine running it. No release has been published yet.
 - **Server mode exposes a network service.** Requests are authenticated by bearer tokens only. A reverse proxy or Cloudflare in front can read them; SuperMgmt consumes no Cloudflare identity assertion ([docs/cloudflare.md](docs/cloudflare.md)). Backup archives are not encrypted, and master keys are never in them.
-- **MCP content is untrusted input.** A model asking for an action has no more authority than its authenticated identity and policy grants (planned, M5).
+- **MCP content is untrusted input.** A model asking for an action has no more authority than its authenticated identity and policy grants (M5; verified with the Go SDK client and a fake authorization server only, never with a real MCP client).
+
+## Automated security scanning
+
+What runs on every change and what runs on a schedule. None of it replaces an audit or a review, and a green run is evidence for the code it ran on, not a guarantee.
+
+| Check | Where | What it covers |
+|---|---|---|
+| Static analysis | `golangci-lint` with gosec (job `lint`); CodeQL (own workflow, not a required check) | Go source |
+| Known vulnerabilities | `govulncheck` (job `govulncheck`) | Go modules and standard library reachable from the binary; test-only fakes excluded |
+| Secrets | gitleaks over the full history (job `secret-scan`, config `.gitleaks.toml`) | Every allowlist entry names one test fixture file and a reason; no blanket pattern |
+| Licences | go-licenses against an allowlist (job `licenses`); dependency review on pull requests | Modules compiled into `sm`; `THIRD_PARTY_LICENSES` ships in every archive |
+| Race detector | `-race` on Ubuntu and macOS (job `race`); stress suite nightly | Unit tests; concurrency seams |
+| Fuzzing | seeds on every change, mutation nightly (job `fuzz-inventory`; workflow `nightly.yml`) | Parsers of untrusted input; 25 known parsers have no target yet ([release checklist](docs/release-checklist.md#unresolved-items-and-stated-limitations)) |
+| Release integrity | reproducible rebuild, SBOM and notices check, provenance verification | Release artifacts; verified with a throwaway key until the first real tag |
+
+GitHub secret scanning and push protection are repository settings that only the owner can turn on; until the [release checklist](docs/release-checklist.md) records them as done, assume they are off. If a scan finds a real secret in the history, rotate it first, then remove it.
 
 ## Release signing key
 
