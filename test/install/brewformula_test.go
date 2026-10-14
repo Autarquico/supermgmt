@@ -52,7 +52,6 @@ func renderBrewFormula(t *testing.T, checksums string) (string, error) {
 const wantBrewFormula = `class Supermgmt < Formula
   desc "Self-hosted management for personal infrastructure"
   homepage "https://github.com/autarquico/supermgmt"
-  version "1.2.3"
   license "Apache-2.0"
 
   on_macos do
