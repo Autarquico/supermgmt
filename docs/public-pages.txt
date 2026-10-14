@@ -25,8 +25,8 @@ installation.md
 deployments.md
 providers.md
 mcp.md
-# tui.md
-# policies.md
+tui.md
+policies.md
 cloudflare.md
 
 [Operate]
