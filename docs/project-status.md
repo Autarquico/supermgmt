@@ -38,7 +38,7 @@ Each claim has exactly one level:
 
 ## The CI run behind these claims
 
-Rows marked "passed at `6f89609`" refer to the `ci` workflow run on `main` at commit `6f89609`, on 2026-10-14: [run 38573703589](https://github.com/autarquico/supermgmt/actions/runs/38573703589). Every job cited above passed in that run. The run as a whole failed, because its full-history secret scan (job `secret-scan`) failed; no claim on this page rests on that job.
+Rows marked "passed at `6f89609`" refer to the `ci` workflow run on `main` at commit `6f89609`, on 2026-10-14: [run 38573703589](https://github.com/autarquico/supermgmt/actions/runs/38573703589). Every job cited above passed in that run. Every job of the run passed on its second attempt (the first failed in `secret-scan` while downloading a Go module, a network error, not a finding).
 
 The rows marked "tested against fakes" also passed in that run. Their level stays lower because the outside system was a fake.
 
