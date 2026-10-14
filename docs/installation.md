@@ -11,7 +11,7 @@ Pick the row that matches what you want to run.
 | Manage machines from your own laptop, no server | none, or `local` | Build from source and follow [Getting started](getting-started.md). You need no installer: the first command that needs the daemon starts it. |
 | Keep `sm` installed for your user, with the daemon running at login | `local --resident` | Run `sm install local --resident` from the binary you built. It copies that binary to `~/.local/bin`. See [Modes](#modes). |
 | Sign in to a shared server from your laptop | `client` | `sm install client`, then `sm profile add` and `sm login`. See [After a server install](#after-a-server-install). |
-| Run a shared server for a team | `server` | Linux with systemd, as root. `sm install server` works from a binary you built; `install.sh` does not work until a release exists. |
+| Run a shared server for a team | `server` | Linux with systemd, as root. `sm install server` works from a binary you built; `install.sh` has not been verified against a published release yet (release checklist H22). |
 | Run the server in a container on Proxmox VE | `proxmox-lxc` | Not tried on a real Proxmox VE host. See [Proxmox appliance](#proxmox-appliance-proxmox-lxc). |
 
 `sm install <mode>` installs the `sm` binary that is running (`internal/cli/install.go`), so it works without a release. `install.sh` downloads and verifies a signed release first, and that is the part that cannot work yet.

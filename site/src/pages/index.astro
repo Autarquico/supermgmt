@@ -87,7 +87,7 @@ const approvalEvidence = [
 								<p>{item.text}</p>
 								<p class="evidence">
 									<span class={`pill ${item.evidence.level.tone}`}>{item.evidence.level.name}</span>
-									<a href={item.evidence.href}>Evidence</a>
+									<a href={item.evidence.href}>Evidence<span class="sr-only">: {item.title}</span></a>
 								</p>
 							</li>
 						))
