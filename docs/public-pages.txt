@@ -15,11 +15,11 @@
 # pages; tui, policies: guides; cli: generated reference).
 
 [Start]
-# overview.md
-# getting-started.md
+overview.md
+getting-started.md
 installation.md
-# concepts.md
-# status.md
+concepts.md
+project-status.md
 
 [Guides]
 deployments.md

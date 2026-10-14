@@ -16,7 +16,7 @@ layout:
     container: "hairline frame, radius 0, own horizontal scroll under 760px"
   claims:
     style: bento
-    source: "docs/status.md claims table (level + limitation shown on each card)"
+    source: "docs/project-status.md claims table (level + limitation shown on each card)"
 density: breathable-aggressive
 motion:
   page_load: none
