@@ -12,6 +12,12 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'SuperMgmt',
+      customCss: ['./src/styles/theme.css'],
+      components: {
+        Header: './src/components/overrides/Header.astro',
+        Footer: './src/components/overrides/Footer.astro',
+      },
+      expressiveCode: { styleOverrides: { borderRadius: '0', codeFontFamily: 'var(--sl-font-mono)' } },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/autarquico/supermgmt' }],
       sidebar: manifest.map(({ label, files }) => ({
         label,
