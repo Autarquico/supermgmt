@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: nothing is released.
 
+### Added: website and documentation
+
+- A static website in `site/` (Astro and Starlight) with a landing page and the documentation, built from `docs/*.md` at build time; `docs/public-pages.txt` lists the public pages. Fonts are self-hosted, and the site source references no third-party script, font or analytics service. The `pages` workflow publishes it to GitHub Pages from release tags only; it is not published yet. The `site` CI job builds and checks it on every change.
+- New pages: overview, getting started (build from source, a local node, an SSH node, setup and approval), concepts, project status (the canonical list of what is verified, claim by claim), using the TUI, policies and approvals, and a CLI reference generated from the command tree (`docs/cli.md`, drift-checked by `make generate`).
+- A shorter README that points to the status page and the getting-started path, and a roadmap organised by area.
+
+### Fixed: documentation
+
+- The README and the roadmap said the Providers and Settings screens of the TUI were not built. They exist, read-only, since the server-mode work (`TestProvidersScreenListsProvidersReadOnly`, `TestSettingsScreenShowsModeProfileServerAndIdentity`).
+
 ### Added in M6
 
 - Fuzzing: a fuzz target for every parser of untrusted input, 55 targets mapped in `scripts/fuzz-inventory.txt` (`sh scripts/fuzz.sh count`). `test/fuzzinv` finds parser candidates from the syntax tree and fails on an unmapped one; `scripts/fuzz.sh reach` proves the seeds execute each mapped function. Seeds run in every `go test`; mutation runs in the new `nightly.yml` (6 shards, 5 minutes per target). 25 known parsers are exempt as `gap` rows with no target.
@@ -32,7 +42,7 @@ Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, au
 
 - Nothing is released, and the production release key, the Homebrew tap, the licence decision and the name checks are human steps that have not been done.
 - Proxmox, GitHub and MCP remain verified against fakes only. The new Proxmox assumptions (the token comment field, the task-list filters, clock skew) are rows of [m3-real-pve.md](docs/manual-checks/m3-real-pve.md).
-- The new lifecycle, crash and chain jobs were written without a GitHub run; arm64 and macOS legs have never run.
+- The new lifecycle, crash and chain jobs, including the arm64 and macOS legs, first passed on GitHub on `main` at `6f89609` (2026-10-14). The nightly workflow has not run, and the release workflow has never run on a real tag.
 - Unresolved flake: the daemon-restart test (`TestM1_DaemonKilledMidRestartReconciles`) has a second failure mode that was seen once and not explained. A downgrade to a build older than M6 leaves its audit record pending until an M6 or newer binary starts. See the [release checklist](docs/release-checklist.md#unresolved-items-and-stated-limitations) for the full list.
 
 ### Added in M5
