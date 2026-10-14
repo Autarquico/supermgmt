@@ -1,6 +1,6 @@
 # M5 manual checks: real MCP clients and a real authorization server
 
-**Status: DEFERRED. Nothing on this page has been run.** Every MCP interaction in M5 was verified with the official Go SDK's own client (`github.com/modelcontextprotocol/go-sdk` v1.8.0, the library the server is built on), with hand-written raw JSON-RPC goldens (`internal/mcp/testdata/wire/`), and every remote token with a fake authorization server (`internal/auth/oauthfake`, written from the RFCs; its [PROVENANCE.md](../../internal/auth/oauthfake/PROVENANCE.md) says the RFC texts were not re-read when it was written). "A registered MCP client inspects nodes, services and deployments with no shell tool" and "remote MCP as an OAuth protected resource" are therefore **SDK-and-fake verified, not real-client verified** until the sections below pass. A skipped row stays "not verified" in the README, ROADMAP and [compatibility.md](../compatibility.md#mcp-m5). Do not write "works with Claude Code" (or any product) anywhere until its row has evidence.
+**Status: DEFERRED. Nothing on this page has been run.** Every MCP interaction in M5 was verified with the official Go SDK's own client (`github.com/modelcontextprotocol/go-sdk` v1.8.0, the library the server is built on), with hand-written raw JSON-RPC goldens (`internal/mcp/testdata/wire/`), and every remote token with a fake authorization server (`internal/auth/oauthfake`, written from the RFCs; its [PROVENANCE.md](../../internal/auth/oauthfake/PROVENANCE.md) says the RFC texts were not re-read when it was written). "A registered MCP client inspects nodes, services and deployments with no shell tool" and "remote MCP as an OAuth protected resource" are therefore **SDK-and-fake verified, not real-client verified** until the sections below pass. A skipped row stays "not verified" in the README, ROADMAP and [compatibility.md](../compatibility.md#mcp). Do not write "works with Claude Code" (or any product) anywhere until its row has evidence.
 
 Where a row says **fix the fake or the code**, change them and their documentation, not the expectation.
 
@@ -115,7 +115,7 @@ Decode the real access token (header and payload) and record them with secrets a
 
 ## 8. Tested-clients matrix
 
-When rows pass, copy the evidence into [compatibility.md](../compatibility.md#mcp-m5) as a table with columns client, version, transport, authorization server and version, date, result. Until then the matrix is empty and says so.
+When rows pass, copy the evidence into [compatibility.md](../compatibility.md#mcp) as a table with columns client, version, transport, authorization server and version, date, result. Until then the matrix is empty and says so.
 
 | Client | Version | Transport | Authorization server | Date | Result |
 |---|---|---|---|---|---|
