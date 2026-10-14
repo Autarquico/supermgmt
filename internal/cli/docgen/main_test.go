@@ -15,7 +15,8 @@ import (
 func newRoot() *cobra.Command { return cli.NewRootCommand(version.Build{}) }
 
 func TestRenderIsDeterministic(t *testing.T) {
-	if render(newRoot()) != render(newRoot()) {
+	first, second := render(newRoot()), render(newRoot())
+	if first != second {
 		t.Fatal("two renders of the same tree differ")
 	}
 }
