@@ -1,6 +1,6 @@
 # ADR-0024: Proxmox discovery model
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §6.2, §15.1, §15.3, §21.1, §39.3; ADR-0023
 
 ## Context
@@ -41,4 +41,4 @@ A guest missing from a successful sync is `absent` only if the token still holds
 ## Consequences
 
 - A token whose ACL shrinks does not make guests look deleted.
-- Snapshot, backup and task-history listings are deferred to M4.
+- Snapshot, backup and task-history listings are deferred past V1 (spec 1.4.8, §15.1).

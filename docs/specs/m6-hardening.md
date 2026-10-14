@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: L
 issue: null
-prs: []
+prs: [17]
 related_issues: [6]
 depends_on: [m5-mcp]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-14
 ---
 
 # M6 — Hardening and release
@@ -26,7 +26,7 @@ Master spec §31 M6. Endurecer y preparar la primera release: fuzzing, race, esc
 **Entra:**
 - Fuzz de todos los parsers; tests de race; escaneos de seguridad.
 - Plan de empaquetado/homebrew; `docs/compatibility.md`.
-- Tests de migración desde fixtures de cada tag previo.
+- Tests de migración desde fixtures de cada commit de milestone en `main` (binarios reales de cada merge, versiones sintéticas; aún no existe ningún tag, ADR-0035).
 - Cierre de documentación y barrido del checklist del Appendix E.
 
 **No entra:** módulos post-V1 (§44).

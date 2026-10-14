@@ -15,8 +15,11 @@ import (
 // point leaves a journal that names everything that might exist.
 
 const (
-	journalDirPrefix = "supermgmt-installer-"
+	// journalRoot is root-only (SEC-22, ADR-0026); journals that M3 builds left in the shared
+	// journalTmpRoot as journalDirPrefix+<id> are still recovered.
+	journalRoot      = "/var/lib/supermgmt-installer/journals"
 	journalTmpRoot   = "/var/tmp"
+	journalDirPrefix = "supermgmt-installer-"
 	journalFile      = "journal.jsonl"
 	stageDirName     = "stage" // the token staging directory inside the journal directory
 )
@@ -62,28 +65,41 @@ type journal struct {
 	entries []journalEntry // folded: the latest line of each seq, in seq order
 }
 
-// reJournalDir is the only name a journal directory may have.
-var reJournalDir = regexp.MustCompile(`^` + journalDirPrefix + `[0-9a-f]{8}$`)
+// reJournalDir and reLegacyJournalDir are the only names a journal directory may have.
+var (
+	reJournalDir       = regexp.MustCompile(`^[0-9a-f]{8}$`)
+	reLegacyJournalDir = regexp.MustCompile(`^` + journalDirPrefix + `[0-9a-f]{8}$`)
+)
 
 var knownResources = []string{resJournal, resLXC, resUser, resRole, resACL, resToken, resHostTemp, resBootstrapDir, resTemplate, resCommitted}
 
-func journalDirFor(id string) string { return path.Join(journalTmpRoot, journalDirPrefix+id) }
+func journalDirFor(id string) string { return path.Join(journalRoot, id) }
 
 func journalIDOf(dir string) string { return strings.TrimPrefix(path.Base(dir), journalDirPrefix) }
 
 func (j *journal) path() string { return path.Join(j.dir, journalFile) }
 
-// createJournal makes the journal directory (it must not exist) and makes both
-// the directory and the first entry durable before returning.
+// createJournal makes the journal directory (it must not exist; Exists does not
+// follow a link) and checks, before the first append, that both it and its
+// parent are what the installer creates: real root-owned directories closed to
+// others. It then makes the directory and the first entry durable.
 func createJournal(files Files, id string) (*journal, error) {
 	j := &journal{files: files, id: id, dir: journalDirFor(id)}
 	if files.Exists(j.dir) {
 		return nil, fmt.Errorf("journal directory %s already exists", j.dir)
 	}
+	if err := files.MkdirAll(journalRoot, 0o700, Owner{}); err != nil {
+		return nil, err
+	}
 	if err := files.MkdirAll(j.dir, 0o700, Owner{}); err != nil {
 		return nil, err
 	}
-	if err := files.SyncDir(journalTmpRoot); err != nil {
+	for _, dir := range []string{journalRoot, j.dir} {
+		if err := requireRootPrivateDir(files, dir); err != nil {
+			return nil, err
+		}
+	}
+	if err := files.SyncDir(journalRoot); err != nil {
 		return nil, err
 	}
 	if _, err := j.begin("S0", resJournal, id); err != nil {
@@ -93,6 +109,17 @@ func createJournal(files Files, id string) (*journal, error) {
 		return nil, err
 	}
 	return j, nil
+}
+
+func requireRootPrivateDir(files Files, dir string) error {
+	info, err := files.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.Dir || info.UID != 0 || info.Mode&0o077 != 0 {
+		return fmt.Errorf("%s is not a root-owned private directory (owner %d, mode %04o): refusing to write a journal there", dir, info.UID, info.Mode)
+	}
+	return nil
 }
 
 // openJournal reads a journal left by an earlier run. A torn last line is
@@ -234,5 +261,5 @@ func (j *journal) remove() error {
 	if err := j.files.RemoveAll(j.dir); err != nil {
 		return err
 	}
-	return j.files.SyncDir(journalTmpRoot)
+	return j.files.SyncDir(path.Dir(j.dir))
 }

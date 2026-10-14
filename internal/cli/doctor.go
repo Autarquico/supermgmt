@@ -17,6 +17,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/config"
+	"github.com/autarquico/supermgmt/internal/daemon"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
@@ -27,6 +28,9 @@ const (
 	statusFail = "fail"
 
 	integrityRowsShown = 5
+
+	// doctorFormatVersion is the version of the --json contract (ADR-0035).
+	doctorFormatVersion = 1
 )
 
 type check struct {
@@ -35,9 +39,15 @@ type check struct {
 	Detail string `json:"detail"`
 }
 
+// doctorReport is the --json contract (ADR-0035). The installer reads the
+// schema versions when format_version is present and falls back to parsing
+// the schema check's text only for binaries that predate it.
 type doctorReport struct {
-	OK     bool    `json:"ok"`
-	Checks []check `json:"checks"`
+	FormatVersion         int     `json:"format_version"`
+	OK                    bool    `json:"ok"`
+	DatabaseSchemaVersion *int    `json:"database_schema_version,omitempty"`
+	BinarySchemaVersion   int     `json:"binary_schema_version,omitempty"`
+	Checks                []check `json:"checks"`
 }
 
 func newDoctorCmd(env []string) *cobra.Command {
@@ -52,16 +62,16 @@ func newDoctorCmd(env []string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configFlag, _ := cmd.Flags().GetString("config")
 			asJSON, _ := cmd.Flags().GetBool("json")
-			var checks []check
+			var report doctorReport
 			if offline {
-				checks = offlineChecks(cmd.Context(), configPath(configFlag, env), env)
+				report = offlineReport(cmd.Context(), configPath(configFlag, env), env)
 			} else {
-				var err error
-				if checks, err = onlineChecks(cmd, env); err != nil {
+				checks, err := onlineChecks(cmd, env)
+				if err != nil {
 					return err
 				}
+				report = newDoctorReport(checks)
 			}
-			report := newDoctorReport(checks)
 			if err := writeDoctorReport(cmd.OutOrStdout(), report, asJSON); err != nil {
 				return err
 			}
@@ -114,7 +124,7 @@ func serverChecks(r wire.AdminDoctor) []check {
 }
 
 func newDoctorReport(checks []check) doctorReport {
-	report := doctorReport{OK: true, Checks: checks}
+	report := doctorReport{FormatVersion: doctorFormatVersion, OK: true, Checks: checks}
 	for _, c := range checks {
 		if c.Status == statusFail {
 			report.OK = false
@@ -135,12 +145,23 @@ func writeDoctorReport(w io.Writer, r doctorReport, asJSON bool) error {
 	return table.Flush()
 }
 
+// offlineReport runs every offline check and adds the schema versions the
+// installer reads: the database's (absent without a schema) and the binary's.
+func offlineReport(ctx context.Context, configFile string, env []string) doctorReport {
+	checks, databaseSchema := offlineChecks(ctx, configFile, env)
+	report := newDoctorReport(checks)
+	report.DatabaseSchemaVersion = databaseSchema
+	report.BinarySchemaVersion, _ = database.LatestSchemaVersion()
+	return report
+}
+
 // offlineChecks runs every offline check. Checks that need the configuration
-// are omitted when it does not load.
-func offlineChecks(ctx context.Context, configFile string, env []string) []check {
+// are omitted when it does not load. The second result is the database's
+// schema version, nil when it has none.
+func offlineChecks(ctx context.Context, configFile string, env []string) ([]check, *int) {
 	result, err := config.Load(configFile, env)
 	if err != nil {
-		return []check{{"config", statusFail, fmt.Sprintf("%s: %s", configFile, strings.Join(configProblems(err), "; "))}}
+		return []check{{"config", statusFail, fmt.Sprintf("%s: %s", configFile, strings.Join(configProblems(err), "; "))}}, nil
 	}
 	cfg := result.Config
 	checks := []check{
@@ -150,7 +171,16 @@ func offlineChecks(ctx context.Context, configFile string, env []string) []check
 		socketCheck(socketPath(cfg, env)),
 		databaseFileCheck(cfg.Storage.SQLite.Path),
 	}
-	return append(checks, databaseChecks(ctx, cfg.Storage.SQLite.Path, cfg.Security.KeysDir)...)
+	if cfg.Server.TLS.Mode == config.TLSDirect {
+		checks = append(checks, tlsCheck(cfg.Server.TLS.CertFile))
+	}
+	dbChecks, databaseSchema := databaseChecks(ctx, cfg.Storage.SQLite.Path, cfg.Security.KeysDir)
+	return append(checks, dbChecks...), databaseSchema
+}
+
+func tlsCheck(certFile string) check {
+	c := daemon.TLSCertificateCheck(certFile, domain.SystemClock{}.Now())
+	return check{c.Name, c.Status, c.Detail}
 }
 
 func environmentCheck(warnings []string) check {
@@ -222,29 +252,30 @@ func modeCheck(name, path string, mode, forbidden fs.FileMode, problem string) c
 
 // databaseChecks holds the database lock for as long as it inspects the file,
 // so no daemon can start underneath it (spec §2.1.1).
-func databaseChecks(ctx context.Context, path, keysDir string) []check {
+func databaseChecks(ctx context.Context, path, keysDir string) ([]check, *int) {
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
-		return []check{{"database_lock", statusWarn, "skipped: database directory does not exist"}}
+		return []check{{"database_lock", statusWarn, "skipped: database directory does not exist"}}, nil
 	}
 	lock, err := database.AcquireDatabaseLock(path)
 	var held *database.LockHeldError
 	switch {
 	case errors.As(err, &held):
-		return []check{{"database_lock", statusFail, heldDetail(held)}}
+		return []check{{"database_lock", statusFail, heldDetail(held)}}, nil
 	case err != nil:
-		return []check{{"database_lock", statusFail, err.Error()}}
+		return []check{{"database_lock", statusFail, err.Error()}}, nil
 	}
 	defer func() { _ = lock.Release() }()
 
 	checks := []check{{"database_lock", statusOK, "no other process holds " + lock.Path()}}
 	if !fileExists(path) {
-		return checks
+		return checks, nil
 	}
-	checks = append(checks, inspectDatabase(ctx, path)...)
+	inspected, schema := inspectDatabase(ctx, path)
+	checks = append(checks, inspected...)
 	if orphans, ok := orphanKeysCheck(ctx, path, keysDir); ok {
 		checks = append(checks, orphans)
 	}
-	return checks
+	return checks, schema
 }
 
 func heldDetail(held *database.LockHeldError) string {
@@ -254,17 +285,22 @@ func heldDetail(held *database.LockHeldError) string {
 	return fmt.Sprintf("held by PID %d (a daemon is running): %s", held.PID, held.Path)
 }
 
-// inspectDatabase reads the file read-only; it never migrates or writes.
-func inspectDatabase(ctx context.Context, path string) []check {
+// inspectDatabase reads the file read-only; it never migrates or writes. It
+// also returns the schema version, nil when the file has no schema.
+func inspectDatabase(ctx context.Context, path string) ([]check, *int) {
 	found, err := database.Inspect(ctx, path)
 	if err != nil {
-		return []check{{"schema", statusFail, err.Error()}}
+		return []check{{"schema", statusFail, err.Error()}}, nil
 	}
 	latest, err := database.LatestSchemaVersion()
 	if err != nil {
-		return []check{{"schema", statusFail, err.Error()}}
+		return []check{{"schema", statusFail, err.Error()}}, nil
 	}
-	return []check{schemaCheck(found, latest), integrityCheck(found.IntegrityFindings)}
+	var schema *int
+	if found.HasSchema {
+		schema = &found.SchemaVersion
+	}
+	return []check{schemaCheck(found, latest), integrityCheck(found.IntegrityFindings)}, schema
 }
 
 func schemaCheck(found database.Inspection, latest int) check {

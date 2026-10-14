@@ -6,25 +6,6 @@ import (
 	"syscall"
 )
 
-// hostDisk is the optional disk-space capability the upgrade's pre-flight
-// needs. Files stays the frozen M2 interface; the real host implements this
-// beside it, and an upgrade on a host that cannot answer refuses to start.
-type hostDisk interface {
-	// FreeBytes is the space available to an unprivileged writer under dir.
-	FreeBytes(dir string) (uint64, error)
-	FileSize(path string) (int64, error)
-}
-
-// locker is the optional exclusive-lock capability (also part of applianceHost).
-type locker interface {
-	Lock(path string) (release func(), err error)
-}
-
-// canonicalizer resolves a path the way the daemon does before it names its lock file.
-type canonicalizer interface {
-	Canonical(path string) (string, error)
-}
-
 // Canonical makes path absolute and resolves symlinks in its directory; the file itself may not exist.
 func (osFiles) Canonical(path string) (string, error) {
 	abs, err := filepath.Abs(path)

@@ -230,7 +230,7 @@ func TestInstall_AccessInformationIsShownOnceTheRecordIsDurable(t *testing.T) {
 		},
 		"removing the journal": func(w *aw) int {
 			return lastIndex(w.opLog, func(op string) bool {
-				return strings.HasPrefix(op, "host.rm /var/tmp/supermgmt-installer-") && !strings.HasSuffix(op, "/stage")
+				return strings.HasPrefix(op, "host.rm "+journalRoot+"/") && !strings.HasSuffix(op, "/stage")
 			}) + 1
 		},
 	}

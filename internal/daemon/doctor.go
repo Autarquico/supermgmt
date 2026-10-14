@@ -2,12 +2,16 @@ package daemon
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
+	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
@@ -35,7 +39,49 @@ func (b *builder) doctor(ctx context.Context) (wire.AdminDoctor, error) {
 
 	report.Checks = append(report.Checks, b.checkKeys())
 	report.Checks = append(report.Checks, b.checkProviders(ctx))
+	if b.cfg.Server.TLS.Mode == config.TLSDirect {
+		report.Checks = append(report.Checks, TLSCertificateCheck(b.cfg.Server.TLS.CertFile, b.o.Clock.Now()))
+	}
 	return report, nil
+}
+
+// tlsExpiryWarning is how long before NotAfter the doctor starts to warn.
+const tlsExpiryWarning = 30 * 24 * time.Hour
+
+// TLSCertificateCheck reads the certificate the server presents in direct TLS
+// mode: ok, warn within 30 days of NotAfter, fail once expired or unreadable.
+// The detail is NotAfter in RFC 3339. The offline doctor shares it.
+func TLSCertificateCheck(certFile string, now time.Time) wire.DoctorCheck {
+	notAfter, err := certificateNotAfter(certFile)
+	if err != nil {
+		return wire.DoctorCheck{Name: "tls", Status: checkFail, Detail: err.Error()}
+	}
+	check := wire.DoctorCheck{Name: "tls", Status: checkOK, Detail: notAfter.UTC().Format(time.RFC3339)}
+	switch remaining := notAfter.Sub(now); {
+	case remaining <= 0:
+		check.Status = checkFail
+	case remaining <= tlsExpiryWarning:
+		check.Status = checkWarn
+	}
+	return check
+}
+
+func certificateNotAfter(certFile string) (time.Time, error) {
+	data, err := os.ReadFile(certFile) //nolint:gosec // the operator's configured certificate path
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read the TLS certificate: %w", err)
+	}
+	for block, rest := pem.Decode(data); block != nil; block, rest = pem.Decode(rest) {
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parse the TLS certificate %s: %w", certFile, err)
+		}
+		return cert.NotAfter, nil
+	}
+	return time.Time{}, fmt.Errorf("%s holds no PEM certificate", certFile)
 }
 
 func (b *builder) checkDatabase(ctx context.Context) wire.DoctorCheck {
@@ -117,7 +163,19 @@ func (b *builder) providerHealth(ctx context.Context, p domain.Provider) (status
 	if age > staleSyncFactor*app.ProviderSyncInterval(p) {
 		return checkWarn, fmt.Sprintf("last synced %s ago", age.Round(time.Second))
 	}
-	return checkOK, "synced " + p.LastSyncAt.UTC().Format(time.RFC3339)
+	synced := "synced " + p.LastSyncAt.UTC().Format(time.RFC3339)
+	if report, ok := app.LatestSyncReport(ctx, b.db.Reader(), p.ID); ok && skewExceedsWindow(report) {
+		return checkWarn, fmt.Sprintf("%s; PVE clock differs by %s: task correlation may miss (set both clocks with NTP)", synced, report.ClockSkew.Round(time.Second))
+	}
+	return checkOK, synced
+}
+
+// maxClockSkew is the largest PVE-vs-appliance clock difference the doctor
+// accepts; the UPID correlation window keeps a 120 s margin (ADR-0025).
+const maxClockSkew = 60 * time.Second
+
+func skewExceedsWindow(r app.SyncReport) bool {
+	return !r.ClockSkewUnknown && (r.ClockSkew > maxClockSkew || r.ClockSkew < -maxClockSkew)
 }
 
 func worse(a, b string) string {

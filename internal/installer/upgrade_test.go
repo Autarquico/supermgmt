@@ -30,7 +30,7 @@ func TestUpgrade_StopsBacksUpReplacesAndStarts(t *testing.T) {
 	}
 	st, ok := h.state()
 	if !ok || st.Phase != upDone || st.OldSHA256 != sha256Hex([]byte(binV1)) || st.NewSHA256 != sha256Hex([]byte(binV2)) ||
-		st.SchemaBefore != 3 || !strings.Contains(st.Archive, "pre-1.tar.zst") || st.FromVersion != "1.0.0" || st.ToVersion != "1.1.0" {
+		st.SchemaBefore != 3 || !strings.Contains(st.Archive, "pre-1-20260101T000000Z.tar.zst") || st.FromVersion != "1.0.0" || st.ToVersion != "1.1.0" {
 		t.Errorf("state = %+v", st)
 	}
 	h.noViolations(t)

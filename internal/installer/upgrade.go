@@ -55,11 +55,7 @@ func (in *Installer) lockForAppliances() (release func(), held bool, err error) 
 }
 
 func (in *Installer) lockInstaller() (func(), error) {
-	l, ok := in.d.Files.(locker)
-	if !ok {
-		return nil, fail(ExitPrerequisite, "this host cannot take the installer lock")
-	}
-	release, err := l.Lock(installerLockPath)
+	release, err := in.d.Files.Lock(installerLockPath)
 	if err != nil {
 		return nil, failWrap(ExitPrerequisite, "another SuperMgmt installer is running", err)
 	}
@@ -77,7 +73,12 @@ type upgrader struct {
 	st upgradeState
 }
 
-func (u *upgrader) hit(point string) error { return u.h.at(point) }
+func (u *upgrader) hit(point string) error {
+	if err := u.h.at(point); err != nil {
+		return err
+	}
+	return crashFromEnv(u.d.Host.Env, point)
+}
 
 func (u *upgrader) say(format string, args ...any) { u.in.say(format, args...) }
 
@@ -151,10 +152,7 @@ func (u *upgrader) fresh(ctx context.Context) error {
 // checkDisk needs room for the staged binary (twice, in case the previous one
 // is copied rather than linked) and for the backup of the database.
 func (u *upgrader) checkDisk(newBin string) error {
-	disk, ok := u.d.Files.(hostDisk)
-	if !ok {
-		return fail(ExitPrerequisite, "this host cannot report free disk space")
-	}
+	disk := u.d.Files
 	size, err := disk.FileSize(newBin)
 	if err != nil {
 		return failWrap(ExitInvalid, "read the new sm binary", err)
@@ -185,7 +183,7 @@ func (u *upgrader) existingParent(dir string) string {
 	return dir
 }
 
-func (u *upgrader) requireFree(disk hostDisk, dir string, need uint64) error {
+func (u *upgrader) requireFree(disk Files, dir string, need uint64) error {
 	free, err := disk.FreeBytes(dir)
 	if err != nil {
 		return failWrap(ExitPrerequisite, "check free space under "+dir, err)
@@ -304,6 +302,12 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 	if err := u.ensurePrepared(ctx, newBin); err != nil {
 		return err
 	}
+	if err := u.retakeArchive(ctx); err != nil {
+		if isCrash(err) {
+			return err
+		}
+		return u.abortBeforeSwap(ctx, err)
+	}
 	return u.advance(ctx)
 }
 
@@ -329,22 +333,77 @@ func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 	if err := u.linkPrevious(u.st.OldSHA256); err != nil {
 		return err
 	}
-	return u.dropArchiveIfServiceRan(ctx)
+	return nil
 }
 
-// dropArchiveIfServiceRan: the archive of a resumed run is only as good as the guarantee that the
-// old service did not write to the database after it was taken. A service found running now is
-// proof it did; the upgrade then goes back to the stopped phase and takes a new archive.
-func (u *upgrader) dropArchiveIfServiceRan(ctx context.Context) error {
-	if u.st.Phase != upBackedUp || u.t.unit == nil {
+// retakeArchive: an archive recorded before a crash is only as good as the guarantee that
+// the database did not change after it. The service may have run again, and its WAL is not
+// visible to a stopped-service check, so a resume in phase backed_up never trusts it: the
+// service is quiesced, a new archive replaces it, and the superseded one is removed last.
+func (u *upgrader) retakeArchive(ctx context.Context) error {
+	if u.st.Phase != upBackedUp || !u.in.hasData(u.t) {
 		return nil
 	}
-	if err := u.t.services.WaitStopped(ctx, *u.t.unit, probeTimeout); err == nil {
+	if live, err := u.d.Files.Hash(u.t.l.Binary); err != nil || live != u.st.OldSHA256 {
+		return nil // already swapped: nothing ran on the old database since
+	}
+	if err := u.quiesce(ctx); err != nil {
+		return err
+	}
+	superseded := u.st.Archive
+	if err := u.takeArchive(ctx); err != nil {
+		return err
+	}
+	u.say("the unfinished upgrade's backup is retaken; the earlier one is removed")
+	if superseded != "" && superseded != u.st.Archive {
+		u.st.Superseded = append(u.st.Superseded, superseded)
+	}
+	if err := u.record(upBackedUp); err != nil {
+		return err
+	}
+	if err := u.removeSuperseded(); err != nil {
+		return err
+	}
+	return u.hit("U:backup:retaken")
+}
+
+// removeSuperseded deletes the archives the state lists as replaced, then forgets them. The
+// list is durable before the new archive is named, so a crash never orphans one. The state is
+// writable by the service account, so a path is only removed when it is a regular file named
+// like a backup archive, in the directory of the current archive; anything else is kept.
+func (u *upgrader) removeSuperseded() error {
+	if len(u.st.Superseded) == 0 {
 		return nil
 	}
-	u.say("the service is running again since the backup was taken; that backup is stale and will be taken anew")
-	u.st.Archive = ""
-	return u.record(upStopped)
+	for _, path := range u.st.Superseded {
+		if !u.isSiblingArchive(path) {
+			u.say("keeping %s: it is not a backup archive next to %s", path, u.st.Archive)
+			continue
+		}
+		if err := u.d.Files.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove the superseded backup %s: %w", path, err)
+		}
+	}
+	u.st.Superseded = nil
+	return u.record(u.st.Phase)
+}
+
+var reArchiveName = regexp.MustCompile(`^supermgmt-.+-\d{8}T\d{6}Z\.tar\.zst$`)
+
+// isSiblingArchive: path is a regular file (not a symlink or directory) with a backup
+// archive's name, and lives in the same canonical directory as the current archive.
+func (u *upgrader) isSiblingArchive(path string) bool {
+	files := u.d.Files
+	if u.st.Archive == "" || !reArchiveName.MatchString(filepath.Base(path)) {
+		return false
+	}
+	info, err := files.Lstat(path)
+	if err != nil || !info.Regular {
+		return false
+	}
+	dir, errDir := files.Canonical(path)
+	current, errCurrent := files.Canonical(u.st.Archive)
+	return errDir == nil && errCurrent == nil && filepath.Dir(dir) == filepath.Dir(current)
 }
 
 // abandon drops an upgrade that never replaced the binary and brings the old service back.
@@ -352,6 +411,9 @@ func (u *upgrader) abandon(ctx context.Context) error {
 	live, err := u.d.Files.Hash(u.t.l.Binary)
 	if err != nil || live != u.st.OldSHA256 {
 		return fail(ExitConfiguration, "cannot abandon the unfinished upgrade: %s is not the old binary", u.t.l.Binary)
+	}
+	if err := u.removeSuperseded(); err != nil {
+		return err
 	}
 	if err := u.forgetBackup(); err != nil {
 		return err
@@ -406,7 +468,7 @@ func (u *upgrader) step(ctx context.Context, phase upgradePhase) error {
 	case upStopped:
 		return u.backup(ctx)
 	case upBackedUp:
-		return u.swap()
+		return u.swap(ctx)
 	case upSwapped:
 		return u.startNew(ctx)
 	case upStarted:
@@ -426,21 +488,22 @@ func (u *upgrader) stopAndVerify(ctx context.Context) error {
 	return u.record(upStopped)
 }
 
-// quiesce stops the service, verifies it terminated and that nobody holds the
-// database. Every offline sm command takes the database lock itself, so the
-// lock is proven free here (taken and released) rather than held across them.
+// quiesce holds the service, stops it, verifies it terminated and that nobody holds the
+// database. Every offline sm command takes the database lock itself, so the lock is proven
+// free here (taken and released) rather than held across them.
 func (u *upgrader) quiesce(ctx context.Context) error {
 	if t := u.t; t.unit != nil {
+		if err := u.holdService(ctx); err != nil {
+			return err
+		}
+		if err := u.hit("U:hold:applied"); err != nil {
+			return err
+		}
 		if err := t.services.Stop(ctx, *t.unit); err != nil {
 			return fmt.Errorf("stop %s: %w", t.unit.Name, err)
 		}
 		if err := t.services.WaitStopped(ctx, *t.unit, stopTimeout); err != nil {
 			return fmt.Errorf("verify %s terminated: %w", t.unit.Name, err)
-		}
-		// The hold: a reboot or a dependency must not start the service while the upgrade is
-		// unfinished. It is lifted by startService, the only way a version is brought back.
-		if err := t.services.Disable(ctx, *t.unit); err != nil {
-			return fmt.Errorf("keep %s from starting during the upgrade: %w", t.unit.Name, err)
 		}
 	}
 	release, err := u.lockDatabase()
@@ -451,21 +514,31 @@ func (u *upgrader) quiesce(ctx context.Context) error {
 	return nil
 }
 
+// holdService keeps the service from starting while the upgrade is unfinished. The hold is
+// placed before Stop, so no start can slip in between, and lifted only by startService, the
+// only way a version is brought back.
+func (u *upgrader) holdService(ctx context.Context) error {
+	t := u.t
+	if err := t.services.Hold(ctx, *t.unit); err != nil {
+		return fmt.Errorf("keep %s from starting during the upgrade: %w", t.unit.Name, err)
+	}
+	return nil
+}
+
 // lockDatabase takes the lock the daemon takes, on the same canonical path, and returns its
 // release. With no database, or no lock file yet, there is nothing to hold.
 func (u *upgrader) lockDatabase() (release func(), err error) {
 	if u.t.dbPath == "" {
 		return func() {}, nil
 	}
-	lockFile := u.lockFilePath()
+	lockFile, err := u.lockFilePath()
+	if err != nil {
+		return nil, err
+	}
 	if !u.d.Files.Exists(lockFile) {
 		return func() {}, nil
 	}
-	l, ok := u.d.Files.(locker)
-	if !ok {
-		return nil, errors.New("this host cannot take the database lock")
-	}
-	release, err = l.Lock(lockFile)
+	release, err = u.d.Files.Lock(lockFile)
 	if err != nil {
 		return nil, fmt.Errorf("the database is still in use: %w", err)
 	}
@@ -474,14 +547,12 @@ func (u *upgrader) lockDatabase() (release func(), err error) {
 
 // lockFilePath is "<canonical database path>.lock", as internal/database names it: the daemon
 // resolves the directory, so a relative or symlinked configuration still meets the same file.
-func (u *upgrader) lockFilePath() string {
-	db := u.t.dbPath
-	if c, ok := u.d.Files.(canonicalizer); ok {
-		if resolved, err := c.Canonical(db); err == nil {
-			db = resolved
-		}
+func (u *upgrader) lockFilePath() (string, error) {
+	db, err := u.d.Files.Canonical(u.t.dbPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve the database path %s: %w", u.t.dbPath, err)
 	}
-	return db + ".lock"
+	return db + ".lock", nil
 }
 
 // ---- backup ----
@@ -501,6 +572,17 @@ func (u *upgrader) backup(ctx context.Context) error {
 	if !u.in.hasData(u.t) {
 		return u.record(upBackedUp)
 	}
+	if err := u.takeArchive(ctx); err != nil {
+		return err
+	}
+	if err := u.hit("U:backed_up:applied"); err != nil {
+		return err
+	}
+	return u.record(upBackedUp)
+}
+
+// takeArchive runs the offline backup and keeps its path and schema in the state (in memory).
+func (u *upgrader) takeArchive(ctx context.Context) error {
 	before, err := u.schemaVersion(ctx, u.t.l.Binary)
 	if err != nil {
 		return fmt.Errorf("read the schema version before the upgrade: %w", err)
@@ -523,10 +605,7 @@ func (u *upgrader) backup(ctx context.Context) error {
 	}
 	u.st.SchemaBefore, u.st.Archive = before, report.Path
 	u.say("pre-upgrade backup: %s (schema %d)", report.Path, before)
-	if err := u.hit("U:backed_up:applied"); err != nil {
-		return err
-	}
-	return u.record(upBackedUp)
+	return nil
 }
 
 var (
@@ -534,19 +613,36 @@ var (
 	reSchemaBehind  = regexp.MustCompile(`schema version (\d+) is behind`)
 )
 
+// doctorReport is the part of `sm doctor --offline --json` the upgrader reads. FormatVersion
+// is absent (zero) in binaries that predate the stable contract.
+type doctorReport struct {
+	FormatVersion         int                                     `json:"format_version"`
+	DatabaseSchemaVersion *int                                    `json:"database_schema_version"`
+	Checks                []struct{ Name, Status, Detail string } `json:"checks"`
+}
+
 // schemaVersion asks bin's offline doctor which schema the database is at.
 // A failing doctor still prints its report, so only a missing report is an error.
 func (u *upgrader) schemaVersion(ctx context.Context, bin string) (int, error) {
 	out, err := u.d.Runner.Run(ctx, Command{
 		Name: bin, Args: []string{"doctor", "--offline", "--json", "--config", u.t.l.ConfigFile}, User: u.t.runAs,
 	})
-	var report struct {
-		Checks []struct{ Name, Status, Detail string } `json:"checks"`
-	}
+	var report doctorReport
 	if jsonErr := json.Unmarshal(out, &report); jsonErr != nil {
 		return 0, fmt.Errorf("doctor --offline gave no report (%w)", errors.Join(err, jsonErr))
 	}
-	for _, c := range report.Checks {
+	if report.FormatVersion > 0 {
+		if report.DatabaseSchemaVersion == nil {
+			return 0, errors.New("doctor reports no database schema version")
+		}
+		return *report.DatabaseSchemaVersion, nil
+	}
+	return report.schemaFromText()
+}
+
+// schemaFromText reads the schema check of a pre-M6 binary, which only describes it in prose.
+func (r doctorReport) schemaFromText() (int, error) {
+	for _, c := range r.Checks {
 		if c.Name != "schema" {
 			continue
 		}
@@ -562,7 +658,7 @@ func (u *upgrader) schemaVersion(ctx context.Context, bin string) (int, error) {
 
 // ---- swap, start, health ----
 
-func (u *upgrader) swap() error {
+func (u *upgrader) swap(ctx context.Context) error {
 	files, t := u.d.Files, u.t
 	live, err := files.Hash(t.l.Binary)
 	if err != nil {
@@ -578,6 +674,9 @@ func (u *upgrader) swap() error {
 		defer release()
 		if sha, err := files.Hash(t.staged()); err != nil || sha != u.st.NewSHA256 {
 			return fmt.Errorf("%s is missing or changed", t.staged())
+		}
+		if err := u.recordDowngrade(ctx); err != nil {
+			return err
 		}
 		if err := u.hit("U:swap:before"); err != nil {
 			return err
@@ -784,9 +883,9 @@ func (u *upgrader) reportAdvanced() error {
 		"To return to %s:\n"+
 		"  1. cp -p %s %s.revert && mv -f %s.revert %s\n"+
 		"  2. %s\n"+
-		"  3. rm %s && systemctl enable --now %s\n"+
+		"  3. rm %s%s && systemctl enable --now %s\n"+
 		"(On a new host: sm install restore --archive %s --key-export <your key export>.)",
 		st.ToVersion, st.SchemaBefore, st.Archive, st.FromVersion,
-		t.previous(), t.l.Binary, t.l.Binary, t.l.Binary, restore, t.statePath(), UnitName, st.Archive)
+		t.previous(), t.l.Binary, t.l.Binary, t.l.Binary, restore, t.statePath(), t.liftHoldCommand(), UnitName, st.Archive)
 	return fail(ExitRestore, "upgrade to %s failed after the database schema advanced; the service is stopped (restore commands printed above)", st.ToVersion)
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"sort"
@@ -36,6 +37,7 @@ type uhost struct {
 	// service and database
 	unit      bool
 	enabled   bool
+	held      bool
 	running   bool
 	healthy   bool
 	dbSchema  int
@@ -51,7 +53,9 @@ type uhost struct {
 	lockHeld     bool
 	noDisk       bool
 	symlinks     map[string]string // directory -> where it really is, for Canonical
-	dbLocks      int               // database locks held right now
+	linkedFiles  map[string]bool   // files that are symlinks for Lstat
+	holdErr      error
+	dbLocks      int // database locks held right now
 	// renamedUnderDBLock: the new binary was renamed into place while the database lock was held.
 	renamedUnderDBLock bool
 
@@ -268,10 +272,29 @@ func (h *uhost) ListDir(dir string) ([]string, error) {
 	return names, nil
 }
 
-type diskHost struct{ *uhost }
+func (h *uhost) FreeBytes(string) (uint64, error) {
+	if h.noDisk {
+		return 0, errors.New("free space unavailable")
+	}
+	return h.freeBytes, nil
+}
 
-func (d diskHost) FreeBytes(string) (uint64, error) { return d.freeBytes, nil }
-func (d diskHost) FileSize(p string) (int64, error) { return int64(len(d.content(p))), nil }
+func (h *uhost) FileSize(p string) (int64, error) { return int64(len(h.content(p))), nil }
+
+func (h *uhost) Lstat(p string) (EntryInfo, error) {
+	switch _, isFile := h.inodes[p]; {
+	case h.linkedFiles[p]:
+		return EntryInfo{Mode: 0o777}, nil
+	case h.dirs[p]:
+		return EntryInfo{Dir: true, Mode: 0o700}, nil
+	case isFile:
+		return EntryInfo{Regular: true, Mode: 0o600}, nil
+	}
+	return EntryInfo{}, fs.ErrNotExist
+}
+
+// diskHost is the host the downgrade spy wraps; it is a uhost, which already answers for disk space.
+type diskHost struct{ *uhost }
 
 // ---- services, health ----
 
@@ -279,7 +302,7 @@ type usvc struct{ h *uhost }
 
 func (s usvc) Register(_ context.Context, u Unit) error {
 	s.h.record("register %s", u.Name)
-	s.h.enabled = true
+	s.h.enabled, s.h.held = true, false
 	return nil
 }
 func (s usvc) Load(_ context.Context, u Unit) error { s.h.record("reload %s", u.Name); return nil }
@@ -311,6 +334,15 @@ func (s usvc) Stop(_ context.Context, u Unit) error {
 		return s.h.stopErr
 	}
 	s.h.running = false
+	return nil
+}
+
+func (s usvc) Hold(_ context.Context, u Unit) error {
+	s.h.record("hold %s", u.Name)
+	if s.h.holdErr != nil {
+		return s.h.holdErr
+	}
+	s.h.enabled, s.h.held = false, true
 	return nil
 }
 
@@ -358,6 +390,9 @@ func atoiOr(s string, fallback int) int {
 func (h *uhost) Run(_ context.Context, c Command) ([]byte, error) {
 	h.runs = append(h.runs, c)
 	h.record("run %s %s", c.Name, strings.Join(c.Args, " "))
+	if c.Name == "/bin/sh" {
+		return nil, h.writePendingAuditScript(c)
+	}
 	content, ok := h.inodes[c.Name]
 	if !ok {
 		return nil, fmt.Errorf("%s: not found", c.Name)
@@ -394,11 +429,26 @@ func (h *uhost) doctor(c Command, f map[string]string) ([]byte, error) {
 	case h.dbSchema > latest:
 		detail, status = fmt.Sprintf("database schema version %d is newer than this binary (%d)", h.dbSchema, latest), "fail"
 	}
-	out, _ := json.Marshal(map[string]any{"ok": status != "fail", "checks": []map[string]string{{"name": "schema", "status": status, "detail": detail}}})
+	report := map[string]any{"ok": status != "fail", "checks": []map[string]string{{"name": "schema", "status": status, "detail": detail}}}
+	if f["doctor"] != "legacy" {
+		report["format_version"], report["database_schema_version"], report["binary_schema_version"] = 1, h.dbSchema, latest
+	}
+	out, _ := json.Marshal(report)
 	if status == "fail" {
 		return out, &ExitStatus{Command: c.Name, Code: 1}
 	}
 	return out, nil
+}
+
+// liveArchives counts the pre-upgrade archives still on disk.
+func (h *uhost) liveArchives() int {
+	n := 0
+	for p := range h.inodes {
+		if strings.HasPrefix(p, applianceLayout().BackupsDir+"/supermgmt-pre-") {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *uhost) backup(c Command, f map[string]string) ([]byte, error) {
@@ -410,7 +460,7 @@ func (h *uhost) backup(c Command, f map[string]string) ([]byte, error) {
 		return nil, h.backupErr
 	}
 	h.archives++
-	archive := fmt.Sprintf("%s/pre-%d.tar.zst", applianceLayout().BackupsDir, h.archives)
+	archive := fmt.Sprintf("%s/supermgmt-pre-%d-20260101T000000Z.tar.zst", applianceLayout().BackupsDir, h.archives)
 	h.put(archive, "archive")
 	schema := h.dbSchema
 	if h.backupSchema != 0 {
@@ -422,13 +472,9 @@ func (h *uhost) backup(c Command, f map[string]string) ([]byte, error) {
 // ---- wiring ----
 
 func (h *uhost) deps() Deps {
-	var files Files = h
-	if !h.noDisk {
-		files = diskHost{h}
-	}
 	d := Deps{
 		Host:  Host{GOOS: "linux", GOARCH: "amd64", UID: h.uid, Home: h.home, Env: map[string]string{}, HasSystemd: true},
-		Files: files, Runner: h, Health: h, Clock: fixedClock{}, Out: &h.out,
+		Files: h, Runner: h, Health: h, Clock: fixedClock{}, Out: &h.out,
 		Services: usvc{h}, UserServices: usvc{h},
 	}
 	if len(h.answers) > 0 || !h.yes {
@@ -502,4 +548,16 @@ func (h *uhost) noViolations(t *testing.T) {
 	if len(h.violations) > 0 {
 		t.Errorf("violations: %v", h.violations)
 	}
+}
+
+// writePendingAuditScript plays the downgrade record script (args: sh dir name; the record on
+// stdin): the record ends up at dir/name. The script's text is pinned in downgrade_record_test.go.
+func (h *uhost) writePendingAuditScript(c Command) error {
+	data, err := io.ReadAll(c.Stdin)
+	if err != nil {
+		return err
+	}
+	h.dirs[c.Args[3]] = true
+	h.put(c.Args[3]+"/"+c.Args[4], string(data))
+	return nil
 }

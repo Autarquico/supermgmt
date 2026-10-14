@@ -14,8 +14,8 @@ import (
 const (
 	perfNodes            = 500
 	servicesPerNode      = 10 // 5,000 services in all
-	cachedRenderBudget   = 500 * time.Millisecond
-	perfKeyBudget        = 50 * time.Millisecond
+	cachedRenderBudget   = 500 * time.Millisecond * raceSlowdown
+	perfKeyBudget        = 50 * time.Millisecond * raceSlowdown
 	servicesBrowsedCount = 25
 )
 

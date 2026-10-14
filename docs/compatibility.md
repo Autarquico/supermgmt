@@ -1,6 +1,54 @@
 # Compatibility
 
-This page has three matrices: [Proxmox VE](#proxmox-ve-m3) (M3), [Deployments: Docker Compose, node tools and GitHub](#deployments-m4) (M4) and [MCP](#mcp-m5) (M5).
+This page has four parts: [platforms and operations](#supported-platforms-m6) (M6), [Proxmox VE](#proxmox-ve-m3) (M3), [Deployments: Docker Compose, node tools and GitHub](#deployments-m4) (M4) and [MCP](#mcp-m5) (M5).
+
+# Supported platforms (M6)
+
+Source: [ADR-0036](adr/0036-distribution-notices-platform-claims.md), spec section 35. A row gets exactly one status:
+
+- **supported**: CI runs install, upgrade, backup plus restore and uninstall on that platform and architecture, and the row cites the test and the job for each. Nothing weaker earns the word.
+- **container-verified**: run in a container on a CI runner. For a server platform that is the same four operations in a systemd container; the kernel and the init are the runner's, not those of a real machine of that distribution.
+- **fake-verified**: the operations run against a simulator or a fake API.
+- **manual**: only a human checklist row covers it (the release checklist (`docs/release-checklist.md`)).
+- **not claimed**: nothing is promised.
+
+`test/docs` (`make docs-check`, job `docs-check`) fails when a *supported* or *container-verified* row has an empty operation cell, when a cited test does not exist, when a cited job is not in `ci.yml`, or when that job's runners do not include the row's architecture (or its mode). The status says what the cited jobs check. These jobs were added in M6 and this page was written without a GitHub run of them; `release.yml` refuses to build a tag whose commit lacks a green run of each ([releasing.md](releasing.md#the-gates)).
+
+## Platforms and operations
+
+Each cell is `test` and `job`. Every operation of a mode runs inside one lifecycle test: N-1 install, a held upgrade to N, backup, restore, uninstall that keeps the data, then `--purge-data`.
+
+| Platform | Arch | Mode | Status | Install | Upgrade | Backup and restore | Uninstall |
+|---|---|---|---|---|---|---|---|
+| Ubuntu 24.04 LTS | amd64 | server | supported | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` |
+| Ubuntu 24.04 LTS | arm64 | server | supported | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` | `TestLifecycleVM_Server`, job `e2e-lifecycle-linux` |
+| Ubuntu 24.04 LTS | amd64 | local-client | supported | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` |
+| Ubuntu 24.04 LTS | arm64 | local-client | supported | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` | `TestLifecycleVM_LocalClient`, job `e2e-lifecycle-linux` |
+| macOS 15 | arm64 | local-client | supported | `TestLifecycleMacOS_LocalClient`, job `e2e-lifecycle-macos` | `TestLifecycleMacOS_LocalClient`, job `e2e-lifecycle-macos` | `TestLifecycleMacOS_LocalClient`, job `e2e-lifecycle-macos` | `TestLifecycleMacOS_LocalClient`, job `e2e-lifecycle-macos` |
+| Debian 13 | amd64 | server | container-verified | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` |
+| Debian 13 | arm64 | server | container-verified | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` | `TestM6_LifecycleServerContainer`, job `e2e-lifecycle-container` |
+| Debian 13 | amd64, arm64 | local-client | not claimed | - | - | - | - |
+| macOS (Intel) | amd64 | local-client | manual | - | - | - | - |
+| Proxmox VE 9.x host, `proxmox-lxc` appliance | amd64 | appliance | fake-verified | `TestM6_ApplianceLifecycleAcrossAReleaseBoundary`, job `e2e-appliance` | `TestM6_ApplianceLifecycleAcrossAReleaseBoundary`, job `e2e-appliance` | `TestM6_ApplianceLifecycleAcrossAReleaseBoundary`, job `e2e-appliance` | `TestM6_ApplianceLifecycleAcrossAReleaseBoundary`, job `e2e-appliance` |
+
+How to read the rows:
+
+- **Ubuntu 24.04 and macOS 15 rows** run on a fresh GitHub-hosted VM per leg (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`). The host-mutating tests refuse any other machine ([ADR-0036](adr/0036-distribution-notices-platform-claims.md#host-mutating-tests)). The server install goes through `install.sh` from a local signed mirror; the `local-client` legs install the resident daemon and, on macOS, also log a client in to a server.
+- **Debian 13** runs in a systemd container on the Ubuntu runners of both architectures. Whether a real Debian 13 VM behaves the same is a human row of the release checklist.
+- **Intel macOS** is compiled (job `cross-build`) and published, and has no lifecycle run. A person checks it by hand.
+- **Proxmox appliance**: the host is a Docker container running `pvesim`, so every `pct`, `pveum` and `pvesh` call is answered by a simulator. See [Proxmox VE (M3)](#proxmox-ve-m3) for what the simulator is built from. A real PVE 9.x host is still a manual row.
+- **Upgrade source.** "Upgrade" is N-1 to N, where N-1 is the newest milestone with a merge commit in `test/e2e/milestones_test.go` (today M5, `v0.5.0`), plus one job from the oldest milestone to N: `TestM6_UpgradeChainOldestToLatestInOneJump` (job `e2e-chain`). Migration of every milestone fixture: job `migration-test`. The crash matrix over all 20 upgrade crash points: job `e2e-crash`. No signed release exists, so an upgrade from an authentic release is a human row.
+- **Not claimed anywhere**: 32-bit hosts, Windows, Alpine/musl, RHEL-family, Linux distributions other than Ubuntu 24.04 and Debian 13 for the server, Debian as a local-client host.
+
+## Nodes and tools
+
+| Node | Status | Evidence |
+|---|---|---|
+| Debian 13 (Docker fixture) | container-verified | job `integration-fixtures` runs `SM_FIXTURE_DISTRO=debian13`; see [Deployments (M4)](#deployments-m4) |
+| Ubuntu 24.04 (Docker fixture) | container-verified | job `integration-fixtures` runs `SM_FIXTURE_DISTRO=ubuntu2404` |
+| Any other distribution | not claimed | |
+
+A fixture node is a container with a real `sshd` and Docker, not a machine. Docker Engine and Compose are pinned in [Deployments (M4)](#deployments-m4).
 
 # Proxmox VE (M3)
 
@@ -27,8 +75,8 @@ Tests: `TestVersionIsSupportedOnlyForPVE9` (`internal/providers/proxmox/client_t
 |---|---|---|---|---|
 | `GET /version` | Version gate (major 9) | `TestVersionIsSupportedOnlyForPVE9` | verified | not verified |
 | `GET /cluster/resources` | Nodes, guests, storages; limited to what the token may audit | `TestResourcesMapNodesGuestsAndStorages`, `TestResourcesOnlyContainWhatTheTokenMayAudit` | verified | not verified |
-| `GET /access/permissions` | Effective privileges per path; nearest listed ancestor decides | `TestPermissions`, `TestPermsHasUsesTheNearestListedAncestor` | verified | not verified |
-| Permission propagation and deeper-ACL replacement | A role on `/vms` replaces the one inherited from `/` (hence `VM.Audit` in `SMPower-<id>`) | `TestADeeperListedPathReplacesWhatAParentGrants`, `TestDeeperPathReplacesInheritedRole`, `TestNonPropagatingGrantStopsAtItsPath` | verified | not verified |
+| `GET /access/permissions?path=` | Effective privileges of the exact path asked; a path the sparse list omits is neither guessed from a parent nor from an old pool (SEC-13) | `TestPathPermissionsAreEffectivePrivilegesOfTheExactPath`, `TestPrivilegesHasIgnoresPropagation` | verified | not verified |
+| Permission propagation and deeper-ACL replacement | A role on `/vms` replaces the one inherited from `/` (hence `VM.Audit` in `SMPower-<id>`) | `TestDeeperPathReplacesInheritedRole`, `TestNonPropagatingGrantStopsAtItsPath`, `TestNonPropagatingGrantIsKeptAsEffectiveOnItsOwnPath` | verified | not verified |
 | Privilege separation | Token privileges are the intersection with its user's | `TestPrivilegeSeparationIsTheIntersectionOfUserAndToken` | verified | not verified |
 | `GET /nodes/{node}/tasks` | Task list, newest first, paginated; read to the end | `TestTasksReadsEveryPageAndFiltersServerSide`, `TestCorrelationFindsATaskThatOnlyAppearsOnPageTwo`, `TestTaskListIsNewestFirstPaginatedAndFiltered` | verified | not verified |
 | Task list `total` field | Top-level `total` as modelled by the fake | `TestTaskListIsNewestFirstPaginatedAndFiltered` | verified | not verified |

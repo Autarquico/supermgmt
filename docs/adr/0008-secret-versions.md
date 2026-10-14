@@ -1,6 +1,6 @@
 # ADR-0008: Secret versions
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §10, §20.3 step 2, §46, App. C `secret_bindings`; ADR-0007, ADR-0010
 
 ## Context

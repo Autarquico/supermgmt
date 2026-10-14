@@ -1,6 +1,6 @@
 # ADR-0017: Server transport, credentials and sessions
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §2.2, §9, §11.1, §11.5, §23, §23.1, §29.2, §30, Appendix A; ADR-0014
 
 ## Context

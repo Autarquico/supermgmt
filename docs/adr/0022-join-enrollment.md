@@ -1,6 +1,6 @@
 # ADR-0022: Join and enrollment (minimal)
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §9 (`join_tokens`), §11.2 (`enrollment.create`), §13, §46; ADR-0009, ADR-0016
 
 ## Context

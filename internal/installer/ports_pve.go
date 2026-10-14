@@ -79,6 +79,9 @@ type PVE interface {
 	NextID(ctx context.Context, from int) (int, error)
 	Storages(ctx context.Context) ([]PVEStorage, error)
 	Bridges(ctx context.Context) ([]string, error)
+	// BridgeAddress is the host's own address on bridge, where the container
+	// reaches the Proxmox API when no endpoint is given.
+	BridgeAddress(ctx context.Context, bridge string) (netip.Addr, error)
 	// Templates lists the vztmpl volumes on storage; AvailableTemplates the
 	// names `pveam available --section system` offers.
 	Templates(ctx context.Context, storage string) ([]string, error)

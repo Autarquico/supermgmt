@@ -272,7 +272,7 @@ func TestFixtures_ManifestInspectVerboseSizes(t *testing.T) {
 	t.Run("sizes for an index digest sum config and layers of the node platform", func(t *testing.T) {
 		out := n.shell(t, "bash /srv/size.sh localhost:5000/ml@"+listDigest+" --insecure")
 		// Sizes from the pushed manifest: config 477 + one layer 1977510.
-		want := n.shell(t, "docker manifest inspect --insecure localhost:5000/ml@"+listDigest+" --verbose | jq '[.[0].SchemaV2Manifest | .config.size, .layers[].size] | add'")
+		want := n.shell(t, "docker manifest inspect --insecure localhost:5000/ml@"+listDigest+" --verbose | jq '[.[0] | (.SchemaV2Manifest // .OCIManifest) | .config.size, .layers[].size] | add'")
 		t.Logf("node platform size = %s bytes", out)
 		if out != want || out == "" || out == "0" {
 			t.Errorf("size = %q; want %q (non-zero)", out, want)

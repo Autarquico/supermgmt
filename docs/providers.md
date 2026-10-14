@@ -132,7 +132,7 @@ The appliance installer creates a **dedicated identity per install**, named with
 
 A token you create yourself for a hand-written provider needs the same two grants. The installer runs, per resource, `pveum user add`, `pveum role add <role> --privs ...`, `pveum acl modify <path> --roles <role> --users <user>` (and `--tokens <user>!<id>`), and `pveum user token add <user> <id> --privsep 1`. Not verified on real PVE.
 
-The deeper-ACL rule matters. Proxmox does not add a role granted on `/vms` to the one inherited from `/`; the deeper entry replaces it. That is why `SMPower-<id>` carries `VM.Audit` too, and why discovery decides what a token may do from `GET /access/permissions` (the nearest listed ancestor of a path decides, `TestPermsHasUsesTheNearestListedAncestor`) instead of from role names. How real Proxmox treats this, and 0-valued or non-propagating grants, is not verified.
+The deeper-ACL rule matters. Proxmox does not add a role granted on `/vms` to the one inherited from `/`; the deeper entry replaces it. That is why `SMPower-<id>` carries `VM.Audit` too, and why discovery decides what a token may do from `GET /access/permissions?path=<path>` instead of from role names; the client asks for the exact path, so a path the sparse list omits is never guessed from a parent (`TestPathPermissionsAreEffectivePrivilegesOfTheExactPath`). How real Proxmox treats this, and 0-valued or non-propagating grants, is not verified.
 
 A guest advertises the capability `proxmox.vm.power` only when the token's effective privileges include `VM.PowerMgmt` on it and it is not a template. The power job rechecks that privilege right before it sends anything.
 

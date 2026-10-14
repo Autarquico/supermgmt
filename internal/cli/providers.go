@@ -376,8 +376,12 @@ func probeCluster(ctx context.Context, client proxmox.Client, report providerChe
 	if err != nil {
 		return fail(err)
 	}
-	if _, err := client.Permissions(ctx); err != nil {
+	rootPrivileges, err := client.PathPermissions(ctx, "/")
+	if err != nil {
 		return fail(err)
+	}
+	if !rootPrivileges.Has("Sys.Audit") {
+		return fail(errors.New("the token lacks Sys.Audit on /: grant it a role with Sys.Audit on path /"))
 	}
 	report.Nodes, report.Guests, report.Storages = len(inventory.Nodes), len(inventory.Guests), len(inventory.Storages)
 	if report.Nodes == 0 {

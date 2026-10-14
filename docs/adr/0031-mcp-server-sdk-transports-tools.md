@@ -1,6 +1,6 @@
 # ADR-0031: MCP server: SDK, transports and tool contract
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §2.1.1, §11.1, §16, §24, §30; ADR-0012, ADR-0032, ADR-0033
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-0012: Route metadata
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §11.2, §23, §46 (ADR-0012 row); ADR-0014
 
 ## Context

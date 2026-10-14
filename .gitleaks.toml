@@ -1,0 +1,64 @@
+# Secret scanning (ADR-0034): gitleaks default rules over the full history.
+# Every allowlist entry names one test fixture file and the rules it may trip. Each value is a
+# synthetic canary or a scrubber input, never a live credential. No blanket regexes: a new
+# fixture needs a new, reviewed entry here.
+
+title = "supermgmt gitleaks"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "PEM-shaped strings the redaction tests feed to the scrubber; not a real key"
+targetRules = ["private-key"]
+paths = ['''^internal/audit/redact_test\.go$''']
+
+[[allowlists]]
+description = "synthetic JWT and token values the audit scrubber must remove"
+targetRules = ["jwt", "generic-api-key"]
+paths = ['''^internal/audit/scrub_credentials_test\.go$''']
+
+[[allowlists]]
+description = "fake join-token constant for CLI rendering tests"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/cli/enrollments_test\.go$''']
+
+[[allowlists]]
+description = "fake bearer token constant for remote-mode CLI tests"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/cli/remote_test\.go$''']
+
+[[allowlists]]
+description = "prompt-injection corpus entry that embeds a synthetic JWT"
+targetRules = ["jwt"]
+paths = ['''^internal/mcp/testdata/injection_corpus\.json$''']
+
+[[allowlists]]
+description = "synthetic token=... string that the MCP read tools must scrub"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/mcp/tools_read_test\.go$''']
+
+[[allowlists]]
+description = "synthetic password=... string in an untrusted-output test"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/mcp/untrusted_test\.go$''']
+
+[[allowlists]]
+description = "canary secret value planted to prove deployments never leak it"
+targetRules = ["generic-api-key"]
+paths = ['''^test/e2e/deploy_secrets_test\.go$''']
+
+[[allowlists]]
+description = "canary secret value planted to prove the M5 surfaces never leak it"
+targetRules = ["generic-api-key"]
+paths = ['''^test/e2e/harness_m5_test\.go$''']
+
+[[allowlists]]
+description = "canary credentials planted to prove MCP responses never leak them"
+targetRules = ["generic-api-key", "jwt"]
+paths = ['''^test/integration/mcp_secrets_test\.go$''']
+
+[[allowlists]]
+description = "sha256 of the fixture master keys in the migration fixtures provenance table; a hash, not a secret"
+targetRules = ["generic-api-key"]
+paths = ['''^test/fixtures/migrations/PROVENANCE\.md$''']

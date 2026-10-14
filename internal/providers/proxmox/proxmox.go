@@ -121,11 +121,6 @@ func (p Privileges) Has(priv string) bool {
 	return ok
 }
 
-// Perms is GET /access/permissions for the token: path -> privileges. PVE
-// lists only the paths that carry an ACL entry, so absence proves nothing;
-// ask PathPermissions about the exact path a decision depends on.
-type Perms map[string]Privileges
-
 // UPID is a decoded PVE task id:
 // UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
 type UPID struct {
@@ -195,7 +190,6 @@ const (
 type Client interface {
 	Version(ctx context.Context) (Version, error)
 	Resources(ctx context.Context) (Inventory, error)
-	Permissions(ctx context.Context) (Perms, error)
 	// PathPermissions asks PVE for the privileges effective for the token on
 	// exactly path (pool membership and inheritance included).
 	PathPermissions(ctx context.Context, path string) (Privileges, error)

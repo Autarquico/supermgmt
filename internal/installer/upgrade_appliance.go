@@ -55,11 +55,7 @@ func (in *Installer) selectAppliance(o Options) (applianceRecord, bool, error) {
 }
 
 func (in *Installer) listRecords() ([]applianceRecord, error) {
-	host, ok := in.d.Files.(applianceHost)
-	if !ok {
-		return nil, fail(ExitPrerequisite, "this host cannot list the appliance records")
-	}
-	names, err := host.ListDir(appliancesDir)
+	names, err := in.d.Files.ListDir(appliancesDir)
 	if err != nil {
 		return nil, failWrap(ExitConfiguration, "list the appliance records", err)
 	}

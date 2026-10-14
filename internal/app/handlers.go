@@ -4,6 +4,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
+
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
@@ -73,7 +75,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	if o.Proxmox != nil {
 		h.power = &proxmoxPowerHandler{
 			core: c, store: o.Store, sync: o.Proxmox, settle: o.Settle.withDefaults(),
-			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, defaultProxmoxHTTPTimeout),
+			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, proxmox.DefaultTimeout),
 		}
 	}
 	if o.Deploy != nil {

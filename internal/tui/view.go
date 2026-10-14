@@ -59,7 +59,11 @@ func (m *Model) summary() string {
 		return "loading…"
 	}
 	online, warnings := 0, 0
+	nodes, guests := m.countNodesAndGuests()
 	for _, n := range m.nodes {
+		if isGuest(n) {
+			continue
+		}
 		if n.Reachability == domain.ReachabilityReachable {
 			online++
 		}
@@ -68,8 +72,12 @@ func (m *Model) summary() string {
 		}
 	}
 	parts := []string{
-		plural(len(m.nodes), "node"), fmt.Sprintf("%d online", online), plural(warnings, "warning"),
+		plural(nodes, "node"),
 	}
+	if guests > 0 {
+		parts = append(parts, plural(guests, "guest"))
+	}
+	parts = append(parts, fmt.Sprintf("%d online", online), plural(warnings, "warning"))
 	if len(m.approvals) > 0 {
 		parts = append(parts, plural(len(m.approvals), "approval"))
 	}
@@ -204,9 +212,9 @@ func (m *Model) keyHints() string {
 	case screenDashboard:
 		return "1-9 screens  r refresh  " + global
 	case screenResources:
-		return "j/k move  enter detail  v services  s ssh  d docker  " + global
+		return "j/k move  enter detail  v services  " + m.sessionHints(false) + global
 	case screenNode:
-		return "v services  s ssh  d docker  p probe  esc back  " + global
+		return "v services  " + m.sessionHints(true) + "esc back  " + global
 	case screenServices:
 		return "j/k move  enter open  l logs  esc back  " + global
 	case screenService:
@@ -231,6 +239,22 @@ func (m *Model) keyHints() string {
 		return "r refresh  esc back  " + global
 	}
 	return "esc back  q quit"
+}
+
+// sessionHints lists the keys that need an SSH endpoint; a Proxmox guest has
+// none, so on a guest they are not offered.
+func (m *Model) sessionHints(withProbe bool) string {
+	n, ok := m.selectedNode()
+	if withProbe {
+		n, ok = m.nodeFull, true
+	}
+	if ok && isGuest(n) {
+		return ""
+	}
+	if withProbe {
+		return "s ssh  d docker  p probe  "
+	}
+	return "s ssh  d docker  "
 }
 
 func (m *Model) serviceVerbHints() string {

@@ -119,9 +119,29 @@ func (m *Model) onHandoffOpened(msg handoffOpenedMsg) tea.Cmd {
 		return nil
 	}
 	h := msg.h
-	return tea.ExecProcess(h.Cmd, func(err error) tea.Msg {
+	returned := func(err error) tea.Msg {
 		return handoffReturnedMsg{node: msg.node, tool: msg.tool, h: h, err: err}
-	})
+	}
+	if h.Cmd.Err != nil {
+		// A command that cannot start (program not on PATH) must not go through
+		// tea.ExecProcess: bubbletea releases and restores the terminal back to
+		// back, and its stale renderer goroutine then stops the restarted
+		// ticker, so nothing is ever painted again.
+		return func() tea.Msg { return returned(h.Cmd.Err) }
+	}
+	return tea.ExecProcess(h.Cmd, returned)
+}
+
+// dropInterruptWhileHandingOff drops the SIGINT bubbletea queues when Ctrl-C
+// reaches the whole foreground process group: during a handoff it is meant for
+// the child, and delivered after the child exits it would kill the TUI.
+func dropInterruptWhileHandingOff(m tea.Model, msg tea.Msg) tea.Msg {
+	if _, interrupt := msg.(tea.InterruptMsg); interrupt {
+		if model, ok := m.(*Model); ok && model.handingOff {
+			return nil
+		}
+	}
+	return msg
 }
 
 // exitOutcome maps the ExecProcess error to Handoff.Done's arguments.

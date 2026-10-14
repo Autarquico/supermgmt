@@ -64,6 +64,11 @@ func (s fakeServices) Disable(_ context.Context, u Unit) error {
 	return nil
 }
 
+func (s fakeServices) Hold(_ context.Context, u Unit) error {
+	s.w.record(s.prefix+"hold ", u.Name)
+	return nil
+}
+
 func (s fakeServices) WaitStopped(_ context.Context, u Unit, _ time.Duration) error {
 	s.w.record(s.prefix+"waitstopped ", u.Name)
 	return nil

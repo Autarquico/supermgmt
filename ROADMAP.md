@@ -1,8 +1,19 @@
 # Roadmap
 
-Status as of 2026-10-13. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
+Status as of 2026-10-14. The project is **pre-alpha**; nothing is released. Milestones follow `docs/spec/SUPERMGMT-SPEC.md` §31 and each depends only on earlier ones.
 
 Statuses: **in progress**, **implemented** (merged, pending release-level review), **planned**.
+
+### M6 accepted scope and honest deferrals
+
+Built: fuzz targets for every parser of untrusted input with an inventory that fails on an unmapped one; a stress suite; secret scanning, a licence gate, reproducible builds, notices and SBOM checks, provenance verification and a release workflow that builds only when every required check and a `nightly` run succeeded on the exact tag commit; migration fixtures written by real binaries of milestones M1 to M5; install, upgrade, backup, restore and uninstall lifecycle tests in a systemd container and on disposable runners; a real-process crash test at each of the 20 upgrade crash points; an upgrade service hold, a retaken backup on resume, offline downgrade and version-transition audit events, a doctor schema contract, TLS expiry and clock-skew warnings; and the documentation (compatibility matrix, releasing, troubleshooting, dependencies, release checklist).
+
+- **No version is released.** The Appendix E boxes in the spec stay unchecked. The [release checklist](docs/release-checklist.md) maps each of the 52 rows to its tests and jobs and lists 21 human-gated rows, all unchecked, each with an owner and a procedure.
+- **Human-gated, never done by an agent:** the signing key and trust root, the real Proxmox, GitHub, MCP and OIDC runs, a real Debian 13 VM, an Intel Mac, an upgrade from a signed release, the legal reading of third-party notices, the licence decision, the name and trademark checks, the Homebrew tap, and the GitHub repository settings.
+- **Platforms (SPEC §35).** Supported means CI runs every operation on that platform ([docs/compatibility.md](docs/compatibility.md#platforms-and-operations)): Ubuntu 24.04 amd64 and arm64 (server and local-client) and macOS 15 arm64 (local-client). Debian 13 is container-verified, the Proxmox appliance is fake-verified, Intel macOS is manual, Debian as a local-client host and everything else are not claimed. The jobs were written without a GitHub run.
+- **Unresolved, listed rather than hidden:** a second, unexplained failure mode of the daemon-restart test; the residual of a TUI handoff that exits instantly (the case seen is fixed); 25 parsers without a fuzz target; a downgrade to a pre-M6 binary keeps its audit record pending; SEC-7 (Proxmox roles carry no marker), SEC-9 (a guest recreated between two syncs) and the unread upstream behaviour behind SEC-12.
+- **Not built, post-V1:** Proxmox `POST /providers`, guest promotion, snapshot, backup, console and task-history handlers, the §33 metrics endpoint, a TLS renewal command, `internal/providers/cloudflare`, Linux packages (a package manager's upgrade would bypass the upgrade protocol), MCP resources and prompts.
+- The M4 and M5 migration fixtures contain no deployment and no OAuth access-token row.
 
 ### M5 accepted scope and honest deferrals
 
@@ -28,7 +39,7 @@ Built: the GitHub connector (read-only fine-grained token; repositories, require
 - `compose_source: repository` is refused for production environments (stricter than the spec, which allows an admin exception with no defined storage).
 - No environment can require an Actions `environment` claim; the spec defines no field for it.
 - Health checks: `http`, `tcp` and docker-health on the node, `http(s)` from the control plane; `command-template` and `systemd-active` are rejected for app targets. Manifest health bounds (timeout at most 30 s, interval at most 1 min, at most 60 attempts) are an implementation choice, not in the spec.
-- The only pre-deploy backup template is `postgres-dump`. `deployment_policy.snapshot: true` is refused ("not supported in this version"); Proxmox snapshots, `POST /providers` for Proxmox, guest promotion and the M3 deferrals above are scheduled for M6.
+- The only pre-deploy backup template is `postgres-dump`. `deployment_policy.snapshot: true` is refused ("not supported in this version"); Proxmox snapshots, `POST /providers` for Proxmox, guest promotion and the M3 deferrals above are post-V1 (decided in M6; none is required by the definition of done in SPEC §43).
 - The disk preflight uses registry-reported sizes plus 1 GiB with no decompression safety factor; an unknown size fails the preflight.
 - The pull step is proven by a `.done` marker, not a per-image inspect.
 - The secret-leak scan of the e2e suite covers the control plane (database, logs, backup archive, API, events), not the node and not CLI stdout.
@@ -41,9 +52,9 @@ Built: Proxmox VE 9.x discovery (cluster nodes, VMs, containers, configured CPU/
 
 - **No real Proxmox host was used.** Every Proxmox interaction is verified against fakes built from the documentation; each assumption is a row of [docs/compatibility.md](docs/compatibility.md) and an item of [docs/manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md). "Proxmox auto-LXC install works" (SPEC Appendix E) stays **unchecked**. Unconfirmed: the task list `total` and paging, the status of a running task, which verbs and guest types accept `timeout`, `/access/permissions` value semantics (0-valued and non-propagating grants, deeper-ACL replacement), the text of the error for a migrated guest, `pct list` columns, `pvesm`/`pvesh` JSON, `pct push` uid mapping, `runuser` and `pct exec` exit codes in the Debian 13 template, the template name `pveam` offers, and a full install, upgrade and uninstall on PVE 9.
 - Proxmox VE 8.x and arm64 hosts are unsupported (PVE 8 reached upstream end of life in 2026-08).
-- Deferred (M4 did not build them; now scheduled for M6): snapshot, backup and console handlers and task-history listings, `POST /api/v1/providers`, promotion of discovered guests to managed.
-- The appliance certificate is self-signed with no renewal (CA 10 years, leaf 5 years) and names the address the container had at install time; there is no certificate expiry check in `sm doctor`.
-- `--allow-downgrade` is recorded in the upgrade state but not in the audit log; `sm doctor --offline --json` has no stable schema-version field (the upgrade reads it from the check text).
+- Deferred (M4 did not build them; post-V1, decided in M6): snapshot, backup and console handlers and task-history listings, `POST /api/v1/providers`, promotion of discovered guests to managed.
+- The appliance certificate is self-signed with no renewal (CA 10 years, leaf 5 years) and names the address the container had at install time. M6 added an expiry check to `sm doctor` and a documented manual re-issue; a renewal command is post-V1.
+- `--allow-downgrade` was recorded in the upgrade state but not in the audit log, and `sm doctor --offline --json` had no stable schema-version field. Both were closed in M6 (see below), except that a downgrade to a pre-M6 binary leaves its audit record pending.
 - A guest renamed in Proxmox bumps its `spec_revision`, so pending plans for it go stale.
 - The end-to-end suites (`TestM3_Appliance*`, `TestM3_Upgrade*`, `TestM3_Uninstall*`, CI jobs `e2e-appliance` and `e2e-upgrade`) run in Docker with a simulated Proxmox host; the upgrade fixture is the M2 build at commit e6d5577, so the job needs the full history.
 
@@ -88,7 +99,7 @@ M1 TUI screens: Dashboard, Resources tree, Node detail, Service list and detail,
 | M3 Proxmox provider and appliance installer | Proxmox discovery, `sm install proxmox-lxc` with rollback journal, restricted credentials, power actions, upgrade and uninstall | **Implemented** on `feat/m3-proxmox-installer` against fakes: pending the real-Proxmox run in [docs/manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md) and release-level review. Accepted scope and deferrals above. |
 | M4 Apps, GitHub, deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Implemented** on `feat/m4-apps-deployments` against a fake GitHub, a virtual Sigstore and a local registry: pending the real-GitHub run in [docs/manual-checks/m4-real-github.md](docs/manual-checks/m4-real-github.md) and release-level review |
 | M5 MCP | MCP client registration, stdio bridge, remote MCP as OAuth protected resource, read tools, plan submission, optional write tools off by default | **Implemented** on `feat/m5-mcp` against the Go SDK client, raw JSON-RPC goldens and a fake authorization server: pending the real-client and real-authorization-server run in [docs/manual-checks/m5-real-mcp-clients.md](docs/manual-checks/m5-real-mcp-clients.md) and release-level review. Accepted scope and deferrals above. |
-| M6 Hardening and release | Packaging, fuzz and race tests, security scans, compatibility matrix, beta migration tests, E2E across all modes | Planned |
+| M6 Hardening and release | Packaging plan, fuzz and race tests, security scans, compatibility matrix, beta migration tests, E2E across all modes, the release gate | **Implemented** on `feat/m6-hardening`: pending the human rows of the [release checklist](docs/release-checklist.md) (signing key, real hosts, legal and naming decisions, repository settings), a first GitHub run of the new jobs, and release-level review. Accepted scope and deferrals above. |
 
 "Done" for V1 is defined in SPEC §43: install without cloning, Proxmox one-command LXC, agentless SSH nodes, Proxmox/systemd/Docker discovery, TUI, CI-gated Compose deploys with safe rollback, audit timeline, remote server mode, MCP with approvals, tested backup/restore/upgrade/uninstall, and signed releases.
 
@@ -111,10 +122,11 @@ These are ideas from SPEC §44. None is scheduled and any may be dropped:
 
 ## Human-gated items
 
-These cannot be completed by code alone and block specific milestones:
+These cannot be completed by code alone and block specific milestones. The [release checklist](docs/release-checklist.md) holds the full list as numbered rows, each with a procedure; this table is the summary:
 
 | Item | Needed before | Owner |
 |---|---|---|
+| M6 release gate: first tag and the gates on a real run, real Debian 13 VM, Intel Mac, upgrade from a signed release, first GitHub run of the lifecycle jobs, Homebrew tap, GitHub repository settings, legal reading of the notices, nightly results ([manual-checks/m6-release.md](docs/manual-checks/m6-release.md)) | First release | Maintainer |
 | Real MCP clients (Claude Code and Claude Desktop over stdio, MCP Inspector against `/mcp`) and a real authorization server (including RFC 8707 `resource` at authorization and token exchange), following [manual-checks/m5-real-mcp-clients.md](docs/manual-checks/m5-real-mcp-clients.md); each row needs dated, versioned evidence | M5 acceptance, V1 | Maintainer |
 | Real-GitHub acceptance run (GHCR, real attestations in a public and a private repository, real Actions OIDC, redirect behaviour, GitHub TUF anchor and refresh), following [manual-checks/m4-real-github.md](docs/manual-checks/m4-real-github.md); fills the GitHub rows of [compatibility.md](docs/compatibility.md#deployments-m4) | M4 acceptance, V1 | Maintainer |
 | Real-Proxmox acceptance run on a supported PVE 9.x host, following [manual-checks/m3-real-pve.md](docs/manual-checks/m3-real-pve.md); fills the real-host column of [compatibility.md](docs/compatibility.md) | M3 acceptance, V1 | Maintainer |

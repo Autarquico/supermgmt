@@ -61,7 +61,7 @@ For each case, read `GET /access/permissions` as the token (and `pveum user perm
 | 3.2 | Add `SMCheckPower` on `/vms` for the user and the token | `VM.PowerMgmt` on `/vms/<id>`; `VM.Audit` still present there. |
 | 3.3 | Replace the `/vms` role by a role **without** `VM.Audit` (for example `PVEVMUser`-like with only `VM.PowerMgmt`) | A deeper ACL replaces the inherited role: guests vanish from `/cluster/resources`, `VM.Audit` is missing on `/vms/<id>`. This is why `SMPower-<id>` repeats `VM.Audit`. If Proxmox instead merges them, the repeat is harmless but the matrix and ADR-0023 text must change. |
 | 3.4 | Grant on `/vms/<id>` with `--propagate 0` | Applies to that path only; `/access/permissions` lists it without descendants. |
-| 3.5 | A grant whose value is `0` or a path that appears with an empty map | How `/access/permissions` encodes a 0-valued, non-propagating grant (the code treats a listed ancestor as authoritative, `decodePerms`). Record the exact JSON. If the value semantics differ, **the fake and `decodePerms` need fixing**. |
+| 3.5 | A grant whose value is `0` or a path that appears with an empty map | How `/access/permissions` encodes a 0-valued, non-propagating grant (the client asks `GET /access/permissions?path=` for the exact path and reads that answer as the path's effective privileges, SEC-13; `decodePathPrivileges`). Record the exact JSON. If the value semantics differ, **the fake and `decodePathPrivileges` need fixing**. |
 | 3.6 | Token privilege separation | With `--privsep 1` the token's rights are the intersection with the user's: remove a privilege from the user only and confirm the token loses it. |
 | 3.7 | Revoke the `/` ACL for the token while `sm` is syncing (section 6) | Guests become `inaccessible` after the next sync (not `absent`), capabilities are dropped, rows stay. Restore the ACL and see them return. |
 
@@ -97,15 +97,17 @@ Use a fresh lab host state (no previous SuperMgmt appliance) and a Proxmox CA as
 | 5.1 | `./sm install proxmox-lxc` with no configuration | The plan names the detected storage, bridge, template and the endpoint `https://<bridge address>:8006`; it proceeds, prints the address, CA fingerprint, CA and bootstrap code. Note the duration, whether the template was downloaded, and any prompt that was needed. |
 | 5.2 | The Proxmox endpoint address detected from the bridge | Reachable from the container, and the served certificate (the default `pve-ssl.pem`) chains to `/etc/pve/pve-root-ca.pem`, with the detected address among its names. If the SAN does not cover the address, step "endpoint trust" fails with exit 8; record the message and set `SUPERMGMT_PVE_ENDPOINT` to the host name. |
 | 5.3 | Custom or ACME certificate on the Proxmox host | Without `SUPERMGMT_PVE_CA_FILE` the trust check refuses (exit 8) before any token exists, and nothing is left behind. With the right CA it passes. |
-| 5.4 | Proxmox firewall blocking 8006 from the container | Exit 8 with the port-8006 hint; full rollback (check `pct list`, `pveum user list`, `pveum role list`, `pveum acl list`, `/var/tmp`). |
+| 5.4 | Proxmox firewall blocking 8006 from the container | Exit 8 with the port-8006 hint; full rollback (check `pct list`, `pveum user list`, `pveum role list`, `pveum acl list`, `/var/lib/supermgmt-installer/journals`). |
 | 5.5 | `pveum user list`, `role list`, `acl list`, `user token list` after install | Exactly `sm-<id>@pve`, `SMAudit-<id>`, `SMPower-<id>`, token `sm`, ACLs on `/` and `/vms` for the user and the token; nothing else changed. |
-| 5.6 | Inside the container: `ls -l /run/supermgmt-bootstrap`, `systemctl is-enabled supermgmt`, file owners under `/var/lib/supermgmt`, `grep -r` for the token secret in `/var/lib`, `/etc`, the host's `/var/tmp` and `journalctl` | Directory gone, unit enabled and active, data owned by `supermgmt`, the secret appears nowhere. |
+| 5.6 | Inside the container: `ls -l /run/supermgmt-bootstrap`, `systemctl is-enabled supermgmt`, file owners under `/var/lib/supermgmt`, `grep -r` for the token secret in `/var/lib`, `/etc`, the host's `/var/lib/supermgmt-installer` and `/var/tmp`, and `journalctl` | Directory gone, unit enabled and active, data owned by `supermgmt`, the secret appears nowhere. |
 | 5.7 | From your workstation: `sm profile add ... --ca-file`, `sm login --bootstrap`, `sm providers list`, `sm nodes list --tree` | Signed in; provider `ok`; the lab node, its guests and storages appear as discovered, with CPU, memory and disk. |
 | 5.8 | Rollback at the container step: make `pct create` fail, for example by creating a guest with the planned VMID between the plan and the create | Exit non-zero, a clean host, the pre-existing guest untouched. |
-| 5.9 | Rollback after the token exists: kill the installer (`kill -9`) between the token and the import, then rerun `sm install proxmox-lxc` on a terminal | The journal is found, the rerun offers to roll back, and afterwards no user, role, ACL, token, container or `/var/tmp/supermgmt-installer-*` directory remains. |
+| 5.9 | Rollback after the token exists: kill the installer (`kill -9`) between the token and the import, then rerun `sm install proxmox-lxc` on a terminal | The journal is found, the rerun offers to roll back, and afterwards no user, role, ACL, token, container or `/var/lib/supermgmt-installer/journals/<id>` directory remains. |
 | 5.10 | Failure after the token import (for example stop the container just before the service starts) | Rolled back, or kept with exit 7 and a precise list; never a half-state without a message. |
 | 5.11 | A second install while the first appliance exists | A different VMID, a different install id, separate identities; the first is untouched. |
 | 5.12 | Change the container's DHCP lease (restart it so it gets another address) | The appliance certificate names the install-time address, so `sm` clients fail verification; record the error and confirm that a reserved lease avoids it. |
+| 5.13 | `pveum user token list sm-<id>@pve --output-format json` right after install | The token row carries a `comment` field equal to `supermgmt install <id>`. **Unverified upstream (M6, SEC-7):** rollback revokes the token only when the listing shows that comment (`TokenExists`), so if the field is named differently or omitted, rollback silently leaves the token behind. Also create a token of the same name without a comment on a scratch user and confirm the installer does not revoke it. |
+| 5.14 | Residual SEC-7: a role is created by name only (roles have no comment field). Read the residual in [ADR-0026](../adr/0026-appliance-installer.md) | Nothing to automate. Record that a PVE user-administrator could plant a role with this install's random name between journaling and creation, and that rollback would then remove it; confirm the actor needed already holds `Sys.Modify` or equivalent. |
 
 ## 6. Operate
 
@@ -122,6 +124,9 @@ With the appliance from section 5 and a lab guest:
 | 6.7 | Rename a guest in Proxmox with a plan pending | The plan is stale after the next sync. |
 | 6.8 | `sm providers refresh pve` repeatedly | Rate limited after 3 quick calls (HTTP 429, error code `TIMEOUT`). |
 | 6.9 | `sm doctor` on the appliance | The `providers` check reports `ok`. |
+| 6.10 | Task-list filters behind power-action correlation: `GET /nodes/$NODE/tasks?source=all&userfilter=<user>&typefilter=qmstart&vmid=<id>` with a task started by the install's token | **Unverified upstream (SEC-12, implemented from finding text; the PVE source was never read).** `source=all` must include running tasks (the default lists archived tasks only), and `userfilter` must match the task's user **without** the `!token` suffix (`internal/providers/proxmox/client.go`, `taskQuery`; the full id is matched locally). Record what a token-started task returns for `userfilter=sm-<id>@pve` and for `userfilter=sm-<id>@pve!sm`. If the filter needs the full id or drops running tasks, correlation after a lost answer can miss the task and a power action is held as uncertain instead of settled: fix the client and the fake. |
+| 6.11 | Residual SEC-9: destroy a guest and recreate one with the same type, VMID and name, with no sync in between, while a power plan for it is approved but not yet dispatched | The approved operation reaches the new guest ([ADR-0025](../adr/0025-proxmox-power-jobs-task-correlation.md)). Record it; confirm the actor needed holds `VM.Allocate`. A shorter sync interval narrows the window and does not close it. |
+| 6.12 | Clock skew: set the Proxmox host clock about two minutes away from the appliance (or the appliance's), then `sm providers refresh pve` and `sm doctor` | The sync report records the skew from the Date header of `/cluster/resources`; `doctor` warns when it exceeds 60 s; a power action near the skew is correlated or held as uncertain, never executed twice. Record the Date header format the real host sends. |
 
 ## 7. Upgrade and uninstall on the real host
 
@@ -129,11 +134,12 @@ With the appliance from section 5 and a lab guest:
 |---|---|---|
 | 7.1 | Build a newer `sm` (any version bump), then on the host `./sm-new install upgrade` | Delegates into the appliance after the record and tag check; backup taken; version changes; data intact; `upgrade.json` gone. |
 | 7.2 | The same with two appliances installed | Refused without `--vmid`; works with it; the other appliance is untouched. |
-| 7.3 | Upgrade from the previous milestone's build (a server installed by M2) to this one | The backup has the old schema; the migration to 4 runs; the service is ready. |
+| 7.3 | Upgrade from the previous milestone's build (a server installed by M2) to this one | The backup has the old schema; the migration to the current schema runs; the service is ready. |
 | 7.4 | Kill the upgrade at each phase (`kill -9` during stop, backup, swap, start) and rerun | It converges; `/usr/local/bin/sm` exists at every moment. |
 | 7.5 | Break the new binary's start (a binary that exits 1) | The old binary is back (schema unchanged); exit 9. |
 | 7.6 | `./sm install uninstall --vmid <id>` | The container is stopped, the software removed inside it, the container, data, record and Proxmox identities remain. |
 | 7.7 | `./sm install uninstall --vmid <id> --purge-data` | Asks for the VMID; the container is destroyed; only that install's user, token, roles and ACLs are removed; the other appliance's identities and the template remain; the record is gone. |
+| 7.8 | While an upgrade is stopped mid-way (kill it after the stop phase), try `systemctl start supermgmt` inside the appliance, then reboot the container | The start is refused while the upgrade hold is in place (`RefuseManualStart`), also after the reboot; the rerun lifts it. The hold is proven on real systemd only in the CI lifecycle jobs, not inside an unprivileged LXC. |
 
 ## Results
 
@@ -143,8 +149,8 @@ With the appliance from section 5 and a lab guest:
 | 2.1 to 2.8 | | | | | |
 | 3.1 to 3.7 | | | | | |
 | 4.1 to 4.8 | | | | | |
-| 5.1 to 5.12 | | | | | |
-| 6.1 to 6.9 | | | | | |
-| 7.1 to 7.7 | | | | | |
+| 5.1 to 5.14 | | | | | |
+| 6.1 to 6.12 | | | | | |
+| 7.1 to 7.8 | | | | | |
 
 When a check changes an assumption, update in the same change: the fake, its row in [compatibility.md](../compatibility.md) (fake-verified becomes real-verified, or the row is corrected), [PROVENANCE.md](../../test/fixtures/pve/PROVENANCE.md), and the README and ROADMAP status.

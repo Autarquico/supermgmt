@@ -355,10 +355,13 @@ func TestTwoBackupsInTheSameSecondDoNotOverwriteEachOther(t *testing.T) {
 	first := f.create()
 	before, _ := os.ReadFile(first.Path)
 
-	_, err := backup.Create(context.Background(), f.options())
+	second := f.create()
 
-	if smerr.CodeOf(err) != smerr.CodeConflict {
-		t.Fatalf("error = %v, want CONFLICT", err)
+	if second.Name == first.Name {
+		t.Fatalf("both archives are named %s", first.Name)
+	}
+	if got, want := second.Manifest.CreatedAt, first.Manifest.CreatedAt.Add(time.Second); !got.Equal(want) {
+		t.Errorf("second CreatedAt = %v, want %v", got, want)
 	}
 	if after, _ := os.ReadFile(first.Path); !bytes.Equal(before, after) {
 		t.Error("the first archive changed")

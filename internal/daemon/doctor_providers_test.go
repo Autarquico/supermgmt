@@ -145,3 +145,47 @@ func TestDoctorProvidersFailsWithTheLastErrorAndNamesTheProvider(t *testing.T) {
 		t.Errorf("check = %s %q; the worst provider decides and every provider is named", status, detail)
 	}
 }
+
+func (d *doctorBox) reportSkew(p domain.Provider, skew time.Duration, unknown bool) {
+	d.t.Helper()
+	err := d.b.db.WithWriteTx(context.Background(), func(ctx context.Context, tx *database.Tx) error {
+		return database.RecordObservation(ctx, tx, database.Observation{
+			ID: domain.UUIDv7Generator{}.NewID(), ResourceType: domain.ResourceProvider, ResourceID: p.ID,
+			Kind: app.ObservationProxmoxSync, Value: app.SyncReport{ClockSkew: skew, ClockSkewUnknown: unknown}, ObservedAt: d.clock.Now(),
+		})
+	})
+	if err != nil {
+		d.t.Fatal(err)
+	}
+}
+
+func TestDoctorProviders_SkewWarns(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		skew    time.Duration
+		unknown bool
+		want    string
+	}{
+		{"PVE 61 s ahead", 61 * time.Second, false, checkWarn},
+		{"PVE 61 s behind", -61 * time.Second, false, checkWarn},
+		{"exactly 60 s", 60 * time.Second, false, checkOK},
+		{"in sync", 2 * time.Second, false, checkOK},
+		{"unknown skew says nothing", 0, true, checkOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDoctorBox(t)
+			now := d.clock.Now()
+			d.setStatus(d.pve, app.ProviderStatusOK, &now)
+			d.reportSkew(d.pve, tt.skew, tt.unknown)
+
+			status, detail := d.check()
+
+			if status != tt.want {
+				t.Fatalf("check = %s %q, want %s", status, detail, tt.want)
+			}
+			if tt.want == checkWarn && !strings.Contains(detail, "pve: synced") {
+				t.Errorf("detail = %q must still name the provider and its sync", detail)
+			}
+		})
+	}
+}

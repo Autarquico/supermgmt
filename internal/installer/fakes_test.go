@@ -12,7 +12,9 @@ import (
 	"errors"
 	"io/fs"
 	"math/big"
+	"path"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -179,4 +181,36 @@ func testCert(t *testing.T, host string, notAfter time.Time) (certPEM, keyPEM []
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+func (w *world) Lock(string) (func(), error) { return func() {}, nil }
+
+func (w *world) Canonical(p string) (string, error) { return p, nil }
+
+func (w *world) FreeBytes(string) (uint64, error) { return 1 << 40, nil }
+
+func (w *world) FileSize(p string) (int64, error) {
+	b, ok := w.files[p]
+	if !ok {
+		return 0, fs.ErrNotExist
+	}
+	return int64(len(b)), nil
+}
+
+func (w *world) ListDir(dir string) ([]string, error) {
+	var names []string
+	for p := range w.files {
+		if path.Dir(p) == dir {
+			names = append(names, path.Base(p))
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func (w *world) Lstat(p string) (EntryInfo, error) {
+	if _, ok := w.files[p]; !ok {
+		return EntryInfo{}, fs.ErrNotExist
+	}
+	return EntryInfo{Regular: true, Mode: w.modes[p]}, nil
 }

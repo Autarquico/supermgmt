@@ -43,7 +43,9 @@ type upgradeState struct {
 	NewSHA256      string       `json:"new_sha256"`
 	SchemaBefore   int          `json:"schema_before,omitempty"`
 	Archive        string       `json:"archive,omitempty"`
+	Superseded     []string     `json:"superseded,omitempty"` // replaced archives not yet removed
 	AllowDowngrade bool         `json:"allow_downgrade,omitempty"`
+	StartedAt      time.Time    `json:"started_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
@@ -70,6 +72,16 @@ type upgradeTarget struct {
 
 func (t upgradeTarget) staged() string   { return t.l.Binary + ".new" }
 func (t upgradeTarget) previous() string { return t.l.Binary + ".prev" }
+
+// liftHoldCommand is the printed shell fragment that removes the upgrade hold, which would
+// otherwise refuse the operator's manual start.
+func (t upgradeTarget) liftHoldCommand() string {
+	if t.unit == nil {
+		return ""
+	}
+	return " && rm -f " + holdDropInPath(*t.unit) + " && systemctl daemon-reload"
+}
+
 func (t upgradeTarget) statePath() string {
 	return filepath.Join(t.l.DataDir, upgradeStateFile)
 }
@@ -144,12 +156,19 @@ func (u *upgrader) loadState() (upgradeState, bool, error) {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return st, false, failWrap(ExitConfiguration, "the upgrade state "+u.t.statePath()+" is unreadable; inspect it before upgrading", err)
 	}
+	if st.StartedAt.IsZero() {
+		st.StartedAt = st.UpdatedAt // a state written before StartedAt existed
+	}
 	return st, true, nil
 }
 
 // record makes phase durable (temp file, fsync, rename, directory fsync).
 func (u *upgrader) record(phase upgradePhase) error {
-	u.st.Phase, u.st.UpdatedAt = phase, u.d.Clock.Now().UTC()
+	now := u.d.Clock.Now().UTC()
+	if u.st.StartedAt.IsZero() {
+		u.st.StartedAt = now
+	}
+	u.st.Phase, u.st.UpdatedAt = phase, now
 	data, err := json.MarshalIndent(u.st, "", "  ")
 	if err != nil {
 		return failWrap(ExitConfiguration, "render the upgrade state", err)

@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ func TestJournalCreationIsDurableBeforeAnySideEffect(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"host.mkdir /var/tmp/supermgmt-installer-ab12cd34", "host.syncdir /var/tmp",
-		"host.append /var/tmp/supermgmt-installer-ab12cd34/journal.jsonl", "host.syncdir /var/tmp/supermgmt-installer-ab12cd34",
+		"host.mkdir " + journalRoot, "host.mkdir " + journalRoot + "/ab12cd34", "host.syncdir " + journalRoot,
+		"host.append " + journalRoot + "/ab12cd34/journal.jsonl", "host.syncdir " + journalRoot + "/ab12cd34",
 	}
 	if strings.Join(w.opLog, "|") != strings.Join(want, "|") {
 		t.Errorf("ops:\n%v\nwant\n%v", w.opLog, want)
@@ -96,5 +97,59 @@ func TestJournalCommittedEntry(t *testing.T) {
 	re, _ := openJournal(w, j.dir)
 	if !re.isCommitted() || len(re.toUndo()) != 0 {
 		t.Errorf("committed journal: %+v", re.entries)
+	}
+}
+
+func TestJournalCreationRefusesALocationItDoesNotControl(t *testing.T) {
+	planted := map[string]struct {
+		path string
+		info EntryInfo
+	}{
+		"journal directory is a symlink":     {journalRoot + "/ab12cd34", EntryInfo{Mode: 0o777}},
+		"journal directory owned by another": {journalRoot + "/ab12cd34", EntryInfo{Dir: true, UID: 1000, Mode: 0o700}},
+		"journal directory open to others":   {journalRoot + "/ab12cd34", EntryInfo{Dir: true, Mode: 0o755}},
+		"journals root is a symlink":         {journalRoot, EntryInfo{Mode: 0o777}},
+		"journals root owned by another":     {journalRoot, EntryInfo{Dir: true, UID: 1000, Mode: 0o700}},
+	}
+	for name, tc := range planted {
+		t.Run(name, func(t *testing.T) {
+			w := newAW(t)
+			w.entries[tc.path] = tc.info
+			if _, err := createJournal(w, "ab12cd34"); err == nil {
+				t.Fatal("expected a refusal")
+			}
+			if w.opIndex("host.append") >= 0 {
+				t.Errorf("the journal was written before the location was verified: %v", w.opLog)
+			}
+		})
+	}
+}
+
+func TestJournalCreationRefusesAPlantedDirectory(t *testing.T) {
+	w := newAW(t)
+	w.dirs[journalRoot+"/ab12cd34"] = true
+	if _, err := createJournal(w, "ab12cd34"); err == nil || w.opIndex("host.append") >= 0 {
+		t.Errorf("err = %v, ops %v", err, w.opLog)
+	}
+}
+
+func TestStaleJournalInTheLegacyLocationIsRolledBack(t *testing.T) {
+	w := newAW(t)
+	w.confirmYes = true
+	legacy := journalTmpRoot + "/" + journalDirPrefix + staleID
+	w.dirs[legacy] = true
+	w.files[legacy+"/"+journalFile] = []byte(
+		`{"seq":1,"step":"S0","phase":"pending","resource":"journal","name":"` + staleID + `"}` + "\n" +
+			`{"seq":2,"step":"S12a","phase":"pending","resource":"user","name":"` + userIDFor(staleID) + `"}` + "\n")
+	w.users[userIDFor(staleID)] = "ours"
+	p, err := New(w.deps(true)).newProvision(w.opts(), fastHooks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.recoverStale(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if w.users[userIDFor(staleID)] != "" || w.Exists(legacy) {
+		t.Errorf("legacy journal not rolled back: users %v, ops %v", w.users, w.opLog)
 	}
 }

@@ -43,14 +43,27 @@ func (h *stubHost) Start(context.Context, installer.Unit) error             { re
 func (h *stubHost) Load(context.Context, installer.Unit) error              { return nil }
 func (h *stubHost) Stop(context.Context, installer.Unit) error              { return nil }
 func (h *stubHost) Disable(context.Context, installer.Unit) error           { return nil }
+func (h *stubHost) Hold(context.Context, installer.Unit) error              { return nil }
 func (h *stubHost) WaitStopped(context.Context, installer.Unit, time.Duration) error {
 	return nil
 }
-func (h *stubHost) AppendSync(string, []byte) error { return nil }
-func (h *stubHost) SyncDir(string) error            { return nil }
-func (h *stubHost) Rename(string, string) error     { return nil }
-func (h *stubHost) Link(string, string) error       { return nil }
-func (h *stubHost) Hash(string) (string, error)     { return "", nil }
+func (h *stubHost) AppendSync(string, []byte) error    { return nil }
+func (h *stubHost) SyncDir(string) error               { return nil }
+func (h *stubHost) Rename(string, string) error        { return nil }
+func (h *stubHost) Link(string, string) error          { return nil }
+func (h *stubHost) Hash(string) (string, error)        { return "", nil }
+func (h *stubHost) Lock(string) (func(), error)        { return func() {}, nil }
+func (h *stubHost) Canonical(p string) (string, error) { return p, nil }
+func (h *stubHost) FreeBytes(string) (uint64, error)   { return 1 << 40, nil }
+func (h *stubHost) FileSize(p string) (int64, error)   { return int64(len(h.files[p])), nil }
+func (h *stubHost) ListDir(string) ([]string, error)   { return nil, nil }
+func (h *stubHost) Lstat(p string) (installer.EntryInfo, error) {
+	if _, ok := h.files[p]; !ok {
+		return installer.EntryInfo{}, fs.ErrNotExist
+	}
+	return installer.EntryInfo{}, nil
+}
+
 func (h *stubHost) Run(context.Context, installer.Command) ([]byte, error) {
 	return []byte("CODE-9\n"), nil
 }

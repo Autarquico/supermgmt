@@ -42,33 +42,12 @@ const (
 	applianceListenPort = "8443"
 )
 
-// applianceHost holds the file-system seams only the appliance installer
-// needs. The real host implements them; Files stays the frozen M2 interface.
-type applianceHost interface {
-	// Lock takes the exclusive installer lock and returns its release.
-	Lock(path string) (release func(), err error)
-	// ListDir lists the entry names of dir; a missing directory is empty.
-	ListDir(dir string) ([]string, error)
-}
-
 // EntryInfo is what Lstat says about a path without following a final symlink.
 type EntryInfo struct {
 	Dir     bool
 	Regular bool
 	UID     int
 	Mode    fs.FileMode // permission bits only
-}
-
-// entryStatter lets the installer judge who owns what it finds in a shared
-// directory before it trusts or deletes it.
-type entryStatter interface {
-	Lstat(path string) (EntryInfo, error)
-}
-
-// bridgeAddresser tells the host's own address on a bridge, which is where the
-// container reaches the Proxmox API when no endpoint is given.
-type bridgeAddresser interface {
-	BridgeAddress(ctx context.Context, bridge string) (netip.Addr, error)
 }
 
 // provisionHooks are the timing and fault-injection seams of one run.
@@ -140,8 +119,7 @@ type provision struct {
 	o    Options
 	h    provisionHooks
 	pve  PVE
-	host applianceHost
-	stat entryStatter
+	host Files
 	plan appliancePlan
 
 	id string
@@ -191,15 +169,7 @@ func (in *Installer) newProvision(o Options, h provisionHooks) (*provision, erro
 	case o.Binary == "":
 		return nil, fail(ExitInvalid, "the running sm binary is unknown")
 	}
-	host, ok := d.Files.(applianceHost)
-	if !ok {
-		return nil, fail(ExitPrerequisite, "this host cannot take the installer lock")
-	}
-	stat, ok := d.Files.(entryStatter)
-	if !ok {
-		return nil, fail(ExitPrerequisite, "this host cannot inspect file ownership")
-	}
-	return &provision{in: in, d: d, o: o, h: h, pve: d.PVE, host: host, stat: stat}, nil
+	return &provision{in: in, d: d, o: o, h: h, pve: d.PVE, host: d.Files}, nil
 }
 
 func (p *provision) say(format string, args ...any) { p.in.say(format, args...) }
@@ -441,11 +411,7 @@ func (p *provision) pickEndpoint(ctx context.Context, plan *appliancePlan) error
 	a := p.o.Appliance
 	endpoint := a.PVEEndpoint
 	if endpoint == "" {
-		addr, ok := p.pve.(bridgeAddresser)
-		if !ok {
-			return fail(ExitInvalid, "cannot detect the host address; set SUPERMGMT_PVE_ENDPOINT")
-		}
-		ip, err := addr.BridgeAddress(ctx, plan.Bridge)
+		ip, err := p.pve.BridgeAddress(ctx, plan.Bridge)
 		if err != nil {
 			return failWrap(ExitInvalid, "detect the host address (set SUPERMGMT_PVE_ENDPOINT)", err)
 		}

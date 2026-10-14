@@ -101,8 +101,24 @@ func Create(ctx context.Context, o CreateOptions) (Created, error) {
 		KEKIDs:           append([]domain.ID{}, reservation.KEKIDs()...),
 		ConfigGeneration: snapshot.Config.Generation,
 	}
-	name := fmt.Sprintf("%s%s-%s%s", namePrefix, sanitizeInstance(o.Instance), manifest.CreatedAt.Format(timestampLayout), Extension)
-	return publish(o.Dir, work, name, manifest, members)
+	manifest.CreatedAt = o.firstFreeSecond(manifest.CreatedAt)
+	return publish(o.Dir, work, o.archiveName(manifest.CreatedAt), manifest, members)
+}
+
+func (o CreateOptions) archiveName(createdAt time.Time) string {
+	return fmt.Sprintf("%s%s-%s%s", namePrefix, sanitizeInstance(o.Instance), createdAt.Format(timestampLayout), Extension)
+}
+
+// firstFreeSecond keeps two archives made within one second apart: names carry
+// second resolution, and the later one must not be refused (a retaken
+// pre-upgrade backup follows its crashed twin at once).
+func (o CreateOptions) firstFreeSecond(createdAt time.Time) time.Time {
+	for {
+		if _, err := os.Lstat(filepath.Join(o.Dir, o.archiveName(createdAt))); err != nil {
+			return createdAt
+		}
+		createdAt = createdAt.Add(time.Second)
+	}
 }
 
 func (o CreateOptions) validate() error {

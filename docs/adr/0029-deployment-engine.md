@@ -1,6 +1,6 @@
 # ADR-0029: Deployment engine
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §19.1, §20.0–§20.5, §21, §26; ADR-0007, ADR-0008, ADR-0010, ADR-0013, ADR-0015, ADR-0030
 
 ## Context

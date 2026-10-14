@@ -1,0 +1,112 @@
+package installer
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// pendingAuditDir holds audit records the installer wrote while the daemon was
+// stopped. The next daemon start imports and deletes them (ADR-0035).
+const pendingAuditDir = "audit-pending"
+
+const actionDowngradeAuthorized = "instance.downgrade_authorized"
+
+// downgradeRecord is the JSON the daemon decodes strictly (internal/app
+// PendingAudit): the field set must match exactly.
+type downgradeRecord struct {
+	EventID  string    `json:"event_id"`
+	Action   string    `json:"action"`
+	OSUID    int       `json:"os_uid"`
+	OSUser   string    `json:"os_user"`
+	SudoUser string    `json:"sudo_user"`
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	At       time.Time `json:"at"`
+}
+
+// recordDowngrade makes an --allow-downgrade authorization durable before the
+// swap, since upgrade.json is deleted at the end. A resumed swap derives the
+// same event id, so it never writes a second record for the same upgrade.
+func (u *upgrader) recordDowngrade(ctx context.Context) error {
+	if !u.st.AllowDowngrade {
+		return nil
+	}
+	files, dataDir := u.d.Files, u.t.l.DataDir
+	id := downgradeEventID(u.st)
+	path := filepath.Join(dataDir, pendingAuditDir, id+".json")
+	if files.Exists(path) {
+		return nil
+	}
+	data, err := json.Marshal(downgradeRecord{
+		EventID: id, Action: actionDowngradeAuthorized,
+		OSUID: u.d.Host.UID, OSUser: u.d.Host.Env["USER"], SudoUser: u.d.Host.Env["SUDO_USER"],
+		From: u.st.FromVersion, To: u.st.ToVersion, At: u.d.Clock.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("render the downgrade record: %w", err)
+	}
+	dir := filepath.Dir(path)
+	if err := u.writePendingAudit(ctx, dir, filepath.Base(path), append(data, '\n')); err != nil {
+		return fmt.Errorf("write the downgrade record: %w", err)
+	}
+	for _, d := range []string{dir, dataDir} {
+		if err := files.SyncDir(d); err != nil {
+			return fmt.Errorf("sync %s: %w", d, err)
+		}
+	}
+	return nil
+}
+
+// writePendingAuditScript runs as the account that owns the data directory, so
+// a path that account controls is never created, chmodded or chowned by root
+// (SEC-1). It also refuses a symlinked directory, and noclobber makes the
+// final create exclusive.
+const writePendingAuditScript = `set -eu
+umask 077
+dir=$1 name=$2
+[ ! -L "$dir" ] || { echo "$dir is a symlink" >&2; exit 1; }
+[ -d "$dir" ] || mkdir -- "$dir"
+[ ! -L "$dir" ] || { echo "$dir is a symlink" >&2; exit 1; }
+rm -f -- "$dir/$name.tmp"
+( set -C; cat > "$dir/$name.tmp" )
+mv -- "$dir/$name.tmp" "$dir/$name"
+sync`
+
+// writePendingAudit stores the record as the service account. A local install
+// has no separate account: the caller owns the data directory already.
+func (u *upgrader) writePendingAudit(ctx context.Context, dir, name string, data []byte) error {
+	if u.t.runAs == "" {
+		return u.writePendingAuditAsCaller(dir, filepath.Join(dir, name), data)
+	}
+	_, err := u.d.Runner.Run(ctx, Command{
+		Name: "/bin/sh", Args: []string{"-c", writePendingAuditScript, "sh", dir, name},
+		User: u.t.runAs, Stdin: bytes.NewReader(data),
+	})
+	return err
+}
+
+func (u *upgrader) writePendingAuditAsCaller(dir, path string, data []byte) error {
+	if err := u.d.Files.MkdirAll(dir, 0o700, Owner{}); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	return u.d.Files.WriteFile(path, data, 0o600, Owner{})
+}
+
+// downgradeEventID derives a UUIDv7-shaped id from the upgrade's identity (the
+// binaries and when it started, which no resume rewrites), so the id survives
+// a crash and a retaken backup.
+func downgradeEventID(st upgradeState) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%d", st.OldSHA256, st.NewSHA256, st.StartedAt.UnixNano()))
+	var id uuid.UUID
+	copy(id[:], sum[:])
+	id[6] = id[6]&0x0f | 0x70
+	id[8] = id[8]&0x3f | 0x80
+	return id.String()
+}

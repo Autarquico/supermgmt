@@ -20,6 +20,9 @@ builds:
       - -X github.com/autarquico/supermgmt/internal/version.Commit={{ .ShortCommit }}
       - -X github.com/autarquico/supermgmt/internal/version.Date={{ .CommitDate }}
     mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      post:
+        - packaging/release/notices.sh generate {{ .Path }} dist/notices/{{ .Os }}_{{ .Arch }}/THIRD_PARTY_LICENSES
 
 archives:
   - id: sm
@@ -30,6 +33,10 @@ archives:
         info:
           mtime: "{{ .CommitDate }}"
       - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: "dist/notices/{{ .Os }}_{{ .Arch }}/THIRD_PARTY_LICENSES"
+        dst: THIRD_PARTY_LICENSES
         info:
           mtime: "{{ .CommitDate }}"
     builds_info:

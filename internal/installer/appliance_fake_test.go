@@ -951,7 +951,16 @@ func (w *aw) doctor() ([]byte, error) {
 
 // ---- observation ----
 
+// hostPaths lists what the host holds under prefix. The legacy journal prefix also covers
+// journalRoot, so assertions about journal debris follow the journals to their new home.
 func (w *aw) hostPaths(prefix string) []string {
+	if prefix == journalTmpRoot+"/"+journalDirPrefix {
+		return append(w.legacyHostPaths(journalRoot+"/"), w.legacyHostPaths(prefix)...)
+	}
+	return w.legacyHostPaths(prefix)
+}
+
+func (w *aw) legacyHostPaths(prefix string) []string {
 	var found []string
 	for p := range w.files {
 		if strings.HasPrefix(p, prefix) {
@@ -1007,4 +1016,16 @@ func testCAPEM(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func (w *aw) Canonical(p string) (string, error) { return p, nil }
+
+func (w *aw) FreeBytes(string) (uint64, error) { return 1 << 40, nil }
+
+func (w *aw) FileSize(p string) (int64, error) {
+	b, ok := w.files[p]
+	if !ok {
+		return 0, fs.ErrNotExist
+	}
+	return int64(len(b)), nil
 }

@@ -1,6 +1,6 @@
 # ADR-0020: Backup format, offline restore and startup order
 
-- Status: Proposed
+- Status: Accepted
 - Spec: §2.1.1, §9, §10, §29.1, §29.2; ADR-0013, ADR-0016
 
 ## Context
