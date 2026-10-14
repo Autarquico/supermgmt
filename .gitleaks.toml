@@ -57,3 +57,8 @@ paths = ['''^test/e2e/harness_m5_test\.go$''']
 description = "canary credentials planted to prove MCP responses never leak them"
 targetRules = ["generic-api-key", "jwt"]
 paths = ['''^test/integration/mcp_secrets_test\.go$''']
+
+[[allowlists]]
+description = "sha256 of the fixture master keys in the migration fixtures provenance table; a hash, not a secret"
+targetRules = ["generic-api-key"]
+paths = ['''^test/fixtures/migrations/PROVENANCE\.md$''']
