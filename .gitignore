@@ -3,6 +3,7 @@
 *.db
 *.db-wal
 *.db-shm
+!/test/fixtures/migrations/m*/sm.db
 /dev/
 coverage.out
 .DS_Store
