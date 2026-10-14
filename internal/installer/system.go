@@ -415,10 +415,23 @@ func (launchd) Load(context.Context, Unit) error { return nil }
 
 func (launchd) Disable(context.Context, Unit) error { return nil }
 
-// Stop boots the agent out; bootout returns once the job is gone.
+// launchctlServiceNotFound is the status `launchctl print` gives for a label that is not loaded.
+const launchctlServiceNotFound = 113
+
+// Stop boots the agent out; bootout returns once the job is gone. A job that is not
+// loaded (a held upgrade being resumed) is already stopped, though bootout fails on it.
 func (l launchd) Stop(ctx context.Context, u Unit) error {
 	_, err := l.runner.Run(ctx, Command{Name: "launchctl", Args: []string{"bootout", "gui/" + strconv.Itoa(l.uid), u.Path}})
+	if err != nil && l.notLoaded(ctx, u) {
+		return nil
+	}
 	return err
+}
+
+func (l launchd) notLoaded(ctx context.Context, u Unit) bool {
+	_, err := l.runner.Run(ctx, Command{Name: "launchctl", Args: []string{"print", l.target(u)}})
+	var exit *ExitStatus
+	return errors.As(err, &exit) && exit.Code == launchctlServiceNotFound
 }
 
 func (launchd) WaitStopped(context.Context, Unit, time.Duration) error { return nil }
