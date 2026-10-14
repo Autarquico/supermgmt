@@ -1,0 +1,59 @@
+# SuperMgmt — project design brief (layer 2). Absent keys inherit ~/.claude/design-system.yml.
+project:
+  name: "SuperMgmt"
+  url: "https://autarquico.github.io/supermgmt/"
+  audience: "self-hosters, homelab owners and small teams who run their own Linux nodes, Proxmox and Compose apps"
+  one_liner: "A local-first control plane for your own infrastructure, safe for humans and AI agents"
+
+aesthetic:
+  family: tech-clinical
+  reference: []
+
+mode:
+  override: ""            # light and dark equal (global)
+
+color:
+  accent:
+    name: "signal teal"
+    hex_light: "#0f766e"
+    hex_dark: "#2dd4bf"
+    note: "single accent: links, primary button, focus ring, the approval/plan-hash motif; never for status"
+  neutrals_override: ""   # cold (global)
+
+typography:
+  headings:
+    family: "Instrument Serif"
+    weights: [400]
+    italic_allowed: true
+  body:
+    family: "Geist"
+    weights: [400, 500, 600]
+  mono:
+    family: "Geist Mono"
+    usage_in_ui: true     # commands, plan hashes, terminal frames are first-class content
+
+iconography:
+  set: "lucide"
+
+copy:
+  tone: "precise, calm and honest; states what is verified and what is not"
+  voice_examples:
+    - "Every change is a plan. Every plan has a hash. Production waits for you."
+    - "Nothing of SuperMgmt runs on your nodes."
+    - "Tested against fakes, not yet against a real Proxmox host."
+  forbidden_local:
+    - "milestone codes (M0–M6), task IDs, SEC-/CODE- finding IDs in public copy"
+    - "claims of production readiness or verified integrations that only ran against fakes"
+  vocabulary_local:
+    node: "a machine SuperMgmt manages (SSH, local, Proxmox guest)"
+    plan: "the exact, hashed description of a change"
+    approval: "a human sign-off bound to one plan hash"
+
+assets:
+  logo_light: ""
+  logo_dark: ""
+  favicon: ""
+
+notes: |
+  The name is a working name pending a trademark check: no logo mark yet, a wordmark in Instrument Serif.
+  Terminal frames on the site come from real TUI renders, never mock-ups.

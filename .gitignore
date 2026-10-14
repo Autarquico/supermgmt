@@ -8,3 +8,11 @@
 coverage.out
 .DS_Store
 .claude/loop/
+
+# Website build outputs (site/)
+/site/node_modules/
+/site/dist/
+/site/.astro/
+/site/src/content/docs/
+/site/test-results/
+/site/playwright-report/
