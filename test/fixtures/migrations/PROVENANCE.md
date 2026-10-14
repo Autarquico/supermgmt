@@ -81,3 +81,56 @@ Transcript:
 6. node.setup on fixture-1 -> succeeded
 7. create the API token fixture-ci
 8. create a backup and keep it as the archive of the milestone
+
+## m4
+
+- commit: `f4195937b25e1570e49f63158e3bcca83ee42e54`
+- synthetic version: `v0.4.0`
+- Go version: `go1.27.2`
+- schema version: 5
+- master key id: `01a139cb-7d03-737a-998d-30ecfc04a360`
+
+| file | sha256 |
+|---|---|
+| `m4/master.key` | `16f6a18b66c4fc960806ce92d34418dc50311a114dfca3a09b188d320827b087` |
+| `m4/sm.db` | `083c1a0635de67937759ecb19614c8d495ad33c36ba38b2f1c38f62074efbe06` |
+| `m4/supermgmt-m4-20260101T000000Z.tar.zst` | `c550c2c55b5e394e9eef0dc640e4d1f945a5f2d3a63bba5eeb2fe40f0273dbed` |
+
+Transcript:
+
+1. import the secrets app/credential and app/api-token (approved) and app/parked (left awaiting approval)
+2. add the SSH node fixture-1 (staging) through the fixture container and probe it -> succeeded
+3. add a node in production and reject the approval -> failed
+4. add a node in production and cancel it -> cancelled
+5. probe fixture-1 while its container is paused -> failed
+6. node.setup on fixture-1 -> succeeded
+7. create the API token fixture-ci
+8. create the app fixture-web and bind it to fixture-1 in staging
+9. create a backup and keep it as the archive of the milestone
+
+## m5
+
+- commit: `658078b15d68846ed67b80d4e2f463c114be27cf`
+- synthetic version: `v0.5.0`
+- Go version: `go1.27.2`
+- schema version: 6
+- master key id: `01a139cc-3a05-74e2-90d4-b86b3cbc56d6`
+
+| file | sha256 |
+|---|---|
+| `m5/master.key` | `908292fedddb7bab78dbc4305cd9bcdcd05ecd3b24e712f3640717d9b91cc4ab` |
+| `m5/sm.db` | `8a1b72fc393b7113ce30c1030407d2bfe37301d7fc5f717c765a934d4cd05461` |
+| `m5/supermgmt-m5-20260101T000000Z.tar.zst` | `f81c04a6272b461f53502e03c773b598b7c8bcd3e30317782e4e8e6446993ab4` |
+
+Transcript:
+
+1. import the secrets app/credential and app/api-token (approved) and app/parked (left awaiting approval)
+2. add the SSH node fixture-1 (staging) through the fixture container and probe it -> succeeded
+3. add a node in production and reject the approval -> failed
+4. add a node in production and cancel it -> cancelled
+5. probe fixture-1 while its container is paused -> failed
+6. node.setup on fixture-1 -> succeeded
+7. create the API token fixture-ci
+8. create the app fixture-web and bind it to fixture-1 in staging
+9. register the local MCP client fixture-agent and store its token
+10. create a backup and keep it as the archive of the milestone
