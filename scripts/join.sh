@@ -22,7 +22,7 @@ die() { code=$1; shift; log "error: $*"; exit "$code"; }
 write_trust_roots() {
 	cat >"$WORK/allowed_signers" <<'EOF'
 # BEGIN allowed_signers
-# Placeholder: no production key yet, so every verification fails closed (exit 5).
+release@supermgmt valid-after="20261014",namespaces="supermgmt-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBDaUxtppvnxho0KAF62G5IJVRMII+v1e7zJNy1f0F3T
 # END allowed_signers
 EOF
 	cat >"$WORK/revoked_keys" <<'EOF'

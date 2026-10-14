@@ -1,6 +1,6 @@
 # Installation
 
-> **Status: nothing is released.** No signed release exists yet, and `install.sh` on `main` holds a placeholder instead of the release public key, so every verification fails closed with exit 5 ([install.sh](../install.sh) line 23). Everything below describes what the installer does once the owner has created the release key ([Release key and custody](#release-key-and-custody)) and cut a protected tag build. Until then, build from source (`make build`) and use `sm install` by hand, or run the test installer in CI.
+> **Status: no release published yet.** The release key exists and is embedded in `install.sh` ([Release key and custody](#release-key-and-custody)); the installer works once the first protected tag build has published a signed release. Until then, build from source (`make build`) and use `sm install` by hand.
 
 Sources: SPEC §3, [ADR-0019](adr/0019-release-pipeline-and-installer.md), [ADR-0004](adr/0004-openssh-release-signatures.md), `install.sh`, `internal/installer`, `internal/cli/install.go`.
 
@@ -32,10 +32,10 @@ ssh-keygen -Y verify -f allowed_signers -I release@supermgmt -n supermgmt-releas
 `allowed_signers` is one line, `release@supermgmt namespaces="supermgmt-release" ssh-ed25519 AAAA...`, holding the release public key. Get the key and its fingerprint from a source other than the one that served the script: `SECURITY.md` at a signed tag, the project website, the release notes. Check the key with `ssh-keygen -lf` against the published fingerprint:
 
 ```text
-SHA256:<RELEASE-KEY-FINGERPRINT-NOT-PUBLISHED-YET>
+SHA256:06Bs6zXAk9KcnjRpoR5bslbRKoNv9L9KuI6zzT7OPX4
 ```
 
-That value is a placeholder. The key does not exist yet and the fingerprint will be published at the first signed tag.
+The key is `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBDaUxtppvnxho0KAF62G5IJVRMII+v1e7zJNy1f0F3T release@supermgmt`.
 
 After this check `install.sh` still verifies the checksum list and the archive with the key embedded **in the script you just verified**; the out-of-band step is what makes that embedded key trustworthy.
 
@@ -315,7 +315,7 @@ Sources: SPEC §3.7, `internal/installer/errors.go`, the header of `install.sh`.
 Nothing about the production key exists yet. The design (ADR-0019):
 
 - The private key exists only as the secret `SM_RELEASE_SIGNING_KEY` of the GitHub environment **`release`**, whose required reviewer is the repository owner. `release.yml` (on `v*` tags) and `channels.yml` (weekly, re-signs `channels/stable.json` and `channels/beta.json`) both run in that environment, so each run waits for the owner's approval. No other workflow may reference the environment; the `workflow-policy` CI job checks it.
-- CI proves the whole chain with an ephemeral test key rendered into a test copy of `install.sh`. The committed `install.sh` and `scripts/join.sh` carry a placeholder block that verifies nothing.
+- CI proves the whole chain with an ephemeral test key rendered into a test copy of `install.sh`. The committed `install.sh` and `scripts/join.sh` embed the production public key.
 - Production signing and build provenance are **not verified** until the first protected tag run. Provenance (`actions/attest-build-provenance`) runs on tag builds only.
 - Rotation: announce the new key in a release signed by the old one and embed both in `install.sh` for the overlap. Revocation: add the key to the embedded `revoked_keys` list. Both scripts embed the trust roots separately, so both must be updated together.
 
