@@ -165,7 +165,7 @@ Before any change the installer prints what it decided (PVE version, VMID, hostn
 
 The order is the failure matrix (`internal/installer/proxmox_steps.go`, ADR-0026).
 
-1. Fix an `install_id` (8 hex digits) and create a write-ahead journal `/var/tmp/supermgmt-installer-<id>/journal.jsonl` (directory 0700, file 0600) before any side effect.
+1. Fix an `install_id` (8 hex digits) and create a write-ahead journal `/var/lib/supermgmt-installer/journals/<id>/journal.jsonl` (root-only directories, 0700; file 0600) before any side effect. Journals that earlier builds left in `/var/tmp/supermgmt-installer-<id>/` are still found and recovered.
 2. Download the Debian 13 `standard` template with `pveam` if none is on the template storage (highest version wins). **A downloaded template is never rolled back or deleted** (shared cache); it is reported.
 3. `pct create`: unprivileged, `nesting=0,keyctl=0`, no mount points, no raw `lxc.*` keys, start on boot, tag `supermgmt`, description `supermgmt install <id>`. The configuration is read back; any mismatch rolls back.
 4. Start it and wait up to 120 s for an IPv4 address.
@@ -229,8 +229,8 @@ sudo ./sm install upgrade --allow-downgrade   # deliberately install an older ve
 1. Refuse a lower version (exit 2) unless `--allow-downgrade`; a version that cannot be ordered is treated the same way. An unchanged binary ends with "nothing to upgrade".
 2. Check free disk for the staged binary and the backup (exit 4).
 3. Stage `sm.new`, hard-link the live binary as `sm.prev`, and record the phase in `/var/lib/supermgmt/upgrade.json`.
-4. Stop the service and **verify it terminated and the database lock is free**.
-5. Take a **read-only offline backup with the new binary** (`sm backup create --offline`): it opens the database read-only, never migrates and never activates, and the archive's schema version must equal the database's. The archive goes to the configured backups directory.
+4. **Hold the service**, then stop it and **verify it terminated and the database lock is free**. The hold (systemd: a drop-in `50-upgrade-hold.conf` that refuses manual start, plus `disable`; launchd: `launchctl disable`) is applied *before* the stop, so nothing, including a reboot or a dependency, can start the old service while the upgrade is unfinished. Starting the service again lifts it ([ADR-0035](adr/0035-upgrade-paths-migration-fixtures-crash-points.md#service-hold)).
+5. Take a **read-only offline backup with the new binary** (`sm backup create --offline`): it opens the database read-only, never migrates and never activates, and the archive's schema version must equal the database's. The archive goes to the configured backups directory. If the installer is killed after the backup and rerun before the swap, it **takes the archive again** under the database lock and removes the superseded one, so the archive always matches the database that is about to be migrated.
 6. Replace `sm` by rename (the live path is never missing), start the service and wait up to 60 s for `/health/ready`. The new daemon migrates the database forward.
 
 Each phase (`prepared`, `stopped`, `backed_up`, `swapped`, `started`, `done`) is recorded durably. A rerun after a crash resumes from the recorded phase, or abandons an upgrade whose binary is no longer the one at hand, and never overwrites the known-good binary. `sm.prev` stays after a successful upgrade.
@@ -241,11 +241,11 @@ Each phase (`prepared`, `stopped`, `backed_up`, `swapped`, `started`, `done`) is
 | After the swap, schema unchanged | The previous binary is put back and started, exit 9. |
 | After the swap, schema advanced (the migration ran) | The service is left **stopped**, the restore commands are printed, exit 9. Nothing is restored automatically. |
 
-`--allow-downgrade` is recorded in `upgrade.json`; an audit event for it is not written yet. What to do after the third outcome: [operations.md](operations.md#upgrade-and-recovery).
+`--allow-downgrade` is recorded in `upgrade.json` and, before the swap, as a pending audit record in `<data dir>/audit-pending/`. The first start of an M6 or later daemon imports it as the event `instance.downgrade_authorized` (who, from, to) and deletes the file; a downgrade to a binary older than M6 leaves the record pending until an M6 or later binary starts. Every start also records `instance.version_changed` when the binary's version differs from the previous start. What to do after the third outcome: [operations.md](operations.md#upgrade-and-recovery).
 
 On a Proxmox host with an appliance record, `sm install upgrade` upgrades **the appliance**. It requires both the record (`/var/lib/supermgmt-installer/appliances/<vmid>.json`) and the container's own marks (description with the install id and the `supermgmt` tag), refuses a container without them, pushes the binary, checks its SHA-256 and runs `sm install upgrade` inside, forwarding `--allow-downgrade` and keeping the inner exit code. With several appliances `--vmid` is required. A Proxmox host with no record upgrades its own `sm` like any host.
 
-Covered by `TestUpgrade_*` and `TestUpgradeAppliance_*` (`internal/installer`) and `TestM3_Upgrade*` (CI job `e2e-upgrade`, which upgrades from the M2 build at commit e6d5577 and kills the run at each phase). Real-host runs: not verified.
+Covered by `TestUpgrade_*` and `TestUpgradeAppliance_*` (`internal/installer`) and `TestM3_Upgrade*` (CI job `e2e-upgrade`, which upgrades from the M2 build at commit e6d5577 and kills the run at each phase). Since M6: the installer is killed at each of the 20 crash points of ADR-0035 and rerun (`TestM6_CrashUpgrade_*`, CI job `e2e-crash`); the oldest milestone is upgraded to the latest in one jump (`TestM6_UpgradeChainOldestToLatestInOneJump`, CI job `e2e-chain`); every milestone's database and archive are migrated and restored (job `migration-test`). The full lifecycle per platform is in [compatibility.md](compatibility.md#supported-platforms-m6). Real-host runs of Proxmox: not verified.
 
 ## Uninstall
 
@@ -267,7 +267,7 @@ On a Proxmox host with an appliance record (same ownership proof as upgrade, `--
 - The default runs `sm install uninstall` **inside** the container and stops the container. The container, its data, the appliance record and the Proxmox identities stay.
 - `--purge-data` destroys the container (only if it carries the install id) and removes **this install's** Proxmox user, token, roles and ACLs, then the record. It asks you to type the VMID; without a terminal it needs `--vmid <id>`, `--purge-data` and `SUPERMGMT_YES=1` (or `--yes`). A record naming any identity other than the ones derived from its own install id is refused, and other appliances' identities are untouched (`TestUninstallAppliance_PurgeLeavesTheOtherApplianceAndForeignIdentitiesAlone`). The template stays.
 
-Covered by `TestUninstall_*`, `TestUninstallAppliance_*` and `TestM3_Uninstall*` (CI job `e2e-upgrade`). Not verified on real PVE.
+Covered by `TestUninstall_*`, `TestUninstallAppliance_*` and `TestM3_Uninstall*` (CI job `e2e-upgrade`), and, per platform, by the lifecycle tests listed in [compatibility.md](compatibility.md#supported-platforms-m6). Not verified on real PVE.
 
 ## Joining a node (`sm join`)
 
