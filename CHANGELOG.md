@@ -42,7 +42,7 @@ Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, au
 
 - No stable release yet. The production release key is embedded in the installer; the Homebrew tap, the licence decision and the name checks are human steps that have not been done.
 - Proxmox, GitHub and MCP remain verified against fakes only. The new Proxmox assumptions (the token comment field, the task-list filters, clock skew) are rows of [m3-real-pve.md](docs/manual-checks/m3-real-pve.md).
-- The new lifecycle, crash and chain jobs, including the arm64 and macOS legs, first passed on GitHub on `main` at `6f89609` (2026-10-14). The nightly workflow has not run, and the release workflow has never run on a real tag.
+- The new lifecycle, crash and chain jobs, including the arm64 and macOS legs, first passed on GitHub on `main` at `6f89609` (2026-10-14). The nightly workflow has not run, and no run of the release workflow on a real tag has been checked by a person yet.
 - Unresolved flake: the daemon-restart test (`TestM1_DaemonKilledMidRestartReconciles`) has a second failure mode that was seen once and not explained. A downgrade to a build older than M6 leaves its audit record pending until an M6 or newer binary starts. See the [release checklist](docs/release-checklist.md#unresolved-items-and-stated-limitations) for the full list.
 
 ### Added in M5

@@ -14,7 +14,7 @@ Pick the row that matches what you want to run.
 | Run a shared server for a team | `server` | Linux with systemd, as root. `sm install server` works from a binary you built; `install.sh` has not been verified against a published release yet (release checklist H22). |
 | Run the server in a container on Proxmox VE | `proxmox-lxc` | Not tried on a real Proxmox VE host. See [Proxmox appliance](#proxmox-appliance-proxmox-lxc). |
 
-`sm install <mode>` installs the `sm` binary that is running (`internal/cli/install.go`), so it works without a release. `install.sh` downloads and verifies a signed release first, and that is the part that cannot work yet.
+`sm install <mode>` installs the `sm` binary that is running (`internal/cli/install.go`), so it works without a release. `install.sh` downloads and verifies a signed release first, and that path has not been verified against a published release yet (release checklist H22).
 
 The rest of this page describes `install.sh` and every mode in detail.
 
