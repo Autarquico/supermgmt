@@ -95,8 +95,11 @@ test('search opens from the keyboard and finds a docs page', async ({ page }) =>
   await page.keyboard.press('Control+k');
   const dialog = page.locator('dialog[open]');
   await expect(dialog).toBeVisible();
-  await page.keyboard.type('approvals');
-  await expect(dialog.locator('.pagefind-ui__result-link').first()).toBeVisible();
+  // Pagefind loads its index on first use; on a cold CI runner that can take a few seconds.
+  const input = dialog.getByRole('textbox', { name: 'Search' });
+  await expect(input).toBeFocused({ timeout: 15_000 });
+  await input.pressSequentially('approvals');
+  await expect(dialog.locator('.pagefind-ui__result-link').first()).toBeVisible({ timeout: 15_000 });
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
 });
