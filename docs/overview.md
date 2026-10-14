@@ -2,7 +2,7 @@
 
 SuperMgmt is a local-first, terminal-first control plane for the machines and services you run yourself. You add Linux machines over SSH, see their systemd services and Docker containers, read their logs and act on them from a fast terminal UI or the `sm` command line. AI agents can reach the same operations through MCP, under the same policy and approvals as you.
 
-> **Pre-alpha. Nothing is released.** You build `sm` from source today. What runs, what was tested against real systems and what only against fakes is listed on one page: [Project status and what is verified](project-status.md).
+> **Pre-alpha. No stable release yet.** Pre-releases may exist, but the installer has not been verified on a clean machine, so build `sm` from source. What runs, what was tested against real systems and what only against fakes is listed on one page: [Project status and what is verified](project-status.md).
 
 ## Who it is for
 
