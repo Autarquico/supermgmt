@@ -1,15 +1,18 @@
 ---
 import { routeFor } from '../../../scripts/sync-docs.mjs';
 
+import type { Evidence } from '../../lib/claims';
+
 interface Props {
 	planHash: string;
+	approvalEvidence: (Evidence & { label: string })[];
 }
-const { planHash } = Astro.props;
+const { planHash, approvalEvidence } = Astro.props;
 
 const steps = [
 	{ name: 'Plan', text: 'A change (restart a service, set up a machine, deploy an app) becomes a plan: the exact steps, the targets and the risk.' },
 	{ name: 'Hash', text: 'The plan is hashed. Change any input and the hash changes.', hash: true },
-	{ name: 'Approval', text: 'Policy is default deny. In production a person approves that exact hash, and an AI agent can never approve.' },
+	{ name: 'Approval', text: 'Policy is default deny. In production a person approves that exact hash, and an AI agent can never approve.', evidence: approvalEvidence },
 	{ name: 'Job', text: 'Only then does a job run. Every request, decision and job lands in an append-only audit trail.' },
 ];
 ---
@@ -24,6 +27,13 @@ const steps = [
 					<h3>{step.name}</h3>
 					<p>{step.text}</p>
 					{step.hash && <p class="hash"><code>#{planHash}</code></p>}
+					{step.evidence && (
+						<p class="evidence">
+							{step.evidence.map((item) => (
+								<a href={item.href}>{`${item.label} (${item.level.name})`}</a>
+							))}
+						</p>
+					)}
 				</li>
 			))
 		}
@@ -74,6 +84,15 @@ const steps = [
 		font-size: var(--sl-text-base);
 		overflow-wrap: anywhere;
 		color: var(--sm-accent);
+	}
+	.evidence {
+		display: grid;
+		margin-top: var(--sm-space-4);
+	}
+	.evidence a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
 	}
 	.more {
 		margin-top: var(--sm-space-5);

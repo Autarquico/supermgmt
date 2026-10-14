@@ -3,10 +3,11 @@ import EditLink from 'virtual:starlight/components/EditLink';
 import LastUpdated from 'virtual:starlight/components/LastUpdated';
 import Pagination from 'virtual:starlight/components/Pagination';
 import { REPO_BLOB_URL } from '../../../scripts/sync-docs.mjs';
+import { siteVersion } from '../../lib/claims';
 
 const repoUrl = 'https://github.com/autarquico/supermgmt';
 const licenseUrl = `${REPO_BLOB_URL}LICENSE`;
-const version = process.env.SITE_VERSION?.trim();
+const version = siteVersion();
 ---
 
 <footer class="sl-flex">
@@ -18,7 +19,7 @@ const version = process.env.SITE_VERSION?.trim();
 
 	<div class="site-footer sl-flex">
 		<p>
-			SuperMgmt is pre-alpha. {version ? `Documentation built from ${version}.` : 'Documentation built from source, not from a release.'}
+			SuperMgmt is pre-alpha. {version ? `Documentation built from pre-release ${version}. The installer has not been verified on a clean machine yet.` : 'Documentation built from source, not from a release.'}
 		</p>
 		<ul class="sl-flex">
 			<li><a href={repoUrl}>GitHub</a></li>

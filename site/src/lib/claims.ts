@@ -14,6 +14,7 @@ export const LEVELS = [
 
 export type Level = (typeof LEVELS)[number];
 export type Claim = { claim: string; scope: string; evidence: string; level: Level; limitation: string };
+export type Evidence = { href: string; level: Level };
 export type Status = { claims: Claim[]; notVerifiedIntro: string; notVerified: string[] };
 
 const escapeHtml = (text: string) =>
@@ -81,4 +82,15 @@ function parseNotVerified(lines: string[]) {
 export function readStatus(): Status {
   const lines = readFileSync(path.resolve(process.cwd(), '..', STATUS_FILE), 'utf8').split('\n');
   return { claims: parseClaims(lines), ...parseNotVerified(lines) };
+}
+
+export const claimAnchor = (index: number) => `claim-${index + 1}`;
+
+export const siteVersion = (): string | undefined => process.env.SITE_VERSION?.trim() || undefined;
+
+// The anchor and level of the landing card of the claim that starts with `claimStart`; fails the build when the status table drops it.
+export function evidenceFor(claims: Claim[], claimStart: string): Evidence {
+  const index = claims.findIndex((claim) => claim.claim.startsWith(claimStart));
+  if (index === -1) throw new Error(`${STATUS_FILE}: no claim starts with "${claimStart}"`);
+  return { href: `#${claimAnchor(index)}`, level: claims[index].level };
 }
