@@ -34,11 +34,17 @@ operations.md
 troubleshooting.md
 
 [Reference]
-# cli.md
+cli.md
 configuration.md
 compatibility.md
 dependencies.md
 
 [Security and design]
 security.md
+architecture.md
+
+[Security]
+security.md
+
+[Project]
 architecture.md
