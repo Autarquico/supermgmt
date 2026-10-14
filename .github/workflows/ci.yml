@@ -441,6 +441,10 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: sync tests, production-base build, crawl of links, fragments and assets
         run: make site-check
+      - name: the same build as a release publishes it (links pinned to a tag)
+        env:
+          SITE_VERSION: v0.0.0-ci
+        run: make site-check
       - name: registry signatures and high advisories in the runtime tree
         run: make site-audit
       - name: Chromium for the rendered checks (the locked Playwright, no install scripts)

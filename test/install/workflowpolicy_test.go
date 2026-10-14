@@ -240,6 +240,9 @@ func deployJobViolations(file, jobName string, j job) []string {
 
 // pagesBuildViolations: jobs without write access are read-only, outside the environment, and build
 // from a release tag with no stored credentials.
+// pagesToolingRef is the only branch a Pages build may check out: it provides site/, never content.
+const pagesToolingRef = "main"
+
 func pagesBuildViolations(file, jobName string, j job, followsRelease bool) []string {
 	where := fmt.Sprintf("%s: job %s", file, jobName)
 	var out []string
@@ -252,6 +255,7 @@ func pagesBuildViolations(file, jobName string, j job, followsRelease bool) []st
 	if environmentName(j.Environment) != "" {
 		out = append(out, where+" builds and must not use an environment")
 	}
+	contentFromATag := false
 	for _, s := range j.Steps {
 		if strings.Contains(s.Run, expression) {
 			out = append(out, where+": run scripts must take values from env, not from expressions")
@@ -262,9 +266,17 @@ func pagesBuildViolations(file, jobName string, j job, followsRelease bool) []st
 		if s.With["persist-credentials"] != false {
 			out = append(out, where+": checkout must set persist-credentials: false")
 		}
-		if ref, _ := s.With["ref"].(string); !strings.HasPrefix(ref, tagRefPrefix) {
-			out = append(out, fmt.Sprintf("%s: checkout must pin ref to %s<tag>, not %q", where, tagRefPrefix, ref))
+		// The site tooling may come from main; the content always comes from a release tag.
+		ref, _ := s.With["ref"].(string)
+		switch {
+		case strings.HasPrefix(ref, tagRefPrefix):
+			contentFromATag = true
+		case ref != pagesToolingRef:
+			out = append(out, fmt.Sprintf("%s: checkout must pin ref to %s<tag> or %q, not %q", where, tagRefPrefix, pagesToolingRef, ref))
 		}
+	}
+	if !contentFromATag {
+		out = append(out, fmt.Sprintf("%s: the content must come from a checkout pinned to %s<tag>", where, tagRefPrefix))
 	}
 	return out
 }
@@ -1167,7 +1179,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
           ref: refs/tags/${{ steps.tag.outputs.tag }}
+          path: release
           persist-credentials: false
       - run: make site-check
   deploy:
@@ -1204,7 +1221,8 @@ func TestWorkflowPolicy_PagesRejectsBreaches(t *testing.T) {
 		change func(string) string
 		want   string
 	}{
-		{"deploy from a branch", "", replaceOnce("ref: refs/tags/${{ steps.tag.outputs.tag }}", "ref: main"), "checkout must pin ref to refs/tags/"},
+		{"content from a branch", "", replaceOnce("ref: refs/tags/${{ steps.tag.outputs.tag }}", "ref: main"), "the content must come from a checkout pinned to refs/tags/"},
+		{"tooling from a branch other than main", "", replaceOnce("ref: main", "ref: feature"), "checkout must pin ref to refs/tags/<tag> or \"main\""},
 		{"checkout without a ref follows the triggering branch", "", replaceOnce("          ref: refs/tags/${{ steps.tag.outputs.tag }}\n", ""), "checkout must pin ref to refs/tags/"},
 		{"credentials persisted in the build", "", replaceOnce("persist-credentials: false", "persist-credentials: true"), "checkout must set persist-credentials: false"},
 		{"push trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  push: {branches: [main]}"), `trigger "push" is not allowed`},
