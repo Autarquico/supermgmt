@@ -211,10 +211,20 @@ starlight-menu-button button,
   overflow-wrap: anywhere;
 }
 
-.sl-markdown-content table {
-  display: block;
+.sl-markdown-content .table-scroll {
   max-width: 100%;
   overflow-x: auto;
+}
+
+/* the region scrolls, not the table (Starlight makes tables their own scroll box) */
+.sl-markdown-content .table-scroll > table {
+  display: table;
+  overflow: visible;
+}
+
+.sl-markdown-content .table-scroll:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 2px;
 }
 
 /* tap targets */

@@ -115,3 +115,9 @@ test('a listed page that does not exist fails the sync', () => {
   const root = fixtureRepo('[S]\nmissing.md\n', {});
   assert.throws(() => syncDocs({ root, out: path.join(root, 'out') }), /does not exist/);
 });
+
+test('a table becomes a focusable scroll region; a table inside code does not', () => {
+  const page = transform('# T\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n| not | a table |\n```\n');
+  assert.match(page, /<div class="table-scroll" tabindex="0" role="region" aria-label="Table">\n\n\| a \| b \|\n\|---\|---\|\n\| 1 \| 2 \|\n\n<\/div>/);
+  assert.equal(page.match(/table-scroll/g).length, 1);
+});

@@ -117,10 +117,29 @@ function rewriteLinks(markdown, context) {
   });
 }
 
+const TABLE_REGION_OPEN = '<div class="table-scroll" tabindex="0" role="region" aria-label="Table">';
+
+// Wraps each Markdown table (outside code) in a focusable, labelled scroll region so keyboard users
+// can scroll wide tables; the blank lines keep the table parsed as Markdown inside the HTML block.
+function wrapTables(markdown) {
+  const out = [];
+  let inTable = false;
+  mapLines(markdown, (line, inCode) => {
+    const isRow = !inCode && /^ {0,3}\|/.test(line);
+    if (isRow && !inTable) out.push(TABLE_REGION_OPEN, '');
+    if (!isRow && inTable) out.push('', '</div>');
+    inTable = isRow;
+    out.push(line);
+    return line;
+  });
+  if (inTable) out.push('', '</div>');
+  return out.join('\n');
+}
+
 export function transformPage({ file, source, publicFiles, base = BASE, kindOf }) {
   if (source.startsWith('---')) throw new Error(`docs/${file}: front matter is not expected in public pages`);
   const { title, body } = extractTitle(source, `docs/${file}`);
-  const rewritten = rewriteLinks(body, { file, publicFiles, base, kindOf });
+  const rewritten = wrapTables(rewriteLinks(body, { file, publicFiles, base, kindOf }));
   return `---\ntitle: ${JSON.stringify(title)}\n---\n${rewritten.replace(/^\n+/, '\n')}`;
 }
 
