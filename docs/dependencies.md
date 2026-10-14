@@ -1,6 +1,6 @@
 # Dependencies and egress
 
-Sources: [ADR-0034](adr/0034-release-hardening-gates.md) (licence gate, pinned tools), [ADR-0036](adr/0036-distribution-notices-platform-claims.md) (notices, egress inventory), spec section 41 (no silent phone-home). Versions are those of `go.mod`, `Makefile` and the workflows at the time of writing; those files win over this page.
+What SuperMgmt is built from, under which licences, and every network destination it can contact. The `sm` binary and the documentation website are covered separately: nothing from the website is part of `sm`. Versions are those of `go.mod`, `Makefile`, `site/package.json` and the workflows at the time of writing; those files win over this page.
 
 ## Licences
 
@@ -47,13 +47,13 @@ Run with `go run <module>@<version>`, or downloaded by a pinned workflow step. V
 | go-licenses | v2.0.1 | `Makefile` | Licence gate |
 | GoReleaser | v2.18.2 | `release.yml` | Release build |
 | syft | v1.52.0 | `release.yml` | SBOM |
-| Docker Compose CLI | 5.5.1 | `test/fixtures/node/Dockerfile`; node requirement in [compatibility.md](compatibility.md#deployments-m4) | Deployments on nodes |
+| Docker Compose CLI | 5.5.1 | `test/fixtures/node/Dockerfile`; node requirement in [compatibility.md](compatibility.md#docker-compose-and-node-tools) | Deployments on nodes |
 
 The licences of the tools are not recorded here. They are build-time tools: none is linked into `sm`.
 
 ## Egress
 
-SuperMgmt makes no request that you did not configure or trigger, and it has no update check and no telemetry. Evidence: the literal `https://` URLs in non-test Go code are the GitHub API default (`internal/config/github.go`), the GitHub TUF mirror (`internal/providers/github/trustroot.go`), the GitHub Actions issuer (`internal/providers/github/types.go`) and documentation links; none names a release or an update endpoint. A destination missing from the table below is a defect ([ADR-0036](adr/0036-distribution-notices-platform-claims.md)).
+SuperMgmt makes no request that you did not configure or trigger, and it has no update check and no telemetry. Evidence: the literal `https://` URLs in non-test Go code are the GitHub API default (`internal/config/github.go`), the GitHub TUF mirror (`internal/providers/github/trustroot.go`), the GitHub Actions issuer (`internal/providers/github/types.go`) and documentation links; none names a release or an update endpoint. A destination missing from the table below is a defect.
 
 Requests from the control plane to a URL an operator supplies pass the outbound filter (`internal/netguard`: a name is resolved once; metadata, loopback, link-local, multicast and reserved ranges are refused; see [security.md](security.md)). Proxmox endpoints are the exception that allows private ranges, since a PVE host usually sits on one.
 
@@ -74,3 +74,27 @@ Requests from the control plane to a URL an operator supplies pass the outbound 
 Inbound, for completeness: the optional GitHub webhook (`POST /api/v1/github/webhook`, HTTPS listener only) and MCP and API clients. Neither is egress.
 
 Not verified: that this list is complete. It was assembled from the configuration reference and from reading the call sites above, not from a packet capture of a running instance.
+
+## Website dependencies
+
+The documentation website is built from `docs/*.md` with [Astro](https://astro.build) and [Starlight](https://starlight.astro.build) in `site/`. None of it is linked into `sm` or shipped in a release archive, and `THIRD_PARTY_LICENSES` does not cover it.
+
+| Package | Version | Used for | Licence |
+|---|---|---|---|
+| `astro` | 7.3.8 | Static site generator | MIT |
+| `@astrojs/starlight` | 0.42.6 | Documentation theme, sidebar, search (Pagefind) | MIT |
+| `@fontsource-variable/geist` | 5.3.0 | Body font, self-hosted | OFL-1.1 |
+| `@fontsource-variable/geist-mono` | 5.3.0 | Code font, self-hosted | OFL-1.1 |
+| `@fontsource/instrument-serif` | 5.3.0 | Heading font, self-hosted | OFL-1.1 |
+
+- **Pinned.** Versions are exact in `site/package.json`, and `site/package-lock.json` pins the whole tree (353 packages, all from `registry.npmjs.org`). Node is pinned in `site/.nvmrc`. Installs run `npm ci --ignore-scripts`, so no package runs an install script.
+- **Fonts.** The three fonts are under the SIL Open Font License 1.1, which allows embedding and redistribution. The build copies each font's licence text into the site, under `licenses/fonts/` (`site/scripts/font-licenses.mjs`). OFL-1.1 is not in the general allow-list of the dependency-review workflow; the font packages are exempted by name, with the reason written in `.github/workflows/dependency-review.yml`.
+- **The rest of the tree.** The lockfile records mostly MIT, plus Apache-2.0, ISC, BSD, MPL-2.0 and a few others. Platform-specific optional packages of the image library `sharp` carry LGPL-3.0-or-later for the bundled libvips. They run at build time only. Which of them end up installed depends on the build machine; no licence review of these build-time packages was done beyond reading the lockfile.
+- **Checked in CI.** The `site` job builds the site and runs `make site-audit`: `npm audit signatures` and `npm audit --omit=dev --audit-level=high`. Dependabot proposes npm updates for `/site`.
+- **No third-party requests from the site.** Fonts, scripts and styles are served from the site itself: no analytics, no CDN, no tracking. `make site-check` crawls the built HTML and fails on any resource loaded from another origin (`site/scripts/crawl.mjs`). The crawl does not inspect URLs inside JavaScript. Links to other sites, such as GitHub, are plain links. The website is hosted on GitHub Pages, so GitHub serves it and sees the requests for it.
+
+## References
+
+- Decision records: [ADR-0034](adr/0034-release-hardening-gates.md) licence gate and pinned tools, [ADR-0036](adr/0036-distribution-notices-platform-claims.md) notices, egress inventory and platform claims.
+- Binding specification: [`docs/spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md), section 41 (no silent phone-home).
+- Files: `Makefile` (`licenses`, `site`, `site-check`, `site-audit`), `packaging/release/license-overrides.txt`, `site/package.json`, `site/package-lock.json`, `site/scripts/font-licenses.mjs`, `.github/workflows/dependency-review.yml`.

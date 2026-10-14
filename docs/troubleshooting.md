@@ -1,8 +1,8 @@
 # Troubleshooting
 
-Each entry is a symptom, the usual cause and what to do. The causes come from the pages linked in the entry; where a cause is a guess it says so. Nothing here was exercised on a real host unless the linked page says it was ([compatibility.md](compatibility.md) states what CI runs).
+Each entry is a symptom, the usual cause and what to do. The causes come from the pages linked in the entry, or from the code and tests it names; where a cause is a guess it says so. Nothing here was exercised on a real host unless the linked page says it was ([Project status](project-status.md) says what is verified, [compatibility.md](compatibility.md) what CI runs per platform).
 
-First, two commands that answer most questions. Run them on the server as root or as the service user:
+Using SuperMgmt from your laptop? Start with [On your laptop](#on-your-laptop). Running a server? First, two commands that answer most questions. Run them on the server as root or as the service user:
 
 ```bash
 sudo sm doctor              # asks the running server: mode, restore hold, admin bound, TLS, providers
@@ -11,13 +11,64 @@ sm doctor --offline --json  # files and database, with the service stopped
 
 Installer exit codes are in [installation.md](installation.md#exit-codes).
 
+## On your laptop
+
+These come up while you follow [Getting started](getting-started.md). The entries were written from the code and its tests, not from runs on real laptops.
+
+### `sm` prints help instead of opening the TUI
+
+`sm` with no arguments opens the TUI only when both its input and its output are a terminal; otherwise it prints the help (`TestBareCommandOutsideATerminalPrintsHelp`). Run it directly in a terminal window, not through a pipe or an editor's task runner. `sm tui` fails with "the TUI needs an interactive terminal" in the same situation.
+
+### `daemon is not reachable`
+
+Exit 4. Every command that is not offline talks to a daemon over a Unix socket, and starts one when none is running. The TUI waits up to 10 seconds for it before taking the screen, so a daemon that does not start shows up as this error, not as an empty screen. The end of the message says which case you hit:
+
+- **`the daemon did not start within 5s; see .../daemon.log`**: the daemon was started but did not answer in time (`TestAutostartGivesUpAfterTheWaitAndPointsAtTheLog`). Read the log it names, in your state directory (`~/.local/state/supermgmt` on Linux, `~/Library/Application Support/SuperMgmt/state` on macOS). A configuration file the daemon rejects is one possible cause; `sm config validate --config <file>` checks it without starting anything.
+- **`no daemon is running and autostart is off`**: `SUPERMGMT_NO_AUTOSTART` is set in your environment (`TestMissingDaemonWithoutAutostartIsReportedNotSpawned`). Unset it, or start the daemon yourself with `sm daemon`.
+- **`cannot start the daemon`**: `sm` could not run itself again, or could not create the log file. The rest of the message says which.
+
+### `refusing to talk to ...`
+
+The socket is owned by another user, or its owner could not be identified, so `sm` sent nothing to it (`TestPeerWithAnotherUIDIsNeverSentAnything`, `TestPeerLookupFailureFailsClosed`). Run `sm` as the user who owns the daemon, and check where `daemon.socket` or `XDG_RUNTIME_DIR` points ([configuration.md](configuration.md)).
+
+### `socket path is ... bytes, over the platform limit`
+
+Unix socket paths are short: 104 bytes on macOS, 108 on Linux. A long home directory or state directory pushes the default path over the limit, and `sm` says so instead of cutting the path (`TestOverlongSocketPathIsAnExplicitErrorNotASilentTruncation`). Set `daemon.socket` to a shorter path in your configuration file.
+
+### `SSH_AUTH_SOCK is not set` or `cannot reach the ssh-agent`
+
+`CAPABILITY_UNAVAILABLE` (`TestAgentUnavailableIsCapabilityUnavailable`). Until a machine is set up, SuperMgmt logs in as your admin account through your SSH agent, and it is the daemon, not the command you typed, that talks to the agent. The daemon keeps the environment of the command that started it, so a daemon started from a shell without an agent cannot use the agent you load later.
+
+1. Check that `ssh-add -l` lists your key in your shell.
+2. Let the daemon go: it exits on its own after `daemon.idle_exit` (10 minutes by default) once no client is connected and no job is unfinished, including jobs waiting for approval. Or stop the `sm daemon` process.
+3. Run the command again from the shell where your agent works.
+
+This was read from the code (`internal/transport/ssh/creds.go`, `internal/client/autostart.go`), not seen on a laptop.
+
+### `SSH_HOST_KEY_MISMATCH`
+
+The machine presented a host key other than the one SuperMgmt pinned when you added it. The message names both fingerprints. SuperMgmt refuses the connection and never re-pins on its own.
+
+Find out why before you do anything else. A reinstalled machine or regenerated host keys explain it; anything else may be someone between you and the machine. Once you have checked the new fingerprint on the machine itself (for example `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`), pin it:
+
+```bash
+sm nodes repin web1                                  # shows the new fingerprint and asks you to confirm
+sm nodes repin web1 --fingerprint SHA256:...         # or pass the fingerprint you checked
+```
+
+`sm nodes repin` refuses a fingerprint other than the one it scans, and refuses when the key has not changed (`TestNodesRepinRefusesAFingerprintOtherThanTheOneYouVerified`, `TestNodesRepinRefusesWhenTheKeyHasNotChanged`). The change is audited with the old and new fingerprints ([operations.md](operations.md#key-management)).
+
+### Setup fails, or the machine shows no units
+
+See [If something goes wrong](getting-started.md#if-something-goes-wrong) in Getting started: the admin account needs `root` or passwordless `sudo`, an existing `supermgmt` account that differs makes setup fail with `CONFLICT`, and a Mac has no systemd, so it shows no units.
+
 ## Installing
 
 ### `install.sh` exits 5
 
 Download, checksum or signature failure; it always fails closed. The causes, most likely first:
 
-- **The script on `main` holds a placeholder instead of the release key.** Every verification fails until a signed release exists ([installation.md](installation.md)). Build from source meanwhile.
+- **No stable release exists yet.** The script on `main` embeds the release key, but the default `stable` channel has nothing to download until the first stable release is published. Pre-releases, if any, are on the `beta` channel, and the installer has not been verified on a clean machine ([installation.md](installation.md)). Build from source meanwhile.
 - **The channel pointer expired** ("channel file has expired"). The weekly `channels` workflow did not run; the owner reruns it ([releasing.md](releasing.md#versions-and-channels)). `SUPERMGMT_VERSION=vX.Y.Z` pins a version and skips the pointer, with integrity but no freshness check.
 - **A mirror served something else.** With `SUPERMGMT_RELEASE_BASE_URL` set, check the mirror holds the files of that release unmodified.
 
@@ -27,7 +78,7 @@ A prerequisite failed: not root, a missing command, another installer running, n
 
 ### Exit 3
 
-The platform is not supported. `proxmox-lxc` needs Proxmox VE 9.x on linux/amd64 ([compatibility.md](compatibility.md#proxmox-ve-m3)); other combinations are listed under [Supported platforms](compatibility.md#supported-platforms-m6).
+The platform is not supported. `proxmox-lxc` needs Proxmox VE 9.x on linux/amd64 ([compatibility.md](compatibility.md#proxmox-ve)); other combinations are listed under [Supported platforms](compatibility.md#supported-platforms).
 
 ### Exit 8: the service did not become ready
 
@@ -103,9 +154,9 @@ The fixed rate limits were exceeded (`/auth/*` and `/enroll`: 10 per minute; wri
 ### A deployment waits, fails or is unavailable
 
 - **`waiting_ci` for a long time**: the required checks are pending. It ends at `github.ci_timeout` (default 2 h) with `CI_TIMEOUT`, or with `CHECK_MISSING` when a required check never appeared ([deployments.md](deployments.md)).
-- **`docker.compose.deploy` unavailable on a node**: the Compose CLI there is not exactly 5.5.1, or `jq`, `flock`, `bash`, `timeout`, `ss`, `sha256sum`, `base64` or `df` is missing ([compatibility.md](compatibility.md#deployments-m4)).
+- **`docker.compose.deploy` unavailable on a node**: the Compose CLI there is not exactly 5.5.1, or `jq`, `flock`, `bash`, `timeout`, `ss`, `sha256sum`, `base64` or `df` is missing ([compatibility.md](compatibility.md#deployments)).
 - **`ROLLBACK_UNAVAILABLE`**: a secret version or snapshot the known-good deployment bound is gone; the rollback is refused before anything changes.
-- **Deployments from GitHub fail verification**: the GitHub path was only exercised against fakes; see the deferred list in [compatibility.md](compatibility.md#deployments-m4).
+- **Deployments from GitHub fail verification**: the GitHub path was only exercised against fakes; see the deferred list in [compatibility.md](compatibility.md#deployments).
 
 ## Still stuck
 

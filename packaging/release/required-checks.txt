@@ -34,6 +34,7 @@ fuzz-inventory
 reproducible
 migration-test
 docs-check
+site
 e2e-lifecycle-container (ubuntu-24.04)
 e2e-lifecycle-container (ubuntu-24.04-arm)
 e2e-lifecycle-linux (ubuntu-24.04, server)

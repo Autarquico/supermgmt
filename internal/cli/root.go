@@ -34,6 +34,12 @@ func execute(args []string, stdout, stderr io.Writer, build version.Build, env [
 	return exitCode(err)
 }
 
+// NewRootCommand returns the sm command tree without side effects, for tools that
+// describe it (the reference generator). Running it uses the empty environment.
+func NewRootCommand(build version.Build) *cobra.Command {
+	return newRootCmd(build, nil)
+}
+
 func newRootCmd(build version.Build, env []string) *cobra.Command {
 	root := &cobra.Command{
 		Use:               "sm",

@@ -426,6 +426,30 @@ jobs:
       - name: docs cite existing tests and jobs, links resolve
         run: make docs-check
 
+  # Builds and checks the website only; it is published by pages.yml on a release, never from here.
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: sync tests, production-base build, crawl of links, fragments and assets
+        run: make site-check
+      - name: registry signatures and high advisories in the runtime tree
+        run: make site-audit
+      - name: Chromium for the rendered checks (the locked Playwright, no install scripts)
+        working-directory: site
+        run: npx --no-install playwright install --with-deps chromium
+      - name: rendered accessibility checks (axe, light and dark, 360 px and desktop, keyboard, no third-party requests)
+        working-directory: site
+        run: npm run test:a11y
+
   e2e-lifecycle-container:
     strategy:
       fail-fast: false

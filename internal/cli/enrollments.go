@@ -40,7 +40,7 @@ func newEnrollmentsCreateCmd(env []string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Issue a join token (the value is shown once)",
-		Long: "Issue a join token for `sm join` (spec §13). It lives at most 24 hours and can be limited to a number of\n" +
+		Long: "Issue a join token for `sm join`. It lives at most 24 hours and can be limited to a number of\n" +
 			"nodes, to tags the enrolled nodes receive and to source networks. The token is printed once, alone, on\n" +
 			"stdout; the command to run on the node goes to stderr and never contains it.",
 		Args: noArgs,

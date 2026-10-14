@@ -1,8 +1,8 @@
 # Operations
 
-How to run a SuperMgmt server (`instance.mode: server`) after it is installed: backups and restores, master keys, approvals of secret operations, and recovery access. Sources: SPEC §10, §11.5, §29, [ADR-0020](adr/0020-backup-format-and-offline-restore.md), [ADR-0021](adr/0021-key-and-identity-management.md), and the code under `internal/backup`, `internal/secrets`, `internal/app`, `internal/cli`.
+How to run a SuperMgmt server (`instance.mode: server`) after it is installed: backups and restores, master keys, approvals of secret operations, and recovery access. To install the server first, see [Installation](installation.md).
 
-> **Verification status.** The M2 flows below are exercised end to end in Docker by the e2e suites (`make e2e-server`, `make e2e-install`: install from a signed release in a Debian systemd container, restore on a fresh host, Dex login). Nothing here has run on a real VM or a real identity provider other than Dex. The M3 appliance, upgrade and uninstall flows run against a simulated Proxmox host (`make e2e-appliance`, `make e2e-upgrade`) and are not verified on real PVE.
+> **Verification status.** The server, backup, restore, key and login flows below are exercised end to end in Docker by the e2e suites (`make e2e-server`, `make e2e-install`: install from a test-signed release in a Debian systemd container, restore on a fresh host, Dex login). Nothing here has run on a real VM or a real identity provider other than Dex. The appliance, upgrade and uninstall flows run against a simulated Proxmox host (`make e2e-appliance`, `make e2e-upgrade`) and are not verified on real PVE. The whole picture: [Project status](project-status.md).
 
 Run `sm` commands that talk to the service from a machine with a signed-in profile (`sm login`); run `sm admin`, the online `sm doctor` and the offline commands on the server as root or the service user `supermgmt`.
 
@@ -23,7 +23,7 @@ supermgmt-<instance>-<UTC timestamp>.tar.zst
 ```
 
 - **Master keys (KEKs) are never in an archive.** Without the matching key, the encrypted secrets in the archive, including the instance SSH identity, cannot be read. Back the keys up separately ([Key management](#key-management)).
-- **The archive is not encrypted.** It holds the full control-plane database: audit events, node inventory, role bindings and the hashes of credentials. Treat it like the database itself. (Encrypting archives was considered and declined for M2.)
+- **The archive is not encrypted.** It holds the full control-plane database: audit events, node inventory, role bindings and the hashes of credentials. Treat it like the database itself. (Encrypting archives was considered and declined.)
 - Written to a temporary file with mode 0600, fsynced and renamed into place; the directory is fsynced too.
 - A backup cannot be made before the daemon has activated a configuration once (`CONFLICT`: nothing consistent to archive).
 
@@ -114,7 +114,7 @@ While the hold is in force:
 
 ## Key management
 
-All online key operations are the high-risk `secret.write` action. They are audited, never carry secret values in events, and (since spec 1.4.4) are **jobs that wait for approval** ([Approvals](#approvals-for-secretwrite)).
+All online key operations are the high-risk `secret.write` action. They are audited, never carry secret values in events, and are **jobs that wait for approval** ([Approvals](#approvals-for-secretwrite)).
 
 ```bash
 sm secrets keys                       # kek ids, which is active, loaded, created; never the keys
@@ -127,7 +127,7 @@ sm ssh-key rotate
 sm nodes repin <node>
 ```
 
-- **Rotate.** The new key file is written and fsynced, then one transaction rewraps every secret and switches the active id. The old key stays on disk and loaded until you retire it. A crash before the commit leaves an unreferenced `.key` that is ignored (ADR-0021 says `doctor` reports it; `doctor` does not do so yet, so compare the key directory with the output of `sm secrets keys`). Rotation jobs are not retried: a failed or interrupted one is resolved by an operator, since repeating it would make a second key.
+- **Rotate.** The new key file is written and fsynced, then one transaction rewraps every secret and switches the active id. The old key stays on disk and loaded until you retire it. A crash before the commit leaves an unreferenced `.key` that is ignored (the design says `doctor` reports it; `doctor` does not do so yet, so compare the key directory with the output of `sm secrets keys`). Rotation jobs are not retried: a failed or interrupted one is resolved by an operator, since repeating it would make a second key.
 - **Retire.** Refuses while any stored secret (staged ones included), any archive manifest in `backup.directory` or any in-progress backup references the key. `--external-backups-handled` is mandatory in the CLI and records an audited acknowledgement that copies of backups kept elsewhere were re-made or discarded. Archives that need a retired key become unrestorable.
 - **Export.** A key export is a passphrase-protected `SMKEY1` file (scrypt N = 2^17, r = 8, p = 1, AES-256-GCM). The passphrase has at least 12 characters and comes from the terminal or stdin, never an argument. The file is created with mode 0600 and `O_EXCL`; without `--out` it is written to stdout only when that is not a terminal.
   - **Local mode:** `sm secrets export-key <id>` only *requests* the export (a job that exports nothing). After it is approved, run `sm secrets export-key <id> --execute --out FILE`: the same identity receives the file once, within 24 hours of approval. A second or late execution is `CONFLICT`; another identity's is `POLICY_DENIED`.
@@ -142,7 +142,7 @@ Keep exports and their passphrases apart from the backups they unlock, and in di
 
 ## Approvals for `secret.write`
 
-`secret.write` is high risk, so section 11.3 step 8 always requires approval. Each command above becomes a plan and a job that stays `awaiting_approval` until a different person approves it:
+`secret.write` is high risk, so it always requires approval, whatever your policy says. Each command above becomes a plan and a job that stays `awaiting_approval` until a different person approves it:
 
 ```bash
 sm jobs list
@@ -170,16 +170,16 @@ This sequence is derived from the code and has not been run end to end. See also
 
 - **Bootstrap code.** `sudo sm admin bootstrap-code` (admin socket; root or the service user) issues a new one-time code (valid `auth.bootstrap.code_ttl`, default 24h), invalidates any unconsumed older one, and prints only the code on stdout (expiry on stderr). It works only while no `admin` binding exists, or during a restore hold. Exchange it with `sm login --bootstrap`.
 - **Grant.** `sudo sm admin grant <identity-id> <role>` binds a role when no administrator can log in. Audited.
-- **API tokens.** `sm tokens create --name N --expires-in 90d [--scope ACTION]...` (default 90 days, at most 365; scopes only narrow what the creator can do); the value is shown once. `sm tokens revoke <id>` takes effect on the next request. `sm login --token-stdin` stores a token for a profile. The first API token issued by a no-OIDC bootstrap lives 90 days (the spec is silent; this is what the code does).
+- **API tokens.** `sm tokens create --name N --expires-in 90d [--scope ACTION]...` (default 90 days, at most 365; scopes only narrow what the creator can do); the value is shown once. `sm tokens revoke <id>` takes effect on the next request. `sm login --token-stdin` stores a token for a profile. The first API token issued by a no-OIDC bootstrap lives 90 days (this is what the code does; no design document fixes it).
 - **Sessions** last `security.session_ttl` (default 12h). `sm logout` revokes the session on the server.
 - **Admin socket.** `server.admin_socket` (default `/run/supermgmt/admin.sock`, mode 0660, owned by the service user). The server checks that the peer is root or the service user; the client checks that the process that answered owns the socket file. It serves exactly `bootstrap-code`, `grant`, `restore-complete` and read-only `doctor`.
 - **Doctor.** `sudo sm doctor` asks the running server (mode, restore hold, whether an admin is bound, its checks); `sm doctor --offline` checks files and the database with the service stopped. `sm doctor --offline --json` adds `format_version` (1), `database_schema_version` (absent when there is no readable database) and `binary_schema_version`, which the upgrader reads. With `server.tls.mode: direct` both doctors check the certificate (`tls`): warn when it expires within 30 days, fail when expired or unreadable (`TestDoctorTLS_StatusByRemainingValidity`). The `providers` check warns when the last Proxmox sync saw the PVE clock more than 60 seconds away from this host's (`TestDoctorProviders_SkewWarns`); see [troubleshooting.md](troubleshooting.md#a-power-action-is-held-as-uncertain-or-doctor-warns-about-clock-skew).
 
 ## Upgrade and recovery
 
-`sm install upgrade` (steps and exit codes: [installation.md](installation.md#upgrade)) takes its pre-upgrade backup **after** the service has stopped and been seen to terminate, using the new binary in read-only mode, so the archive is a consistent copy of the database as the old version left it and has the old schema version (SPEC §29.3, ADR-0027). The archive path is printed. Keep it until you are satisfied with the new version; scheduled backups prune only by `backup.retention`.
+`sm install upgrade` (steps and exit codes: [installation.md](installation.md#upgrade)) takes its pre-upgrade backup **after** the service has stopped and been seen to terminate, using the new binary in read-only mode, so the archive is a consistent copy of the database as the old version left it and has the old schema version. The archive path is printed. Keep it until you are satisfied with the new version; scheduled backups prune only by `backup.retention`.
 
-State lives in `/var/lib/supermgmt/upgrade.json` while an upgrade is unfinished. If the host dies mid-upgrade, run `sm install upgrade` again with the same binary: it resumes from the recorded phase. Until it finishes, the service is **held**: `systemctl start supermgmt` is refused (a drop-in `50-upgrade-hold.conf` and `disable`; on macOS `launchctl disable`), so a reboot does not bring the old version back up. The rerun lifts the hold when it starts the service; to abandon an upgrade, rerun with the old binary instead. Every outcome by crash point is in [ADR-0035](adr/0035-upgrade-paths-migration-fixtures-crash-points.md#recovery-per-point). `sm.prev`, next to `sm`, is the previous binary; the live `sm` path exists at every moment.
+State lives in `/var/lib/supermgmt/upgrade.json` while an upgrade is unfinished. If the host dies mid-upgrade, run `sm install upgrade` again with the same binary: it resumes from the recorded phase. Until it finishes, the service is **held**: `systemctl start supermgmt` is refused (a drop-in `50-upgrade-hold.conf` and `disable`; on macOS `launchctl disable`), so a reboot does not bring the old version back up. The rerun lifts the hold when it starts the service; to abandon an upgrade, rerun with the old binary instead. Every outcome by crash point is listed in the upgrade design record ([References](#references)). `sm.prev`, next to `sm`, is the previous binary; the live `sm` path exists at every moment.
 
 ### The new version failed after the database was migrated
 
@@ -211,6 +211,14 @@ If the new version fails while the schema is unchanged, the installer puts `sm.p
 
 ## Limits worth knowing
 
-- Rate limits are fixed constants: `/auth/*` and `/enroll` 10 per minute with a burst of 5 per remote address, writes 60 per minute with a burst of 20 per identity; an exceeded limit is 429 with `Retry-After` (the error code is `TIMEOUT`, as the spec has no rate-limit code). Behind a proxy the remote address is the forwarded client address, taken only from `trusted_proxies`.
+- Rate limits are fixed constants: `/auth/*` and `/enroll` 10 per minute with a burst of 5 per remote address, writes 60 per minute with a burst of 20 per identity; an exceeded limit is 429 with `Retry-After` (the error code is `TIMEOUT`, as there is no dedicated rate-limit code). Behind a proxy the remote address is the forwarded client address, taken only from `trusted_proxies`.
 - `GET /events/stream` allows 4 open streams per identity; the credential is re-checked every 30 seconds and on revocation events.
-- Upgrade, uninstall and the Proxmox appliance installer exist since M3: [installation.md](installation.md#upgrade) and the next section. What CI runs, per platform and operation, is in [compatibility.md](compatibility.md#supported-platforms-m6); a real Proxmox host has not been tried.
+- Upgrade, uninstall and the Proxmox appliance installer: [installation.md](installation.md#upgrade) and [Upgrade and recovery](#upgrade-and-recovery). What CI runs, per platform and operation, is in [compatibility.md](compatibility.md#supported-platforms); a real Proxmox host has not been tried.
+
+## References
+
+- Code: `internal/backup`, `internal/secrets`, `internal/app`, `internal/cli`.
+- [Specification](spec/SUPERMGMT-SPEC.md): section 10 (backup and restore), section 11.3 (approval of high-risk actions), section 11.5 (keys), section 29 (upgrade and uninstall).
+- Backup format and offline restore: [ADR-0020](adr/0020-backup-format-and-offline-restore.md).
+- Key and identity management: [ADR-0021](adr/0021-key-and-identity-management.md).
+- Upgrade and uninstall: [ADR-0027](adr/0027-upgrade-and-uninstall.md); outcome per crash point: [ADR-0035](adr/0035-upgrade-paths-migration-fixtures-crash-points.md#recovery-per-point).

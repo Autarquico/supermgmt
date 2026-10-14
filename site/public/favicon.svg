@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <style>
+    .frame { fill: #f8f9fb; stroke: #0f766e; }
+    .mark { stroke: #0f766e; }
+    @media (prefers-color-scheme: dark) {
+      .frame { fill: #0b0d12; stroke: #2dd4bf; }
+      .mark { stroke: #2dd4bf; }
+    }
+  </style>
+  <rect class="frame" x="2" y="2" width="28" height="28" stroke-width="2"/>
+  <path class="mark" d="M12 8 10 24M20 8 18 24M7 13h18M6 19h18" stroke-width="2" stroke-linecap="square" fill="none"/>
+</svg>

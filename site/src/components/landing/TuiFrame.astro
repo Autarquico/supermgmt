@@ -1,0 +1,61 @@
+---
+import { goldenUrl, readGolden } from '../../lib/goldens';
+
+interface Props {
+	file: string;
+	title: string;
+	text: string;
+}
+const { file, title, text } = Astro.props;
+const frame = readGolden(file);
+---
+
+<figure>
+	<p class="text">{text}</p>
+	<div class="scroll" role="region" aria-label={`${title}, terminal frame`} tabindex="0">
+		<pre>{frame}</pre>
+	</div>
+	<figcaption>
+		Rendered by the TUI test suite with fixture data. Source: <a href={goldenUrl(file)}><code>{file}</code></a>
+	</figcaption>
+</figure>
+
+<style>
+	figure {
+		margin: 0;
+	}
+	.text {
+		max-width: 40rem;
+		margin: 0 0 var(--sm-space-4);
+		line-height: 1.5;
+	}
+	.scroll {
+		overflow-x: auto;
+		border: 1px solid var(--sm-border);
+		border-radius: var(--sm-radius-surface);
+		background: var(--sm-surface);
+	}
+	pre {
+		margin: 0;
+		padding: var(--sm-space-4);
+		width: max-content;
+		font-family: var(--sm-font-mono);
+		font-size: var(--sl-text-sm);
+		line-height: 1.3;
+		font-variant-ligatures: none;
+		color: var(--sm-text-strong);
+	}
+	figcaption {
+		margin-top: var(--sm-space-3);
+		font-size: var(--sl-text-sm);
+		color: var(--sm-text-muted);
+	}
+	figcaption a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+	figcaption code {
+		font-family: var(--sm-font-mono);
+	}
+</style>

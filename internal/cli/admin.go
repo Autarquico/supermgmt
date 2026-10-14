@@ -45,7 +45,7 @@ func newBootstrapCodeCmd(env []string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "bootstrap-code",
 		Short: "Issue a one-time code for the first administrator and print it",
-		Long: "Issues a new one-time bootstrap code (spec §11.5) and prints only the code on stdout. " +
+		Long: "Issues a new one-time bootstrap code and prints only the code on stdout. " +
 			"Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

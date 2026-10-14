@@ -1,0 +1,27 @@
+# SuperMgmt landing (layer 3). Overrides base.yml for the landing page only.
+layout:
+  structure: [hero, how-it-works, terminal, trust, claims, not-verified, install, footer]
+  rule: "one idea per section; statement hero, then split sections (text | terminal frame)"
+  hero:
+    style: statement
+    headline_font: "Instrument Serif"   # large, italic allowed for one word
+    elements: [one_liner, status_badge, primary_cta_docs, secondary_cta_github]
+    status_badge: "pre-alpha · build from source"
+  how_it_works:
+    style: "four steps in a row on desktop, stacked on mobile: plan → hash → approval → job"
+    motif: "the plan hash in Geist Mono, accent-coloured, is the visual thread"
+  terminal:
+    source: "internal/tui/testdata/*.golden (dashboard 120x30, approvals 120x30)"
+    caption: "Rendered by the TUI test suite with fixture data."
+    container: "hairline frame, radius 0, own horizontal scroll under 760px"
+  claims:
+    style: bento
+    source: "docs/project-status.md claims table (level + limitation shown on each card)"
+density: breathable-aggressive
+motion:
+  page_load: none
+color:
+  hero_background: "neutral surface, no gradient, no image"
+copy:
+  cta_primary: "Read the docs"
+  cta_secondary: "View on GitHub"

@@ -1,8 +1,22 @@
 # Installation
 
-> **Status: no release published yet.** The release key exists and is embedded in `install.sh` ([Release key and custody](#release-key-and-custody)); the installer works once the first protected tag build has published a signed release. Until then, build from source (`make build`) and use `sm install` by hand.
+> **Status: no stable release yet.** The release key exists and is embedded in `install.sh` ([Release key and custody](#release-key-and-custody)). Pre-releases may exist on the `beta` channel, but the installer has not been verified on a clean machine until [Project status](project-status.md) says so. Build from source (`make build`) and use `sm install` by hand.
 
-Sources: SPEC §3, [ADR-0019](adr/0019-release-pipeline-and-installer.md), [ADR-0004](adr/0004-openssh-release-signatures.md), `install.sh`, `internal/installer`, `internal/cli/install.go`.
+## Laptop or server
+
+Pick the row that matches what you want to run.
+
+| You want | Mode | Today |
+|---|---|---|
+| Manage machines from your own laptop, no server | none, or `local` | Build from source and follow [Getting started](getting-started.md). You need no installer: the first command that needs the daemon starts it. |
+| Keep `sm` installed for your user, with the daemon running at login | `local --resident` | Run `sm install local --resident` from the binary you built. It copies that binary to `~/.local/bin`. See [Modes](#modes). |
+| Sign in to a shared server from your laptop | `client` | `sm install client`, then `sm profile add` and `sm login`. See [After a server install](#after-a-server-install). |
+| Run a shared server for a team | `server` | Linux with systemd, as root. `sm install server` works from a binary you built; `install.sh` has not been verified against a published release yet (release checklist H22). |
+| Run the server in a container on Proxmox VE | `proxmox-lxc` | Not tried on a real Proxmox VE host. See [Proxmox appliance](#proxmox-appliance-proxmox-lxc). |
+
+`sm install <mode>` installs the `sm` binary that is running (`internal/cli/install.go`), so it works without a release. `install.sh` downloads and verifies a signed release first, and that path has not been verified against a published release yet (release checklist H22).
+
+The rest of this page describes `install.sh` and every mode in detail.
 
 ## Two ways in
 
@@ -14,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.s
 
 The organisation in the URL is the one `install.sh` uses for downloads (`DEFAULT_BASE_URL`); that the repository is public at that address is not verified.
 
-**This path trusts the `main` branch.** Whoever can change `install.sh` on `main` can replace both the verifier and the embedded public key, so a repository compromise defeats it (SPEC §3.2). The signatures protect what the script downloads *after* it has started; they cannot protect the script itself.
+**This path trusts the `main` branch.** Whoever can change `install.sh` on `main` can replace both the verifier and the embedded public key, so a repository compromise defeats it. The signatures protect what the script downloads *after* it has started; they cannot protect the script itself.
 
 ### Review first (verify the script with a key you obtained elsewhere)
 
@@ -53,11 +67,11 @@ Environment: `SUPERMGMT_VERSION`, `SUPERMGMT_CHANNEL`, `SUPERMGMT_MODE`, `SUPERM
 
 ### OpenSSH 8.2 or newer
 
-`install.sh` and `scripts/join.sh` refuse an `ssh-keygen` that cannot pass the self-test and tell you "OpenSSH 8.2 or newer is required" (`install.sh` line 79). SPEC §3.2 and ADR-0019 require 8.2 as well: the self-test signs with a `valid-after` option in `allowed_signers`, which older releases reject.
+`install.sh` and `scripts/join.sh` refuse an `ssh-keygen` that cannot pass the self-test and tell you "OpenSSH 8.2 or newer is required" (`install.sh` line 79). The release design requires 8.2 as well: the self-test signs with a `valid-after` option in `allowed_signers`, which older releases reject.
 
 ### The default mode is `auto`
 
-`install.sh` and `sm install` with no mode run `auto` (SPEC §3.4, `internal/installer/auto.go`):
+`install.sh` and `sm install` with no mode run `auto` (`internal/installer/auto.go`):
 
 | Host | Result |
 |---|---|
@@ -75,8 +89,8 @@ Run as `install.sh <mode> [flags]` or, with the binary, `sm install <mode> [flag
 
 | Mode | What it does | Needs |
 |---|---|---|
-| `local` | Binary in `~/.local/bin` (or `SUPERMGMT_INSTALL_DIR`), a config file and a data directory under the user paths of SPEC §8.1. `--resident` also registers and starts a user unit (systemd) or launch agent (macOS) so the daemon keeps running. `--name` sets the instance name. | Linux or macOS. `--resident` on Linux needs systemd. |
-| `server` | System user `supermgmt`, `/etc/supermgmt` (0750, root:supermgmt), `/var/lib/supermgmt` (0750), `secrets/keys` (0700), a backups directory, binary in `/usr/local/bin/sm`, the systemd unit of SPEC Appendix A, a generated config, then starts the unit, waits for `/health/ready` and prints a one-time bootstrap code. | Linux with systemd, run as root. |
+| `local` | Binary in `~/.local/bin` (or `SUPERMGMT_INSTALL_DIR`), a config file and a data directory under your user's configuration and data directories ([configuration.md](configuration.md)). `--resident` also registers and starts a user unit (systemd) or launch agent (macOS) so the daemon keeps running. `--name` sets the instance name. | Linux or macOS. `--resident` on Linux needs systemd. |
+| `server` | System user `supermgmt`, `/etc/supermgmt` (0750, root:supermgmt), `/var/lib/supermgmt` (0750), `secrets/keys` (0700), a backups directory, binary in `/usr/local/bin/sm`, a hardened systemd unit (`internal/installer/render.go`), a generated config, then starts the unit, waits for `/health/ready` and prints a one-time bootstrap code. | Linux with systemd, run as root. |
 | `client` | Binary only, plus an empty profile file (mode 0600) in the config directory. | Linux or macOS. |
 | `restore` | Installs like `server` without starting it, imports a master key export, restores an archive offline, then starts the service in restore hold. Does not print a bootstrap code. | As `server`, plus `--archive` and `--key-export`. |
 | `auto` | Picks one of the above from the host, see [above](#the-default-mode-is-auto). | |
@@ -104,12 +118,12 @@ The config the installer writes holds only `instance` and `server`. OIDC and eve
 
 ### TLS: proxy or direct
 
-There is **no ACME**. You bring the certificate, or a reverse proxy that has one, or (since M3) ask for a self-signed one.
+There is **no ACME**. You bring the certificate, or a reverse proxy that has one, or ask for a self-signed one.
 
 - `--tls proxy` (default): the daemon speaks plain HTTP on a loopback or Unix address and a reverse proxy in front terminates TLS. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from a peer inside `trusted_proxies`; a forwarded proto other than `https` is rejected with 400; a connection from loopback gets no special trust. A non-loopback plain-HTTP listener is refused. Keep the default `127.0.0.1/32` only when the proxy runs on the same host.
 - `--tls direct`: the daemon terminates TLS 1.2 or newer with the pair you give it. The installer checks that the pair matches, has not expired and covers the host of `--public-url`. The pair is re-read on `SIGHUP` (a failed reload keeps the old pair).
 
-- `--tls self-signed` (M3): direct TLS with a certificate authority generated on the host (`internal/installer/selfsigned.go`): a CA valid 10 years and a server certificate valid 5 years, valid for the host of `--public-url` (a DNS name or an IP) plus the loopback names, so `--public-url` must be the address clients really use. The CA certificate and its SHA-256 fingerprint are printed; copy the CA to each client and run `sm profile add <name> --url <public URL> --ca-file <ca.pem> --use`. There is no renewal flow: after the leaf expires you reinstall or supply your own pair with `--tls direct`. The proxmox-lxc mode uses this arrangement.
+- `--tls self-signed`: direct TLS with a certificate authority generated on the host (`internal/installer/selfsigned.go`): a CA valid 10 years and a server certificate valid 5 years, valid for the host of `--public-url` (a DNS name or an IP) plus the loopback names, so `--public-url` must be the address clients really use. The CA certificate and its SHA-256 fingerprint are printed; copy the CA to each client and run `sm profile add <name> --url <public URL> --ca-file <ca.pem> --use`. There is no renewal flow: after the leaf expires you reinstall or supply your own pair with `--tls direct`. The proxmox-lxc mode uses this arrangement.
 
 Cloudflare Access/Tunnel is a proxy arrangement: see [cloudflare.md](cloudflare.md).
 
@@ -128,7 +142,7 @@ With OIDC configured, the code is exchanged *after* a normal `sm login` by the i
 
 ## Proxmox appliance (`proxmox-lxc`)
 
-> **Verification status.** Read against the code and exercised against **fakes**: a fake Proxmox API and fake `pct`/`pveam`/`pvesh`/`pveum` commands that reject unknown flags and endpoints (ADR-0023, [compatibility.md](compatibility.md)). The end-to-end run in a simulated Proxmox host is covered by `TestM3_Appliance*` (CI job `e2e-appliance`). **No run on a real Proxmox VE host has happened.** The real-host checklist is [manual-checks/m3-real-pve.md](manual-checks/m3-real-pve.md); until it passes, "Proxmox auto-LXC install works" (SPEC Appendix E) stays unchecked. Everything on this page about Proxmox behaviour is not verified on real PVE.
+> **Verification status.** Read against the code and exercised against **fakes**: a fake Proxmox API and fake `pct`/`pveam`/`pvesh`/`pveum` commands that reject unknown flags and endpoints ([compatibility.md](compatibility.md#proxmox-ve)). The end-to-end run in a simulated Proxmox host is covered by `TestM3_Appliance*` (CI job `e2e-appliance`). **No run on a real Proxmox VE host has happened.** The real-host checklist is [manual-checks/m3-real-pve.md](manual-checks/m3-real-pve.md); until it passes, "Proxmox auto-LXC install works" stays unchecked in the [release checklist](release-checklist.md). Everything on this page about Proxmox behaviour is not verified on real PVE.
 
 Run on the Proxmox host, as root:
 
@@ -163,7 +177,7 @@ Before any change the installer prints what it decided (PVE version, VMID, hostn
 
 ### What it does, in order
 
-The order is the failure matrix (`internal/installer/proxmox_steps.go`, ADR-0026).
+The order is the failure matrix (`internal/installer/proxmox_steps.go`).
 
 1. Fix an `install_id` (8 hex digits) and create a write-ahead journal `/var/lib/supermgmt-installer/journals/<id>/journal.jsonl` (root-only directories, 0700; file 0600) before any side effect. Journals that earlier builds left in `/var/tmp/supermgmt-installer-<id>/` are still found and recovered.
 2. Download the Debian 13 `standard` template with `pveam` if none is on the template storage (highest version wins). **A downloaded template is never rolled back or deleted** (shared cache); it is reported.
@@ -182,7 +196,7 @@ The order is the failure matrix (`internal/installer/proxmox_steps.go`, ADR-0026
 
 ### Per-install identities
 
-Every Proxmox resource carries the install id, so a name collision means "not ours": the installer fails and never adopts it (ADR-0023). Created on the Proxmox side:
+Every Proxmox resource carries the install id, so a name collision means "not ours": the installer fails and never adopts it. Created on the Proxmox side:
 
 | Resource | Name | Privileges and path |
 |---|---|---|
@@ -224,12 +238,12 @@ install.sh upgrade                            # download, verify and install the
 sudo ./sm install upgrade --allow-downgrade   # deliberately install an older version
 ```
 
-`install.sh upgrade` verifies the release exactly like a fresh install and then runs the new `sm install upgrade`, so the binary doing the upgrade is the one being installed. The policy (SPEC §29.3, [ADR-0027](adr/0027-upgrade-and-uninstall.md), `internal/installer/upgrade.go`):
+`install.sh upgrade` verifies the release exactly like a fresh install and then runs the new `sm install upgrade`, so the binary doing the upgrade is the one being installed. The policy (`internal/installer/upgrade.go`):
 
 1. Refuse a lower version (exit 2) unless `--allow-downgrade`; a version that cannot be ordered is treated the same way. An unchanged binary ends with "nothing to upgrade".
 2. Check free disk for the staged binary and the backup (exit 4).
 3. Stage `sm.new`, hard-link the live binary as `sm.prev`, and record the phase in `/var/lib/supermgmt/upgrade.json`.
-4. **Hold the service**, then stop it and **verify it terminated and the database lock is free**. The hold (systemd: a drop-in `50-upgrade-hold.conf` that refuses manual start, plus `disable`; launchd: `launchctl disable`) is applied *before* the stop, so nothing, including a reboot or a dependency, can start the old service while the upgrade is unfinished. Starting the service again lifts it ([ADR-0035](adr/0035-upgrade-paths-migration-fixtures-crash-points.md#service-hold)).
+4. **Hold the service**, then stop it and **verify it terminated and the database lock is free**. The hold (systemd: a drop-in `50-upgrade-hold.conf` that refuses manual start, plus `disable`; launchd: `launchctl disable`) is applied *before* the stop, so nothing, including a reboot or a dependency, can start the old service while the upgrade is unfinished. Starting the service again lifts it.
 5. Take a **read-only offline backup with the new binary** (`sm backup create --offline`): it opens the database read-only, never migrates and never activates, and the archive's schema version must equal the database's. The archive goes to the configured backups directory. If the installer is killed after the backup and rerun before the swap, it **takes the archive again** under the database lock and removes the superseded one, so the archive always matches the database that is about to be migrated.
 6. Replace `sm` by rename (the live path is never missing), start the service and wait up to 60 s for `/health/ready`. The new daemon migrates the database forward.
 
@@ -241,11 +255,11 @@ Each phase (`prepared`, `stopped`, `backed_up`, `swapped`, `started`, `done`) is
 | After the swap, schema unchanged | The previous binary is put back and started, exit 9. |
 | After the swap, schema advanced (the migration ran) | The service is left **stopped**, the restore commands are printed, exit 9. Nothing is restored automatically. |
 
-`--allow-downgrade` is recorded in `upgrade.json` and, before the swap, as a pending audit record in `<data dir>/audit-pending/`. The first start of an M6 or later daemon imports it as the event `instance.downgrade_authorized` (who, from, to) and deletes the file; a downgrade to a binary older than M6 leaves the record pending until an M6 or later binary starts. Every start also records `instance.version_changed` when the binary's version differs from the previous start. What to do after the third outcome: [operations.md](operations.md#upgrade-and-recovery).
+`--allow-downgrade` is recorded in `upgrade.json` and, before the swap, as a pending audit record in `<data dir>/audit-pending/`. The first start of a daemon that knows this record (the current version and later) imports it as the event `instance.downgrade_authorized` (who, from, to) and deletes the file; a downgrade to an older build, which does not know the record, leaves it pending until a build that knows it starts. Every start also records `instance.version_changed` when the binary's version differs from the previous start. What to do after the third outcome: [operations.md](operations.md#upgrade-and-recovery).
 
 On a Proxmox host with an appliance record, `sm install upgrade` upgrades **the appliance**. It requires both the record (`/var/lib/supermgmt-installer/appliances/<vmid>.json`) and the container's own marks (description with the install id and the `supermgmt` tag), refuses a container without them, pushes the binary, checks its SHA-256 and runs `sm install upgrade` inside, forwarding `--allow-downgrade` and keeping the inner exit code. With several appliances `--vmid` is required. A Proxmox host with no record upgrades its own `sm` like any host.
 
-Covered by `TestUpgrade_*` and `TestUpgradeAppliance_*` (`internal/installer`) and `TestM3_Upgrade*` (CI job `e2e-upgrade`, which upgrades from the M2 build at commit e6d5577 and kills the run at each phase). Since M6: the installer is killed at each of the 20 crash points of ADR-0035 and rerun (`TestM6_CrashUpgrade_*`, CI job `e2e-crash`); the oldest milestone is upgraded to the latest in one jump (`TestM6_UpgradeChainOldestToLatestInOneJump`, CI job `e2e-chain`); every milestone's database and archive are migrated and restored (job `migration-test`). The full lifecycle per platform is in [compatibility.md](compatibility.md#supported-platforms-m6). Real-host runs of Proxmox: not verified.
+Covered by `TestUpgrade_*` and `TestUpgradeAppliance_*` (`internal/installer`) and `TestM3_Upgrade*` (CI job `e2e-upgrade`, which upgrades from an earlier build at commit e6d5577 and kills the run at each phase). The installer is also killed at each of its 20 crash points and rerun (`TestM6_CrashUpgrade_*`, CI job `e2e-crash`); the oldest recorded build is upgraded to the latest in one jump (`TestM6_UpgradeChainOldestToLatestInOneJump`, CI job `e2e-chain`); the database and archive of every recorded build are migrated and restored (job `migration-test`). The full lifecycle per platform is in [compatibility.md](compatibility.md#supported-platforms). Real-host runs of Proxmox: not verified.
 
 ## Uninstall
 
@@ -254,7 +268,7 @@ sudo ./sm install uninstall                   # remove the software, keep config
 sudo ./sm install uninstall --purge-data      # also delete them, after a typed confirmation
 ```
 
-Uninstall (SPEC §29.4) stops the service, verifies it terminated, disables it, removes the unit, `sm` and the `sm.prev`/`sm.new` leftovers, and **keeps configuration, data and backups**. Deleting them is a separate decision:
+Uninstall stops the service, verifies it terminated, disables it, removes the unit, `sm` and the `sm.prev`/`sm.new` leftovers, and **keeps configuration, data and backups**. Deleting them is a separate decision:
 
 - On a terminal, `--purge-data` asks you to type `delete my data`.
 - Without a terminal, deleting needs `--purge-data` **and** `SUPERMGMT_YES=1` (the code also accepts `--yes` for the second); `--yes` without `--purge-data` deletes nothing.
@@ -267,11 +281,11 @@ On a Proxmox host with an appliance record (same ownership proof as upgrade, `--
 - The default runs `sm install uninstall` **inside** the container and stops the container. The container, its data, the appliance record and the Proxmox identities stay.
 - `--purge-data` destroys the container (only if it carries the install id) and removes **this install's** Proxmox user, token, roles and ACLs, then the record. It asks you to type the VMID; without a terminal it needs `--vmid <id>`, `--purge-data` and `SUPERMGMT_YES=1` (or `--yes`). A record naming any identity other than the ones derived from its own install id is refused, and other appliances' identities are untouched (`TestUninstallAppliance_PurgeLeavesTheOtherApplianceAndForeignIdentitiesAlone`). The template stays.
 
-Covered by `TestUninstall_*`, `TestUninstallAppliance_*` and `TestM3_Uninstall*` (CI job `e2e-upgrade`), and, per platform, by the lifecycle tests listed in [compatibility.md](compatibility.md#supported-platforms-m6). Not verified on real PVE.
+Covered by `TestUninstall_*`, `TestUninstallAppliance_*` and `TestM3_Uninstall*` (CI job `e2e-upgrade`), and, per platform, by the lifecycle tests listed in [compatibility.md](compatibility.md#supported-platforms). Not verified on real PVE.
 
 ## Joining a node (`sm join`)
 
-A node can enroll itself instead of being added over SSH (SPEC §13, [ADR-0022](adr/0022-join-enrollment.md)). Join creates the unprivileged `supermgmt` user and its `restrict`ed authorized key only; it grants no sudo, no docker and no journal access. Those stay `node.setup`, an approval-gated job run with an `admin_user`.
+A node can enroll itself instead of being added over SSH. Join creates the unprivileged `supermgmt` user and its `restrict`ed authorized key only; it grants no sudo, no docker and no journal access. Those stay `node.setup`, an approval-gated job run with an `admin_user`.
 
 On a machine signed in as an admin:
 
@@ -291,7 +305,7 @@ Options: `--token-file FILE`, `--ca-file FILE` (CA of the server certificate, de
 
 `sm join` is safe to re-run after a lost response. A joined node reads as managed and read-only until `sm nodes setup <node>` runs. Authorizing the instance key on a node always goes through that step.
 
-Whether `join.sh` was exercised against a real signed release: not verified (no release exists).
+Whether `join.sh` was exercised against a real signed release: not verified.
 
 ## Exit codes
 
@@ -308,11 +322,11 @@ Whether `join.sh` was exercised against a real signed release: not verified (no 
 | 9 | restore failure (a failing `sm secrets import-key` or `sm backup restore` step keeps its own 2 or 4); also a failed, aborted or reverted upgrade | `sm install restore`, `sm install upgrade` |
 | 10 | cancelled by the user | `sm install` |
 
-Sources: SPEC §3.7, `internal/installer/errors.go`, the header of `install.sh`.
+Sources: `internal/installer/errors.go` and the header of `install.sh`. [Troubleshooting](troubleshooting.md#installing) says what to do about each.
 
 ## Release key and custody
 
-Nothing about the production key exists yet. The design (ADR-0019):
+The production key exists; its fingerprint is published above. How it is held:
 
 - The private key exists only as the secret `SM_RELEASE_SIGNING_KEY` of the GitHub environment **`release`**, whose required reviewer is the repository owner. `release.yml` (on `v*` tags) and `channels.yml` (weekly, re-signs `channels/stable.json` and `channels/beta.json`) both run in that environment, so each run waits for the owner's approval. No other workflow may reference the environment; the `workflow-policy` CI job checks it.
 - CI proves the whole chain with an ephemeral test key rendered into a test copy of `install.sh`. The committed `install.sh` and `scripts/join.sh` embed the production public key.
@@ -324,3 +338,12 @@ Steps the owner must do are in [manual-checks/m2-handoff.md](manual-checks/m2-ha
 ## Client credential storage
 
 `sm login` keeps the session token in the macOS keychain (`security -i`, token on stdin), in the Secret Service through `secret-tool` on Linux, or in a mode-0600 `credentials.json` in the config directory when neither is usable (`internal/client/credstore.go`). The token is never an argument. The OS stores are unit-tested with fakes; real keychain and `secret-tool` runs are manual checks.
+
+## References
+
+- Code: `install.sh`, `internal/installer`, `internal/cli/install.go`.
+- [Specification](spec/SUPERMGMT-SPEC.md): section 3 (installer, exit codes), section 8.1 (local paths), section 13 (join), sections 29.3 and 29.4 (upgrade and uninstall), Appendix A (systemd unit).
+- Release pipeline, installer and key custody: [ADR-0019](adr/0019-release-pipeline-and-installer.md); OpenSSH release signatures: [ADR-0004](adr/0004-openssh-release-signatures.md).
+- Join and enrollment: [ADR-0022](adr/0022-join-enrollment.md).
+- Proxmox identities and privileges: [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md); appliance failure matrix: [ADR-0026](adr/0026-appliance-installer.md).
+- Upgrade and uninstall: [ADR-0027](adr/0027-upgrade-and-uninstall.md); upgrade paths, crash points and the service hold: [ADR-0035](adr/0035-upgrade-paths-migration-fixtures-crash-points.md#service-hold).

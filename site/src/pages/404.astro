@@ -1,0 +1,16 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import '../fonts';
+import { BASE, routeFor } from '../../scripts/sync-docs.mjs';
+
+const start = routeFor('getting-started');
+---
+
+<StarlightPage frontmatter={{ title: 'Page not found', template: 'splash', hero: undefined, pagefind: false }}>
+	<p>There is no page at this address. It may have moved, or the link may be mistyped.</p>
+	<ul>
+		<li><a href={BASE}>Go to the home page</a></li>
+		<li><a href={start}>Get started from source</a></li>
+	</ul>
+	<p>Use the search box above to look for a topic.</p>
+</StarlightPage>

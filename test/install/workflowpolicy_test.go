@@ -31,13 +31,26 @@ const nightlyWorkflow = "nightly.yml"
 
 var nightlyTriggers = set("schedule", "workflow_dispatch")
 
+// pagesWorkflow publishes the website: only after a successful release run or by hand, built from a release
+// tag, with write access confined to a deploy job that runs no code of ours.
+const (
+	pagesWorkflow    = "pages.yml"
+	pagesEnvironment = "github-pages"
+	tagRefPrefix     = "refs/tags/"
+)
+
+var (
+	pagesTriggers = set("workflow_run", "workflow_dispatch")
+	pagesWrites   = set("pages", "id-token")
+)
+
 // unpinnedDebt lists existing workflows that still use tag-pinned actions. Not owned by the
 // release pipeline; remove the entry when the file is pinned.
 var unpinnedDebt = set("pm-policy.yml")
 
 // releaseScopes are the permission scopes that can publish or attest artifacts; write on them is
-// reserved for the release workflows.
-var releaseScopes = set("contents", "id-token", "attestations")
+// reserved for the release workflows (and, for pages and id-token, the Pages workflow).
+var releaseScopes = set("contents", "id-token", "attestations", "pages")
 
 var (
 	shaPin     = regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
@@ -53,6 +66,7 @@ type workflow struct {
 
 type job struct {
 	Name     string `yaml:"name"`
+	If       string `yaml:"if"`
 	Needs    any    `yaml:"needs"`
 	Strategy struct {
 		Matrix yaml.Node `yaml:"matrix"`
@@ -93,6 +107,7 @@ func fileViolations(name, source string) []string {
 		return []string{fmt.Sprintf("%s: not valid YAML: %v", name, err)}
 	}
 	allowed, isRelease := releaseWorkflows[name]
+	writes, hasWriteAllowance := writeAllowance(name)
 	triggers := triggersOf(wf.On)
 	var out []string
 	report := func(format string, args ...any) { out = append(out, name+": "+fmt.Sprintf(format, args...)) }
@@ -120,9 +135,12 @@ func fileViolations(name, source string) []string {
 	if name == nightlyWorkflow {
 		out = append(out, nightlyViolations(name, wf, triggers)...)
 	}
+	if name == pagesWorkflow {
+		out = append(out, pagesViolations(name, wf, triggers)...)
+	}
 
 	for _, scope := range permissionScopes(wf) {
-		out = append(out, permissionViolations(name, scope.where, scope.value, allowed.writes, isRelease)...)
+		out = append(out, permissionViolations(name, scope.where, scope.value, writes, hasWriteAllowance)...)
 	}
 	for _, jobName := range sortedKeys(wf.Jobs) {
 		j := wf.Jobs[jobName]
@@ -141,6 +159,111 @@ func fileViolations(name, source string) []string {
 		}
 		for _, s := range j.Steps {
 			out = append(out, stepViolations(name, jobName, s, isRelease)...)
+		}
+	}
+	return out
+}
+
+// writeAllowance returns the write scopes a workflow may hold on its jobs; ok is false for
+// workflows that may hold none of the publishing scopes.
+func writeAllowance(name string) (scopes map[string]bool, ok bool) {
+	if release, isRelease := releaseWorkflows[name]; isRelease {
+		return release.writes, true
+	}
+	if name == pagesWorkflow {
+		return pagesWrites, true
+	}
+	return nil, false
+}
+
+// pagesViolations keeps the site's build read-only and tag-bound, and its deploy job free of code.
+func pagesViolations(name string, wf workflow, triggers map[string]any) []string {
+	var out []string
+	for _, trigger := range sortedKeys(triggers) {
+		if !pagesTriggers[trigger] {
+			out = append(out, fmt.Sprintf("%s: trigger %q is not allowed", name, trigger))
+		}
+	}
+	run, followsRelease := triggers["workflow_run"]
+	if followsRelease && !completesReleaseRun(run) {
+		out = append(out, name+": the workflow_run trigger must be limited to workflows: [release] and types: [completed]")
+	}
+	for _, jobName := range sortedKeys(wf.Jobs) {
+		j := wf.Jobs[jobName]
+		granted, _ := j.Permissions.(map[string]any)
+		if hasWrite(granted) {
+			out = append(out, deployJobViolations(name, jobName, j)...)
+			continue
+		}
+		out = append(out, pagesBuildViolations(name, jobName, j, followsRelease)...)
+	}
+	return out
+}
+
+func completesReleaseRun(run any) bool {
+	cfg, ok := run.(map[string]any)
+	if !ok {
+		return false
+	}
+	workflows, _ := cfg["workflows"].([]any)
+	types, _ := cfg["types"].([]any)
+	return len(workflows) == 1 && workflows[0] == "release" && len(types) == 1 && types[0] == "completed"
+}
+
+// deployJobViolations: the job that holds pages/id-token write publishes an artifact and runs nothing else.
+func deployJobViolations(file, jobName string, j job) []string {
+	where := fmt.Sprintf("%s: job %s holds write access", file, jobName)
+	var out []string
+	if environmentName(j.Environment) != pagesEnvironment {
+		out = append(out, fmt.Sprintf("%s and must use the %s environment", where, pagesEnvironment))
+	}
+	if len(needsOf(j.Needs)) == 0 {
+		out = append(out, where+" and must wait for the build with needs")
+	}
+	if len(j.Env) != 0 {
+		out = append(out, where+" and must not set env")
+	}
+	for _, s := range j.Steps {
+		switch {
+		case s.Run != "":
+			out = append(out, where+" and must not run scripts")
+		case strings.HasPrefix(s.Uses, "actions/checkout@"):
+			out = append(out, where+" and must not check out the repository")
+		case !strings.HasPrefix(s.Uses, "actions/deploy-pages@"):
+			out = append(out, fmt.Sprintf("%s and may only use actions/deploy-pages, not %q", where, s.Uses))
+		case len(s.Env) != 0:
+			out = append(out, where+" and must not set env on a step")
+		}
+	}
+	return out
+}
+
+// pagesBuildViolations: jobs without write access are read-only, outside the environment, and build
+// from a release tag with no stored credentials.
+func pagesBuildViolations(file, jobName string, j job, followsRelease bool) []string {
+	where := fmt.Sprintf("%s: job %s", file, jobName)
+	var out []string
+	if followsRelease && !strings.Contains(j.If, "workflow_run.conclusion == 'success'") {
+		out = append(out, where+" must run only when the release run concluded with success")
+	}
+	if j.Permissions == nil {
+		out = append(out, where+" must declare read-only permissions")
+	}
+	if environmentName(j.Environment) != "" {
+		out = append(out, where+" builds and must not use an environment")
+	}
+	for _, s := range j.Steps {
+		if strings.Contains(s.Run, expression) {
+			out = append(out, where+": run scripts must take values from env, not from expressions")
+		}
+		if !strings.HasPrefix(s.Uses, "actions/checkout@") {
+			continue
+		}
+		if s.With["persist-credentials"] != false {
+			out = append(out, where+": checkout must set persist-credentials: false")
+		}
+		if ref, _ := s.With["ref"].(string); !strings.HasPrefix(ref, tagRefPrefix) {
+			out = append(out, fmt.Sprintf("%s: checkout must pin ref to %s<tag>, not %q", where, tagRefPrefix, ref))
 		}
 	}
 	return out
@@ -180,7 +303,7 @@ func permissionScopes(wf workflow) []permissionScope {
 	return scopes
 }
 
-func permissionViolations(name, where string, value any, writable map[string]bool, isRelease bool) []string {
+func permissionViolations(name, where string, value any, writable map[string]bool, hasAllowance bool) []string {
 	if value == nil {
 		return nil
 	}
@@ -194,11 +317,11 @@ func permissionViolations(name, where string, value any, writable map[string]boo
 			continue
 		}
 		switch {
-		case !isRelease && releaseScopes[scope]:
-			out = append(out, fmt.Sprintf("%s: %s: %s: write is only for the release workflows", name, where, scope))
-		case isRelease && where == "top level":
+		case !hasAllowance && releaseScopes[scope]:
+			out = append(out, fmt.Sprintf("%s: %s: %s: write is only for the release and pages workflows", name, where, scope))
+		case hasAllowance && where == "top level":
 			out = append(out, fmt.Sprintf("%s: top level: %s: write belongs on the job", name, scope))
-		case isRelease && !writable[scope]:
+		case hasAllowance && !writable[scope]:
 			out = append(out, fmt.Sprintf("%s: %s: %s: write is not needed by this workflow", name, where, scope))
 		}
 	}
@@ -392,7 +515,7 @@ func TestWorkflowPolicyRejectsBreaches(t *testing.T) {
 			name: "id-token write in ci",
 			file: "ci.yml",
 			yaml: "on: push\npermissions: {contents: read}\njobs:\n  j:\n    permissions: {id-token: write}\n    runs-on: x\n    steps: []\n",
-			want: "write is only for the release workflows",
+			want: "write is only for the release and pages workflows",
 		},
 		{
 			name: "unpinned action",
@@ -1026,5 +1149,106 @@ jobs:
 `
 	if !reaches(parseWorkflow(t, chained).Jobs, "sign-publish", gatesJob) {
 		t.Fatal("sign-publish must reach gates through build")
+	}
+}
+
+// ---- Pages workflow: the site follows releases, built read-only, published by a code-free job ----
+
+const compliantPages = `
+on:
+  workflow_run: {workflows: [release], types: [completed]}
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: x
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          persist-credentials: false
+      - run: make site-check
+  deploy:
+    needs: build
+    runs-on: x
+    permissions: {pages: write, id-token: write}
+    environment: {name: github-pages}
+    steps:
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346
+`
+
+func replaceOnce(old, replacement string) func(string) string {
+	return func(s string) string { return strings.Replace(s, old, replacement, 1) }
+}
+
+func appendSteps(steps string) func(string) string {
+	return func(s string) string { return s + steps }
+}
+
+func TestWorkflowPolicy_PagesAcceptsABuildFromATagAndACodeFreeDeploy(t *testing.T) {
+	if got := violations(map[string]string{pagesWorkflow: compliantPages}); len(got) != 0 {
+		t.Fatalf("unexpected violations: %q", got)
+	}
+}
+
+func TestWorkflowPolicy_PagesRejectsBreaches(t *testing.T) {
+	const (
+		buildHead   = "build:\n    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'\n    runs-on: x\n    permissions: {contents: read}"
+		checkoutSHA = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+	)
+	tests := []struct {
+		name   string
+		file   string
+		change func(string) string
+		want   string
+	}{
+		{"deploy from a branch", "", replaceOnce("ref: refs/tags/${{ steps.tag.outputs.tag }}", "ref: main"), "checkout must pin ref to refs/tags/"},
+		{"checkout without a ref follows the triggering branch", "", replaceOnce("          ref: refs/tags/${{ steps.tag.outputs.tag }}\n", ""), "checkout must pin ref to refs/tags/"},
+		{"credentials persisted in the build", "", replaceOnce("persist-credentials: false", "persist-credentials: true"), "checkout must set persist-credentials: false"},
+		{"push trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  push: {branches: [main]}"), `trigger "push" is not allowed`},
+		{"pull request trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  pull_request:"), `trigger "pull_request" is not allowed`},
+		{"workflow_run from another workflow", "", replaceOnce("workflows: [release]", "workflows: [ci]"), "limited to workflows: [release] and types: [completed]"},
+		{"workflow_run beyond completed", "", replaceOnce("types: [completed]", "types: [completed, requested]"), "limited to workflows: [release] and types: [completed]"},
+		{"release trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  release: {types: [published]}"), `trigger "release" is not allowed`},
+		{"build without the conclusion check", "", replaceOnce("github.event.workflow_run.conclusion == 'success'", "true"), "must run only when the release run concluded with success"},
+		{"build without any condition", "", replaceOnce("    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'\n", ""), "must run only when the release run concluded with success"},
+		{"pages write at the top level", "", replaceOnce("permissions: {contents: read}\njobs:", "permissions: {pages: write}\njobs:"), "top level: pages: write belongs on the job"},
+		{"contents write on the deploy job", "", replaceOnce("{pages: write, id-token: write}", "{pages: write, id-token: write, contents: write}"), "contents: write is not needed by this workflow"},
+		{"build job in an environment", "", replaceOnce(buildHead, buildHead+"\n    environment: staging"), "job build builds and must not use an environment"},
+		{"id-token write on the build job", "", replaceOnce("permissions: {contents: read}\n    steps", "permissions: {contents: read, id-token: write}\n    steps"), "job build holds write access and must use the github-pages environment"},
+		{"deploy without needs", "", replaceOnce("    needs: build\n", ""), "must wait for the build with needs"},
+		{"deploy outside the pages environment", "", replaceOnce("environment: {name: github-pages}", "environment: {name: staging}"), "must use the github-pages environment"},
+		{"deploy job runs a script", "", appendSteps("      - run: npm ci\n"), "must not run scripts"},
+		{"deploy job checks out the repository", "", appendSteps("      - uses: " + checkoutSHA + "\n"), "must not check out the repository"},
+		{"deploy job uses another action", "", appendSteps("      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n"), "may only use actions/deploy-pages"},
+		{"build job has no permissions block", "", replaceOnce("    permissions: {contents: read}\n    steps", "    steps"), "job build must declare read-only permissions"},
+		{"expression in a build script", "", replaceOnce("run: make site-check", "run: echo ${{ github.event.workflow_run.name }}"), "run scripts must take values from env"},
+		{"pages write in another workflow", "ci.yml", func(string) string {
+			return "on: push\npermissions: {contents: read}\njobs:\n  j:\n    permissions: {pages: write}\n    runs-on: x\n    steps: []\n"
+		}, "pages: write is only for the release and pages workflows"},
+		{"id-token write in another workflow", "ci.yml", func(string) string {
+			return "on: push\npermissions: {contents: read}\njobs:\n  j:\n    permissions: {id-token: write}\n    runs-on: x\n    steps: []\n"
+		}, "id-token: write is only for the release and pages workflows"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := tt.file
+			if file == "" {
+				file = pagesWorkflow
+			}
+			source := tt.change(compliantPages)
+			if source == compliantPages {
+				t.Fatal("the fixture change did not apply")
+			}
+			got := violations(map[string]string{file: source})
+			for _, v := range got {
+				if strings.Contains(v, tt.want) {
+					return
+				}
+			}
+			t.Fatalf("want a violation containing %q, got %q", tt.want, got)
+		})
 	}
 }

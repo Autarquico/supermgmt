@@ -1,0 +1,283 @@
+/* SuperMgmt theme: global signature -> base.yml -> landing.yml. Tokens first, Starlight mapping second. */
+
+:root {
+  /* spacing scale (4 8 12 16 24 32 48 64 96 128) */
+  --sm-space-1: 0.25rem;
+  --sm-space-2: 0.5rem;
+  --sm-space-3: 0.75rem;
+  --sm-space-4: 1rem;
+  --sm-space-5: 1.5rem;
+  --sm-space-6: 2rem;
+  --sm-space-7: 3rem;
+  --sm-space-8: 4rem;
+  --sm-space-9: 6rem;
+  --sm-space-10: 8rem;
+
+  /* radius: squared structure, soft controls */
+  --sm-radius-surface: 0;
+  --sm-radius-control: 6px;
+  --sm-radius-pill: 9999px;
+
+  /* motion */
+  --sm-duration-instant: 100ms;
+  --sm-duration-short: 150ms;
+  --sm-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* type */
+  --sm-font-heading: 'Instrument Serif', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --sm-font-body: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sm-font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sm-tap-target: 2.75rem;
+
+  /* cold neutrals (hue 220) */
+  --sm-neutral-0: hsl(220 30% 99%);
+  --sm-neutral-50: hsl(220 25% 97%);
+  --sm-neutral-100: hsl(220 22% 94%);
+  --sm-neutral-200: hsl(220 18% 88%);
+  --sm-neutral-300: hsl(220 14% 78%);
+  --sm-neutral-400: hsl(220 11% 60%);
+  --sm-neutral-500: hsl(220 10% 44%);
+  --sm-neutral-600: hsl(220 12% 34%);
+  --sm-neutral-700: hsl(220 15% 25%);
+  --sm-neutral-800: hsl(220 20% 16%);
+  --sm-neutral-900: hsl(220 24% 10%);
+  --sm-neutral-950: hsl(220 28% 6%);
+
+  /* signal teal, dark mode (default, as in Starlight) */
+  --sm-accent: #2dd4bf;
+  --sm-accent-hover: #5eead4;
+  --sm-accent-active: #99f6e4;
+  --sm-accent-low: hsl(174 55% 14%);
+  --sm-on-accent: var(--sm-neutral-950);
+  --sm-border: var(--sm-neutral-800);
+  --sm-surface: var(--sm-neutral-900);
+  --sm-bg: var(--sm-neutral-950);
+  --sm-text: var(--sm-neutral-300);
+  --sm-text-strong: var(--sm-neutral-50);
+  --sm-text-muted: var(--sm-neutral-400);
+
+  --sm-success: #34d399;
+  --sm-warning: #fbbf24;
+  --sm-danger: #fb7185;
+  --sm-info: #38bdf8;
+
+  /* Starlight mapping */
+  --sl-font: var(--sm-font-body);
+  --sl-font-mono: var(--sm-font-mono);
+  --sl-color-white: var(--sm-text-strong);
+  --sl-color-gray-1: var(--sm-neutral-100);
+  --sl-color-gray-2: var(--sm-neutral-300);
+  --sl-color-gray-3: var(--sm-neutral-400);
+  --sl-color-gray-4: var(--sm-neutral-500);
+  --sl-color-gray-5: var(--sm-neutral-800);
+  --sl-color-gray-6: var(--sm-neutral-900);
+  --sl-color-black: var(--sm-neutral-950);
+  --sl-color-accent: var(--sm-accent);
+  --sl-color-accent-high: var(--sm-accent);
+  --sl-color-accent-low: var(--sm-accent-low);
+  --sl-color-text-accent: var(--sm-accent);
+  --sl-color-text-invert: var(--sm-on-accent);
+  --sl-color-bg-nav: var(--sm-bg);
+  --sl-color-bg-sidebar: var(--sm-bg);
+  --sl-color-bg-inline-code: var(--sm-neutral-900);
+  --sl-color-hairline: var(--sm-border);
+  --sl-color-hairline-light: var(--sm-border);
+  --sl-color-hairline-shade: var(--sm-border);
+  --sl-color-green: var(--sm-success);
+  --sl-color-orange: var(--sm-warning);
+  --sl-color-red: var(--sm-danger);
+  --sl-color-blue: var(--sm-info);
+  --sl-shadow-sm: none;
+  --sl-shadow-md: none;
+  --sl-shadow-lg: none;
+
+  /* type scale: 12 14 16 18 20 24 30 38 48 60 */
+  --sl-text-2xs: 0.75rem;
+  --sl-text-xs: 0.875rem;
+  --sl-text-sm: 0.875rem;
+  --sl-text-base: 1rem;
+  --sl-text-lg: 1.125rem;
+  --sl-text-xl: 1.25rem;
+  --sl-text-2xl: 1.5rem;
+  --sl-text-3xl: 1.875rem;
+  --sl-text-4xl: 2.375rem;
+  --sl-text-5xl: 3rem;
+  --sl-text-6xl: 3.75rem;
+  --sl-line-height: 1.7;
+  --sl-line-height-headings: 1.15;
+}
+
+:root[data-theme='light'] {
+  --sm-accent: #0f766e;
+  --sm-accent-hover: #115e59;
+  --sm-accent-active: #134e4a;
+  --sm-accent-low: hsl(174 60% 91%);
+  --sm-on-accent: #ffffff;
+  --sm-border: var(--sm-neutral-200);
+  --sm-surface: var(--sm-neutral-50);
+  --sm-bg: var(--sm-neutral-0);
+  --sm-text: var(--sm-neutral-700);
+  --sm-text-strong: var(--sm-neutral-900);
+  --sm-text-muted: var(--sm-neutral-500);
+
+  --sm-success: #047857;
+  --sm-warning: #b45309;
+  --sm-danger: #be123c;
+  --sm-info: #0369a1;
+
+  --sl-color-white: var(--sm-text-strong);
+  --sl-color-gray-1: var(--sm-neutral-800);
+  --sl-color-gray-2: var(--sm-neutral-700);
+  --sl-color-gray-3: var(--sm-neutral-600);
+  --sl-color-gray-4: var(--sm-neutral-500);
+  --sl-color-gray-5: var(--sm-neutral-200);
+  --sl-color-gray-6: var(--sm-neutral-100);
+  --sl-color-gray-7: var(--sm-neutral-50);
+  --sl-color-black: var(--sm-neutral-0);
+  --sl-color-bg-inline-code: var(--sm-neutral-100);
+  --sl-color-green: var(--sm-success);
+  --sl-color-orange: var(--sm-warning);
+  --sl-color-red: var(--sm-danger);
+  --sl-color-blue: var(--sm-info);
+}
+
+/* headings: serif editorial, single weight */
+h1,
+h2,
+h3,
+.sl-markdown-content :is(h1, h2, h3):not(:where(.not-content *)) {
+  font-family: var(--sm-font-heading);
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: -0.01em;
+}
+
+h4,
+h5,
+h6 {
+  font-weight: 600;
+}
+
+/* hairline depth, squared surfaces */
+.sl-markdown-content .starlight-aside,
+.sl-markdown-content table,
+.sl-markdown-content blockquote,
+.sl-markdown-content details,
+.expressive-code .frame,
+.expressive-code .frame pre,
+.expressive-code .frame .header,
+site-search dialog {
+  border-radius: var(--sm-radius-surface);
+  box-shadow: none;
+}
+
+/* soft controls */
+.sl-link-button,
+site-search button[data-open-modal],
+starlight-theme-select select,
+starlight-menu-button button,
+.pagination-links a {
+  border-radius: var(--sm-radius-control);
+}
+
+/* accent link and button states */
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: var(--sm-accent-hover);
+}
+
+.sl-link-button.primary {
+  background: var(--sm-accent);
+  border-color: var(--sm-accent);
+  color: var(--sm-on-accent);
+}
+
+.sl-link-button.primary:hover {
+  background: var(--sm-accent-hover);
+  border-color: var(--sm-accent-hover);
+}
+
+.sl-link-button.primary:active {
+  background: var(--sm-accent-active);
+  border-color: var(--sm-accent-active);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 2px;
+}
+
+/* long inline code and tables stay inside the column */
+.sl-markdown-content :not(pre) > code {
+  overflow-wrap: anywhere;
+}
+
+.sl-markdown-content .table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* the region scrolls, not the table (Starlight makes tables their own scroll box) */
+.sl-markdown-content .table-scroll > table {
+  display: table;
+  overflow: visible;
+}
+
+.sl-markdown-content .table-scroll:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 2px;
+}
+
+/* tap targets */
+site-search button[data-open-modal],
+starlight-theme-select select,
+starlight-menu-button button {
+  min-height: var(--sm-tap-target);
+}
+
+starlight-menu-button button,
+starlight-theme-select select {
+  min-width: var(--sm-tap-target);
+}
+
+@media (pointer: coarse) {
+  .sidebar-content a,
+  starlight-toc a,
+  .pagination-links a {
+    min-height: var(--sm-tap-target);
+    display: flex;
+    align-items: center;
+  }
+}
+
+/* instant, ease-out only */
+a,
+button,
+select,
+input {
+  transition-duration: var(--sm-duration-instant);
+  transition-timing-function: var(--sm-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* visually hidden, still read by screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

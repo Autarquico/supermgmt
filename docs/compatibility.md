@@ -1,18 +1,18 @@
 # Compatibility
 
-This page has four parts: [platforms and operations](#supported-platforms-m6) (M6), [Proxmox VE](#proxmox-ve-m3) (M3), [Deployments: Docker Compose, node tools and GitHub](#deployments-m4) (M4) and [MCP](#mcp-m5) (M5).
+What runs where, and how each statement was checked. The page has four parts: [platforms and operations](#supported-platforms), [Proxmox VE](#proxmox-ve), [Deployments: Docker Compose, node tools and GitHub](#deployments) and [MCP](#mcp). For the state of the project as a whole, see [Project status](project-status.md).
 
-# Supported platforms (M6)
+## Supported platforms
 
-Source: [ADR-0036](adr/0036-distribution-notices-platform-claims.md), spec section 35. A row gets exactly one status:
+A row gets exactly one status:
 
 - **supported**: CI runs install, upgrade, backup plus restore and uninstall on that platform and architecture, and the row cites the test and the job for each. Nothing weaker earns the word.
 - **container-verified**: run in a container on a CI runner. For a server platform that is the same four operations in a systemd container; the kernel and the init are the runner's, not those of a real machine of that distribution.
 - **fake-verified**: the operations run against a simulator or a fake API.
-- **manual**: only a human checklist row covers it (the release checklist (`docs/release-checklist.md`)).
+- **manual**: only a human checklist row covers it (the [release checklist](release-checklist.md)).
 - **not claimed**: nothing is promised.
 
-`test/docs` (`make docs-check`, job `docs-check`) fails when a *supported* or *container-verified* row has an empty operation cell, when a cited test does not exist, when a cited job is not in `ci.yml`, or when that job's runners do not include the row's architecture (or its mode). The status says what the cited jobs check. These jobs were added in M6 and this page was written without a GitHub run of them; `release.yml` refuses to build a tag whose commit lacks a green run of each ([releasing.md](releasing.md#the-gates)).
+`test/docs` (`make docs-check`, job `docs-check`) fails when a *supported* or *container-verified* row has an empty operation cell, when a cited test does not exist, when a cited job is not in `ci.yml`, or when that job's runners do not include the row's architecture (or its mode). The status says what the cited jobs check. This page was written before these jobs had run on GitHub. They have since passed in the CI run recorded on [Project status](project-status.md#the-ci-run-behind-these-claims); a person reviewing that first run is still an open release check. `release.yml` refuses to build a tag whose commit lacks a green run of each ([releasing.md](releasing.md#the-gates)).
 
 ## Platforms and operations
 
@@ -33,28 +33,28 @@ Each cell is `test` and `job`. Every operation of a mode runs inside one lifecyc
 
 How to read the rows:
 
-- **Ubuntu 24.04 and macOS 15 rows** run on a fresh GitHub-hosted VM per leg (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`). The host-mutating tests refuse any other machine ([ADR-0036](adr/0036-distribution-notices-platform-claims.md#host-mutating-tests)). The server install goes through `install.sh` from a local signed mirror; the `local-client` legs install the resident daemon and, on macOS, also log a client in to a server.
+- **Ubuntu 24.04 and macOS 15 rows** run on a fresh GitHub-hosted VM per leg (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`). The host-mutating tests refuse any other machine. The server install goes through `install.sh` from a local signed mirror; the `local-client` legs install the resident daemon and, on macOS, also log a client in to a server.
 - **Debian 13** runs in a systemd container on the Ubuntu runners of both architectures. Whether a real Debian 13 VM behaves the same is a human row of the release checklist.
 - **Intel macOS** is compiled (job `cross-build`) and published, and has no lifecycle run. A person checks it by hand.
-- **Proxmox appliance**: the host is a Docker container running `pvesim`, so every `pct`, `pveum` and `pvesh` call is answered by a simulator. See [Proxmox VE (M3)](#proxmox-ve-m3) for what the simulator is built from. A real PVE 9.x host is still a manual row.
-- **Upgrade source.** "Upgrade" is N-1 to N, where N-1 is the newest milestone with a merge commit in `test/e2e/milestones_test.go` (today M5, `v0.5.0`), plus one job from the oldest milestone to N: `TestM6_UpgradeChainOldestToLatestInOneJump` (job `e2e-chain`). Migration of every milestone fixture: job `migration-test`. The crash matrix over all 20 upgrade crash points: job `e2e-crash`. No signed release exists, so an upgrade from an authentic release is a human row.
+- **Proxmox appliance**: the host is a Docker container running `pvesim`, so every `pct`, `pveum` and `pvesh` call is answered by a simulator. See [Proxmox VE](#proxmox-ve) for what the simulator is built from. A real PVE 9.x host is still a manual row.
+- **Upgrade source.** "Upgrade" is N-1 to N, where N-1 is the newest earlier build listed in `test/e2e/milestones_test.go` (today `v0.5.0`, a synthetic version built from its merge commit on `main`), plus one job from the oldest listed build to N: `TestM6_UpgradeChainOldestToLatestInOneJump` (job `e2e-chain`). Migration from the fixture of every listed build: job `migration-test`. The crash matrix over all 20 upgrade crash points: job `e2e-crash`. An upgrade from an authentic signed release has not been run, so it is a human row.
 - **Not claimed anywhere**: 32-bit hosts, Windows, Alpine/musl, RHEL-family, Linux distributions other than Ubuntu 24.04 and Debian 13 for the server, Debian as a local-client host.
 
 ## Nodes and tools
 
 | Node | Status | Evidence |
 |---|---|---|
-| Debian 13 (Docker fixture) | container-verified | job `integration-fixtures` runs `SM_FIXTURE_DISTRO=debian13`; see [Deployments (M4)](#deployments-m4) |
+| Debian 13 (Docker fixture) | container-verified | job `integration-fixtures` runs `SM_FIXTURE_DISTRO=debian13`; see [Deployments](#deployments) |
 | Ubuntu 24.04 (Docker fixture) | container-verified | job `integration-fixtures` runs `SM_FIXTURE_DISTRO=ubuntu2404` |
 | Any other distribution | not claimed | |
 
-A fixture node is a container with a real `sshd` and Docker, not a machine. Docker Engine and Compose are pinned in [Deployments (M4)](#deployments-m4).
+A fixture node is a container with a real `sshd` and Docker, not a machine. Docker Engine and Compose are pinned in [Deployments](#deployments).
 
-# Proxmox VE (M3)
+## Proxmox VE
 
-Source: [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md). Fixture origin: [test/fixtures/pve/PROVENANCE.md](../test/fixtures/pve/PROVENANCE.md).
+Every Proxmox row below was checked against a fake or a simulator, never against a real Proxmox VE host. Fixture origin: [test/fixtures/pve/PROVENANCE.md](../test/fixtures/pve/PROVENANCE.md).
 
-## Supported versions
+### Supported versions
 
 | Proxmox VE | Debian | Status |
 |---|---|---|
@@ -64,18 +64,18 @@ Source: [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md). Fixture o
 
 Tests: `TestVersionIsSupportedOnlyForPVE9` (`internal/providers/proxmox/client_test.go`), `TestPVE_VersionAndTemplatesAndNextID` (`internal/installer/pve_test.go`).
 
-## Reading the table
+### Reading the table
 
 - **Fake**: the behaviour is exercised by the test named in the row against a fake built from the PVE documentation (see PROVENANCE.md). The fake may differ from a real host.
 - **Real host**: `not verified` for every row until the manual run (`docs/manual-checks/m3-real-pve.md`). No row is real-verified yet.
 
-## HTTP API (provider, `internal/providers/proxmox`)
+### HTTP API (provider, `internal/providers/proxmox`)
 
 | Row | Used as | Test | Fake | Real host |
 |---|---|---|---|---|
 | `GET /version` | Version gate (major 9) | `TestVersionIsSupportedOnlyForPVE9` | verified | not verified |
 | `GET /cluster/resources` | Nodes, guests, storages; limited to what the token may audit | `TestResourcesMapNodesGuestsAndStorages`, `TestResourcesOnlyContainWhatTheTokenMayAudit` | verified | not verified |
-| `GET /access/permissions?path=` | Effective privileges of the exact path asked; a path the sparse list omits is neither guessed from a parent nor from an old pool (SEC-13) | `TestPathPermissionsAreEffectivePrivilegesOfTheExactPath`, `TestPrivilegesHasIgnoresPropagation` | verified | not verified |
+| `GET /access/permissions?path=` | Effective privileges of the exact path asked; a path the sparse list omits is neither guessed from a parent nor from an old pool | `TestPathPermissionsAreEffectivePrivilegesOfTheExactPath`, `TestPrivilegesHasIgnoresPropagation` | verified | not verified |
 | Permission propagation and deeper-ACL replacement | A role on `/vms` replaces the one inherited from `/` (hence `VM.Audit` in `SMPower-<id>`) | `TestDeeperPathReplacesInheritedRole`, `TestNonPropagatingGrantStopsAtItsPath`, `TestNonPropagatingGrantIsKeptAsEffectiveOnItsOwnPath` | verified | not verified |
 | Privilege separation | Token privileges are the intersection with its user's | `TestPrivilegeSeparationIsTheIntersectionOfUserAndToken` | verified | not verified |
 | `GET /nodes/{node}/tasks` | Task list, newest first, paginated; read to the end | `TestTasksReadsEveryPageAndFiltersServerSide`, `TestCorrelationFindsATaskThatOnlyAppearsOnPageTwo`, `TestTaskListIsNewestFirstPaginatedAndFiltered` | verified | not verified |
@@ -90,7 +90,7 @@ Tests: `TestVersionIsSupportedOnlyForPVE9` (`internal/providers/proxmox/client_t
 | Guest migrated to another node | Reachable only on its new node | `TestMigratedGuestIsOnlyReachableOnItsNewNode` | verified | not verified |
 | TLS trust | Pinned CA or fingerprint; no verify-off | `TestTLSTrust` | verified | not verified |
 
-## Host CLI (installer, `internal/installer`)
+### Host CLI (installer, `internal/installer`)
 
 Every tool runs by absolute path with a clean environment, never through a shell: `TestPVE_RunsToolsByAbsolutePathWithACleanEnvironment`, `TestPVE_ExecNeverUsesAShellAndSeparatesOptions`, `TestPVE_ArgvValidation`.
 
@@ -111,7 +111,7 @@ Every tool runs by absolute path with a clean environment, never through a shell
 | `pveum user`, `role`, `acl list` | Per-install identity (`sm-<id>@pve`, `SMAudit-<id>`, `SMPower-<id>`) | `TestParseACLNameRoundTrips`, `TestPVE_ArgvValidation` | verified | not verified |
 | `pveum user token add ... --privsep 1 --output-format json` | Token secret read from JSON, never echoed | `TestPVE_AddTokenIsSensitiveAndNeverEchoesOutput` | verified | not verified |
 
-## Deferred: assumed, not confirmed on a real host
+### Deferred: assumed, not confirmed on a real host
 
 Written into the fakes from documentation; a real PVE 9.x host may differ. Each is on the manual checklist.
 
@@ -124,18 +124,18 @@ Written into the fakes from documentation; a real PVE 9.x host may differ. Each 
 7. `pct push` uid/gid mapping in an unprivileged container.
 8. `runuser` available in the Debian 13 container template.
 
-"Proxmox auto-LXC install works" (spec Appendix E) stays unchecked until that run.
+"Proxmox auto-LXC install works" stays unchecked in the [release checklist](release-checklist.md) until that run.
 
-# Deployments (M4)
+## Deployments
 
-Sources: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [ADR-0010](adr/0010-secret-env-file-encoding.md), [ADR-0028](adr/0028-github-connector.md), [ADR-0030](adr/0030-node-setup-v2.md). Fixture origin of the GitHub fake: [test/fixtures/github/PROVENANCE.md](../test/fixtures/github/PROVENANCE.md).
+Every GitHub row below was checked against a fake, never against github.com. Fixture origin of the GitHub fake: [test/fixtures/github/PROVENANCE.md](../test/fixtures/github/PROVENANCE.md).
 
-## Reading the table
+### Reading the table
 
 - **Verified**: exercised by the test named in the row against the thing named in the column. `Fixture` means a real Docker daemon, a real sshd and the pinned Compose CLI inside the node fixture (`test/fixtures/node`, build tag `fixtures`); these tests were not run for this page.
 - **GitHub fake**: the behaviour is exercised against `ghfake` (hand-written from the GitHub documentation, never recorded from the live API), a virtual Sigstore and a local registry. The fake may differ from github.com. **Real GitHub is `not verified` for every GitHub row** until the manual run ([manual-checks/m4-real-github.md](manual-checks/m4-real-github.md)). GitHub Enterprise Server is not verified either.
 
-## Docker Compose and node tools
+### Docker Compose and node tools
 
 | Row | Used as | Test | Verified |
 |---|---|---|---|
@@ -151,7 +151,7 @@ Sources: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [ADR-001
 | Pre-deploy backup | One template, `postgres-dump` | `TestFixtures_BackupStep` | Fixture |
 | Registry | The e2e registry is served over TLS with a test CA and reached by a non-loopback address | `TestM4_*` (job `e2e-deploy`) | e2e only; **GHCR and Docker Hub: not verified** |
 
-## GitHub (provider `github`, `internal/providers/github`)
+### GitHub (provider `github`, `internal/providers/github`)
 
 All rows: real GitHub `not verified`.
 
@@ -169,7 +169,7 @@ All rows: real GitHub `not verified`.
 | Webhook | `X-Hub-Signature-256` HMAC over the raw body, delivery-id dedupe, rate limit; only `check_run`, `check_suite`, `workflow_run` act | `TestVerifyWebhook_*`, `TestWebhookForgedDeliveriesAreRefusedAndActOnNothing`, `TestWebhookReplayedDeliveryIsAcknowledgedAndNotReevaluated` | verified with the `ghsim` sender; no real delivery |
 | Rate limits | Reported with the reset time | `TestClient_RateLimitIsReportedWithItsReset` | verified (fake headers) |
 
-## Deferred: assumed, not confirmed against real services
+### Deferred: assumed, not confirmed against real services
 
 Written into the fakes from documentation. Each is on [manual-checks/m4-real-github.md](manual-checks/m4-real-github.md).
 
@@ -182,21 +182,21 @@ Written into the fakes from documentation. Each is on [manual-checks/m4-real-git
 7. Compose CLI releases other than 5.5.1.
 8. GitHub Enterprise Server.
 
-"CI-gated deployment against real GitHub, GHCR and real attestations" (spec Appendix E) stays unchecked until that run.
+The [release checklist](release-checklist.md) row for CI-gated deployments ("GitHub CI exact commit/digest validation works") stays unchecked until that run.
 
-# MCP (M5)
+## MCP
 
-Sources: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md); operator guide [mcp.md](mcp.md).
+How to set it up: [MCP](mcp.md).
 
-**Tested MCP clients: none.** The spec asks for the tested clients to be documented; today the honest list is empty. Every MCP interaction in CI is driven by the official Go SDK's own client (the same module the server uses, `github.com/modelcontextprotocol/go-sdk` v1.8.0) and by hand-written raw JSON-RPC messages. A real client may differ in transport details, protocol version negotiation, authorization discovery or tool-schema handling in ways the SDK's client does not reveal. Rows for Claude Code, Claude Desktop and MCP Inspector are in [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md) and have not been run.
+**Tested MCP clients: none.** This page is where tested clients will be listed; today the honest list is empty. Every MCP interaction in CI is driven by the official Go SDK's own client (the same module the server uses, `github.com/modelcontextprotocol/go-sdk` v1.8.0) and by hand-written raw JSON-RPC messages. A real client may differ in transport details, protocol version negotiation, authorization discovery or tool-schema handling in ways the SDK's client does not reveal. Rows for Claude Code, Claude Desktop and MCP Inspector are in [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md) and have not been run.
 
-## Reading the table
+### Reading the table
 
 - **verified** means a test in this repository exercises it. The test is named.
 - **assumed** means written from the specification text or documentation and not exercised against the real counterpart.
 - No row says "works with" a named product.
 
-## Protocol and transports
+### Protocol and transports
 
 | Item | Behavior | Evidence | Status |
 |---|---|---|---|
@@ -208,7 +208,7 @@ Sources: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0033](adr
 | Tools | 10 read tools plus `infra_plan_action`, and 5 write tools when enabled, pinned by golden files; no resources, no prompts | `TestReadTools_ListGolden`, `TestNewServer_AllToolsGolden` | verified |
 | Host configuration files | `examples/mcp/*.json` launch `sm mcp` with real flags and name the `<origin>/mcp` resource | `TestMCPExamples_StdioHostsLaunchSmMcpWithRealFlags`, `TestMCPExamples_RemoteNamesTheMCPResourceOfAnOrigin` | the files are checked for shape; **whether Claude Desktop or Claude Code accept them is not verified** |
 
-## Remote authorization
+### Remote authorization
 
 | Item | Behavior | Evidence | Status |
 |---|---|---|---|
@@ -219,9 +219,9 @@ Sources: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0033](adr
 | Audience binding / RFC 8707 `resource` | `aud` must contain exactly `<origin>/mcp` | `TestOAuthJWT_ClaimAndHeaderRules` (audience rows) | the check on the token is verified; **whether a real authorization server puts the resource in `aud` when the client sends the `resource` parameter at authorization and at token exchange is not tested** |
 | Authorization server fidelity | the fake serves JWKS (with rotation) and RFC 7662 introspection, written from the RFCs | `internal/auth/oauthfake/PROVENANCE.md`, `internal/auth/oauthfake/server_test.go` | assumed to match real servers; its provenance file says the RFC texts were not re-read when it was written |
 | Client registration at the authorization server | not implemented; no dynamic client registration; an administrator registers each client's `(iss, sub, client_id)` in SuperMgmt | `TestAnUnregisteredOAuthSubjectIsRefusedOnMCP` | verified (refusal) |
-| MCP authorization specification text | `2026-07-28` and `2025-06-18` read; `2025-11-25` served but its authorization text was not read | ADR-0033 | recorded in the ADR |
+| MCP authorization specification text | `2026-07-28` and `2025-06-18` read; `2025-11-25` served but its authorization text was not read | the design record for remote MCP (see [References](#references)) | recorded there |
 
-## Deferred: assumed, not confirmed against real software
+### Deferred: assumed, not confirmed against real software
 
 Each is a row of [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md).
 
@@ -232,3 +232,11 @@ Each is a row of [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mc
 5. Real clients' behavior with a stateless server, with root-path discovery, and with tool descriptions that contain the untrusted-content notice.
 
 "Read without shell" and "remote MCP as an OAuth protected resource" are done against the SDK client and a fake; they are **not** "verified with real clients" until those rows are run and dated.
+
+## References
+
+- Platform statuses and the host-mutating test guard: [ADR-0036](adr/0036-distribution-notices-platform-claims.md) (see its section on [host-mutating tests](adr/0036-distribution-notices-platform-claims.md#host-mutating-tests)); [specification](spec/SUPERMGMT-SPEC.md), section 35.
+- Proxmox identities, privileges and compatibility: [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md).
+- Deployments: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md) (pinned compose-go and CLI equivalence), [ADR-0010](adr/0010-secret-env-file-encoding.md) (secret env files), [ADR-0028](adr/0028-github-connector.md) (GitHub connector), [ADR-0030](adr/0030-node-setup-v2.md) (node setup).
+- MCP: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md) (server, SDK, transports and tools), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md) (remote MCP as an OAuth protected resource).
+- What is verified across the project: [Project status](project-status.md).

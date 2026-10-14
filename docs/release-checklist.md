@@ -2,7 +2,7 @@
 
 The gate between "M6 is merged" and "a version is released". Sources: spec Appendix E, [ADR-0034](adr/0034-release-hardening-gates.md), [ADR-0036](adr/0036-distribution-notices-platform-claims.md), [releasing.md](releasing.md), and the manual-check pages in [manual-checks/](manual-checks/m6-release.md).
 
-**Nothing is released and no row on this page is ticked.** The Appendix E boxes in the spec stay unchecked. A row becomes a fact when its evidence has run, not when it is written down; the automated rows below name the tests and jobs that will say so, and the release workflow refuses to build unless every required job is green on the exact tag commit ([releasing.md](releasing.md#the-gates)).
+**There is no stable release yet and no row on this page is ticked.** The Appendix E boxes in the spec stay unchecked. A row becomes a fact when its evidence has run, not when it is written down; the automated rows below name the tests and jobs that will say so, and the release workflow refuses to build unless every required job is green on the exact tag commit ([releasing.md](releasing.md#the-gates)).
 
 ## How to read this page
 
@@ -80,7 +80,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 A row is ticked by a person who has run its procedure and recorded the date, the build and the platform in the page the procedure names. An agent never ticks one. `make docs-check` fails if one of these rows is ticked or lacks an owner or a procedure.
 
 - [ ] [human] H1 Signing key generated, `release` environment configured, public key embedded in `install.sh` and `scripts/join.sh`, fingerprint published. owner: repository owner. procedure: [manual-checks/m6-release.md](manual-checks/m6-release.md#1-signing-key-and-trust-root)
-- [ ] [human] H2 Release candidate tagged; `gates`, notices, SBOM, provenance verification, attestation and channel pointer behave on a real tag; yank rehearsed. owner: repository owner. procedure: [manual-checks/m6-release.md](manual-checks/m6-release.md#2-first-tag-release-candidate-and-gate-behaviour)
+- [ ] [human] H2 Release candidate tagged; `gates`, notices, SBOM, provenance verification, attestation and channel pointer behave on a real tag; yank rehearsed; the site published from that tag is read and its status page still true. owner: repository owner. procedure: [manual-checks/m6-release.md](manual-checks/m6-release.md#2-first-tag-release-candidate-and-gate-behaviour)
 - [ ] [human] H3 Install, upgrade, backup, restore and uninstall on a real Debian 13 virtual machine. owner: repository owner. procedure: [manual-checks/m6-release.md](manual-checks/m6-release.md#3-real-debian-13-vm)
 - [ ] [human] H4 Install, resident daemon, upgrade and uninstall on an Intel Mac. owner: repository owner. procedure: [manual-checks/m6-release.md](manual-checks/m6-release.md#4-intel-macos)
 - [ ] [human] H5 First GitHub run of the lifecycle jobs (arm64 and macOS never ran anywhere) read, assumptions confirmed, the "not seen running" sentence removed from the compatibility page. owner: maintainer. procedure: [manual-checks/m6-release.md](manual-checks/m6-release.md#5-first-runs-on-github-of-the-lifecycle-jobs)
@@ -100,6 +100,7 @@ A row is ticked by a person who has run its procedure and recorded the date, the
 - [ ] [human] H19 Repository layout read against spec section 5 (version 1.4.8) and the ADR index against the ADR files. owner: maintainer. procedure: compare `git ls-files` with the section 5 tree of the master spec and the status lines in [adr/README.md](adr/README.md); record every difference as a spec patch or a task
 - [ ] [human] H20 README, ROADMAP and the docs read for any capability described as shipped without a test, job or checklist row behind it. owner: maintainer. procedure: read [README.md](../README.md) feature matrix and [ROADMAP.md](../ROADMAP.md) against this page; the rule is "Documentation honesty" in [CONTRIBUTING.md](../CONTRIBUTING.md#documentation-honesty)
 - [ ] [human] H21 Audit coverage until a test exists: list the mutating routes of `api/openapi.yaml` and confirm each handler writes an audit event. owner: maintainer. procedure: read the route table in `internal/api` against `internal/app` audit calls and record the routes that write none
+- [ ] [human] H22 After the first clean-host install from a beta pre-release passes, raise the installer level and the release statement in project-status, and only then let the landing page show the `install.sh` command. owner: repository owner. procedure: run [manual-checks/m6-release.md](manual-checks/m6-release.md#3-real-debian-13-vm) against the beta channel, then update [project-status.md](project-status.md#claims) and the landing install section in the same pull request
 
 ## Unresolved items and stated limitations
 
