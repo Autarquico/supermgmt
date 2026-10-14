@@ -31,7 +31,7 @@ const nightlyWorkflow = "nightly.yml"
 
 var nightlyTriggers = set("schedule", "workflow_dispatch")
 
-// pagesWorkflow publishes the website: only on a published release or by hand, built from a release
+// pagesWorkflow publishes the website: only after a successful release run or by hand, built from a release
 // tag, with write access confined to a deploy job that runs no code of ours.
 const (
 	pagesWorkflow    = "pages.yml"
@@ -40,7 +40,7 @@ const (
 )
 
 var (
-	pagesTriggers = set("release", "workflow_dispatch")
+	pagesTriggers = set("workflow_run", "workflow_dispatch")
 	pagesWrites   = set("pages", "id-token")
 )
 
@@ -66,6 +66,7 @@ type workflow struct {
 
 type job struct {
 	Name     string `yaml:"name"`
+	If       string `yaml:"if"`
 	Needs    any    `yaml:"needs"`
 	Strategy struct {
 		Matrix yaml.Node `yaml:"matrix"`
@@ -183,8 +184,9 @@ func pagesViolations(name string, wf workflow, triggers map[string]any) []string
 			out = append(out, fmt.Sprintf("%s: trigger %q is not allowed", name, trigger))
 		}
 	}
-	if release, ok := triggers["release"]; ok && !publishesOnlyReleases(release) {
-		out = append(out, name+": the release trigger must be limited to types: [published]")
+	run, followsRelease := triggers["workflow_run"]
+	if followsRelease && !completesReleaseRun(run) {
+		out = append(out, name+": the workflow_run trigger must be limited to workflows: [release] and types: [completed]")
 	}
 	for _, jobName := range sortedKeys(wf.Jobs) {
 		j := wf.Jobs[jobName]
@@ -193,18 +195,19 @@ func pagesViolations(name string, wf workflow, triggers map[string]any) []string
 			out = append(out, deployJobViolations(name, jobName, j)...)
 			continue
 		}
-		out = append(out, pagesBuildViolations(name, jobName, j)...)
+		out = append(out, pagesBuildViolations(name, jobName, j, followsRelease)...)
 	}
 	return out
 }
 
-func publishesOnlyReleases(release any) bool {
-	cfg, ok := release.(map[string]any)
+func completesReleaseRun(run any) bool {
+	cfg, ok := run.(map[string]any)
 	if !ok {
 		return false
 	}
+	workflows, _ := cfg["workflows"].([]any)
 	types, _ := cfg["types"].([]any)
-	return len(types) == 1 && types[0] == "published"
+	return len(workflows) == 1 && workflows[0] == "release" && len(types) == 1 && types[0] == "completed"
 }
 
 // deployJobViolations: the job that holds pages/id-token write publishes an artifact and runs nothing else.
@@ -237,9 +240,12 @@ func deployJobViolations(file, jobName string, j job) []string {
 
 // pagesBuildViolations: jobs without write access are read-only, outside the environment, and build
 // from a release tag with no stored credentials.
-func pagesBuildViolations(file, jobName string, j job) []string {
+func pagesBuildViolations(file, jobName string, j job, followsRelease bool) []string {
 	where := fmt.Sprintf("%s: job %s", file, jobName)
 	var out []string
+	if followsRelease && !strings.Contains(j.If, "workflow_run.conclusion == 'success'") {
+		out = append(out, where+" must run only when the release run concluded with success")
+	}
 	if j.Permissions == nil {
 		out = append(out, where+" must declare read-only permissions")
 	}
@@ -1150,11 +1156,12 @@ jobs:
 
 const compliantPages = `
 on:
-  release: {types: [published]}
+  workflow_run: {workflows: [release], types: [completed]}
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: x
     permissions: {contents: read}
     steps:
@@ -1188,7 +1195,7 @@ func TestWorkflowPolicy_PagesAcceptsABuildFromATagAndACodeFreeDeploy(t *testing.
 
 func TestWorkflowPolicy_PagesRejectsBreaches(t *testing.T) {
 	const (
-		buildHead   = "build:\n    runs-on: x\n    permissions: {contents: read}"
+		buildHead   = "build:\n    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'\n    runs-on: x\n    permissions: {contents: read}"
 		checkoutSHA = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	)
 	tests := []struct {
@@ -1202,18 +1209,22 @@ func TestWorkflowPolicy_PagesRejectsBreaches(t *testing.T) {
 		{"credentials persisted in the build", "", replaceOnce("persist-credentials: false", "persist-credentials: true"), "checkout must set persist-credentials: false"},
 		{"push trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  push: {branches: [main]}"), `trigger "push" is not allowed`},
 		{"pull request trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  pull_request:"), `trigger "pull_request" is not allowed`},
-		{"release trigger beyond published", "", replaceOnce("[published]", "[published, edited]"), "limited to types: [published]"},
+		{"workflow_run from another workflow", "", replaceOnce("workflows: [release]", "workflows: [ci]"), "limited to workflows: [release] and types: [completed]"},
+		{"workflow_run beyond completed", "", replaceOnce("types: [completed]", "types: [completed, requested]"), "limited to workflows: [release] and types: [completed]"},
+		{"release trigger", "", replaceOnce("workflow_dispatch:", "workflow_dispatch:\n  release: {types: [published]}"), `trigger "release" is not allowed`},
+		{"build without the conclusion check", "", replaceOnce("github.event.workflow_run.conclusion == 'success'", "true"), "must run only when the release run concluded with success"},
+		{"build without any condition", "", replaceOnce("    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'\n", ""), "must run only when the release run concluded with success"},
 		{"pages write at the top level", "", replaceOnce("permissions: {contents: read}\njobs:", "permissions: {pages: write}\njobs:"), "top level: pages: write belongs on the job"},
 		{"contents write on the deploy job", "", replaceOnce("{pages: write, id-token: write}", "{pages: write, id-token: write, contents: write}"), "contents: write is not needed by this workflow"},
 		{"build job in an environment", "", replaceOnce(buildHead, buildHead+"\n    environment: staging"), "job build builds and must not use an environment"},
-		{"id-token write on the build job", "", replaceOnce(buildHead, "build:\n    runs-on: x\n    permissions: {contents: read, id-token: write}"), "job build holds write access and must use the github-pages environment"},
+		{"id-token write on the build job", "", replaceOnce("permissions: {contents: read}\n    steps", "permissions: {contents: read, id-token: write}\n    steps"), "job build holds write access and must use the github-pages environment"},
 		{"deploy without needs", "", replaceOnce("    needs: build\n", ""), "must wait for the build with needs"},
 		{"deploy outside the pages environment", "", replaceOnce("environment: {name: github-pages}", "environment: {name: staging}"), "must use the github-pages environment"},
 		{"deploy job runs a script", "", appendSteps("      - run: npm ci\n"), "must not run scripts"},
 		{"deploy job checks out the repository", "", appendSteps("      - uses: " + checkoutSHA + "\n"), "must not check out the repository"},
 		{"deploy job uses another action", "", appendSteps("      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n"), "may only use actions/deploy-pages"},
-		{"build job has no permissions block", "", replaceOnce(buildHead, "build:\n    runs-on: x"), "job build must declare read-only permissions"},
-		{"expression in a build script", "", replaceOnce("run: make site-check", "run: echo ${{ github.event.release.name }}"), "run scripts must take values from env"},
+		{"build job has no permissions block", "", replaceOnce("    permissions: {contents: read}\n    steps", "    steps"), "job build must declare read-only permissions"},
+		{"expression in a build script", "", replaceOnce("run: make site-check", "run: echo ${{ github.event.workflow_run.name }}"), "run scripts must take values from env"},
 		{"pages write in another workflow", "ci.yml", func(string) string {
 			return "on: push\npermissions: {contents: read}\njobs:\n  j:\n    permissions: {pages: write}\n    runs-on: x\n    steps: []\n"
 		}, "pages: write is only for the release and pages workflows"},

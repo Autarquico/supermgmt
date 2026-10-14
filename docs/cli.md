@@ -998,7 +998,7 @@ Flags:
 - `--ca-file` (string): PEM file with an extra CA to trust (absolute path)
 - `--config-file` (string): with --local: the daemon's configuration file (default: the standard location)
 - `--local` (bool): a local daemon profile instead of a remote one
-- `--url` (string): server URL, https://host[:port]
+- `--url` (string): server URL, `https://host[:port]`
 - `--use` (bool): make it the current profile
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
@@ -1062,7 +1062,7 @@ sm providers check --offline (<name> | --tls-only --endpoint URL --ca-file FILE)
 Flags:
 
 - `--ca-file` (string): with --tls-only: the CA that must have signed the certificate
-- `--endpoint` (string): with --tls-only: the endpoint to verify, https://host[:port]
+- `--endpoint` (string): with --tls-only: the endpoint to verify, `https://host[:port]`
 - `--offline` (bool): check with the service stopped (required)
 - `--tls-only` (bool): only verify the certificate the endpoint serves
 

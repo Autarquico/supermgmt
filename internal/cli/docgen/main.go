@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,9 @@ import (
 )
 
 const maxHeadingLevel = 6
+
+// urlInText matches a bare URL in help text, which Markdown would render as a (broken) autolink.
+var urlInText = regexp.MustCompile(`https?://[\w.\-:\[\]/]*[\w\]/]`)
 
 func main() {
 	out := flag.String("o", "", "write the reference to this file instead of stdout")
@@ -90,7 +94,11 @@ func flagLine(f *pflag.Flag) string {
 	if !isZeroDefault(f.DefValue) {
 		detail += ", default `" + f.DefValue + "`"
 	}
-	return fmt.Sprintf("- %s (%s): %s", name, detail, f.Usage)
+	return fmt.Sprintf("- %s (%s): %s", name, detail, urlsAsCode(f.Usage))
+}
+
+func urlsAsCode(text string) string {
+	return urlInText.ReplaceAllString(text, "`$0`")
 }
 
 func isZeroDefault(value string) bool {

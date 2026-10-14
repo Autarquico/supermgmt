@@ -54,6 +54,19 @@ func TestRenderDocumentsCommandsAndFlags(t *testing.T) {
 	}
 }
 
+func TestUrlsInFlagUsageAreRenderedAsCodeSpans(t *testing.T) {
+	tests := map[string]string{
+		"server URL, https://host[:port]":   "server URL, `https://host[:port]`",
+		"see http://example.com/a. Then go": "see `http://example.com/a`. Then go",
+		"no url here":                       "no url here",
+	}
+	for in, want := range tests {
+		if got := urlsAsCode(in); got != want {
+			t.Errorf("urlsAsCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestCommittedReferenceMatchesTheCommandTree(t *testing.T) {
 	committed, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "cli.md"))
 	if err != nil {
