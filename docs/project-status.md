@@ -48,7 +48,7 @@ Not run yet: the nightly workflow (fuzzing and stress tests) has no recorded run
 
 Nothing on this list has been tried. Do not rely on it.
 
-- A release you can install. There is none; `install.sh` refuses to install until one exists.
+- An installer verified on a clean machine. No stable release exists yet, and `install.sh` has not been run against a published release on a clean machine; build from source.
 - A real Proxmox VE host. Every Proxmox behaviour was checked against a simulator.
 - Real GitHub, GitHub Container Registry, real attestations or GitHub Actions OIDC tokens. Every GitHub behaviour was checked against a fake.
 - Any real MCP client (Claude Code, Claude Desktop, MCP Inspector) or real OAuth authorization server.

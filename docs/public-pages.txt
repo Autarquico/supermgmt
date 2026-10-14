@@ -17,16 +17,16 @@
 [Start]
 overview.md
 getting-started.md
-installation.md
 concepts.md
 project-status.md
+installation.md
 
 [Guides]
-deployments.md
 providers.md
-mcp.md
 tui.md
 policies.md
+mcp.md
+deployments.md
 cloudflare.md
 
 [Operate]
