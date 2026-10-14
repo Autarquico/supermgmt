@@ -86,7 +86,7 @@ Service actions are jobs. In an environment with `risk_level: production` they w
 
 ### Interactive tools
 
-`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation-m1) for the exact isolation. `lazydocker` is never installed for you; when it is missing, install it on the node yourself. M1 does not offer lazydocker on a local machine over an SSH Docker context.
+`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. `lazydocker` is never installed for you; when it is missing, install it on the node yourself. M1 does not offer lazydocker on a local machine over an SSH Docker context.
 
 ## Local provider
 
@@ -224,7 +224,7 @@ providers:
 
 ## Docker Compose apps on SSH nodes
 
-An application is deployed to an SSH node that completed `node.setup` v2. The node needs Docker with Compose CLI **5.5.1 exactly**, `jq`, `flock` and the other tools listed in [compatibility.md](compatibility.md#docker-compose-and-node-tools); `deploy_root` (default `/srv/supermgmt`) is created and owned by the dedicated user. Discovery reports the capability `docker.compose.deploy` as unavailable, with the first unmet requirement as reason, when any of this is missing. The local provider and Proxmox guests without SSH are never deploy targets. The deployment flow is described in [architecture.md](architecture.md#applications-and-deployments-m4) and operated in [deployments.md](deployments.md).
+An application is deployed to an SSH node that completed `node.setup` v2. The node needs Docker with Compose CLI **5.5.1 exactly**, `jq`, `flock` and the other tools listed in [compatibility.md](compatibility.md#docker-compose-and-node-tools); `deploy_root` (default `/srv/supermgmt`) is created and owned by the dedicated user. Discovery reports the capability `docker.compose.deploy` as unavailable, with the first unmet requirement as reason, when any of this is missing. The local provider and Proxmox guests without SSH are never deploy targets. The deployment flow is described in [architecture.md](architecture.md#applications-and-deployments) and operated in [deployments.md](deployments.md).
 
 ## Not in M1
 

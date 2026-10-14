@@ -14,7 +14,7 @@ Pass `--config <path>`. The default locations (SPEC §8.1) are:
 | Linux, local user | `$XDG_CONFIG_HOME/supermgmt/config.yaml` (default `~/.config/supermgmt/`) | `$XDG_DATA_HOME/supermgmt/supermgmt.db` (default `~/.local/share/supermgmt/`) |
 | macOS, local user | `~/Library/Application Support/SuperMgmt/config.yaml`, unless `XDG_*` variables are set | `~/Library/Application Support/SuperMgmt/supermgmt.db` |
 
-Paths that you do not set (`instance.data_dir`, `storage.sqlite.path`, `security.keys_dir`, `ssh.known_hosts_file`, `backup.directory`) are derived from the mode: the server locations above for `instance.mode: server`, the local-user locations otherwise. `security.keys_dir` defaults to `<instance.data_dir>/secrets/keys` and holds the KEK files; back them up separately from the database ([security.md](security.md#secrets-and-the-instance-ssh-identity-m1)).
+Paths that you do not set (`instance.data_dir`, `storage.sqlite.path`, `security.keys_dir`, `ssh.known_hosts_file`, `backup.directory`) are derived from the mode: the server locations above for `instance.mode: server`, the local-user locations otherwise. `security.keys_dir` defaults to `<instance.data_dir>/secrets/keys` and holds the KEK files; back them up separately from the database ([security.md](security.md#secrets-and-the-instance-ssh-identity)).
 
 The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that variable is set, otherwise `<state dir>/run/sm.sock` (state dir `$XDG_STATE_HOME/supermgmt`, default `~/.local/state/supermgmt`; on macOS `~/Library/Application Support/SuperMgmt/state`). `daemon.socket` overrides it. The autostarted daemon writes its log to `daemon.log` in the state directory.
 
