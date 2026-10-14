@@ -8,16 +8,24 @@ import TuiFrame from '../components/landing/TuiFrame.astro';
 import Claims from '../components/landing/Claims.astro';
 import Install from '../components/landing/Install.astro';
 import { approvalsPlanHash, readGolden } from '../lib/goldens';
+import { evidenceFor, readStatus, siteVersion } from '../lib/claims';
 
 const repoUrl = 'https://github.com/autarquico/supermgmt';
-const version = process.env.SITE_VERSION?.trim() || 'main';
+const version = siteVersion() ?? 'main';
 const planHash = approvalsPlanHash(readGolden('approvals_120x30.golden'));
-const description = 'A local-first control plane for your own infrastructure, safe for humans and AI agents. Pre-alpha: build from source.';
+const description =
+	'A local-first control plane for your own infrastructure, safe for humans and AI agents. Manage Linux machines over SSH from your laptop: systemd services, Docker containers, Proxmox hosts and Compose apps. Nothing of SuperMgmt is installed on them. Pre-alpha: build from source.';
+const { claims } = readStatus();
 const trust = [
-	{ title: 'Agentless', text: 'Nothing of SuperMgmt runs on your machines. It uses the system sshd and a dedicated account with a narrow sudoers file.' },
-	{ title: 'Agents cannot approve', text: 'An AI agent connects as a client of its own, with no roles by default. It can never approve a plan, and write tools are off until you turn them on.' },
-	{ title: 'Default deny', text: 'Nothing runs unless a rule allows it, and a deny always wins.' },
+	{ title: 'Agentless', text: 'Nothing of SuperMgmt runs on your machines. It uses the system sshd and a dedicated account with a narrow sudoers file.', claimStart: 'Agentless' },
+	{ title: 'Agents cannot approve', text: 'An AI agent connects as a client of its own, with no roles by default. It can never approve a plan, and write tools are off until you turn them on.', claimStart: 'AI agents get no bypass' },
+	{ title: 'Default deny', text: 'Nothing runs unless a rule allows it, and a deny always wins.', claimStart: 'Default deny' },
+].map((item) => ({ ...item, evidence: evidenceFor(claims, item.claimStart) }));
+const approvalEvidence = [
+	{ label: 'Evidence: approvals bind to the plan hash', ...evidenceFor(claims, 'Approvals bind') },
+	{ label: 'Evidence: an AI agent can never approve', ...evidenceFor(claims, 'AI agents get no bypass') },
 ];
+
 ---
 
 <!doctype html>
@@ -53,7 +61,7 @@ const trust = [
 		</header>
 		<main id="main" class="wrap">
 			<Hero />
-			<div class="block"><HowItWorks planHash={planHash} /></div>
+			<div class="block"><HowItWorks planHash={planHash} approvalEvidence={approvalEvidence} /></div>
 			<section class="block" aria-labelledby="terminal-title">
 				<h2 id="terminal-title">The terminal UI</h2>
 				<div class="frames">
@@ -77,6 +85,10 @@ const trust = [
 							<li>
 								<h3>{item.title}</h3>
 								<p>{item.text}</p>
+								<p class="evidence">
+									<span class={`pill ${item.evidence.level.tone}`}>{item.evidence.level.name}</span>
+									<a href={item.evidence.href}>Evidence</a>
+								</p>
 							</li>
 						))
 					}
@@ -88,7 +100,10 @@ const trust = [
 		</main>
 		<footer>
 			<div class="wrap foot">
-				<p>SuperMgmt is pre-alpha. Site version: <code>{version}</code></p>
+				<p>
+					SuperMgmt is pre-alpha. {siteVersion() ? 'Built from pre-release' : 'Site version:'} <code>{version}</code>.
+					{siteVersion() && ' The installer has not been verified on a clean machine yet.'}
+				</p>
 				<ul>
 					<li><a href={repoUrl}>GitHub</a></li>
 					<li><a href={`${REPO_BLOB_URL}LICENSE`}>Apache-2.0</a></li>
@@ -219,6 +234,40 @@ const trust = [
 	.trust p {
 		margin: 0;
 		line-height: 1.5;
+	}
+	.trust .evidence {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--sm-space-2) var(--sm-space-4);
+		margin-top: var(--sm-space-4);
+	}
+	.trust .evidence a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+	.pill {
+		display: inline-block;
+		margin: 0;
+		padding: var(--sm-space-1) var(--sm-space-3);
+		border: 1px solid currentColor;
+		border-radius: var(--sm-radius-pill);
+		font-family: var(--sm-font-mono);
+		font-size: var(--sl-text-sm);
+		line-height: 1.3;
+	}
+	.pill.success {
+		color: var(--sm-success);
+	}
+	.pill.info {
+		color: var(--sm-info);
+	}
+	.pill.warning {
+		color: var(--sm-warning);
+	}
+	.pill.muted {
+		color: var(--sm-text-muted);
 	}
 	.more {
 		margin: var(--sm-space-5) 0 0;

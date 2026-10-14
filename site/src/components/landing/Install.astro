@@ -1,5 +1,11 @@
 ---
 import { routeFor } from '../../../scripts/sync-docs.mjs';
+import { siteVersion } from '../../lib/claims';
+
+const version = siteVersion();
+const release = version
+	? `Built from pre-release ${version}. The installer has not been verified on a clean machine yet — build from source.`
+	: 'No release yet — build from source.';
 
 const commands = `git clone https://github.com/autarquico/supermgmt.git
 cd supermgmt
@@ -11,8 +17,7 @@ sm version`;
 <section aria-labelledby="install-title">
 	<h2 id="install-title">Try it from source</h2>
 	<p class="intro">
-		There is no release yet, and the installer cannot install anything until one exists. You need Go 1.27.2 or newer and
-		<code>git</code>.
+		{release} You need Go 1.27.2 or newer and <code>git</code>.
 	</p>
 	<div class="scroll" role="region" aria-label="Build commands" tabindex="0">
 		<pre><code>{commands}</code></pre>

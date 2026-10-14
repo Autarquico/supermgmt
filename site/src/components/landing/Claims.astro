@@ -1,6 +1,6 @@
 ---
 import { routeFor } from '../../../scripts/sync-docs.mjs';
-import { LEVELS, inlineHtml, readStatus } from '../../lib/claims';
+import { LEVELS, claimAnchor, inlineHtml, readStatus } from '../../lib/claims';
 
 const { claims, notVerifiedIntro, notVerified } = readStatus();
 const counts = LEVELS.map((level) => ({ ...level, count: claims.filter((claim) => claim.level === level).length }));
@@ -25,8 +25,8 @@ const statusPage = routeFor('project-status');
 	</ul>
 	<ul class="grid">
 		{
-			claims.map((claim) => (
-				<li class="card">
+			claims.map((claim, index) => (
+				<li class="card" id={claimAnchor(index)}>
 					<p class={`pill ${claim.level.tone}`}>{claim.level.name}</p>
 					<h3 set:html={inlineHtml(claim.claim)} />
 					<p class="scope"><span>Scope</span> <span set:html={inlineHtml(claim.scope)} /></p>

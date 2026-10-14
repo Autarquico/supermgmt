@@ -1,13 +1,20 @@
 ---
 import { routeFor } from '../../../scripts/sync-docs.mjs';
+import { siteVersion } from '../../lib/claims';
 
 const repoUrl = 'https://github.com/autarquico/supermgmt';
+const version = siteVersion();
+const badge = version ? `pre-release ${version} · build from source` : 'pre-alpha · build from source';
 ---
 
 <section class="hero" aria-labelledby="hero-title">
-	<p class="badge">pre-alpha · build from source</p>
+	<p class="badge">{badge}</p>
 	<h1 id="hero-title">Every change is a plan. Every plan has a hash. Production <em>waits</em> for you.</h1>
 	<p class="lead">A local-first control plane for your own infrastructure, safe for humans and AI agents.</p>
+	<p class="detail">
+		Manage Linux machines over SSH from your laptop: their systemd services, Docker containers, Proxmox hosts and Compose apps.
+		Nothing of SuperMgmt is installed on them.
+	</p>
 	<p class="actions">
 		<a class="button primary" href={routeFor('overview')}>Read the docs</a>
 		<a class="button secondary" href={repoUrl}>View on GitHub</a>
@@ -45,6 +52,12 @@ const repoUrl = 'https://github.com/autarquico/supermgmt';
 		font-size: var(--sl-text-xl);
 		line-height: 1.5;
 		color: var(--sm-text);
+	}
+	.detail {
+		max-width: 40rem;
+		margin: var(--sm-space-4) 0 0;
+		line-height: 1.5;
+		color: var(--sm-text-muted);
 	}
 	.actions {
 		display: flex;
