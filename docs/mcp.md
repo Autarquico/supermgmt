@@ -1,8 +1,48 @@
-# MCP
+# AI agents with MCP
 
-SuperMgmt exposes its inventory and a small set of approval-gated actions to AI agents over the Model Context Protocol. This page is the operator guide. The decisions behind it are [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md) (server, transports, tools), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md) (clients, tokens, identity) and [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md) (remote OAuth).
+SuperMgmt exposes its inventory and a small set of approval-gated actions to AI agents over the Model Context Protocol (MCP). An agent connects as its own identity, sees only what policy lets it see, and can never approve anything. This page is the operator guide.
 
-> **Status: pre-alpha, M5.** Everything below was verified with **the official Go SDK's own client** (`github.com/modelcontextprotocol/go-sdk` v1.8.0, the library the server is built on), with **hand-written raw JSON-RPC goldens**, and, for remote tokens, with a **fake authorization server** (`internal/auth/oauthfake`). **Not verified: any real MCP client (Claude Code, Claude Desktop, MCP Inspector) and any real OAuth authorization server.** Those checks are written down in [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md) and stay **DEFERRED** until someone runs them and records dated, versioned evidence. See [compatibility.md](compatibility.md#mcp-m5) for what each statement rests on.
+> **Status: pre-alpha.** Everything below was verified with **the official Go SDK's own client** (`github.com/modelcontextprotocol/go-sdk` v1.8.0, the library the server is built on), with **hand-written raw JSON-RPC goldens**, and, for remote tokens, with a **fake authorization server** (`internal/auth/oauthfake`). **Not verified: any real MCP client (Claude Code, Claude Desktop, MCP Inspector) and any real OAuth authorization server.** Those checks are written down in [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md) and stay **DEFERRED** until someone runs them and records dated, versioned evidence. See [compatibility.md](compatibility.md) for what each statement rests on.
+
+## Quick path: connect an agent on this machine
+
+The shortest way to let an MCP host on your machine read your infrastructure. It uses the local daemon and your OS keychain.
+
+1. Register a client and ask for its token in the keychain:
+
+   ```sh
+   sm mcp clients add my-agent --keychain supermgmt-mcp-my-agent
+   ```
+
+   Registering a client is a high-risk action, so the command prints the job that waits for approval and stops.
+
+2. Approve it, then run the same command again. This time it issues the token straight into the keychain, without printing it:
+
+   ```sh
+   sm approvals
+   sm jobs approve <job-id> --plan-hash <hash>
+   sm mcp clients add my-agent --keychain supermgmt-mcp-my-agent
+   ```
+
+   In local mode you may approve your own plans; see [Policies and approvals](policies.md#approving-your-own-plans).
+
+3. Add SuperMgmt to your host's MCP configuration, with the same keychain entry:
+
+   ```json
+   {
+     "mcpServers": {
+       "supermgmt": {
+         "type": "stdio",
+         "command": "sm",
+         "args": ["mcp", "--keychain", "supermgmt-mcp-my-agent"]
+       }
+     }
+   }
+   ```
+
+The agent can now list and read nodes, services, apps, deployments, events and health, and plan an action without running it. It cannot read logs, cannot submit anything and can never approve. To let it act, see [Writes are off by default](#writes-are-off-by-default).
+
+If your machine has no native keychain, use `--token-file <path>` in both commands instead of `--keychain`. Whether a real host such as Claude Code or Claude Desktop launches `sm mcp` this way is **not verified**; the automated tests drive the same steps with the Go SDK client (`TestE2E_MCPClientsAddFlow`, `TestE2E_MCPStdioReadsGraph`). The details and every rule behind these steps are below.
 
 ## What an MCP client is
 
@@ -155,8 +195,8 @@ Discovery (RFC 9728):
 
 - The metadata document is at `https://<origin>/.well-known/oauth-protected-resource/mcp`. Every `401` from `/mcp` carries `WWW-Authenticate: Bearer resource_metadata="<that URL>", scope="<required scopes>"` (`TestRemote_ChallengeCarriesThePathSuffixedMetadataURL`).
 - The document is `{resource, authorization_servers: [mcp.oauth.issuer], scopes_supported: required_scopes, bearer_methods_supported: ["header"]}` (`TestHTTP_ProtectedResourceMetadataDocument`). Tokens are read from the `Authorization` header only.
-- **Known deviation:** the root path `/.well-known/oauth-protected-resource` serves the same document (the master spec names that path), but a client that discovers through the root and applies RFC 9728 section 3.3 strictly will reject it, because the identifier derived from the root URL is the bare origin, not `<origin>/mcp`. Use challenge-based discovery. `TestRemote_MetadataBothPaths` pins both paths.
-- Other recorded deviations (ADR-0033): no case-insensitive match of the resource's scheme and host; no scope hierarchies (a token must carry every `required_scopes` entry exactly). `offline_access` must not be listed in `required_scopes`.
+- **Known deviation:** the root path `/.well-known/oauth-protected-resource` serves the same document (the project specification names that path), but a client that discovers through the root and applies RFC 9728 section 3.3 strictly will reject it, because the identifier derived from the root URL is the bare origin, not `<origin>/mcp`. Use challenge-based discovery. `TestRemote_MetadataBothPaths` pins both paths.
+- Other recorded deviations: no case-insensitive match of the resource's scheme and host; no scope hierarchies (a token must carry every `required_scopes` entry exactly). `offline_access` must not be listed in `required_scopes`.
 
 ### Register a remote client
 
@@ -193,7 +233,7 @@ OAuth tokens are accepted **only** at `/mcp`, never on `/api/v1` (`TestHTTPSRefu
 
 ### Network rules for the authorization server
 
-The JWKS and introspection requests go through the outbound filter as provider endpoints ([security.md](security.md#outbound-filter-m2)): `https` only, no redirects, and the always-denied ranges (loopback, link-local, cloud metadata, multicast) are refused. **A private, non-loopback host (for example an authorization server on `10.0.0.0/8` or `192.168.0.0/16`) is allowed, like an OIDC identity provider.** The wiring passes `AllowAllPrivate: true` (`internal/daemon/mcp_remote.go`); the tests prove that loopback is refused (`TestOAuthEndpointsGoThroughNetguard`) and that private ranges pass the filter for provider endpoints (`TestPermit`), but no test drives a JWKS fetch to a private address through the MCP wiring. If you do not want a private authorization server reachable, do not point `jwks_url` or `introspection_url` at one.
+The JWKS and introspection requests go through the outbound filter as provider endpoints ([security.md](security.md)): `https` only, no redirects, and the always-denied ranges (loopback, link-local, cloud metadata, multicast) are refused. **A private, non-loopback host (for example an authorization server on `10.0.0.0/8` or `192.168.0.0/16`) is allowed, like an OIDC identity provider.** The wiring passes `AllowAllPrivate: true` (`internal/daemon/mcp_remote.go`); the tests prove that loopback is refused (`TestOAuthEndpointsGoThroughNetguard`) and that private ranges pass the filter for provider endpoints (`TestPermit`), but no test drives a JWKS fetch to a private address through the MCP wiring. If you do not want a private authorization server reachable, do not point `jwks_url` or `introspection_url` at one.
 
 ### Transport details
 
@@ -201,7 +241,7 @@ Stateless streamable HTTP with JSON responses. Protocol versions accepted: `2026
 
 ### Rate limits on `/mcp`
 
-Fixed constants, the same as the rest of the API ([security.md](security.md#https-transport-credentials-and-sessions-m2)). In this order: (1) a per-address bucket (10 per minute, burst 5) on **every** `/mcp` and metadata request, before the token is parsed, so a flood of bad tokens is bounded and cannot trigger JWKS or introspection calls (`TestRemote_InvalidTokenFloodFromOneAddressStopsAtTheBucketBeforeVerification`); (2) token verification; (3) a per-identity bucket on accepted requests (60 per minute, burst 20; `TestRemote_PerIdentityBucketLimitsAdmittedRequestsWithADeterministicRetryAfter`); (4) each write the tool makes is charged once to the per-identity write bucket (`TestInProcessChargesEachWriteOnceToTheCallersBucket`). Rejections are `429` with `Retry-After`. Over the local socket only the write bucket applies, to MCP callers (`TestSocketMCPWritesBeyondTheBucketAreRateLimitedPerIdentity`); the human on the socket stays unlimited (`TestLocalUserWritesOnTheSocketAreNotLimited`).
+Fixed constants, the same as the rest of the API ([security.md](security.md)). In this order: (1) a per-address bucket (10 per minute, burst 5) on **every** `/mcp` and metadata request, before the token is parsed, so a flood of bad tokens is bounded and cannot trigger JWKS or introspection calls (`TestRemote_InvalidTokenFloodFromOneAddressStopsAtTheBucketBeforeVerification`); (2) token verification; (3) a per-identity bucket on accepted requests (60 per minute, burst 20; `TestRemote_PerIdentityBucketLimitsAdmittedRequestsWithADeterministicRetryAfter`); (4) each write the tool makes is charged once to the per-identity write bucket (`TestInProcessChargesEachWriteOnceToTheCallersBucket`). Rejections are `429` with `Retry-After`. Over the local socket only the write bucket applies, to MCP callers (`TestSocketMCPWritesBeyondTheBucketAreRateLimitedPerIdentity`); the human on the socket stays unlimited (`TestLocalUserWritesOnTheSocketAreNotLimited`).
 
 ### Short-lived tokens and queued jobs
 
@@ -227,7 +267,7 @@ This is a pattern-based guarantee with a stated limit, independent of `security.
 
 ## Giving MCP access to logs
 
-By default MCP cannot read service logs. To allow it outside production, add a rule to your policy file. `security.policy_file` **replaces** the built-in policy entirely, so start from the built-in rules (`sm config validate --policy FILE` prints how a file differs from the default):
+By default MCP cannot read service logs. To allow it outside production, add a rule to your policy file. `security.policy_file` **replaces** the built-in policy entirely, so start from the built-in rules ([Write your own policy](policies.md#write-your-own-policy); `sm config validate --policy FILE` prints how a file differs from the default):
 
 ```yaml
   - name: mcp-logs-staging
@@ -248,10 +288,18 @@ The rule syntax is checked by `sm config validate --policy` (the snippet validat
 
 ## Limitations, in one list
 
-- No real MCP client and no real authorization server has been tested; the compatibility matrix is empty on purpose ([compatibility.md](compatibility.md#mcp-m5)).
+- No real MCP client and no real authorization server has been tested; the compatibility matrix is empty on purpose ([compatibility.md](compatibility.md)).
 - Redaction cannot find unknown secrets in remote text.
 - Root-path metadata discovery is a known RFC 9728 deviation; use the challenge.
 - JWT access tokens must be `at+jwt`; issuers that cannot emit it need introspection.
 - Prefix-mounted reverse proxies are not supported for remote MCP.
 - No MCP resources or prompts; no interactive exec (`mcp.allow_interactive_exec: true` fails validation).
 - A token lost after issuance can only be replaced by remove and add.
+
+## References
+
+- [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md): server, transports and tools.
+- [ADR-0032](adr/0032-mcp-clients-tokens-identity.md): clients, tokens and identity.
+- [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md): remote MCP as an OAuth protected resource, and its recorded deviations.
+- Host configurations: [`examples/mcp/`](../examples/mcp).
+- Real-client checklist: [manual-checks/m5-real-mcp-clients.md](manual-checks/m5-real-mcp-clients.md).
