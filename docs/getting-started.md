@@ -2,7 +2,7 @@
 
 This page takes you from nothing to a Linux machine managed from your laptop: build `sm`, register your laptop, add a machine over SSH, set it up and approve the setup. You need no server and no account.
 
-> **What works today.** SuperMgmt is pre-alpha and has no release, so you build it from source. Everything on this page runs on your own laptop. The steps were tested in CI against Docker containers that play the managed machine, not against real servers; see [Project status](project-status.md).
+> **What works today.** SuperMgmt is pre-alpha and has no stable release, so you build it from source. Pre-releases may exist, but the installer has not been verified on a clean machine. Everything on this page runs on your own laptop. The steps were tested in CI against Docker containers that play the managed machine, not against real servers; see [Project status](project-status.md).
 
 ## What you need
 
@@ -172,7 +172,7 @@ Every action is a job. In an environment marked `production`, it waits for appro
 - [Providers](providers.md): SSH nodes, the local machine, Proxmox and GitHub in detail.
 - [Configuration](configuration.md): environments, policies and every setting.
 - [MCP](mcp.md): let an AI agent read your infrastructure and propose plans.
-- [Installation](installation.md): server mode and the Proxmox appliance (not released yet).
+- [Installation](installation.md): server mode and the Proxmox appliance (no stable release yet).
 
 ## References
 

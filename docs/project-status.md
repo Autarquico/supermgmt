@@ -1,6 +1,6 @@
 # Project status and what is verified
 
-SuperMgmt is **pre-alpha. Nothing is released.** No signed release exists, so the installer cannot install anything yet and you [build `sm` from source](getting-started.md). The code for the first version is written; the checks that need real hosts, real services, a release key and people are still open.
+SuperMgmt is **pre-alpha. No stable release yet.** Pre-releases may exist, but the installer has not been verified on a clean machine, so [build `sm` from source](getting-started.md). The code for the first version is written; the checks that need real hosts, real services, a release key and people are still open.
 
 This is the canonical page for what is verified. Other pages carry a one-line status and link here. When this page and another page disagree, this page is the one to fix.
 
@@ -32,7 +32,7 @@ Each claim has exactly one level:
 | Proxmox VE: discovery, power actions and a one-command appliance install | Proxmox VE 9.x on amd64 | `TestPowerTaskLifecycle` (job `test`); `TestM3_Appliance*`, `TestM6_ApplianceLifecycleAcrossAReleaseBoundary` (job `e2e-appliance`) | tested against fakes | A simulated Proxmox host. Nothing has run on a real Proxmox VE host. Proxmox VE 8.x is not supported |
 | The docs cite only tests and CI jobs that exist, and a platform is "supported" only when CI runs every operation on it | `docs/*.md` | `TestEveryCitedTestExists`, `TestEveryCitedJobExists`, `TestPlatformMatrixClaimsOnlyWhatCIRuns` (job `docs-check`), passed at `6f89609` | implemented and tested in CI | It checks that cited tests and jobs exist, not that the prose matches what they assert. The README is not checked |
 | Every module compiled into `sm` has an allowed open-source licence | The `sm` binary | job `licenses`, passed at `6f89609` | implemented and tested in CI | Whether the shipped licence notices are legally sufficient is an open human check |
-| Signed releases with checksums, SBOM and provenance, verified by the installer before anything runs | Release pipeline and `install.sh` | Snapshot builds signed with a throwaway key (job `release-snapshot`) and installer tamper tests (job `install-sh`) | configured, not yet run | No release has been published and the release workflow has never run on a real tag. The production release key is embedded but has not signed a release yet |
+| Signed releases with checksums, SBOM and provenance, verified by the installer before anything runs | Release pipeline and `install.sh` | Snapshot builds signed with a throwaway key (job `release-snapshot`) and installer tamper tests (job `install-sh`) | configured, not yet run | No stable release yet, and no person has checked a release run on a real tag. The production release key is embedded but has not signed a release yet |
 | No telemetry, no update check, no request you did not configure | The `sm` binary | Egress inventory in [Dependencies and egress](dependencies.md#egress) | not verified | Assembled from reading the code, not from capturing the traffic of a running instance |
 | Cloudflare Tunnel and Access can sit in front of a server | Server mode | [Cloudflare guide](cloudflare.md) | not verified | A guide only; never tried against a real Cloudflare account |
 

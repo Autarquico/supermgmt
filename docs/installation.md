@@ -1,6 +1,6 @@
 # Installation
 
-> **Status: no release published yet.** The release key exists and is embedded in `install.sh` ([Release key and custody](#release-key-and-custody)); the installer works once the first protected tag build has published a signed release. Until then, build from source (`make build`) and use `sm install` by hand.
+> **Status: no stable release yet.** The release key exists and is embedded in `install.sh` ([Release key and custody](#release-key-and-custody)). Pre-releases may exist on the `beta` channel, but the installer has not been verified on a clean machine until [Project status](project-status.md) says so. Build from source (`make build`) and use `sm install` by hand.
 
 ## Laptop or server
 
@@ -305,7 +305,7 @@ Options: `--token-file FILE`, `--ca-file FILE` (CA of the server certificate, de
 
 `sm join` is safe to re-run after a lost response. A joined node reads as managed and read-only until `sm nodes setup <node>` runs. Authorizing the instance key on a node always goes through that step.
 
-Whether `join.sh` was exercised against a real signed release: not verified (no release exists).
+Whether `join.sh` was exercised against a real signed release: not verified.
 
 ## Exit codes
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of 2026-10-14. SuperMgmt is **pre-alpha and nothing is released.** The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
+Status as of 2026-10-14. SuperMgmt is **pre-alpha, with no stable release yet.** Pre-releases may exist; build from source is the recommended path. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
 
 What is verified today, claim by claim, is on one page: [Project status](docs/project-status.md). This page says what is built, what is left and what is deliberately not built.
 
@@ -36,7 +36,7 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 | Apps, GitHub and deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Implemented** against a fake GitHub, a virtual Sigstore and a local registry; the real-GitHub run is open |
 | MCP | MCP client registration, stdio bridge, remote MCP as an OAuth protected resource, read tools, plan submission, optional write tools off by default | **Implemented** against the Go SDK client, raw JSON-RPC goldens and a fake authorization server; the real-client run is open |
 | Hardening and release | Fuzz and race tests, security scans, compatibility matrix, migration tests, lifecycle tests across modes, the release gate | **Implemented**; the human rows of the release checklist are open |
-| Website and documentation | A static site built from `docs/`, a getting-started path, TUI and policy guides, a generated CLI reference, one status page | **In progress**; the site is not published (it is built from release tags, and there is no release) |
+| Website and documentation | A static site built from `docs/`, a getting-started path, TUI and policy guides, a generated CLI reference, one status page | **In progress**; the site is built from release tags and is not published until the first one |
 
 "Done" for the first version means: install without cloning, a one-command Proxmox LXC, agentless SSH nodes, Proxmox, systemd and Docker discovery, the TUI, CI-gated Compose deploys with safe rollback, an audit timeline, remote server mode, MCP with approvals, tested backup, restore, upgrade and uninstall, and signed releases.
 
@@ -112,7 +112,7 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 
 ### Hardening and release
 
-- **No version is released.** The [release checklist](docs/release-checklist.md) maps each of its 52 rows to tests and jobs and lists 21 human-gated rows, all unchecked, each with an owner and a procedure.
+- **No stable version is released.** The [release checklist](docs/release-checklist.md) maps each of its 52 rows to tests and jobs and lists 22 human-gated rows, all unchecked, each with an owner and a procedure.
 - **Platforms.** Supported means CI runs every operation on that platform ([Compatibility](docs/compatibility.md#platforms-and-operations)): Ubuntu 24.04 amd64 and arm64 (server and local client) and macOS 15 arm64 (local client). Debian 13 is container-verified, the Proxmox appliance is fake-verified, Intel macOS is manual, and Debian as a local-client host and everything else are not claimed.
 - A second, unexplained failure mode of the daemon-restart test (`TestM1_DaemonKilledMidRestartReconciles`), seen once.
 - The residual of a TUI handoff that exits instantly; the case seen is fixed.
