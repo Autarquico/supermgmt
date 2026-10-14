@@ -1,0 +1,44 @@
+# Public documentation pages, in sidebar order.
+#
+# Read by site/scripts/sync-docs.mjs (copies these pages into the website),
+# by the sidebar in site/astro.config.mjs and by test/docs.
+#
+# Format: "[Section name]" starts a sidebar group; each following line is a
+# file name in docs/ (flat, no subfolders). Lines starting with "#" and blank
+# lines are ignored. A file may be listed once. Every listed file must exist.
+#
+# Pages not listed here (STATUS, release-checklist, releasing, manual-checks,
+# spec, specs, adr) are internal and are never copied to the website.
+#
+# Pages planned by the site-and-docs epic are commented out; uncomment each
+# one when its file lands (overview, getting-started, concepts, status: start
+# pages; tui, policies: guides; cli: generated reference).
+
+[Start]
+# overview.md
+# getting-started.md
+installation.md
+# concepts.md
+# status.md
+
+[Guides]
+deployments.md
+providers.md
+mcp.md
+# tui.md
+# policies.md
+cloudflare.md
+
+[Operate]
+operations.md
+troubleshooting.md
+
+[Reference]
+# cli.md
+configuration.md
+compatibility.md
+dependencies.md
+
+[Security and design]
+security.md
+architecture.md
