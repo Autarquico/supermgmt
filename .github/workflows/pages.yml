@@ -1,9 +1,10 @@
 name: pages
 
-# The website follows releases: it is built from a release tag and never from a branch.
-# It runs after the release workflow finishes successfully for a v* tag (a release created with
-# the workflow token does not fire `release: published`). A manual dispatch rebuilds from the
-# latest published release (pre-releases included).
+# The website follows releases: its content (docs/ and the TUI golden frames) comes from a release
+# tag, never from a branch. The site tooling (site/) comes from main, so a fix to the website never
+# needs a new release. It runs after the release workflow finishes successfully for a v* tag (a release
+# created with the workflow token does not fire `release: published`). A manual dispatch rebuilds the
+# latest published release (pre-releases included) with the current tooling.
 on:
   workflow_run:
     workflows: [release]
@@ -46,30 +47,39 @@ jobs:
             exit 1
           fi
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: site tooling from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: content from the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ steps.tag.outputs.tag }}
+          path: release
           persist-credentials: false
       - name: the tag still points at the commit the release was built from
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ -n "$EXPECTED_SHA" ] && [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then
-            echo "tag moved: HEAD is $(git rev-parse HEAD), release ran on $EXPECTED_SHA" >&2
+          if [ -n "$EXPECTED_SHA" ] && [ "$(git -C release rev-parse HEAD)" != "$EXPECTED_SHA" ]; then
+            echo "tag moved: HEAD is $(git -C release rev-parse HEAD), release ran on $EXPECTED_SHA" >&2
             exit 1
           fi
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
+      - name: use the release's docs and TUI frames
+        run: |
+          rm -rf docs internal/tui/testdata
+          cp -R release/docs docs
+          cp -R release/internal/tui/testdata internal/tui/testdata
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: site/.nvmrc
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - name: docs checks, then build and crawl the site for this tag
+      - name: build and crawl the site for this tag (its docs passed docs-check in the release gates)
         env:
           SITE_VERSION: ${{ steps.tag.outputs.tag }}
-        run: make docs-check site-check
+        run: make site-check
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/dist
