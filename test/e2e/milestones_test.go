@@ -26,13 +26,13 @@ type milestone struct {
 // pin a branch head in its place: a squash merge would orphan that commit.
 func (m milestone) merged() bool { return m.commit != "" }
 
-// milestones lists M1..M5 in merge order. M4 and M5 are stacked under M6 and not yet on main.
+// milestones lists M1..M5 in merge order.
 var milestones = []milestone{
 	{"m1", "0c31ac148e3b78668c1e9425eb34d089700a6eba", "v0.1.0", 2},
 	{"m2", "e6d5577bb51e8837a58d9d48cd06e9c2bfd2641a", "v0.2.0", 3},
 	{"m3", "e13d021a09a796d50527a92b8f2a9832fbe01c99", "v0.3.0", 4},
-	{"m4", "", "v0.4.0", 5},
-	{"m5", "", "v0.5.0", 6},
+	{"m4", "f4195937b25e1570e49f63158e3bcca83ee42e54", "v0.4.0", 5},
+	{"m5", "658078b15d68846ed67b80d4e2f463c114be27cf", "v0.5.0", 6},
 }
 
 var (

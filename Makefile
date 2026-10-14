@@ -204,7 +204,5 @@ brew-formula: ## Render the Homebrew formula on stdout: make -s brew-formula CHE
 	@[ -n "$(CHECKSUMS)" ] || { echo "usage: make -s brew-formula CHECKSUMS=checksums.txt [TRUST=allowed_signers]"; exit 1; }
 	@packaging/release/brew-formula.sh "$(CHECKSUMS)" $(TRUST)
 
-# The suite arrives with the docs task (T26); until test/docs exists the target says so instead of passing silently.
 docs-check: ## Check that the docs cite existing tests and jobs and that their links resolve
-	@if [ -d test/docs ]; then go test -count=1 -shuffle=on ./test/docs/...; \
-	else echo "docs-check: test/docs does not exist yet (T26); nothing was checked"; fi
+	go test -count=1 -shuffle=on ./test/docs/...
