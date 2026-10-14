@@ -75,10 +75,10 @@ GitHub secret scanning and push protection are repository settings that only the
 
 ## Release signing key
 
-Release artifacts (`checksums.txt`, `install.sh`, `join.sh`, channel files) are signed with an OpenSSH key in the namespace `supermgmt-release`, principal `release@supermgmt`. The private key will live only as a secret of the protected GitHub environment `release` (the repository owner is its required reviewer).
+Release artifacts (`checksums.txt`, `install.sh`, `join.sh`, channel files) are signed with an OpenSSH key in the namespace `supermgmt-release`, principal `release@supermgmt`. The private key lives only as a secret of the protected GitHub environment `release` (the repository owner is its required reviewer).
 
 ```text
-Fingerprint: SHA256:<RELEASE-KEY-FINGERPRINT-NOT-PUBLISHED-YET>
+Fingerprint: SHA256:06Bs6zXAk9KcnjRpoR5bslbRKoNv9L9KuI6zzT7OPX4
 ```
 
-The key and its fingerprint do not exist yet; the value above is a placeholder, and until the real key is embedded in `install.sh` every signature check fails closed. This file will state the real fingerprint at the first signed tag. Verify it against a second source (project website, release notes) before trusting it.
+Public key: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBDaUxtppvnxho0KAF62G5IJVRMII+v1e7zJNy1f0F3T release@supermgmt`, embedded in `install.sh` and `scripts/join.sh`. Verify it against a second source (project website, release notes) before trusting it.

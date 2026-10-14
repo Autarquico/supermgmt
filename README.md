@@ -79,7 +79,7 @@ sm                                   # open the TUI
 
 Until setup, a node is read with read-only probes as your `admin_user`. Starting, stopping and restarting services needs `node.setup` first. Step by step, and what setup changes on the node: [docs/providers.md](docs/providers.md). Trust and risk: [docs/security.md](docs/security.md).
 
-Installer and server mode (M2). **Unreleased: the installer's trust root is a placeholder until the owner creates the release key, so a real `install.sh` run fails closed with exit 5.** What it does once a signed release exists, the review-first alternative to `curl | bash`, and the honest trust roots: [docs/installation.md](docs/installation.md). Running a server: [docs/operations.md](docs/operations.md).
+Installer and server mode (M2). **Unreleased: the release key is embedded, but no signed release is published yet, so `install.sh` has nothing to download.** What it does once a signed release exists, the review-first alternative to `curl | bash`, and the honest trust roots: [docs/installation.md](docs/installation.md). Running a server: [docs/operations.md](docs/operations.md).
 
 ```bash
 # on a Debian/Ubuntu host with systemd, as root (not verified against a real release)
