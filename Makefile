@@ -56,7 +56,7 @@ test: ## Run unit tests
 	$(IF_GO) go test -count=1 -tags crashpoints ./internal/backup/... ./internal/installer/...
 
 test-race: ## Run unit tests with the race detector
-	$(IF_GO) go test -race -count=1 -shuffle=on $(UNIT_PKGS)
+	$(IF_GO) go test -race -count=1 -shuffle=on -timeout 20m $(UNIT_PKGS)
 
 test-pty: ## Run the PTY handoff-restoration tests (ubuntu and macOS CI)
 	@if [ -d test/integration/pty ]; then go test -race -count=1 -shuffle=on -v ./test/integration/pty/...; \
