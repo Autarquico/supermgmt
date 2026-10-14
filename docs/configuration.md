@@ -1,12 +1,12 @@
 # Configuration
 
-SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
+SuperMgmt reads one YAML file. The schema is implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox providers (M3) and GitHub providers and `github.*` (M4) and `mcp.*` (M5) are read by the daemon.
+> **Status:** pre-alpha; see [Project status](project-status.md). The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon and `sm server` read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired.
 
 ## File location
 
-Pass `--config <path>`. The default locations (SPEC §8.1) are:
+Pass `--config <path>`. The default locations are:
 
 | Mode | Config file | Database |
 |---|---|---|
@@ -20,18 +20,19 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 
 ## Which keys are read
 
-### Local daemon and CLI (M1)
+### Local daemon and CLI
 
 - `instance.*`, `daemon.*` (`socket`, `idle_exit`, `resident`), `storage.sqlite.*`
 - `security.keys_dir`, `security.policy_file`, `security.approval_ttl`, `security.allow_self_approval`
 - `ssh.*` timeouts and pool limits: `connect_timeout`, `command_timeout`, `keepalive_interval`, `max_dials_in_flight`, `max_connections`, `max_sessions_per_connection`, `idle_connection_ttl`
+- `ssh.logs_mode`: the log mode a `node.setup` plan gets when the request names none (`internal/daemon/assemble.go`, `internal/app/plans.go`; `TestASetupPlanTakesTheConfiguredLogsModeWhenNoneIsGiven`). The plan then states the mode, so it is part of the plan hash. `sm nodes setup` and the TUI always name one (`journal-group` unless you ask for `broker`), so the default applies to requests that leave it out, such as API calls. After setup, a node's log mode is the one recorded by its setup.
 - `refresh.*`, `jobs.*`, `server.shutdown_timeout`
 - `environments` and SSH `providers`, applied when the daemon starts
-- Proxmox `providers` (M3), applied when the daemon starts and then synced every `sync_interval`; see [providers.md](providers.md#proxmox)
-- GitHub `providers` (M4), applied when the daemon starts; see [GitHub](#github)
+- Proxmox `providers`, applied when the daemon starts and then synced every `sync_interval`; see [providers.md](providers.md#proxmox)
+- GitHub `providers`, applied when the daemon starts; see [GitHub](#github)
 - `github.oidc_audience`, `github.ci_poll_initial`, `github.ci_poll_max`, `github.ci_timeout`, and `health.allowed_private_cidrs` (control-plane health checks only); environment keys `require_provenance` and `allow_automatic_rollback` (`internal/daemon/assemble.go`, `internal/app/staticconfig.go`)
 
-### Server (M2), read by `sm server`
+### Server, read by `sm server`
 
 - `server.listen`, `server.tls.*`, `server.trusted_proxies`, `server.admin_socket`, `server.request_timeout`, `server.shutdown_timeout`; see [Server](#server-transport-and-tls)
 - `auth.bootstrap.code_ttl`, `security.session_ttl`
@@ -39,18 +40,18 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 - `backup.schedule`, `backup.retention`, `backup.directory`; see [Backup](#backup)
 - `security.redact_command_output` (when false, raw log output is kept)
 - `outbound.proxy`, used only for requests to the identity provider
-- `ssh.known_hosts_file`: only as the file that goes into a backup archive (and is restored to `<data_dir>/known_hosts`). The pinned host key in the database is still the only trust anchor ([ADR-0015](adr/0015-ssh-transport-and-command-templates.md)).
+- `ssh.known_hosts_file`: only as the file that goes into a backup archive (and is restored to `<data_dir>/known_hosts`). The pinned host key in the database is still the only trust anchor.
 
 Reading was checked by searching the code for each key; a key not listed has no reader outside the config package.
 
-### MCP (M5), read by the daemon and `sm mcp`
+### MCP, read by the daemon and `sm mcp`
 
 - `mcp.enabled`, `mcp.write_tools_enabled` and, for `sm server` with remote MCP, `mcp.remote_enabled` and `mcp.oauth.*`; see [MCP](#mcp). `sm mcp` reads `mcp.enabled` and `mcp.write_tools_enabled` (`internal/cli/mcp_bridge.go`); the daemon reads all of them (`internal/daemon/assemble.go`, `internal/daemon/mcp_remote.go`).
 - `mcp.allow_interactive_exec` is validated but refused when `true`.
 
 ### Validated but not read
 
-- `ssh.host_key_policy` (must be `strict`) and `ssh.logs_mode`: the log mode of a node comes from the `logs_mode` parameter of its `node.setup` plan.
+- `ssh.host_key_policy` (must be `strict`).
 - `ui.theme`, `server.public_url` (the installer, the default of `github.oidc_audience` and, with `mcp.remote_enabled`, the MCP resource identity and the `Origin` check use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
 
 ## How a value is resolved
@@ -71,8 +72,8 @@ Secrets are never written inline. Credential references are URIs from a closed s
 
 | Reference | Meaning |
 |---|---|
-| `secret://<path>` | encrypted secret in the SuperMgmt store. `secret://ssh/default` is the instance SSH identity; other names are stored with `sm secrets import --name <path>` ([operations.md](operations.md#key-management)). `secret://<path>@<n>` pins version `n`. The key that reads such a name in M2 is `auth.oidc.client_secret_ref`; whether provider `credential_ref` values other than `secret://ssh/default` resolve for SSH nodes is not verified |
-| `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode. In M1 it serves `admin_user` only |
+| `secret://<path>` | encrypted secret in the SuperMgmt store. `secret://ssh/default` is the instance SSH identity; other names are stored with `sm secrets import --name <path>` ([operations.md](operations.md#key-management)). `secret://<path>@<n>` pins version `n`. Besides the SSH identity, such names are read for `auth.oidc.client_secret_ref`, the tokens of Proxmox and GitHub providers and `mcp.oauth.introspection_client_secret_ref`; whether provider `credential_ref` values other than `secret://ssh/default` resolve for SSH nodes is not verified |
+| `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode. It serves `admin_user` only |
 | `file://<abs-path>` | key file at an absolute path; discouraged, supported for migration |
 
 ## Environment overrides
@@ -225,7 +226,7 @@ In local mode the schedule only runs when `daemon.resident: true`. Details, rest
 
 ## Environments and providers
 
-These are lists of structures and are set in the file only (see SPEC §8.2.1 and §8.3).
+These are lists of structures and are set in the file only.
 
 ```yaml
 environments:
@@ -247,7 +248,7 @@ providers:
     environment: production
 ```
 
-An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`, M3) is applied the same way and then synced; its keys, `verify_tls: true` (required) and `ca_file` are described in [providers.md](providers.md#proxmox).
+An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`) is applied the same way and then synced; its keys, `verify_tls: true` (required) and `ca_file` are described in [providers.md](providers.md#proxmox).
 
 ## GitHub
 
@@ -284,7 +285,7 @@ environments:
 
 ## MCP
 
-Operator guide: [mcp.md](mcp.md). Decisions: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md).
+Operator guide: [mcp.md](mcp.md).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -322,10 +323,16 @@ The URLs are placeholders in the shape of a Keycloak realm; this configuration p
 
 ## Policy
 
-Permissions are granted only by policy rules. The binary embeds a built-in default policy; `security.policy_file` replaces it entirely. See [`examples/policies.yaml`](../examples/policies.yaml) and [security.md](security.md). The policy package can diff a user policy against the built-in default.
+Permissions are granted only by policy rules. The binary embeds a built-in default policy; `security.policy_file` replaces it entirely. How to write one, and how approvals work: [Policies and approvals](policies.md). Example: [`examples/policies.yaml`](../examples/policies.yaml).
 
 ## Defaults that depend on mode
 
-- `security.allow_self_approval` defaults to `true` in local mode and `false` in server mode (SPEC §11.4); set it explicitly to override.
+- `security.allow_self_approval` defaults to `true` in local mode and `false` in server mode; set it explicitly to override.
 - Local mode keeps the daemon alive while a client is connected or a job is not finished (including `awaiting_approval`), then exits after `daemon.idle_exit` unless `daemon.resident: true`. `sm install local --resident` registers a user unit (systemd) or launch agent (macOS) that starts a resident daemon at login; the unit and agent are rendered and tested with fakes, and a real launchd or user-systemd run is not verified.
 - `backup.schedule` defaults to `0 3 * * *` (UTC) in server mode and is empty in local mode; a schedule in local mode runs only when the daemon is resident.
+
+## References
+
+- Binding specification: [`docs/spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md), section 8 (configuration: locations, environments, providers) and section 11.4 (self-approval).
+- Decision records: [ADR-0015](adr/0015-ssh-transport-and-command-templates.md) SSH transport and host-key pinning, [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md) MCP server and tools, [ADR-0032](adr/0032-mcp-clients-tokens-identity.md) MCP clients and identity, [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md) remote MCP as an OAuth protected resource.
+- Code: `internal/config` (schema, defaults, validation), `internal/config/gen` (the generated environment table).

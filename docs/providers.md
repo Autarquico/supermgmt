@@ -1,6 +1,13 @@
 # Providers
 
-A provider is a source of nodes. There are four: **ssh** (a Linux machine reached over SSH), **local** (the machine running `sm`) and, since M3, **proxmox** (a Proxmox VE cluster, [below](#proxmox)) and, since M4, **github** (a source of repositories, CI results and attestations, not of nodes; [below](#github)). Sources: SPEC §6.4, §12, §14, §15; [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md), [ADR-0024](adr/0024-proxmox-discovery.md), [ADR-0025](adr/0025-proxmox-power-jobs-task-correlation.md); [ADR-0009](adr/0009-node-provisioning.md), [ADR-0015](adr/0015-ssh-transport-and-command-templates.md).
+A provider is a source of nodes. There are four:
+
+- **ssh**: a Linux machine reached over SSH.
+- **local**: the machine running `sm`.
+- **proxmox**: a Proxmox VE cluster ([below](#proxmox)).
+- **github**: a source of repositories, CI results and attestations, not of nodes ([below](#github)).
+
+New to nodes, setup and approvals? Start with [Getting started](getting-started.md) and [Concepts](concepts.md). What is verified, and how, is on [Project status](project-status.md).
 
 ## SSH nodes (agentless)
 
@@ -11,7 +18,7 @@ Nothing of SuperMgmt runs on the node. It is reached with the system's own `sshd
 | Your own account | `admin_user` (required) with `admin_credential_ref` (default `ssh-agent://default` in local mode) | read-only probes before setup, `node.setup` itself, interactive sessions |
 | The dedicated account | `user` (default `supermgmt`) with `credential_ref` (default `secret://ssh/default`, the instance identity) | every automated session after setup |
 
-The rule (ADR-0009): automated sessions use the dedicated user if and only if the node has completed `node.setup`; otherwise they use `admin_user`, for read-only probes only.
+The rule: automated sessions use the dedicated user if and only if the node has completed `node.setup`; otherwise they use `admin_user`, for read-only probes only.
 
 ### Add a node
 
@@ -36,7 +43,15 @@ A node can also be declared in the configuration file (`providers:` with `type: 
 
 ### Set up a node
 
-Without setup a node is read-only. Starting, stopping and restarting services, restricted log modes and Docker container actions all need `node.setup`. In M1 you start it from the TUI palette (there is no CLI command for it):
+Without setup a node is read-only. Starting, stopping and restarting services, restricted log modes, Docker container actions and deployments all need `node.setup`. Start it from the CLI:
+
+```bash
+sm nodes setup web1                          # logs via the journal group, no Docker
+sm nodes setup web1 --docker-access          # also join the docker group (root-equivalent)
+sm nodes setup web1 --logs-mode broker       # logs through the root-owned broker instead of the journal group
+```
+
+or from the TUI palette:
 
 ```text
 / setup web1                  logs via the journal group, no Docker
@@ -44,13 +59,15 @@ Without setup a node is read-only. Starting, stopping and restarting services, r
 / setup web1 broker           logs through the root-owned broker instead of the journal group
 ```
 
-The palette opens a plan that names the bootstrap identity and, for `docker`, shows the warning that the docker group is equivalent to root. Confirm it with `y`. The setup job is approval-gated; approve it from the Approvals screen (`4`, then `A`) or with `sm jobs approve`. `docker_access` has no default: omitting `docker` means `"false"`.
+Both show a plan that names the bootstrap identity and, with Docker access, the warning that the docker group is equivalent to root. Confirm it (`y` in the TUI). The setup job is approval-gated; approve it from the Approvals screen (`4`, then `A`) or with `sm jobs approve`. Docker access is never implied: without `--docker-access` (or `docker` in the palette) it is off. How approvals work is in [Policies and approvals](policies.md).
 
 Bootstrap privilege:
 
 - `admin_user` is `root`: commands run directly.
 - Otherwise `admin_user` needs passwordless sudo: each privileged command runs as `sudo -n ...`. SuperMgmt never prompts for a password; without it setup fails before changing anything.
 - If you added a temporary `NOPASSWD` rule for this, revoke it afterwards. SuperMgmt needs it again only to re-run setup.
+
+Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo, and that `jq` is installed on the node (deployments need it). Either missing fails the job with nothing changed.
 
 What setup does, in order, and how it ends:
 
@@ -61,16 +78,16 @@ What setup does, in order, and how it ends:
 5. Applies a tmpfiles entry; in broker mode installs the broker.
 6. Writes `/etc/sudoers.d/supermgmt` (validated with `visudo -cf` before it is moved into place).
 7. Verifies over a fresh connection as `supermgmt`, with the pinned host key: the user, writable markers, and `sudo -n -l` equal to the rendered lines exactly.
-8. Records the capability `node.setup` with its metadata. If any step fails or the verification does not match, the job fails, the capability is not written and the node stays read-only as `admin_user`.
+8. Creates `deploy_root` (default `/srv/supermgmt`), owned by `supermgmt` with mode 0750, for deployments ([deployments.md](deployments.md#prerequisites-on-the-node)).
+9. Records the capability `node.setup` with its metadata. If any step fails or the verification does not match, the job fails, the capability is not written and the node stays read-only as `admin_user`.
 
 Every step is an "ensure" step, so an interrupted setup is requeued and re-running it is safe. Full list of what lands on the node and how to remove it: [security.md](security.md#the-dedicated-supermgmt-user-and-how-to-remove-it).
 
 Setup is verified in CI on a Debian fixture. The `useradd` flags on the RHEL family are an assumption.
 
-Limits in M1:
+Current limits:
 
 - No standalone `sudoers.write` or `log_broker.install` job: to change the unit set or the log mode, re-run setup with the new parameters.
-- No `deploy_root` and no deployments (M4).
 - No automated teardown; the manual steps are in [security.md](security.md#the-dedicated-supermgmt-user-and-how-to-remove-it).
 - Server-mode instances: `node.setup` authorizes the instance key as in local mode; that flow was not verified in a server-mode run here. A node can also enroll itself with `sm join` (it gets the unprivileged user only; setup still follows), see [installation.md](installation.md#joining-a-node-sm-join).
 
@@ -86,7 +103,7 @@ Service actions are jobs. In an environment with `risk_level: production` they w
 
 ### Interactive tools
 
-`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. `lazydocker` is never installed for you; when it is missing, install it on the node yourself. M1 does not offer lazydocker on a local machine over an SSH Docker context.
+`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. `lazydocker` is never installed for you; when it is missing, install it on the node yourself. SuperMgmt does not offer lazydocker on a local machine over an SSH Docker context.
 
 ## Local provider
 
@@ -98,9 +115,9 @@ Service actions are jobs. In an environment with `risk_level: production` they w
 
 ## Proxmox
 
-> **Verification status.** Discovery and power actions are exercised against a **fake** Proxmox API (`internal/providers/proxmox/pvefake`) built from the Proxmox documentation, and, end to end, against a simulated host in CI (`TestM3_Appliance*`, job `e2e-appliance`). **No real Proxmox VE host was used.** Each assumption is a row in [compatibility.md](compatibility.md) and an item in [manual-checks/m3-real-pve.md](manual-checks/m3-real-pve.md). Supported: Proxmox VE 9.x only.
+> **Status: tested against fakes. No real Proxmox VE host was used.** Discovery and power actions run against a fake Proxmox API (`internal/providers/proxmox/pvefake`) written from the Proxmox documentation and, end to end, against a simulated host in CI (`TestM3_Appliance*`, job `e2e-appliance`). Each assumption is a row in [compatibility.md](compatibility.md) and an item in the [real Proxmox checklist](manual-checks/m3-real-pve.md). Supported: Proxmox VE 9.x only. See [Project status](project-status.md).
 
-The Proxmox provider reads a cluster through its HTTPS API with an API token and shows nodes, VMs and containers next to your SSH nodes. Today it can start, shut down, reboot and stop guests. Snapshots, backups, console, task history, creating providers through the API and promoting a discovered guest to a managed node are not built (M4 or later).
+The Proxmox provider reads a cluster through its HTTPS API with an API token and shows nodes, VMs and containers next to your SSH nodes. Today it can start, shut down, reboot and stop guests. Snapshots, backups, console, task history, creating providers through the API and promoting a discovered guest to a managed node are not built.
 
 ### Configure
 
@@ -160,7 +177,7 @@ sm providers refresh pve             # discover now; exit 0 if it worked, 8 if t
 sm nodes list --tree                 # providers, cluster nodes and their guests
 ```
 
-`refresh` is `POST /api/v1/providers/{id}/refresh`, authorized as `provider.read` and rate limited per caller and provider (6 per minute, burst 3; `internal/api/routes_m3.go`). It changes nothing on the cluster, only what SuperMgmt knows. In the TUI the palette has `refresh proxmox [provider]`. `sm doctor` has a `providers` check: `ok` after a recent successful sync, `warn` while the first sync is pending or when none succeeded for three intervals, `fail` when the last sync failed; the appliance installer waits for it.
+`refresh` is `POST /api/v1/providers/{id}/refresh`, authorized as `provider.read` and rate limited per caller and provider (6 per minute, burst 3). It changes nothing on the cluster, only what SuperMgmt knows. In the TUI the palette has `refresh proxmox [provider]`. `sm doctor` has a `providers` check: `ok` after a recent successful sync, `warn` while the first sync is pending or when none succeeded for three intervals, `fail` when the last sync failed; the appliance installer waits for it.
 
 ### Power actions
 
@@ -170,7 +187,7 @@ sm nodes power web-vm start --wait   # start | shutdown | reboot | stop
 
 (also `power <node> <verb>` in the TUI palette). A power action is the catalog action `proxmox.vm.power`, a job that is **never retried** (`non_retryable`). `start`, `shutdown` and `reboot` are operational; `stop` cuts power without a clean shutdown, is **high risk** and always waits for approval (`internal/policy/evaluate.go`: the high-risk floor). The CLI shows the plan and the risk and asks before submitting; `--wait` returns 0 only when the job succeeded.
 
-What the job does, in order (`internal/app/proxmox_power.go`, ADR-0025):
+What the job does, in order:
 
 1. Recheck the permission and resolve the guest's current Proxmox node.
 2. Record an intent (what, which guest, which token user) and mark it dispatched, durably, **before** anything is sent.
@@ -196,11 +213,11 @@ sm jobs get <job-id>
 sm jobs resolve <job-id> --plan-hash <hash> --outcome succeeded|failed --note "checked in the Proxmox UI" --assume-quiescent
 ```
 
-`--assume-quiescent` is your statement that nothing of the task is still running (SPEC §20.4); it is recorded and audited with your note. Without it, `resolve` of a task-tracked job without stop evidence is refused with `CONFLICT`.
+`--assume-quiescent` is your statement that nothing of the task is still running; it is recorded and audited with your note. Without it, `resolve` of a task-tracked job without stop evidence is refused with `CONFLICT`.
 
 ## GitHub
 
-> **Verification status.** The GitHub connector is exercised against a **fake** GitHub API (`internal/providers/github/ghfake`, hand-written from the GitHub documentation), a virtual Sigstore and a local registry, end to end by `TestM4_*` (CI job `e2e-deploy`). **It was never run against github.com, GHCR, real attestations or real Actions OIDC tokens.** See [compatibility.md](compatibility.md#github-provider-github-internalprovidersgithub) and [manual-checks/m4-real-github.md](manual-checks/m4-real-github.md). Sources: SPEC §8.3, §18; [ADR-0028](adr/0028-github-connector.md).
+> **Status: tested against fakes. Never run against github.com, GHCR, real attestations or real Actions OIDC tokens.** The connector runs against a hand-written fake GitHub API (`internal/providers/github/ghfake`), a virtual Sigstore and a local registry, end to end by `TestM4_*` (CI job `e2e-deploy`). See [compatibility.md](compatibility.md#github-provider-github-internalprovidersgithub), the [real GitHub checklist](manual-checks/m4-real-github.md) and [Project status](project-status.md).
 
 The GitHub provider is read-only. It lists repositories, reads a manifest and Compose file at one commit, checks that the required CI checks passed for that commit, verifies image attestations and verifies GitHub Actions OIDC tokens. It never writes to GitHub.
 
@@ -226,7 +243,13 @@ providers:
 
 An application is deployed to an SSH node that completed `node.setup` v2. The node needs Docker with Compose CLI **5.5.1 exactly**, `jq`, `flock` and the other tools listed in [compatibility.md](compatibility.md#docker-compose-and-node-tools); `deploy_root` (default `/srv/supermgmt`) is created and owned by the dedicated user. Discovery reports the capability `docker.compose.deploy` as unavailable, with the first unmet requirement as reason, when any of this is missing. The local provider and Proxmox guests without SSH are never deploy targets. The deployment flow is described in [architecture.md](architecture.md#applications-and-deployments) and operated in [deployments.md](deployments.md).
 
-## Not in M1
+## Not available
 
-- Identity rotation (`sm ssh-key rotate`), host-key re-pin (`sm nodes repin`) and the secrets CLI arrived in M2 ([operations.md](operations.md)). SSH CA trust and per-node keys are not scheduled. `ssh.known_hosts_file` is only the file that goes into a backup.
+- SSH CA trust and per-node keys are not scheduled. Identity rotation (`sm ssh-key rotate`), host-key re-pin (`sm nodes repin`) and the secrets CLI exist; see [operations.md](operations.md). `ssh.known_hosts_file` is only the file that goes into a backup.
 - Hetzner, OVH and cloud providers: exploratory, not scheduled.
+
+## References
+
+- Binding specification: [`docs/spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md), sections 6.4 (providers), 12 (nodes and setup), 14 and 15 (Proxmox), 18 (GitHub) and 20.4 (resolving interrupted jobs).
+- Decision records: [ADR-0009](adr/0009-node-provisioning.md) node provisioning, [ADR-0015](adr/0015-ssh-transport-and-command-templates.md) SSH transport and command templates, [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md) Proxmox identity and privileges, [ADR-0024](adr/0024-proxmox-discovery.md) Proxmox discovery, [ADR-0025](adr/0025-proxmox-power-jobs-task-correlation.md) Proxmox power jobs and task correlation, [ADR-0028](adr/0028-github-connector.md) GitHub connector.
+- Code: `internal/app/setup.go` (setup), `internal/app/proxmox_power.go` (power jobs), `internal/api/routes_m3.go` (provider refresh rate limit), `internal/config/github.go` and `internal/config/validate.go` (provider validation).

@@ -1,8 +1,10 @@
-# Applications and deployments (M4)
+# Applications and deployments
 
-SuperMgmt deploys one Docker Compose application to one node, from a commit that passed CI and an image digest that CI built. This page describes what the code in this repository does. Specification: SPEC §18-§21 and §31 M4 (`docs/spec/SUPERMGMT-SPEC.md`), [`docs/specs/m4-apps-deployments.md`](specs/m4-apps-deployments.md); design decisions: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [0007](adr/0007-execution-snapshots.md), [0008](adr/0008-secret-versions.md), [0010](adr/0010-secret-env-file-encoding.md), [0011](adr/0011-provisional-deployment-api.md), [0028](adr/0028-github-connector.md), [0029](adr/0029-deployment-engine.md), [0030](adr/0030-node-setup-v2.md) (all `Proposed` until the M4 PR merges).
+SuperMgmt deploys one Docker Compose application to one node, from a commit that passed CI and an image digest that CI built. This page describes what the code in this repository does. The terms (app, target, deployment, known good) are introduced in [Concepts](concepts.md#apps-and-deployments).
 
 ## What is verified, and what is not
+
+Status: tested against fakes; see [Project status](project-status.md) for every claim and its evidence.
 
 **No real GitHub, GHCR or Sigstore was contacted by any test.** GitHub is replaced by a hand-written fake (`internal/providers/github/ghfake`, provenance in [`test/fixtures/github/PROVENANCE.md`](../test/fixtures/github/PROVENANCE.md)), attestations are signed by a virtual Sigstore (`sigstore-go` `pkg/testing/ca`), and images come from a local TLS registry. The fake was written from the GitHub documentation, not recorded from the live API. Everything on this page that depends on GitHub's real behavior is marked **not verified against real GitHub** and has a row in [manual-checks/m4-real-github.md](manual-checks/m4-real-github.md), which is **DEFERRED** (nothing on it has been run).
 
@@ -15,7 +17,7 @@ Tests that exercise the node run against a Docker fixture node with Docker Compo
 | GitHub provider | `type: github` provider with a read-only token ([Configuration](configuration.md#github)) |
 | Repository | A GitHub repository known by its numeric ID (names are display only), created when an app links to it |
 | App | The configuration of one application: deployed service, image policy, Compose source, variables, secret references, CI policy |
-| App target | An app bound to one environment and one node, with a deployment policy. Unique per (app, environment) in V1 |
+| App target | An app bound to one environment and one node, with a deployment policy. Unique per (app, environment) in this version |
 | Deployment | One request to put a commit's digests on a target (`kind: deploy`) or to restore a known-good one (`kind: rollback`) |
 
 The Compose project of a target is `sm-<app>-<environment>`; it cannot be changed after creation (a database trigger refuses it, test `TestM4ImmutabilityTriggers`). App names match `^[a-z0-9][a-z0-9-]{0,39}$` (`internal/app/apps.go`).
@@ -23,10 +25,10 @@ The Compose project of a target is `sm-<app>-<environment>`; it cannot be change
 ## Prerequisites on the node
 
 1. **Set the node up with `docker_access=true`.** The `supermgmt` user then joins the `docker` group, which is root-equivalent ([security.md](security.md#apps-github-and-deployments)).
-2. **Run `node.setup` again if the node was set up before M4.** `setup_version` 2 creates `deploy_root` (default `/srv/supermgmt`) owned by the `supermgmt` user with mode 0750, refuses a symlink there, and requires `jq` on the node (`internal/transport/ssh/templates/setup.go`, `internal/app/setup.go`; tests `TestSetupV2CreatesDeployRootAndRequiresJQ`, `TestDeployRootStepCreatesADirectoryOwnedByTheDedicatedUserOnlyForValidPaths`). `deploy_root` is a `node.setup` parameter: absolute, clean, outside `/var/lib/supermgmt` (`TestValidateDeployRoot`). Nodes at version 1 keep working for everything else but cannot deploy.
+2. **Run `node.setup` again if the node was set up by an older version.** `setup_version` 2 creates `deploy_root` (default `/srv/supermgmt`) owned by the `supermgmt` user with mode 0750, refuses a symlink there, and requires `jq` on the node (`internal/transport/ssh/templates/setup.go`, `internal/app/setup.go`; tests `TestSetupV2CreatesDeployRootAndRequiresJQ`, `TestDeployRootStepCreatesADirectoryOwnedByTheDedicatedUserOnlyForValidPaths`). `deploy_root` is a `node.setup` parameter: absolute, clean, outside `/var/lib/supermgmt` (`TestValidateDeployRoot`). Nodes at version 1 keep working for everything else but cannot deploy.
 3. **Install the tools.** The node must have the Docker Compose plugin at exactly **5.5.1**, `jq` and `flock` (util-linux); `curl` is needed for `http` health checks and `bash` plus `timeout` for `tcp` checks (`internal/runtimes/runtime.go`, `internal/discovery`). Discovery advertises the `docker.compose.deploy` capability only when all of these hold and `docker_access=true`; a node without it is refused at request time and again by the preflight (`TestDeploymentsCreate_NeedsTheComposeDeployCapability`, `TestPreflight_ComposeDeployCapabilityMissing`).
 4. **Compose 5.5.1 is the only supported CLI.** Any other `docker compose version --short` makes the preflight fail with `PREFLIGHT_FAILED` (cause `COMPOSE_UNSUPPORTED`); adding a version needs a new fixture row and a review of the CLI-default normalization table (`internal/deployments/compose/normalize.go`). The loader and CLI are compared on a five-file corpus for this one version (`TestComposeEquivalence_Corpus`).
-5. **A registry the node can pull from.** The node pulls `<repository>@<digest>` itself; SuperMgmt never sees registry credentials. Registry authentication on the node is not managed by SuperMgmt in M4 (private GHCR pulls are not verified against real GHCR).
+5. **A registry the node can pull from.** The node pulls `<repository>@<digest>` itself; SuperMgmt never sees registry credentials. Registry authentication on the node is not managed by SuperMgmt (private GHCR pulls are not verified against real GHCR).
 
 ## Register GitHub
 
@@ -87,9 +89,9 @@ Writes are validated before anything is stored, and again when an approved write
 
 `compose_source` is `control-plane` (the Compose text is stored in the app and edited through `app.write`) or `repository` (read from the exact commit that passed CI, at the manifest's `composeFile`).
 
-**V1 limitation:** a `repository` source is refused for any target in a `production` environment. The spec lets an admin grant an exception but defines no place to record one, so none is honored (`requireSourceForEnvironment`, `internal/app/apps.go`; test `TestAppsUpdate_RefusesARepositorySourceWhileAProductionTargetExists`). Production Compose content always comes from the control plane.
+**Limitation of this version:** a `repository` source is refused for any target in a `production` environment. The spec lets an admin grant an exception but defines no place to record one, so none is honored (`requireSourceForEnvironment`, `internal/app/apps.go`; test `TestAppsUpdate_RefusesARepositorySourceWhileAProductionTargetExists`). Production Compose content always comes from the control plane.
 
-Either source runs through the same closed pipeline (ADR-0006), in this order: a **raw pass** over the YAML tree (anchors and merge keys expanded and checked as if written inline; `version`, port ranges, short port syntax, string-form `command`/`entrypoint` and list-form `environment` rejected), the pinned `compose-go` v2.15.0 loader, a **model pass** against an allowlist, image rewriting, then both passes again. Tests: `TestCheckRaw_RejectsSourceForms`, `TestCheckRaw_RejectsPrivilegedConstructsIntroducedByAnchorsAndMerges`, `TestCheckModel_RejectsDeniedServiceKeys`.
+Either source runs through the same closed pipeline, in this order: a **raw pass** over the YAML tree (anchors and merge keys expanded and checked as if written inline; `version`, port ranges, short port syntax, string-form `command`/`entrypoint` and list-form `environment` rejected), the pinned `compose-go` v2.15.0 loader, a **model pass** against an allowlist, image rewriting, then both passes again. Tests: `TestCheckRaw_RejectsSourceForms`, `TestCheckRaw_RejectsPrivilegedConstructsIntroducedByAnchorsAndMerges`, `TestCheckModel_RejectsDeniedServiceKeys`.
 
 What the model pass allows (`internal/deployments/compose/schema.go`):
 
@@ -116,7 +118,7 @@ A target needs an effective health check or the deployment is rejected (`TestFin
 | `attempts` | 1 to 60 | 12 |
 | `path` (http) | absolute path of `A-Za-z0-9._~/-`, no query or fragment | |
 
-These bounds are not in the spec; they are a V1 decision enforced in `internal/app/apps.go` and the manifest parser. `command-template` and `systemd-active` checks are rejected for app targets.
+These bounds are not in the spec; they are a decision of this version, enforced in `internal/app/apps.go` and the manifest parser. `command-template` and `systemd-active` checks are rejected for app targets.
 
 Where a node-scope check may connect is never taken from user input. The destination is resolved from a port the frozen Compose model publishes: a manifest check only on `127.0.0.1` or `::1`; a control-plane check also on an address in `allowed_bind_addresses`. A URL or host in a manifest health block is `MANIFEST_INVALID` (`TestManifest_RejectsHealthURLAndHost`, `TestM4_ManifestHealthOffNodeRejected`); a port the model does not publish is rejected (`TestFinalize_AHealthCheckOnAPortTheModelDoesNotPublishIsRejected`). Control-plane checks go through the outbound filter and may reach private ranges only if `health.allowed_private_cidrs` lists them.
 
@@ -135,7 +137,7 @@ Where a node-scope check may connect is never taken from user input. The destina
 }
 ```
 
-- `snapshot: true` is refused (`INVALID_ARGUMENT`): Proxmox snapshots in the deployment path are not part of M4.
+- `snapshot: true` is refused (`INVALID_ARGUMENT`): Proxmox snapshots in the deployment path are not built.
 - `stateful: true` in a `production` environment requires `pre_deploy_backup`; finalization and `app_target.write` reject it otherwise (`TestFinalize_StatefulProductionWithoutABackupIsRejected`, `TestAppsUpdateTarget_ProductionStatefulKeepsItsBackupRule`).
 - `pre_deploy_backup` is `{template: "postgres-dump", args: {container, database}, timeout}` (timeout 1s to 1h, default 10m). It is the only backup template. The dump goes to `/var/lib/supermgmt/db-backups` on the node (`internal/transport/ssh/templates/compose_stage.go`).
 
@@ -176,19 +178,19 @@ sm rollback myapp production --to <known-good-deployment-id>
 
 ### From GitHub Actions
 
-[`examples/github-actions.yml`](../examples/github-actions.yml) is the conceptual workflow (it follows SPEC §28: `contents: read` by default, `id-token: write` only in the build and deploy jobs, actions pinned to a SHA; `TestSpecExamples_GitHubActionsPermissions`). The deploy job requests an Actions OIDC token whose audience is `github.oidc_audience` (default: `server.public_url`) and calls `POST /api/v1/deployments` with an `Idempotency-Key`. This works on the server's HTTPS listener only; GitHub Actions tokens are not accepted when no audience is configured (`TestGitHubActionsTokensAreAcceptedOnlyWithAnAudience`).
+[`examples/github-actions.yml`](../examples/github-actions.yml) is the conceptual workflow (`contents: read` by default, `id-token: write` only in the build and deploy jobs, actions pinned to a SHA; `TestSpecExamples_GitHubActionsPermissions`). The deploy job requests an Actions OIDC token whose audience is `github.oidc_audience` (default: `server.public_url`) and calls `POST /api/v1/deployments` with an `Idempotency-Key`. This works on the server's HTTPS listener only; GitHub Actions tokens are not accepted when no audience is configured (`TestGitHubActionsTokensAreAcceptedOnlyWithAnAudience`).
 
 The token is verified against the Actions JWKS: issuer, audience, RS256, `iat` not older than 5 minutes (60 seconds of skew), `jti` accepted once (`TestOIDC_ReplayIsRefused`), and `MatchClaims` requires the policy's repository ID, owner ID, `ref`, `sha` equal to the requested commit, allowed `event_name`, `workflow_ref`, and `job_workflow_ref`; a pull-request token never matches (`TestMatchClaims`).
 
 **Automation identity.** `app.write` with `automation_identity: true` creates (or links) an identity `repository_id:<id>:workflow:<deploy_workflow>` with **no role**. An admin must grant it a role such as `deployer` (or a narrower policy rule) before it can do anything; its credentials carry only the scopes `deployment.create` and `deployment.read`. Unlinking revokes its open OIDC credentials (`TestAutomation_ChangingTheDeployWorkflowMovesTheLinkAndRevokesTheOldCredentials`, `TestCredentialStatus_GitHubOIDC`).
 
-**V1 limitation:** no environment requires an `environment` claim in the token, because the spec defines no field to configure it. `MatchClaims` supports the check, but the caller never turns it on (`internal/app/deployments.go`, `github.EnvRequirement{}`). The `environment:` line in the example workflow documents intent; SuperMgmt does not enforce it.
+**Limitation of this version:** no environment requires an `environment` claim in the token, because the spec defines no field to configure it. `MatchClaims` supports the check, but the caller never turns it on (`internal/app/deployments.go`, `github.EnvRequirement{}`). The `environment:` line in the example workflow documents intent; SuperMgmt does not enforce it.
 
 Real Actions tokens, the real JWKS and fork behavior are **not verified against real GitHub**.
 
 ### What the request does
 
-`POST /api/v1/deployments` answers 202 with a deployment in `created` or `waiting_ci` (ADR-0011). Nothing is frozen yet. When CI is decided, finalization runs in one transaction: it freezes the Compose model for that target, stores the execution snapshots, builds the plan, evaluates policy (including the backup sub-action) and enqueues the job. A production target then waits for approval (`awaiting_approval`; `TestFinalize_ProductionWaitsForApproval`). The requester's credential is checked again at finalization (`TestFinalize_ARevokedRequesterFailsTheDeployment`). `POST /deployments/{id}/cancel` ends a deployment that has no job yet and delegates to `job.cancel` otherwise.
+`POST /api/v1/deployments` answers 202 with a deployment in `created` or `waiting_ci`. Nothing is frozen yet. When CI is decided, finalization runs in one transaction: it freezes the Compose model for that target, stores the execution snapshots, builds the plan, evaluates policy (including the backup sub-action) and enqueues the job. A production target then waits for approval (`awaiting_approval`; `TestFinalize_ProductionWaitsForApproval`). The requester's credential is checked again at finalization (`TestFinalize_ARevokedRequesterFailsTheDeployment`). `POST /deployments/{id}/cancel` ends a deployment that has no job yet and delegates to `job.cancel` otherwise.
 
 ## Lifecycle
 
@@ -226,7 +228,12 @@ Secrets referenced by apps live under `apps/` (`secret://apps/...`). `secret.wri
 
 - Compose CLI **5.5.1 only**; one node per target; one target per (app, environment).
 - `repository` Compose source refused in production environments.
-- Health bounds (30s / 1m / 60) are a V1 decision, not spec text. Health types limited to `http`, `tcp`, `docker-health` on the node and `http`/`https` from the control plane.
+- Health bounds (30s / 1m / 60) are a decision of this version, not spec text. Health types limited to `http`, `tcp`, `docker-health` on the node and `http`/`https` from the control plane.
 - No environment-claim requirement for Actions tokens.
-- `snapshot` in a deployment policy and the Proxmox items deferred from M3 are not available.
+- `snapshot` in a deployment policy and the Proxmox snapshot, backup and console actions are not available.
 - Real GitHub, GHCR and Sigstore behavior, including redirects, the TUF trust anchor and attestation verification: **not verified**, see [the manual checklist](manual-checks/m4-real-github.md).
+
+## References
+
+- Binding specification: [`docs/spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md), sections 18 to 21 (apps, deployments, rollback, recovery) and 28 (the GitHub Actions workflow), and the [apps and deployments milestone spec](specs/m4-apps-deployments.md).
+- Decision records: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md) pinned compose-go and CLI equivalence, [ADR-0007](adr/0007-execution-snapshots.md) execution snapshots, [ADR-0008](adr/0008-secret-versions.md) secret versions, [ADR-0010](adr/0010-secret-env-file-encoding.md) secret env-file encoding, [ADR-0011](adr/0011-provisional-deployment-api.md) deployment API, [ADR-0028](adr/0028-github-connector.md) GitHub connector, [ADR-0029](adr/0029-deployment-engine.md) deployment engine, [ADR-0030](adr/0030-node-setup-v2.md) node setup version 2.
