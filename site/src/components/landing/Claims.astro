@@ -1,0 +1,204 @@
+---
+import { routeFor } from '../../../scripts/sync-docs.mjs';
+import { LEVELS, inlineHtml, readStatus } from '../../lib/claims';
+
+const { claims, notVerifiedIntro, notVerified } = readStatus();
+const counts = LEVELS.map((level) => ({ ...level, count: claims.filter((claim) => claim.level === level).length }));
+const statusPage = routeFor('project-status');
+---
+
+<section aria-labelledby="claims-title">
+	<h2 id="claims-title">What is verified, and how far</h2>
+	<p class="intro">
+		Each claim carries its level and what the evidence does not show. The list is read from the
+		<a href={statusPage}>status page</a> when the site is built, so the two cannot disagree.
+	</p>
+	<ul class="legend" aria-label="Claims by level">
+		{
+			counts.map((level) => (
+				<li>
+					<span class={`pill ${level.tone}`}>{level.name}</span>
+					<span class="count">{level.count}</span>
+				</li>
+			))
+		}
+	</ul>
+	<ul class="grid">
+		{
+			claims.map((claim) => (
+				<li class="card">
+					<p class={`pill ${claim.level.tone}`}>{claim.level.name}</p>
+					<h3 set:html={inlineHtml(claim.claim)} />
+					<p class="scope"><span>Scope</span> <span set:html={inlineHtml(claim.scope)} /></p>
+					<p class="limit"><span>Limitation</span> <span set:html={inlineHtml(claim.limitation)} /></p>
+					<details>
+						<summary>Evidence</summary>
+						<p set:html={inlineHtml(claim.evidence)} />
+					</details>
+				</li>
+			))
+		}
+	</ul>
+
+	<h2 id="not-verified-title" class="second">Not verified</h2>
+	<p class="intro">{notVerifiedIntro}</p>
+	<ul class="plain" aria-labelledby="not-verified-title">
+		{notVerified.map((item) => <li set:html={inlineHtml(item)} />)}
+	</ul>
+	<p class="more"><a href={statusPage}>Full status page</a></p>
+</section>
+
+<style>
+	h2 {
+		margin: 0 0 var(--sm-space-5);
+		font-size: var(--sl-text-4xl);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sm-text-strong);
+	}
+	h2.second {
+		margin-top: var(--sm-space-9);
+	}
+	.intro {
+		max-width: 40rem;
+		margin: 0 0 var(--sm-space-6);
+		line-height: 1.5;
+	}
+	ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sm-space-3) var(--sm-space-5);
+		margin-bottom: var(--sm-space-6);
+	}
+	.legend li {
+		display: flex;
+		align-items: center;
+		gap: var(--sm-space-2);
+	}
+	.count {
+		font-family: var(--sm-font-mono);
+		color: var(--sm-text-strong);
+	}
+	.pill {
+		display: inline-block;
+		margin: 0;
+		padding: var(--sm-space-1) var(--sm-space-3);
+		border: 1px solid currentColor;
+		border-radius: var(--sm-radius-pill);
+		font-family: var(--sm-font-mono);
+		font-size: var(--sl-text-sm);
+		line-height: 1.3;
+	}
+	.success {
+		color: var(--sm-success);
+	}
+	.info {
+		color: var(--sm-info);
+	}
+	.warning {
+		color: var(--sm-warning);
+	}
+	.muted {
+		color: var(--sm-text-muted);
+	}
+	.grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--sm-space-4);
+	}
+	.card {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sm-space-3);
+		padding: var(--sm-space-5);
+		border: 1px solid var(--sm-border);
+		border-radius: var(--sm-radius-surface);
+		background: var(--sm-surface);
+	}
+	.card .pill {
+		align-self: flex-start;
+	}
+	.card h3 {
+		margin: 0;
+		font-family: var(--sm-font-body);
+		font-size: var(--sl-text-lg);
+		font-weight: 600;
+		line-height: 1.3;
+		color: var(--sm-text-strong);
+	}
+	.card p {
+		margin: 0;
+		font-size: var(--sl-text-sm);
+		line-height: 1.5;
+	}
+	.scope span:first-child,
+	.limit span:first-child {
+		display: block;
+		font-family: var(--sm-font-mono);
+		font-size: var(--sl-text-2xs);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--sm-text-muted);
+	}
+	details {
+		margin-top: auto;
+		font-size: var(--sl-text-sm);
+	}
+	summary {
+		display: flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+		cursor: pointer;
+		color: var(--sm-text-muted);
+	}
+	summary:hover {
+		color: var(--sm-accent);
+	}
+	details p {
+		overflow-wrap: anywhere;
+	}
+	.plain {
+		display: grid;
+		gap: var(--sm-space-3);
+		max-width: 48rem;
+	}
+	.plain li {
+		padding-left: var(--sm-space-5);
+		border-left: 1px solid var(--sm-border);
+		line-height: 1.5;
+	}
+	.more {
+		margin-top: var(--sm-space-5);
+	}
+	.more a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+	code,
+	.card :global(code) {
+		font-family: var(--sm-font-mono);
+		font-size: 0.9em;
+		overflow-wrap: anywhere;
+	}
+
+	@media (min-width: 800px) {
+		.grid {
+			grid-template-columns: repeat(12, 1fr);
+		}
+		.card {
+			grid-column: span 3;
+		}
+		.card:nth-child(6n + 1),
+		.card:nth-child(6n) {
+			grid-column: span 6;
+		}
+		.card:last-child:nth-child(3n + 1) {
+			grid-column: 1 / -1;
+		}
+	}
+</style>

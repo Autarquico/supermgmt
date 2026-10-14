@@ -1,0 +1,86 @@
+---
+import { routeFor } from '../../../scripts/sync-docs.mjs';
+
+interface Props {
+	planHash: string;
+}
+const { planHash } = Astro.props;
+
+const steps = [
+	{ name: 'Plan', text: 'A change (restart a service, set up a machine, deploy an app) becomes a plan: the exact steps, the targets and the risk.' },
+	{ name: 'Hash', text: 'The plan is hashed. Change any input and the hash changes.', hash: true },
+	{ name: 'Approval', text: 'Policy is default deny. In production a person approves that exact hash, and an AI agent can never approve.' },
+	{ name: 'Job', text: 'Only then does a job run. Every request, decision and job lands in an append-only audit trail.' },
+];
+---
+
+<section aria-labelledby="how-title">
+	<h2 id="how-title">How a change happens</h2>
+	<ol>
+		{
+			steps.map((step, index) => (
+				<li>
+					<span class="number">{String(index + 1).padStart(2, '0')}</span>
+					<h3>{step.name}</h3>
+					<p>{step.text}</p>
+					{step.hash && <p class="hash"><code>#{planHash}</code></p>}
+				</li>
+			))
+		}
+	</ol>
+	<p class="more"><a href={routeFor('concepts')}>Concepts in one page</a></p>
+</section>
+
+<style>
+	h2 {
+		margin: 0 0 var(--sm-space-7);
+		font-size: var(--sl-text-4xl);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sm-text-strong);
+	}
+	ol {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+		gap: var(--sm-space-5);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	li {
+		padding: var(--sm-space-5);
+		border: 1px solid var(--sm-border);
+		background: var(--sm-surface);
+	}
+	.number {
+		font-family: var(--sm-font-mono);
+		font-size: var(--sl-text-sm);
+		color: var(--sm-text-muted);
+	}
+	h3 {
+		margin: var(--sm-space-3) 0 var(--sm-space-2);
+		font-size: var(--sl-text-3xl);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sm-text-strong);
+	}
+	p {
+		margin: 0;
+		line-height: 1.5;
+	}
+	.hash {
+		margin-top: var(--sm-space-4);
+	}
+	.hash code {
+		font-family: var(--sm-font-mono);
+		font-size: var(--sl-text-base);
+		overflow-wrap: anywhere;
+		color: var(--sm-accent);
+	}
+	.more {
+		margin-top: var(--sm-space-5);
+	}
+	.more a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+</style>

@@ -1,0 +1,61 @@
+---
+import { routeFor } from '../../../scripts/sync-docs.mjs';
+
+const commands = `git clone https://github.com/autarquico/supermgmt.git
+cd supermgmt
+make build
+export PATH="$PWD/dist:$PATH"
+sm version`;
+---
+
+<section aria-labelledby="install-title">
+	<h2 id="install-title">Try it from source</h2>
+	<p class="intro">
+		There is no release yet, and the installer cannot install anything until one exists. You need Go 1.27.2 or newer and
+		<code>git</code>.
+	</p>
+	<div class="scroll" role="region" aria-label="Build commands" tabindex="0">
+		<pre><code>{commands}</code></pre>
+	</div>
+	<p class="more"><a href={routeFor('getting-started')}>Getting started: manage your first machine</a></p>
+</section>
+
+<style>
+	h2 {
+		margin: 0 0 var(--sm-space-5);
+		font-size: var(--sl-text-4xl);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sm-text-strong);
+	}
+	.intro {
+		max-width: 40rem;
+		margin: 0 0 var(--sm-space-5);
+		line-height: 1.5;
+	}
+	code {
+		font-family: var(--sm-font-mono);
+	}
+	.scroll {
+		overflow-x: auto;
+		border: 1px solid var(--sm-border);
+		background: var(--sm-surface);
+	}
+	pre {
+		margin: 0;
+		padding: var(--sm-space-5);
+		width: max-content;
+		min-width: 100%;
+		box-sizing: border-box;
+		font-size: var(--sl-text-sm);
+		line-height: 1.7;
+		color: var(--sm-text-strong);
+	}
+	.more {
+		margin-top: var(--sm-space-4);
+	}
+	.more a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+</style>

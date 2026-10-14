@@ -1,0 +1,265 @@
+---
+import '../fonts';
+import '../styles/theme.css';
+import { BASE, REPO_BLOB_URL, routeFor } from '../../scripts/sync-docs.mjs';
+import Hero from '../components/landing/Hero.astro';
+import HowItWorks from '../components/landing/HowItWorks.astro';
+import TuiFrame from '../components/landing/TuiFrame.astro';
+import Claims from '../components/landing/Claims.astro';
+import Install from '../components/landing/Install.astro';
+import { approvalsPlanHash, readGolden } from '../lib/goldens';
+
+const repoUrl = 'https://github.com/autarquico/supermgmt';
+const version = process.env.SITE_VERSION?.trim() || 'main';
+const planHash = approvalsPlanHash(readGolden('approvals_120x30.golden'));
+const description = 'A local-first control plane for your own infrastructure, safe for humans and AI agents. Pre-alpha: build from source.';
+const trust = [
+	{ title: 'Agentless', text: 'Nothing of SuperMgmt runs on your machines. It uses the system sshd and a dedicated account with a narrow sudoers file.' },
+	{ title: 'Agents cannot approve', text: 'An AI agent connects as a client of its own, with no roles by default. It can never approve a plan, and write tools are off until you turn them on.' },
+	{ title: 'Default deny', text: 'Nothing runs unless a rule allows it, and a deny always wins.' },
+];
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>SuperMgmt</title>
+		<meta name="description" content={description} />
+		<link rel="icon" href={`${BASE}favicon.svg`} type="image/svg+xml" />
+		<script is:inline>
+			(function () {
+				var stored = '';
+				try {
+					stored = localStorage.getItem('starlight-theme') || '';
+				} catch (error) {}
+				var light = stored === 'light' || (stored !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches);
+				document.documentElement.dataset.theme = light ? 'light' : 'dark';
+			})();
+		</script>
+	</head>
+	<body>
+		<a class="skip" href="#main">Skip to content</a>
+		<header>
+			<div class="wrap bar">
+				<a class="wordmark" href={BASE} translate="no">SuperMgmt</a>
+				<nav aria-label="Main">
+					<a href={routeFor('overview')}>Docs</a>
+					<a href={routeFor('project-status')}>Status</a>
+					<a href={repoUrl}>GitHub</a>
+				</nav>
+			</div>
+		</header>
+		<main id="main" class="wrap">
+			<Hero />
+			<div class="block"><HowItWorks planHash={planHash} /></div>
+			<section class="block" aria-labelledby="terminal-title">
+				<h2 id="terminal-title">The terminal UI</h2>
+				<div class="frames">
+					<TuiFrame
+						file="dashboard_120x30.golden"
+						title="Dashboard"
+						text="The dashboard: which machines need attention, what waits for approval, what is running."
+					/>
+					<TuiFrame
+						file="approvals_120x30.golden"
+						title="Approvals"
+						text="An approval screen: the exact plan, its hash and the decision, in one place."
+					/>
+				</div>
+			</section>
+			<section class="block" aria-labelledby="trust-title">
+				<h2 id="trust-title">Trust model</h2>
+				<ul class="trust">
+					{
+						trust.map((item) => (
+							<li>
+								<h3>{item.title}</h3>
+								<p>{item.text}</p>
+							</li>
+						))
+					}
+				</ul>
+				<p class="more"><a href={`${routeFor('security')}#trust-boundaries-in-one-page`}>The trust boundaries in one page</a></p>
+			</section>
+			<div class="block"><Claims /></div>
+			<div class="block"><Install /></div>
+		</main>
+		<footer>
+			<div class="wrap foot">
+				<p>SuperMgmt is pre-alpha. Site version: <code>{version}</code></p>
+				<ul>
+					<li><a href={repoUrl}>GitHub</a></li>
+					<li><a href={`${REPO_BLOB_URL}LICENSE`}>Apache-2.0</a></li>
+					<li><a href={routeFor('project-status')}>Status</a></li>
+				</ul>
+				<p>Set in Instrument Serif, Geist and Geist Mono (SIL OFL 1.1).</p>
+			</div>
+		</footer>
+	</body>
+</html>
+
+<style is:global>
+	html {
+		color-scheme: dark;
+		background: var(--sm-bg);
+	}
+	html[data-theme='light'] {
+		color-scheme: light;
+	}
+	body {
+		margin: 0;
+		background: var(--sm-bg);
+		color: var(--sm-text);
+		font-family: var(--sm-font-body);
+		font-size: var(--sl-text-base);
+		line-height: var(--sl-line-height);
+		-webkit-text-size-adjust: 100%;
+	}
+	body a {
+		color: var(--sm-accent);
+	}
+	body a:hover {
+		color: var(--sm-accent-hover);
+	}
+	body :is(h1, h2, h3) {
+		overflow-wrap: break-word;
+	}
+	.wrap {
+		box-sizing: border-box;
+		max-width: 72rem;
+		margin-inline: auto;
+		padding-inline: var(--sm-space-5);
+	}
+	.skip {
+		position: absolute;
+		left: var(--sm-space-4);
+		top: -4rem;
+		z-index: 1;
+		padding: var(--sm-space-3) var(--sm-space-4);
+		background: var(--sm-bg);
+		border: 1px solid var(--sm-border);
+	}
+	.skip:focus {
+		top: var(--sm-space-4);
+	}
+	header {
+		border-bottom: 1px solid var(--sm-border);
+	}
+	.bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--sm-space-4);
+		min-height: 3.5rem;
+	}
+	.wordmark {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+		font-family: var(--sm-font-heading);
+		font-size: var(--sl-text-2xl);
+		line-height: 1;
+		letter-spacing: -0.01em;
+		text-decoration: none;
+		color: var(--sm-text-strong) !important;
+	}
+	.wordmark:hover {
+		color: var(--sm-accent) !important;
+	}
+	header nav {
+		display: flex;
+		gap: var(--sm-space-4);
+	}
+	header nav a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+		color: var(--sm-text) !important;
+		text-decoration: none;
+	}
+	header nav a:hover {
+		color: var(--sm-accent) !important;
+	}
+	.block {
+		padding-block: var(--sm-space-9);
+		border-top: 1px solid var(--sm-border);
+	}
+	.block h2 {
+		margin: 0 0 var(--sm-space-6);
+		font-size: var(--sl-text-4xl);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sm-text-strong);
+	}
+	.frames {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--sm-space-8);
+	}
+	.trust {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+		gap: var(--sm-space-5);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.trust li {
+		padding: var(--sm-space-5);
+		border: 1px solid var(--sm-border);
+		background: var(--sm-surface);
+	}
+	.trust h3 {
+		margin: 0 0 var(--sm-space-2);
+		font-size: var(--sl-text-3xl);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sm-text-strong);
+	}
+	.trust p {
+		margin: 0;
+		line-height: 1.5;
+	}
+	.more {
+		margin: var(--sm-space-5) 0 0;
+	}
+	.more a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+	footer {
+		border-top: 1px solid var(--sm-border);
+		padding-block: var(--sm-space-7);
+		font-size: var(--sl-text-sm);
+		color: var(--sm-text-muted);
+	}
+	.foot {
+		display: grid;
+		gap: var(--sm-space-2);
+	}
+	.foot p {
+		margin: 0;
+	}
+	.foot code {
+		font-family: var(--sm-font-mono);
+	}
+	.foot ul {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sm-space-5);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.foot a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sm-tap-target);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		html {
+			scroll-behavior: auto;
+		}
+	}
+</style>
