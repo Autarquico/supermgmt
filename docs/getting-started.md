@@ -45,10 +45,23 @@ You do not need a configuration file to continue. Without one, SuperMgmt runs in
 
 ```bash
 sm nodes add --local
-sm nodes list
 ```
 
-The first command that needs the daemon starts it in the background; it exits on its own after a while with nothing to do. `sm nodes add --local` asks for consent (pass `--yes` to skip the prompt) and registers your laptop as a read-only node: SuperMgmt reads what runs there and never changes anything on it. A Mac has no systemd, so it shows no units.
+The first command that needs the daemon starts it in the background; it exits on its own after a while with nothing to do. `sm nodes add --local` asks for consent (pass `--yes` to skip the prompt). Adding a node changes what SuperMgmt manages, so the default policy turns it into a job that waits for your approval:
+
+```text
+job 01a13ad5-… (control_plane.apply) is awaiting_approval; approval required (quorum 1)
+```
+
+Look at the plan and approve it with its hash. The hash binds your approval to that exact plan:
+
+```bash
+sm approvals                                   # the pending job and its plan hash
+sm jobs approve <job-id> --plan-hash <hash>
+sm nodes list                                  # your laptop, as the node "local"
+```
+
+Your laptop is now a read-only node: SuperMgmt reads what runs there and never changes anything on it. A Mac has no systemd, so the local node has no services view (`sm services list local` says the node does not offer that capability).
 
 Now open the terminal UI:
 
@@ -60,7 +73,7 @@ Running `sm` with no arguments in a terminal opens the TUI. Press `?` for help, 
 
 ## 4. Add a machine over SSH
 
-Replace the address and account with yours:
+SuperMgmt installs nothing on the machine: it logs in with the system's own `sshd`. If `ssh <your-account>@<address>` already works with your key, the machine is ready. Replace the address and account with yours:
 
 ```bash
 sm nodes add --name web1 --host 203.0.113.10 --admin-user root
@@ -72,6 +85,8 @@ sm nodes add --name web1 --host 203.0.113.10 --admin-user root
 - Or pass `--fingerprint SHA256:...` if you checked it beforehand.
 
 From then on, that key is the only one SuperMgmt accepts from `web1`. A different key later fails the connection.
+
+As with the local node, the addition waits for your approval: `sm approvals`, then `sm jobs approve <job-id> --plan-hash <hash>`.
 
 Look at what it found:
 
