@@ -68,7 +68,7 @@ See [If something goes wrong](getting-started.md#if-something-goes-wrong) in Get
 
 Download, checksum or signature failure; it always fails closed. The causes, most likely first:
 
-- **The script on `main` holds a placeholder instead of the release key.** Every verification fails until a signed release exists ([installation.md](installation.md)). Build from source meanwhile.
+- **No signed release exists yet.** The script on `main` embeds the release key, but there is nothing to download until the first release is published ([installation.md](installation.md)). Build from source meanwhile.
 - **The channel pointer expired** ("channel file has expired"). The weekly `channels` workflow did not run; the owner reruns it ([releasing.md](releasing.md#versions-and-channels)). `SUPERMGMT_VERSION=vX.Y.Z` pins a version and skips the pointer, with integrity but no freshness check.
 - **A mirror served something else.** With `SUPERMGMT_RELEASE_BASE_URL` set, check the mirror holds the files of that release unmodified.
 

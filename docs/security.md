@@ -268,7 +268,7 @@ Releases are built from `v*` tags in a protected environment, with OpenSSH signa
 
 `install.sh` verifies the verifier first, checks signed channel freshness (30-day maximum validity), a version-and-channel-bound checksum list and the archive hash, and only then runs `sm`. A revocation list is embedded. See [installation.md](installation.md).
 
-The embedded production key is a placeholder until the owner creates the key: **production signing and provenance are unverified**, and every real install fails closed until then.
+The production public key is embedded in `install.sh` and `scripts/join.sh`, and its fingerprint is published in [SECURITY.md](../SECURITY.md). No release has been signed with it yet: **production signing and provenance are unverified** until the first release run.
 
 ## Proxmox and the appliance installer
 
@@ -378,7 +378,7 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Real terminal emulators are not automated; restoring the terminal after an interactive session is covered by a pseudo-terminal test and the [interactive-session manual checklist](manual-checks/m1-handoff.md).
 - Node setup is verified in CI on Debian only. Other distributions are an assumption.
 - The `curl | bash` installer path trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that. The installer requires OpenSSH 8.2 or newer (`valid-after` in `allowed_signers`).
-- No release exists and the production signing key has not been generated; the placeholder trust root makes real installs fail closed.
+- No release exists yet: the production key is embedded but has not signed anything, so `install.sh` has nothing to download.
 - Deployments need a root-equivalent `docker` group; a Compose file that passes the allowlist can still run any image whose digest was bound.
 - Production Compose content comes only from the control plane; a repository Compose source is refused there. No exception mechanism exists.
 - Actions OIDC tokens are not required to carry an `environment` claim.
