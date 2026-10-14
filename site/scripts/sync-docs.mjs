@@ -6,11 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 export const SITE = 'https://autarquico.github.io';
 export const BASE = '/supermgmt/';
-export const REPO_BLOB_URL = 'https://github.com/autarquico/supermgmt/blob/main/';
-export const REPO_TREE_URL = 'https://github.com/autarquico/supermgmt/tree/main/';
+export const REPO_URL = 'https://github.com/autarquico/supermgmt';
+// Links to non-public files point at the tag the site is built from, or main for untagged builds.
+const REPO_REF = process.env.SITE_VERSION?.trim() || 'main';
+export const REPO_BLOB_URL = `${REPO_URL}/blob/${REPO_REF}/`;
+export const REPO_TREE_URL = `${REPO_URL}/tree/${REPO_REF}/`;
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, '..', '..');
+export const repoRoot =path.resolve(scriptDir, '..', '..');
 const outputDir = path.join(repoRoot, 'site', 'src', 'content', 'docs');
 const MANIFEST_PATH = 'docs/public-pages.txt';
 
