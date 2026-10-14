@@ -198,7 +198,7 @@ func newNodesAddCmd(env []string) *cobra.Command {
 		},
 	}
 	r := &f.request
-	cmd.Flags().BoolVar(&f.local, "local", false, "register this machine (read-only in M1)")
+	cmd.Flags().BoolVar(&f.local, "local", false, "register this machine (read-only)")
 	cmd.Flags().BoolVar(&f.assumeYes, "yes", false, "with --local: consent without prompting")
 	cmd.Flags().StringVar(&f.fingerprint, "fingerprint", "", "expected host key fingerprint (SHA256:...)")
 	cmd.Flags().StringVar(&r.Name, "name", "", "node name")

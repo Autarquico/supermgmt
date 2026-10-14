@@ -32,7 +32,7 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 Issue a one-time code for the first administrator and print it
 
-Issues a new one-time bootstrap code (spec §11.5) and prints only the code on stdout. Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold.
+Issues a new one-time bootstrap code and prints only the code on stdout. Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold.
 
 ```text
 sm admin bootstrap-code
@@ -392,7 +392,7 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 Issue a join token (the value is shown once)
 
-Issue a join token for `sm join` (spec §13). It lives at most 24 hours and can be limited to a number of
+Issue a join token for `sm join`. It lives at most 24 hours and can be limited to a number of
 nodes, to tags the enrolled nodes receive and to source networks. The token is printed once, alone, on
 stdout; the command to run on the node goes to stderr and never contains it.
 
@@ -844,7 +844,7 @@ Flags:
 - `--environment` (string): environment name
 - `--fingerprint` (string): expected host key fingerprint (SHA256:...)
 - `--host` (string): host name or address
-- `--local` (bool): register this machine (read-only in M1)
+- `--local` (bool): register this machine (read-only)
 - `--name` (string): node name
 - `--port` (int, default `22`): SSH port
 - `--tag` (stringSlice): tag (repeatable)
