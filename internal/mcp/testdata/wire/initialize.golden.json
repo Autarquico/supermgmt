@@ -1,0 +1,65 @@
+{
+  "_comment": "Hand-written from the MCP specification (lifecycle, initialize), not recorded from the SDK. Response matching: every key written here must be present and equal; arrays must have equal length; \"$string\" matches any non-empty string.",
+  "cases": [
+    {
+      "name": "initialize 2025-11-25 is answered with the same version",
+      "headers": {},
+      "request": {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {},
+          "clientInfo": {"name": "raw-wire-client", "version": "1"}
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 1,
+        "result": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {"tools": {"listChanged": true}},
+          "serverInfo": {"name": "supermgmt", "version": "$string"}
+        }
+      }
+    },
+    {
+      "name": "initialize 2025-06-18 is answered with the same version",
+      "headers": {},
+      "request": {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-06-18",
+          "capabilities": {},
+          "clientInfo": {"name": "raw-wire-client", "version": "1"}
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 1,
+        "result": {
+          "protocolVersion": "2025-06-18",
+          "capabilities": {"tools": {"listChanged": true}},
+          "serverInfo": {"name": "supermgmt", "version": "$string"}
+        }
+      }
+    },
+    {
+      "name": "initialize 2026-07-28 is answered with the newest version that has a handshake",
+      "headers": {},
+      "request": {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+          "protocolVersion": "2026-07-28",
+          "capabilities": {},
+          "clientInfo": {"name": "raw-wire-client", "version": "1"}
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 1,
+        "result": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {"tools": {"listChanged": true}},
+          "serverInfo": {"name": "supermgmt", "version": "$string"}
+        }
+      }
+    }
+  ]
+}

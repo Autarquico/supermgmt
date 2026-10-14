@@ -2,7 +2,7 @@
 
 SuperMgmt reads one YAML file. The schema is defined in SPEC §8 (`docs/spec/SUPERMGMT-SPEC.md`) and implemented in `internal/config`. A complete example is [`examples/config.yaml`](../examples/config.yaml); a policy example is [`examples/policies.yaml`](../examples/policies.yaml).
 
-> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox providers (M3) and GitHub providers and `github.*` (M4) are read by the daemon; MCP: M5.
+> **Status:** pre-alpha. The loader and validator back `sm config validate` and `sm doctor --offline`; the local daemon (M1) and `sm server` (M2) read the file at start. Accepting a key does not mean its feature is implemented: [Which keys are read](#which-keys-are-read) lists what is wired. Proxmox providers (M3) and GitHub providers and `github.*` (M4) and `mcp.*` (M5) are read by the daemon.
 
 ## File location
 
@@ -43,11 +43,15 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 
 Reading was checked by searching the code for each key; a key not listed has no reader outside the config package.
 
+### MCP (M5), read by the daemon and `sm mcp`
+
+- `mcp.enabled`, `mcp.write_tools_enabled` and, for `sm server` with remote MCP, `mcp.remote_enabled` and `mcp.oauth.*`; see [MCP](#mcp). `sm mcp` reads `mcp.enabled` and `mcp.write_tools_enabled` (`internal/cli/mcp_bridge.go`); the daemon reads all of them (`internal/daemon/assemble.go`, `internal/daemon/mcp_remote.go`).
+- `mcp.allow_interactive_exec` is validated but refused when `true`.
+
 ### Validated but not read
 
 - `ssh.host_key_policy` (must be `strict`) and `ssh.logs_mode`: the log mode of a node comes from the `logs_mode` parameter of its `node.setup` plan.
-- `ui.theme`, `server.public_url` (only the installer and the default of `github.oidc_audience` use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
-- `mcp.*`
+- `ui.theme`, `server.public_url` (the installer, the default of `github.oidc_audience` and, with `mcp.remote_enabled`, the MCP resource identity and the `Origin` check use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
 
 ## How a value is resolved
 
@@ -61,7 +65,7 @@ In order, later steps win:
 
 ## Strict validation
 
-Unknown fields fail validation, so a typo is an error rather than a silently ignored setting. Validation reports every problem at once, each located by its YAML path, and `sm config validate` exits with code 2 on invalid input (it reports the problems first). Decoding rejects duplicate keys, YAML aliases, anchors and merge keys as well as unknown fields. Examples of what is checked: `version` must be 1; `instance.mode` is `local` or `server`; in server mode, `server.tls.mode: direct` needs a certificate and key, and `server.tls.mode: proxy` needs non-empty `server.trusted_proxies` and a loopback or Unix-socket listener; durations and the worker and connection counts must be positive; `ssh.host_key_policy` must be `strict`; `jobs.reconcile_grace` must be at least `ssh.connect_timeout` + `ssh.command_timeout` + 5s; `mcp.remote_enabled` needs complete `mcp.oauth` settings; environments and providers must be well formed.
+Unknown fields fail validation, so a typo is an error rather than a silently ignored setting. Validation reports every problem at once, each located by its YAML path, and `sm config validate` exits with code 2 on invalid input (it reports the problems first). Decoding rejects duplicate keys, YAML aliases, anchors and merge keys as well as unknown fields. Examples of what is checked: `version` must be 1; `instance.mode` is `local` or `server`; in server mode, `server.tls.mode: direct` needs a certificate and key, and `server.tls.mode: proxy` needs non-empty `server.trusted_proxies` and a loopback or Unix-socket listener; durations and the worker and connection counts must be positive; `ssh.host_key_policy` must be `strict`; `jobs.reconcile_grace` must be at least `ssh.connect_timeout` + `ssh.command_timeout` + 5s; `mcp.remote_enabled` needs server mode, complete `mcp.oauth` settings and the resource rules in [MCP](#mcp); `mcp.allow_interactive_exec: true` is refused; environments and providers must be well formed.
 
 Secrets are never written inline. Credential references are URIs from a closed set; any other scheme fails validation:
 
@@ -146,6 +150,8 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_MCP_OAUTH_RESOURCE` | `mcp.oauth.resource` | string |
 | `SUPERMGMT_MCP_OAUTH_JWKS_URL` | `mcp.oauth.jwks_url` | string |
 | `SUPERMGMT_MCP_OAUTH_INTROSPECTION_URL` | `mcp.oauth.introspection_url` | string |
+| `SUPERMGMT_MCP_OAUTH_INTROSPECTION_CLIENT_ID` | `mcp.oauth.introspection_client_id` | string |
+| `SUPERMGMT_MCP_OAUTH_INTROSPECTION_CLIENT_SECRET_REF` | `mcp.oauth.introspection_client_secret_ref` | string |
 | `SUPERMGMT_MCP_OAUTH_REQUIRED_SCOPES` | `mcp.oauth.required_scopes` | list (comma-separated) |
 | `SUPERMGMT_MCP_ALLOW_INTERACTIVE_EXEC` | `mcp.allow_interactive_exec` | bool |
 | `SUPERMGMT_MCP_WRITE_TOOLS_ENABLED` | `mcp.write_tools_enabled` | bool |
@@ -275,6 +281,44 @@ environments:
 - The webhook is `POST /api/v1/github/webhook`, HTTPS listener only, authenticated by HMAC-SHA256 over the body with the secret behind `webhook_secret_ref`. Local mode has no webhook and only polls.
 - `require_provenance` and `allow_automatic_rollback` are read from the file at start like the other environment keys. A `GitHub` provider can also be registered by `POST /api/v1/providers` with `type: github`; the request is gated by `provider.write` and may park for approval (`TestPostProvidersAcceptsAGitHubProvider`).
 - `github.ci_poll_*` and `ci_timeout` are read by the CI watcher (`internal/daemon/assemble.go`); the generated table above lists their environment variables.
+
+## MCP
+
+Operator guide: [mcp.md](mcp.md). Decisions: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mcp.enabled` | `true` | Master switch. `false` makes the daemon refuse every MCP token and `sm mcp` refuse to start, and `/mcp` is not mounted. |
+| `mcp.write_tools_enabled` | `false` | Registers the five write tools **and** lets the application layer consider writes by MCP identities at all. With `false`, every non-query action by an MCP identity is denied `MCP_WRITES_DISABLED`, whatever the policy says. |
+| `mcp.allow_interactive_exec` | `false` | `true` fails validation ("not supported in this version"); no MCP tool runs commands. |
+| `mcp.remote_enabled` | `false` | Serves `/mcp` and the protected-resource metadata on the HTTPS listener. Requires `instance.mode: server`. |
+| `mcp.oauth.issuer` | empty | Authorization server issuer; `https`. Becomes `authorization_servers` in the metadata and must equal the token `iss` exactly. |
+| `mcp.oauth.resource` | empty | Must be exactly `<server.public_url origin>/mcp`. Must equal the token `aud` entry exactly. |
+| `mcp.oauth.jwks_url` | empty | `https` JWKS of the issuer, for JWT access tokens of type `at+jwt`. |
+| `mcp.oauth.introspection_url` | empty | `https` RFC 7662 endpoint. Needs the two keys below. |
+| `mcp.oauth.introspection_client_id` | empty | How SuperMgmt authenticates to the introspection endpoint. |
+| `mcp.oauth.introspection_client_secret_ref` | empty | A `secret://` reference only (an inline value fails validation). |
+| `mcp.oauth.required_scopes` | `["supermgmt:mcp"]` | Every entry must be in the token; also advertised in the metadata and the `401` challenge. Do not list `offline_access`. |
+
+With `mcp.remote_enabled: true` validation requires: `instance.mode: server`; `issuer` and `resource` set; at least one of `jwks_url` and `introspection_url`; `required_scopes` non-empty; `https` for the issuer and each endpoint; `server.public_url` an `https` URL with no path (other than `/`), query, fragment or userinfo; and `resource` equal to that origin plus `/mcp` (a different origin, a different path, a trailing slash, a fragment or query, an `http` scheme, a path-prefixed public URL and userinfo are each rejected: `internal/config/mcp_validate_test.go`). The daemon additionally refuses to start remote MCP when the introspection secret cannot be read or the OAuth section cannot be served (`TestRemoteMCPRefusesToStartOnAnOAuthSectionItCannotServe`).
+
+The JWKS and introspection endpoints are called through the outbound filter as provider endpoints: `https` only, no redirects, loopback, link-local and metadata ranges always refused, private non-loopback hosts allowed ([mcp.md](mcp.md#network-rules-for-the-authorization-server)).
+
+```yaml
+server:
+  public_url: https://supermgmt.example.com
+mcp:
+  enabled: true
+  write_tools_enabled: false
+  remote_enabled: true
+  oauth:
+    issuer: https://auth.example.com/realms/ops
+    resource: https://supermgmt.example.com/mcp
+    jwks_url: https://auth.example.com/realms/ops/protocol/openid-connect/certs
+    required_scopes: ["supermgmt:mcp"]
+```
+
+The URLs are placeholders in the shape of a Keycloak realm; this configuration passes `sm config validate`; it was not tried against a running Keycloak or any real authorization server.
 
 ## Policy
 

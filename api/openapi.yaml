@@ -56,6 +56,8 @@ tags:
     description: Join tokens and node enrollment.
   - name: apps
     description: Applications and their environment targets.
+  - name: mcp
+    description: MCP clients and their tokens.
   - name: deployments
     description: Deployments, rollbacks and the GitHub webhook.
 paths:
@@ -1249,6 +1251,91 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Deployment'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/mcp/clients:
+    get:
+      operationId: listMCPClients
+      summary: The registered MCP clients.
+      description: Never returns tokens or token hashes.
+      tags: [mcp]
+      x-supermgmt-route: action:identity.read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of MCP clients.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfMCPClient'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: registerMCPClient
+      summary: Register an MCP client.
+      description: Creates the client's identity with no role bindings. A local client then collects its token with the token route.
+      tags: [mcp]
+      x-supermgmt-route: action:mcp_client.register
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisterMCPClientRequest'}
+      responses:
+        '200':
+          description: Registered at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfMCPClient'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfMCPClient'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/mcp/clients/{id}:
+    delete:
+      operationId: deleteMCPClient
+      summary: Delete an MCP client.
+      description: Revokes its token and OAuth access tokens, disables its identity and removes its role bindings. The row is kept.
+      tags: [mcp]
+      x-supermgmt-route: action:mcp_client.delete
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Deleted at once.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfMCPClient'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfMCPClient'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/mcp/clients/{id}/token:
+    post:
+      operationId: issueMCPClientToken
+      summary: Issue a local MCP client's token (value shown once).
+      description: Allowed once, only to the registrant, only while the client is pending_token and within 24 hours of approval. Rejects a request carrying `Idempotency-Key`.
+      tags: [mcp]
+      x-supermgmt-route: action:mcp_client.issue_token
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IssueMCPTokenRequest'}
+      responses:
+        '201':
+          description: The client and its token.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/MCPTokenIssued'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/github/webhook:
     post:
       operationId: receiveGitHubWebhook
@@ -2356,4 +2443,52 @@ components:
       required: [applied, pending]
       properties:
         applied: {oneOf: [{$ref: '#/components/schemas/AppTarget'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
+    MCPClient:
+      type: object
+      required: [id, identity_id, name, origin, state, requested_by, approved_at, token_issued_at, token_expires_at, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        identity_id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        origin: {type: string, enum: [local, remote]}
+        state: {type: string, enum: [pending_token, active, deleted]}
+        subject: {type: string, description: OAuth subject of a remote client.}
+        client_id: {type: string, description: OAuth client_id of a remote client.}
+        requested_by: {$ref: '#/components/schemas/ID'}
+        approved_at: {$ref: '#/components/schemas/Timestamp'}
+        token_issued_at: {type: [string, 'null'], format: date-time}
+        token_expires_at: {type: [string, 'null'], format: date-time}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    RegisterMCPClientRequest:
+      type: object
+      required: [name, origin]
+      properties:
+        name: {type: string}
+        origin: {type: string, enum: [local, remote]}
+        subject: {type: string, description: Required for a remote client.}
+        client_id: {type: string, description: Required for a remote client.}
+    IssueMCPTokenRequest:
+      type: object
+      required: [expires_at]
+      properties:
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+    MCPTokenIssued:
+      type: object
+      required: [client, token]
+      properties:
+        client: {$ref: '#/components/schemas/MCPClient'}
+        token: {type: string, description: The token value; shown once.}
+    PageOfMCPClient:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MCPClient'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    DirectOfMCPClient:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/MCPClient'}, {type: 'null'}]}
         pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}

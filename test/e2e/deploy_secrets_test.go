@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
-	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/test/e2e/harness"
 )
 
@@ -84,7 +83,7 @@ func (w *m4World) secretsAPIEvidence(app wire.App) []byte {
 	record("apps", apps, err)
 	one, err := w.api.GetApp(ctx, app.ID)
 	record("app", one, err)
-	deps, err := w.api.ListDeployments(ctx, client.DeploymentQuery{PageQuery: page})
+	deps, err := w.api.ListDeployments(ctx, wire.DeploymentQuery{PageQuery: page})
 	record("deployments", deps, err)
 	for _, d := range deps.Items {
 		full, err := w.api.GetDeployment(ctx, d.ID)

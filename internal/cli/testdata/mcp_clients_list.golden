@@ -1,0 +1,4 @@
+ID                                    NAME        ORIGIN  STATE          TOKEN EXPIRES
+0192a000-0000-7000-8000-00000000c001  desk        local   active         2026-12-30T12:00:00Z
+0192a000-0000-7000-8000-00000000c003  laptop      local   pending_token  -
+0192a000-0000-7000-8000-00000000c002  claude-web  remote  active         -

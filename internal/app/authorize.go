@@ -25,16 +25,31 @@ func (c core) authorize(req policy.Request) policy.Result {
 		}
 		return policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonDefaultDeny}
 	}
+	if res, gated := c.mcpGate(req.Actor, actionsOf(req)...); gated {
+		return res
+	}
 	return c.cfg.Policy.Evaluate(req)
 }
 
 // authorizeGovernance evaluates a governance action on the plan's target and
 // sub-actions. The system actor can never approve, reject or resolve (spec §11.4).
 func (c core) authorizeGovernance(actor domain.Actor, action string, b built) policy.Result {
+	return c.authorizeGovernanceOn(actor, action, []policy.Target{b.target}, b.subs)
+}
+
+// authorizeGovernanceOn is authorizeGovernance for targets no plan built.
+func (c core) authorizeGovernanceOn(actor domain.Actor, action string, targets []policy.Target, subs []policy.SubAction) policy.Result {
 	if actor.Type == domain.ActorSystem {
 		return policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonDefaultDeny}
 	}
-	return c.cfg.Policy.EvaluateGovernance(actor, action, []policy.Target{b.target}, b.subs)
+	// An approval decision by an mcp actor is refused by policy's own floor
+	// (DEFAULT_DENY) whether or not writes are enabled.
+	if action != policy.ActionApprovalGrant && action != policy.ActionApprovalReject {
+		if res, gated := c.mcpGate(actor, action); gated {
+			return res
+		}
+	}
+	return c.cfg.Policy.EvaluateGovernance(actor, action, targets, subs)
 }
 
 // decisionError turns a non-allow result into its typed error; nil when allowed.

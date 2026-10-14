@@ -36,3 +36,6 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0028](0028-github-connector.md) | GitHub connector | Proposed | M4 |
 | [0029](0029-deployment-engine.md) | Deployment engine | Proposed | M4 |
 | [0030](0030-node-setup-v2.md) | `node.setup` v2: `deploy_root` and `docker.compose.deploy` (extends 0009) | Proposed | M4 |
+| [0031](0031-mcp-server-sdk-transports-tools.md) | MCP server: SDK, transports and tool contract | Proposed | M5 |
+| [0032](0032-mcp-clients-tokens-identity.md) | MCP clients, tokens and the MCP identity | Proposed | M5 |
+| [0033](0033-remote-mcp-oauth-protected-resource.md) | Remote MCP as an OAuth 2.0 protected resource | Proposed | M5 |

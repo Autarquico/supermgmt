@@ -12,13 +12,12 @@ import (
 	"github.com/autarquico/supermgmt/internal/tui"
 )
 
-// appsClient serves the TUI's optional Applications and Deployments screens:
-// the client lists deployments with a client.DeploymentQuery, which tui cannot
-// name because client imports tui.
+// appsClient serves the TUI's optional Applications and Deployments screens,
+// which page through every deployment without the client's filters.
 type appsClient struct{ *client.Client }
 
 func (a appsClient) ListDeployments(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Deployment], error) {
-	return a.Client.ListDeployments(ctx, client.DeploymentQuery{PageQuery: q})
+	return a.Client.ListDeployments(ctx, wire.DeploymentQuery{PageQuery: q})
 }
 
 var (

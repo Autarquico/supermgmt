@@ -2,7 +2,7 @@
 
 > **Purpose:** this document is the single source of truth for implementing SuperMgmt from an empty repository to a releasable open-source product. It is intentionally prescriptive so an implementation agent can build the project without inventing product behavior, architecture, file formats, security rules, or UX along the way.
 >
-> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.6-draft (changes in Appendix F)
+> **Working name:** SuperMgmt · **CLI:** `sm` · **Status:** implementation specification · **Spec version:** 1.4.7-draft (changes in Appendix F)
 
 ---
 
@@ -373,8 +373,8 @@ sm daemon [stop|install-user-unit]   run local daemon (Unix socket); normally au
 sm server                  run daemon in server mode (TCP/HTTPS)
 sm install <mode>          installer logic invoked by install.sh (§3.4)
 sm admin bootstrap-code|grant|restore-complete   server admin socket only (§11.5, §29.2)
-sm mcp                     stdio MCP bridge (§24)
-sm mcp clients list|add|remove
+sm mcp [--token-file F|--keychain NAME]   stdio MCP bridge (§24); exit 2 without a valid MCP client token
+sm mcp clients list|add|remove   add: --token-file F | --keychain NAME, --expires (default 90d) (§24)
 sm ssh-key show            server-mode public key (§8.4)
 sm secrets import|rotate-master-key|retire-key|export-key|import-key
 sm jobs [list|get|approve|reject|resolve]
@@ -750,14 +750,16 @@ github:
 
 mcp:
   enabled: true
-  remote_enabled: false
+  remote_enabled: false            # server mode only (§24)
   oauth:                           # required when remote_enabled (§24)
     issuer: ""
-    resource: ""                   # canonical MCP resource URL; token audience
+    resource: ""                   # exactly <server.public_url origin>/mcp; token audience
     jwks_url: ""                   # or introspection_url
     introspection_url: ""
+    introspection_client_id: ""    # required with introspection_url (RFC 7662 client auth)
+    introspection_client_secret_ref: ""  # secret://...; required with introspection_url
     required_scopes: ["supermgmt:mcp"]
-  allow_interactive_exec: false
+  allow_interactive_exec: false    # true is refused in V1 (no MCP tool runs commands)
   write_tools_enabled: false
 
 providers: []
@@ -912,6 +914,8 @@ secrets(id, name, version, envelope_version, kek_id, wrapped_dek, ciphertext, me
 join_tokens(id, token_hash, expires_at, consumed_at, created_by, constraints_json)
 webhook_deliveries(id, provider, delivery_id, received_at, signature_valid, event_type, processed_at, result)
 settings(key PRIMARY KEY, value_json, updated_at)
+mcp_clients(id, identity_id, name, origin, state, requested_by, registration_job_id, approved_at, token_hash, token_issued_at, token_expires_at, revoked_at, last_used_at, created_at, updated_at, deleted_at)
+oauth_access_tokens(id, mcp_client_id, token_hash, issuer, jti, issued_at, expires_at, revoked_at, first_seen_at, last_used_at)
 ```
 
 Constraints that carry semantics (not just performance):
@@ -933,12 +937,18 @@ app_targets         UNIQUE(node_id, compose_project); UNIQUE(app_id, environment
 repositories        UNIQUE(provider_id, github_repository_id)
 execution_snapshots PRIMARY KEY(hash); rows immutable (ADR-0007)
 github_oidc_credentials PRIMARY KEY(id) = sha256(issuer|jti); never holds the token (ADR-0028)
+mcp_clients         at most one live (state <> 'deleted') row per identity_id and per name; deleted rows
+                    are history; token_hash local only, set once; state moves only pending_token -> active
+                    and any -> deleted; identity_id must be an mcp identity (ADR-0032)
+oauth_access_tokens UNIQUE(token_hash) = sha256(token); a row never changes mcp_client_id and never
+                    un-revokes; expired rows are swept unless a non-terminal job or a provisional
+                    deployment references them (ADR-0033)
 deployments         recovery_target_deployment_id set iff recovery_mode = safety_recovery (ADR-0029)
 providers           UNIQUE(name)
 nodes               UNIQUE(provider_id, native_id)
 ```
 
-Enumerations (CHECK constraints): `identities.actor_type ∈ {human, automation, mcp, system}`; `artifacts.provenance_method ∈ {attestation, oidc_claims}`; `deployments.kind ∈ {deploy, rollback}`; `deployments.state` ∈ the §20.1 states; `deployments.recovery_mode ∈ {forward, safety_recovery}` or null; `execution_snapshots.kind ∈ {compose_model, health, deployment_policy, exceptions, manifest}`; `health_checks.type ∈ {http, https, tcp, docker-health}` and `scope ∈ {node, control_plane}` for app targets in V1; `operation_intents.state ∈ {recorded, completed}`; `resource_locks.mode ∈ {exclusive, shared}`; `nodes.management_state ∈ {discovered, managed, retired}`; `nodes.reachability ∈ {reachable, unreachable, unknown}`.
+Enumerations (CHECK constraints): `identities.actor_type ∈ {human, automation, mcp, system}`; `mcp_clients.origin ∈ {local, remote}`; `mcp_clients.state ∈ {pending_token, active, deleted}`; `artifacts.provenance_method ∈ {attestation, oidc_claims}`; `deployments.kind ∈ {deploy, rollback}`; `deployments.state` ∈ the §20.1 states; `deployments.recovery_mode ∈ {forward, safety_recovery}` or null; `execution_snapshots.kind ∈ {compose_model, health, deployment_policy, exceptions, manifest}`; `health_checks.type ∈ {http, https, tcp, docker-health}` and `scope ∈ {node, control_plane}` for app targets in V1; `operation_intents.state ∈ {recorded, completed}`; `resource_locks.mode ∈ {exclusive, shared}`; `nodes.management_state ∈ {discovered, managed, retired}`; `nodes.reachability ∈ {reachable, unreachable, unknown}`.
 
 Indexes MUST additionally cover node/service lookup, event timeline, job queue (`state, scheduled_at`), deployments by app/environment, and token/session hash lookup.
 
@@ -1035,6 +1045,8 @@ system      the daemon itself. Allowed operations, fixed in code: observation wr
 ```
 
 On the local socket, a request carrying an MCP client token is `mcp`; a request carrying no token is `human`. This separation guards against a misbehaving model using the bridge. It does not guard against arbitrary code running as the same OS user (§2.1.1 trust boundary).
+
+**MCP clients (1.4.7; ADR-0032).** A local client's identity is `issuer = supermgmt:mcp-local`, `subject = <mcp_clients.id>`, `client_id = ''`; a remote client's is its OAuth `(issuer, subject, client_id)`, with `issuer = mcp.oauth.issuer`. Both are created with no role binding. A local client token (`smm_…`, kind `m`) is issued once, expires (mandatory, at most 365 days; default 90 days in the CLI), is accepted only on the local socket and is refused while `mcp.enabled` is false; its `credential_id` is the client id. An OAuth access token's `credential_id` is the id of its `oauth_access_tokens` row (keyed by the token's SHA-256). Deleting a client revokes its token and every OAuth token row, disables its identity and removes its role bindings. Re-registering a deleted remote triple reuses the identity (still with no role) under a new client row; old credentials stay refused, including OAuth tokens whose `iat` precedes the new client's creation by more than 60 s.
 
 **Credential context.** Every authenticated request also carries the credential it used: `credential_kind ∈ {local_socket, session, api_token, mcp_token, oauth_access_token, github_oidc}`, `credential_id`, the token `scopes`, and the credential expiry. Plans and jobs persist this context (§9). It is re-checked at claim (§20.4):
 - a revoked credential fails the job (`CREDENTIAL_REVOKED`);
@@ -1151,6 +1163,7 @@ Notes on the catalog:
 - `**` **Credential-issuing** direct actions (`mcp_client.issue_token`, `token.create`, `enrollment.create`) return a secret exactly once and are **never approval-gated**. Two design rules make this consistent with §11.3 step 8:
   - Their risk is `operational` and their resources (identities, the instance) have no environment, so the automatic approval floors never apply to them. The only possible trigger is an explicit `require_approval: true` rule, which `sm config validate` rejects for these actions. At runtime such a request is denied (`POLICY_DENIED`, `APPROVAL_NOT_SUPPORTED`).
   - The decision that may need approval is separated from the secret: **registering** an MCP client (`mcp_client.register`, high) is approval-gated like any high-risk direct action and creates the identity in state `pending_token`. Afterwards, `mcp_client.issue_token` is allowed **once**, only to the identity that requested the registration, only while the client is `pending_token`, and within 24h of approval. It returns the token and moves the client to `active`. A lost token requires deletion and re-registration.
+- **MCP floors (1.4.7; ADR-0032), applied before policy for an `mcp` actor and not configurable:** every `credential`-mode action (`token.create`, `mcp_client.issue_token`, `enrollment.create`, and any later one) and `mcp_client.register`, `mcp_client.delete`, `identity.write`, `role_binding.write` are denied (`POLICY_DENIED`, `MCP_ACTION_FORBIDDEN`), whatever a rule grants. While `mcp.write_tools_enabled` is false, every action that is not a `query` is also denied (`MCP_WRITES_DISABLED`), including governance actions and the admission of `POST /deployments`, `…/rollback` and `…/cancel`, which authorize before persisting anything. `POST /plans` still stores the plan with that denial as its verdict; submitting it fails.
 - `secret.write` is approval-gated by the high-risk floor (§11.3 step 8). Its operations carry no secret in the plan: an import is sealed as a staged version that approval activates, and `export-key` is requested, approved, then executed once by the requester with the passphrase (§10). Values under `apps/…` follow the env-file rule of §10.
 - A token can never carry scopes broader than the creator's own permissions at creation; scopes only narrow (§11.3 step 7).
 - `sub-action`: never invoked directly. It is authorized as part of a composite plan (§11.3).
@@ -2118,10 +2131,10 @@ POST   /api/v1/auth/logout
 GET    /api/v1/tokens
 POST   /api/v1/tokens                # not idempotent-replayable (§23)
 DELETE /api/v1/tokens/{id}           # revocation; rows are kept for audit
-GET    /api/v1/mcp/clients
+GET    /api/v1/mcp/clients           # identity.read; never returns tokens or hashes
 POST   /api/v1/mcp/clients           # register (mcp_client.register; may return a pending job)
 POST   /api/v1/mcp/clients/{id}/token  # one-time token issuance (mcp_client.issue_token)
-DELETE /api/v1/mcp/clients/{id}
+DELETE /api/v1/mcp/clients/{id}      # mcp_client.delete; revokes every credential of the client
 POST   /api/v1/plans                 # build + persist a plan (read-risk)
 GET    /api/v1/plans/{id}
 POST   /api/v1/plans/{id}/submit     # body: {plan_hash}; creates the job
@@ -2174,6 +2187,9 @@ POST   /api/v1/enrollments
 POST   /api/v1/enroll
 GET    /health/live
 GET    /health/ready
+POST   /mcp                          # remote MCP, server mode (exempt:mcp; outside /api/v1 and OpenAPI; ADR-0031)
+GET    /.well-known/oauth-protected-resource/mcp  # RFC 9728 metadata (exempt:mcp, ADR-0033)
+GET    /.well-known/oauth-protected-resource      # same document, the §24 alias (exempt:mcp)
 ```
 
 **Plans.** Every `job`-mode action (§11.2) goes through a persisted plan. `direct` actions apply inside the request transaction unless policy requires approval, in which case they too become a plan and a `control_plane.apply` job. `governance` actions act on existing jobs. Authentication endpoints are not actions.
@@ -2205,7 +2221,8 @@ Remote interactive terminals are not exposed through a generic command endpoint 
 
 ## 23.1 Transports, TLS and login
 
-- **Unix socket** (local mode): peer-credential auth and MCP client tokens (§2.1.1, §11.1).
+- **Unix socket** (local mode): peer-credential auth and MCP client tokens (§2.1.1, §11.1). An `smm_` token is the only bearer the socket accepts; its requests are charged to the per-identity write rate limit (1.4.7; ADR-0032).
+- **MCP credentials on HTTPS** (1.4.7): `smm_` tokens are refused; OAuth access tokens are accepted only at `/mcp`, never on `/api/v1` (ADR-0033).
 - **HTTPS** (server mode), `server.tls.mode`:
   - `direct`: the daemon terminates TLS with `cert_file`/`key_file` (TLS ≥ 1.2; reloaded on SIGHUP).
   - `proxy`: `server.listen` must be a loopback or Unix address, `trusted_proxies` must be non-empty, and `X-Forwarded-For`/`X-Forwarded-Proto` are honored only from those peers. Requests whose forwarded proto is not `https` are rejected. Behind a proxy, a connection from loopback is **not** treated as local or privileged; there is no loopback trust in HTTP auth.
@@ -2242,6 +2259,8 @@ Transport:
   - maps `(iss, sub, client_id|azp)` to a pre-registered `mcp` identity (`POST /api/v1/mcp/clients`, admin; remote clients need no token issuance because the external authorization server issues their tokens). An unknown client gets `403`.
 
   The current MCP authorization specification must be checked at implementation time (§0) and any deviation recorded in an ADR. If `mcp.oauth` is incomplete, remote MCP refuses to start; local stdio is unaffected.
+
+  **Remote details (1.4.7; ADR-0033).** Remote MCP needs `instance.mode: server`. `server.public_url` must be a bare https origin (no path, query, fragment or userinfo) and `mcp.oauth.resource` must equal `<public_url origin>/mcp` byte for byte. The 401 challenge names the path-suffixed metadata `/.well-known/oauth-protected-resource/mcp` and the required scopes; the root document is an alias whose RFC 9728 §3.3 identifier does not match (a recorded deviation). JWT access tokens must be typed `at+jwt` (RFC 9068), carry `iat` and `client_id` (and `azp`, if present, equal to it) and no `nonce`; other issuers use introspection, which authenticates with `introspection_client_id` and `introspection_client_secret_ref`. Missing scope → 403 `insufficient_scope`; an unregistered client → 403 `MCP_CLIENT_UNREGISTERED`. Every `/mcp` request first passes the per-address bucket, before any token work. Streamable HTTP is stateless with JSON responses, serves protocol versions `2026-07-28`, `2025-11-25` and `2025-06-18`, refuses an `Origin` other than `server.public_url`'s, and reaches the API in process as the resolved `mcp` identity.
 
 Document tested MCP clients.
 
@@ -2294,7 +2313,7 @@ No default MCP tools for arbitrary shell, arbitrary container exec, secret reads
 
 Unknown actions, unknown parameters and ambiguous target names fail with `INVALID_ARGUMENT`. Planning is `plan.create` (read risk) and is audited.
 
-Write tools (when enabled) take `{plan_id, plan_hash}` and call `POST /api/v1/plans/{id}/submit`. `infra_restart_service`, `infra_create_deployment`, `infra_rollback_deployment` and `infra_reboot_node` are thin wrappers that plan, then submit the returned hash. The model never supplies a hash it did not receive from a plan.
+Write tools (when enabled) take `{plan_id, plan_hash}` and call `POST /api/v1/plans/{id}/submit`. `infra_restart_service` and `infra_reboot_node` are thin wrappers that plan, then submit the returned hash. `infra_create_deployment` and `infra_rollback_deployment` call `POST /api/v1/deployments` and `POST /api/v1/deployments/{id}/rollback`, because a deployment has no plan until CI passes (ADR-0011); they return `waiting_ci`, `approval_required`, `queued` or `denied` with the deployment id (1.4.7). The model never supplies a hash it did not receive from a plan.
 
 Untrusted output to models: `infra_get_service_logs` and any tool returning remote text apply redaction (§16), strip control/ANSI sequences, cap size (default 64 KiB / 500 lines), and wrap content in a structured field marked `"untrusted_remote_output": true`. Policy can deny `service.logs` for `type:mcp` per environment (recommended for production).
 
@@ -2313,6 +2332,17 @@ Example result:
 ```
 
 Tool schemas are versioned and covered by golden tests. MCP resources may expose sanitized node/app/deployment context. Prompts are optional and never grant authority.
+
+**Decisions (1.4.7; ADR-0031, ADR-0032).**
+
+- V1 exposes tools only: no resources and no prompts. Each tool's schema version is `_meta["dev.supermgmt/schema_version"] = 1`.
+- `mcp.write_tools_enabled: false` hides the write tools **and** denies every non-query action to `mcp` identities at the application layer (§11.2), so the flag is not cosmetic.
+- Tool output is an allowlisted view per DTO. Remote-discovered fields (service names and native ids, runtime status strings, metadata, step errors, event data, log lines) sit under a `remote` object marked `"untrusted_remote_output": true`, stripped, credential-scrubbed and bounded (256 bytes per scalar, 64 KiB / 500 lines per text, depth 4, 64 entries per level). Scrubbing covers Bearer/Basic, PEM private keys, SuperMgmt tokens, JWT-shaped strings and sensitive-key `key=value` / `key: value` / JSON forms, whatever `security.redact_command_output` says; a secret under a non-sensitive name is **not** detected (stated in the tool descriptions and `docs/mcp.md`).
+- Name resolution compares raw API values and the plan binds ids. Write results are `{status, job_id?, deployment_id?, plan_hash?, summary, risk}` with `status ∈ {approval_required, queued, waiting_ci, denied}`.
+- The default policy keeps `service.logs` away from `type:mcp`; `docs/mcp.md` shows an environment-scoped grant.
+- `mcp.allow_interactive_exec: true` is refused by configuration validation in V1.
+- `sm mcp clients add <name>` registers the client; when approval is pending it prints the job and exits 0. Run again by the requester after approval, it preflights the destination (`--token-file`: a new 0600 file created with `O_EXCL|O_NOFOLLOW` in a directory owned by the caller and not group/world-writable; `--keychain`: the native OS keychain, never a file fallback, with no existing entry), then issues the token and stores it. A storage failure after issuance prints `sm mcp clients remove <id>` and re-registration as the only recovery; the token is never printed. On an `active` client it exits 1 saying the token is not re-issued.
+- Tested clients: automated checks use the SDK's own client and hand-written JSON-RPC goldens; Claude Code, Claude Desktop and MCP Inspector with a real authorization server stay a manual checklist until run with dated, versioned evidence.
 
 ---
 
@@ -2877,10 +2907,12 @@ INVALID_ARGUMENT         COMPOSE_REJECTED, MANIFEST_INVALID, UNKNOWN_ACTION, AMB
 NOT_FOUND                —
 CONFLICT                 PLAN_STALE, PLAN_EXPIRED, ALREADY_SUBMITTED, ALREADY_DECIDED,
                          RESOURCE_LOCKED, RESTORE_HOLD, IDEMPOTENCY_MISMATCH,
-                         INVALID_TRANSITION, PROJECT_NOT_OWNED
-UNAUTHENTICATED          CREDENTIAL_EXPIRED, CREDENTIAL_REVOKED, OIDC_REPLAY, OIDC_INVALID
+                         INVALID_TRANSITION, PROJECT_NOT_OWNED, ISSUANCE_WINDOW_EXPIRED
+UNAUTHENTICATED          CREDENTIAL_EXPIRED, CREDENTIAL_REVOKED, OIDC_REPLAY, OIDC_INVALID,
+                         OAUTH_TOKEN_INVALID
 POLICY_DENIED            DENY_RULE, DEFAULT_DENY, DESTRUCTIVE_GATE, SCOPE_DENIED,
-                         APPROVAL_NOT_SUPPORTED, NOT_PLAN_ACTOR, SELF_APPROVAL
+                         APPROVAL_NOT_SUPPORTED, NOT_PLAN_ACTOR, SELF_APPROVAL,
+                         MCP_WRITES_DISABLED, MCP_ACTION_FORBIDDEN, MCP_CLIENT_UNREGISTERED
 APPROVAL_REQUIRED        —
 CAPABILITY_UNAVAILABLE   UNIT_NOT_ELIGIBLE, HEALTH_CAPABILITY_MISSING
 NODE_UNREACHABLE         —
@@ -3129,7 +3161,7 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0009 Node provisioning | M1 | The approved setup operation that creates `/var/lib/supermgmt/markers`, `/run/supermgmt/locks` (tmpfiles.d), `deploy_root`, the broker and sudoers drop-in, and the capabilities it advertises | A `node.setup` job (high risk, approval-gated, idempotent); nodes lacking it do not advertise `docker.compose.deploy` or any `non_retryable` mutating capability; marker-based recovery (§20.4) applies only to SSH templates. Proxmox recovery uses task correlation only, and missing evidence never implies safe re-dispatch |
 | ADR-0010 Secret env-file encoding ([file](../adr/0010-secret-env-file-encoding.md)) | M4 | How secret values are written to `secrets/<service>.env` so Compose reads them byte-exact | Must round-trip every value in a test corpus (`$`, quotes, `#`, spaces, unicode). Values with NUL or newline are rejected at `secret.write` time unless the ADR proves support (e.g. a pinned Compose version with `format: raw`). The node-side check compares resolved values privately (hash-only output) before masking |
 | ADR-0011 Provisional deployment API ([file](../adr/0011-provisional-deployment-api.md)) | M4 | Request/response shape of a deployment before its final plan exists | `plan_hash: null` while provisional; persisted in `deployments` with commit, requested digest(s) and credential context; only `job.cancel` applies before finalization; approve/reject accepted only once a final hash exists; finalization emits a `deployment.finalized` event carrying the hash |
-| ADR-0012 Route metadata | M2 | OpenAPI extension marking every route with exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`, `exempt:self`, `exempt:webhook` (1.4.6: the GitHub webhook, authenticated by HMAC) | CI fails on unmapped routes; exempt routes are listed explicitly; key-management CLI commands map to `secret.write` (rotate/retire/export) or are offline-only (`import-key`); enrollment consumption is `exempt:auth`; planning on resource types without a read action (secrets, repositories) requires `config.read` |
+| ADR-0012 Route metadata | M2 | OpenAPI extension marking every route with exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`, `exempt:self`, `exempt:webhook` (1.4.6: the GitHub webhook, authenticated by HMAC), `exempt:mcp` (1.4.7: `/mcp` and the protected-resource metadata, outside `/api/v1`) | CI fails on unmapped routes; exempt routes are listed explicitly; key-management CLI commands map to `secret.write` (rotate/retire/export) or are offline-only (`import-key`); enrollment consumption is `exempt:auth`; planning on resource types without a read action (secrets, repositories) requires `config.read` |
 | ADR-0023 Proxmox identity and compatibility | M3 | Identities, privilege sets, supported versions, fake fidelity | Per-install identities only; read and power privilege sets separate; nothing destructive by default; matrix rows marked fake- or real-verified |
 | ADR-0024 Proxmox discovery | M3 | Node rows, sync loop, on-demand refresh, absent vs inaccessible | Guests stay `discovered`; power state is not reachability; rows are never deleted |
 | ADR-0025 Proxmox power jobs | M3 | Dispatch, UPID persistence, correlation, quiescence | UPID persisted before polling; uncertain dispatch never retried; quiescence needs a stopped task or an audited override |
@@ -3138,6 +3170,9 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0028 GitHub connector | M4 | Provider config and credential, redirects, check verification, Actions OIDC and its durable credential status, attestations, webhooks, fake fidelity | Read-only token; token only to the `api_url` origin; never "unverified" provenance; webhooks only nudge; every unproven GitHub behaviour is a manual checklist row |
 | ADR-0029 Deployment engine | M4 | Fine/coarse state mirroring, steps, preflight, backup, evidence, reconciliation, recovery claim, rollback, health execution | Proven completion before any automatic action; safety recovery restores only the plan's frozen target and never re-authorizes the requester; mirror in the same transaction |
 | ADR-0030 node.setup v2 | M4 | `deploy_root` and the gating of `docker.compose.deploy`, `health.http`, `health.tcp` | Capability only with setup ≥ 2, Docker access, a matrix Compose CLI, `flock` and `jq` |
+| ADR-0031 MCP server ([file](../adr/0031-mcp-server-sdk-transports-tools.md)) | M5 | SDK version, transports, tool list and contracts, output views, redaction guarantee | No database handle or connector credential; every tool is API calls; write tools only when enabled; remote output marked untrusted, scrubbed and bounded; the redaction limit stated |
+| ADR-0032 MCP clients and identity ([file](../adr/0032-mcp-clients-tokens-identity.md)) | M5 | Client state, one-time token, re-registration, socket admission, credential status, MCP floors, writes gate | No inherited roles; token issued once to the requester within 24h of approval; MCP never mints credentials or approves; writes disabled means denied at the application layer |
+| ADR-0033 Remote MCP protected resource ([file](../adr/0033-remote-mcp-oauth-protected-resource.md)) | M5 | MCP authorization spec version checked and deviations, resource identity, metadata, token validation, rate-limit order, fake fidelity | Protected resource only; audience bound to `<origin>/mcp`; OAuth tokens never accepted on `/api/v1`; per-address limit before any token work; real authorization servers are a manual checklist |
 
 Each ADR lives in `docs/adr/` and is referenced from this table once accepted.
 
@@ -3591,6 +3626,40 @@ Decisions (M4 W0, user-approved option (a) for every question): compose-go v2.15
         (control plane) health, postgres-dump backup only; one target per (app, environment); jq required
         on deploying nodes; rollbacks verified with the known-good health and policy snapshots; image sizes
         from the node, no safety factor.
+```
+
+## F.11 Changes from 1.4.6-draft to 1.4.7-draft
+
+```text
+§4      sm mcp [--token-file|--keychain]; sm mcp clients add destinations and --expires.
+§8.2    mcp.oauth.introspection_client_id and introspection_client_secret_ref; remote_enabled
+        requires server mode, a bare https public_url and resource = <origin>/mcp;
+        allow_interactive_exec: true refused.
+§9      mcp_clients and oauth_access_tokens with their constraints; sweep retention of token rows.
+§11.1   local MCP identity format; smm_ tokens (kind m, mandatory expiry, socket only); OAuth
+        credential id = token row; deletion and re-registration of MCP clients; iat floor.
+§11.2   MCP floors: credential and identity actions forbidden; writes disabled denies every
+        non-query action, governance and deployment admission included.
+§23     /mcp/clients route actions; exempt:mcp routes outside /api/v1; smm_ only on the socket
+        (with the per-identity write limit); OAuth tokens only at /mcp.
+§24     remote resource identity, challenge, at+jwt typing, introspection client auth, rate limit
+        before token work, stateless streamable HTTP and protocol versions, Origin rule;
+        deployment tools wrap POST /deployments and rollback; tools only (no resources/prompts);
+        provenance views, untrusted envelope, redaction guarantee and limit; write-result
+        statuses; sm mcp clients add flow; tested-client policy.
+§38     MCP_WRITES_DISABLED, MCP_ACTION_FORBIDDEN, MCP_CLIENT_UNREGISTERED (POLICY_DENIED);
+        ISSUANCE_WINDOW_EXPIRED (CONFLICT); OAUTH_TOKEN_INVALID (UNAUTHENTICATED).
+§46     exempt:mcp in ADR-0012; ADR-0031..0033 (M5).
+Decisions (M5 W0, user-approved option (a) for every question): JWT and RFC 7662 introspection,
+        introspection authenticated by the resource server; remote tool calls reach the API in
+        process, OAuth tokens never on /api/v1; write_tools_enabled: false denies at the
+        application layer; deployment tools wrap the provisional deployment API; MCP tokens
+        expire (default 90d, max 365d); add stores the token in a preflighted 0600 file or the
+        native keychain, never printed; allow_interactive_exec refused; no service.logs for MCP
+        by default; no resources or prompts; stateless streamable HTTP (2026-07-28, 2025-11-25,
+        2025-06-18); SDK client plus wire goldens, real clients a manual checklist; strict
+        RFC 9068 at+jwt; resource = <origin>/mcp with root metadata as a recorded deviation; MCP
+        can never perform credential or identity actions.
 ```
 
 ---

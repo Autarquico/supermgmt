@@ -44,6 +44,8 @@ const (
 	maxAuthBodyBytes  = 16 << 10
 	maxSecretBytes    = 256 << 10
 	bearerScheme      = "Bearer"
+	// mcpTokenPrefix starts every local MCP client token ("smm_...").
+	mcpTokenPrefix = "sm" + string(rune(app.MCPTokenKind)) + "_"
 )
 
 // Residency is how the server reports the clients that keep a local daemon
@@ -78,6 +80,8 @@ type Services struct {
 	Apps         *app.Apps
 	Repositories *app.Repositories
 	Deployments  *app.DeploymentFinalizer
+	// MCPClients is optional (M5): without it the /mcp/clients routes are not served.
+	MCPClients app.MCPClients
 
 	Auth        app.Auth
 	Keys        app.Keys
@@ -152,6 +156,13 @@ type Options struct {
 	Identity domain.ID
 	// Resolver authenticates bearer tokens on HTTPS.
 	Resolver Resolver
+	// MCPResolver admits the token of a local MCP client on the Unix socket
+	// (ADR-0032). Without it the socket refuses every token.
+	MCPResolver Resolver
+	// MCPRemote is the remote MCP endpoint and MCPRemotePaths the paths it is
+	// mounted on, verbatim and outside /api/v1 (ADR-0033). HTTPS only.
+	MCPRemote      http.Handler
+	MCPRemotePaths []string
 	// GitHubWebhook enables POST /github/webhook. It is served on HTTPS only,
 	// whatever is configured: local mode polls CI.
 	GitHubWebhook *GitHubWebhook
@@ -187,6 +198,7 @@ type Server struct {
 	transport transport
 	caller    app.Caller // Unix socket: the local user
 	resolver  Resolver
+	mcp       Resolver // Unix socket: local MCP client tokens
 	proxy     *Proxy
 	db        *database.DB
 	stream    StreamOptions
@@ -195,6 +207,9 @@ type Server struct {
 	ready     func(context.Context) error
 	clock     domain.Clock
 	webhooks  *GitHubWebhook
+
+	mcpRemote      http.Handler
+	mcpRemotePaths []string
 
 	authLimit  *limiter
 	pollLimit  *limiter
@@ -225,11 +240,14 @@ func New(o Options) (*Server, error) {
 	if (o.Identity == "") == (o.Resolver == nil) {
 		return nil, errors.New("api: exactly one of the local caller identity and the bearer resolver is required")
 	}
+	if err := o.validateMCP(); err != nil {
+		return nil, err
+	}
 	if o.Clock == nil {
 		o.Clock = domain.SystemClock{}
 	}
 	s := &Server{
-		responder: responder{log: o.Log}, svc: o.Services, ids: o.IDs, resolver: o.Resolver, proxy: o.Proxy, db: o.DB,
+		responder: responder{log: o.Log}, svc: o.Services, ids: o.IDs, resolver: o.Resolver, mcp: o.MCPResolver, mcpRemote: o.MCPRemote, mcpRemotePaths: o.MCPRemotePaths, proxy: o.Proxy, db: o.DB,
 		stream: o.Stream.withDefaults(), timeout: o.RequestTimeout, residency: o.Residency, ready: o.Ready,
 		authLimit: newLimiter(authRate, o.Clock.Now), pollLimit: newLimiter(pollRate, o.Clock.Now), writeLimit: newLimiter(writeRate, o.Clock.Now),
 		refreshLimit: newLimiter(refreshRate, o.Clock.Now), webhookLimit: newLimiter(webhookRate, o.Clock.Now), clock: o.Clock,
@@ -268,6 +286,18 @@ func New(o Options) (*Server, error) {
 	return s, nil
 }
 
+func (o Options) validateMCP() error {
+	switch {
+	case o.MCPResolver != nil && o.Resolver != nil:
+		return errors.New("api: the MCP token resolver belongs to the Unix socket transport")
+	case o.MCPRemote != nil && o.Resolver == nil:
+		return errors.New("api: the remote MCP endpoint belongs to the HTTPS transport")
+	case (o.MCPRemote == nil) != (len(o.MCPRemotePaths) == 0):
+		return errors.New("api: the remote MCP endpoint and its paths go together")
+	}
+	return nil
+}
+
 // Handler is the full request pipeline. On the Unix socket it refuses requests
 // whose connection was not admitted by RestrictToUID, so it is only useful
 // behind Serve.
@@ -295,6 +325,9 @@ func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 	for _, rt := range s.routes {
 		mux.Handle(rt.method+" "+rt.pattern, s.guard(rt))
+	}
+	for _, path := range s.mcpRemotePaths {
+		mux.Handle(path, s.mcpRemote)
 	}
 	mux.Handle("/", s.guard(route{auth: authNone, do: notFound}))
 	return mux
@@ -387,9 +420,12 @@ func (s *Server) admit(r *http.Request, rt route) (*http.Request, error) {
 		sc  scope
 		err error
 	)
-	if s.transport == viaUnixSocket {
-		sc, err = s.admitLocal(r)
-	} else {
+	switch by, inProcess := inProcessCaller(r.Context()); {
+	case inProcess:
+		sc, err = s.admitInProcess(by, rt)
+	case s.transport == viaUnixSocket:
+		sc, err = s.admitLocal(r, rt)
+	default:
 		sc, err = s.admitRemote(r, rt)
 	}
 	if err != nil {
@@ -419,15 +455,42 @@ func (s *Server) holdGuard(ctx context.Context, rt route, by app.Caller) error {
 }
 
 // admitLocal refuses what cannot be this machine's user acting on the local
-// socket.
-func (s *Server) admitLocal(r *http.Request) (scope, error) {
+// socket. The one token it accepts is a local MCP client's (ADR-0032), whose
+// writes draw on the per-identity bucket the socket otherwise lacks.
+func (s *Server) admitLocal(r *http.Request, rt route) (scope, error) {
 	if _, ok := verifiedPeer(r.Context()); !ok {
 		return scope{}, smerr.New(smerr.CodeUnauthenticated, "", "peer credentials were not verified")
 	}
-	if _, bearer := r.Header[wire.HeaderAuthorization]; bearer {
-		return scope{}, smerr.New(smerr.CodeUnauthenticated, "", "the local socket authenticates by peer credentials; tokens are not accepted")
+	if _, bearer := r.Header[wire.HeaderAuthorization]; !bearer {
+		return scope{caller: s.caller}, nil
 	}
-	return scope{caller: s.caller}, nil
+	by, err := s.mcpCaller(r)
+	if err != nil {
+		return scope{}, err
+	}
+	if err := s.chargeWrite(by, rt); err != nil {
+		return scope{}, err
+	}
+	return scope{caller: by}, nil
+}
+
+func (s *Server) mcpCaller(r *http.Request) (app.Caller, error) {
+	token, err := bearerToken(r)
+	if err != nil || s.mcp == nil || !strings.HasPrefix(token, mcpTokenPrefix) {
+		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "the local socket authenticates by peer credentials; only an MCP client token is accepted besides")
+	}
+	return s.mcp.Resolve(r.Context(), token)
+}
+
+// chargeWrite takes one write from the per-identity bucket of by.
+func (s *Server) chargeWrite(by app.Caller, rt route) error {
+	if !rt.writes() || by.ID == "" {
+		return nil
+	}
+	if ok, after := s.writeLimit.allow(by.ID.String()); !ok {
+		return &rateLimited{after: after}
+	}
+	return nil
 }
 
 // admitRemote applies, in order, the proxy rules (health probes are exempt,
@@ -451,10 +514,8 @@ func (s *Server) admitRemote(r *http.Request, rt route) (scope, error) {
 	if err := requireScope(by, rt); err != nil {
 		return scope{}, err
 	}
-	if rt.writes() && by.ID != "" {
-		if ok, after := s.writeLimit.allow(by.ID.String()); !ok {
-			return scope{}, &rateLimited{after: after}
-		}
+	if err := s.chargeWrite(by, rt); err != nil {
+		return scope{}, err
 	}
 	return scope{caller: by, client: client}, nil
 }
@@ -479,18 +540,30 @@ func (s *Server) loginLimiter(rt route) *limiter {
 }
 
 func (s *Server) bearerCaller(r *http.Request, mode authMode) (app.Caller, error) {
-	values := r.Header.Values(wire.HeaderAuthorization)
-	switch {
-	case mode == authNone, mode == authOptional && len(values) == 0:
+	if mode == authNone || mode == authOptional && len(r.Header.Values(wire.HeaderAuthorization)) == 0 {
 		return app.Caller{}, nil
-	case len(values) != 1:
-		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "send exactly one Authorization: Bearer header")
+	}
+	token, err := bearerToken(r)
+	if err != nil {
+		return app.Caller{}, err
+	}
+	if strings.HasPrefix(token, mcpTokenPrefix) {
+		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "this token is valid on the local socket only")
+	}
+	return s.resolver.Resolve(r.Context(), token)
+}
+
+// bearerToken is the token of the request's one Authorization: Bearer header.
+func bearerToken(r *http.Request) (string, error) {
+	values := r.Header.Values(wire.HeaderAuthorization)
+	if len(values) != 1 {
+		return "", smerr.New(smerr.CodeUnauthenticated, "", "send exactly one Authorization: Bearer header")
 	}
 	scheme, token, found := strings.Cut(values[0], " ")
 	if !found || !strings.EqualFold(scheme, bearerScheme) || strings.TrimSpace(token) == "" {
-		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "the Authorization header must be Bearer <token>")
+		return "", smerr.New(smerr.CodeUnauthenticated, "", "the Authorization header must be Bearer <token>")
 	}
-	return s.resolver.Resolve(r.Context(), strings.TrimSpace(token))
+	return strings.TrimSpace(token), nil
 }
 
 func (s *Server) recoverRequest(w http.ResponseWriter, r *http.Request) {

@@ -47,6 +47,11 @@ const (
 	ReasonInterruptedBeforeDeploy Reason = "INTERRUPTED_BEFORE_DEPLOY"
 	ReasonRejected                Reason = "REJECTED"
 	ReasonRestoredUndispatched    Reason = "RESTORED_UNDISPATCHED"
+	ReasonMCPWritesDisabled       Reason = "MCP_WRITES_DISABLED"
+	ReasonMCPActionForbidden      Reason = "MCP_ACTION_FORBIDDEN"
+	ReasonMCPClientUnregistered   Reason = "MCP_CLIENT_UNREGISTERED"
+	ReasonIssuanceWindowExpired   Reason = "ISSUANCE_WINDOW_EXPIRED"
+	ReasonOAuthTokenInvalid       Reason = "OAUTH_TOKEN_INVALID"
 )
 
 var codeByReason = map[Reason]Code{
@@ -88,6 +93,11 @@ var codeByReason = map[Reason]Code{
 	ReasonInterruptedBeforeDeploy: CodeDeploymentFailed,
 	ReasonRejected:                CodeDeploymentFailed,
 	ReasonRestoredUndispatched:    CodeDeploymentFailed,
+	ReasonMCPWritesDisabled:       CodePolicyDenied,
+	ReasonMCPActionForbidden:      CodePolicyDenied,
+	ReasonMCPClientUnregistered:   CodePolicyDenied,
+	ReasonIssuanceWindowExpired:   CodeConflict,
+	ReasonOAuthTokenInvalid:       CodeUnauthenticated,
 }
 
 // CodeFor returns the top-level code a reason belongs to (spec §38). A reason

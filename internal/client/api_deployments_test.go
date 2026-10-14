@@ -78,7 +78,7 @@ func TestListDeploymentsSendsOnlyTheFiltersThatAreSet(t *testing.T) {
 		respond(w, 200, wire.Page[wire.Deployment]{Items: []wire.Deployment{{State: "healthy"}}})
 	})
 
-	got, err := d.client(client.Options{}).ListDeployments(context.Background(), client.DeploymentQuery{AppID: app, State: "failed"})
+	got, err := d.client(client.Options{}).ListDeployments(context.Background(), wire.DeploymentQuery{AppID: app, State: "failed"})
 	if err != nil {
 		t.Fatal(err)
 	}

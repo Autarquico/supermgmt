@@ -2,44 +2,10 @@ package client
 
 import (
 	"context"
-	"net/url"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
-
-// Query parameters of GET /deployments.
-const (
-	queryDeploymentApp         = "app_id"
-	queryDeploymentAppTarget   = "app_target_id"
-	queryDeploymentEnvironment = "environment_id"
-)
-
-// DeploymentQuery filters GET /deployments. Empty fields do not filter.
-type DeploymentQuery struct {
-	wire.PageQuery
-	AppID         domain.ID
-	AppTargetID   domain.ID
-	EnvironmentID domain.ID
-	State         string
-}
-
-func (q DeploymentQuery) values() url.Values {
-	v := q.Values()
-	for name, id := range map[string]domain.ID{
-		queryDeploymentApp:         q.AppID,
-		queryDeploymentAppTarget:   q.AppTargetID,
-		queryDeploymentEnvironment: q.EnvironmentID,
-	} {
-		if id != "" {
-			v.Set(name, string(id))
-		}
-	}
-	if q.State != "" {
-		v.Set(wire.QueryState, q.State)
-	}
-	return v
-}
 
 // ---- apps and targets ------------------------------------------------------
 
@@ -65,8 +31,8 @@ func (c *Client) CreateAppTarget(ctx context.Context, app domain.ID, r wire.Crea
 
 // ---- deployments -----------------------------------------------------------
 
-func (c *Client) ListDeployments(ctx context.Context, q DeploymentQuery) (wire.Page[wire.Deployment], error) {
-	return call[wire.Page[wire.Deployment]](ctx, c, get(wire.PathDeployments, q.values()))
+func (c *Client) ListDeployments(ctx context.Context, q wire.DeploymentQuery) (wire.Page[wire.Deployment], error) {
+	return call[wire.Page[wire.Deployment]](ctx, c, get(wire.PathDeployments, q.Values()))
 }
 
 func (c *Client) GetDeployment(ctx context.Context, id domain.ID) (wire.Deployment, error) {

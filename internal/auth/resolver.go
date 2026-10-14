@@ -85,7 +85,7 @@ func (r DBResolver) lookup(ctx context.Context, bearer string) (credentialRow, e
 			return credentialRow{}, unknownCredential(err)
 		}
 		return credentialRow{domain.CredentialAPIToken, t.ID, t.IdentityID, t.Scopes, t.ExpiresAt, t.RevokedAt, t.LastUsedAt, database.TouchAPIToken}, nil
-	case KindBootstrap, KindJoin:
+	case KindBootstrap, KindJoin, KindMCP:
 	}
 	return credentialRow{}, smerr.New(smerr.CodeUnauthenticated, "", "this token kind cannot authenticate a request")
 }

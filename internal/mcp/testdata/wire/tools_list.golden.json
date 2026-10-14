@@ -1,0 +1,58 @@
+{
+  "_comment": "Hand-written from the MCP specification (tools/list) and ADR-0031: with writes off the server lists the ten read tools and infra_plan_action, sorted by name, each with a description, an object input schema and the schema_version meta; read tools carry readOnlyHint. Matching rules as in initialize.golden.json.",
+  "cases": [
+    {
+      "name": "tools/list 2025-11-25",
+      "headers": {"MCP-Protocol-Version": "2025-11-25"},
+      "request": {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+      "response": {
+        "jsonrpc": "2.0", "id": 2,
+        "result": {"tools": [
+          {"name": "infra_get_deployment", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_get_health", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_get_node", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_get_service", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_get_service_logs", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_apps", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_deployments", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_events", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_nodes", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_services", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_plan_action", "description": "$string", "inputSchema": {"type": "object"}, "_meta": {"dev.supermgmt/schema_version": 1}}
+        ]}
+      }
+    },
+    {
+      "name": "tools/list 2025-06-18 lists the same tools",
+      "headers": {"MCP-Protocol-Version": "2025-06-18"},
+      "request": {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+      "response": {
+        "jsonrpc": "2.0", "id": 3,
+        "result": {"tools": [
+          {"name": "infra_get_deployment"}, {"name": "infra_get_health"}, {"name": "infra_get_node"},
+          {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_list_apps"},
+          {"name": "infra_list_deployments"}, {"name": "infra_list_events"}, {"name": "infra_list_nodes"},
+          {"name": "infra_list_services"}, {"name": "infra_plan_action"}
+        ]}
+      }
+    },
+    {
+      "name": "tools/list 2026-07-28 (per-request version and standard headers)",
+      "transports": ["http"],
+      "headers": {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/list"},
+      "request": {
+        "jsonrpc": "2.0", "id": 4, "method": "tools/list",
+        "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}}}
+      },
+      "response": {
+        "jsonrpc": "2.0", "id": 4,
+        "result": {"tools": [
+          {"name": "infra_get_deployment"}, {"name": "infra_get_health"}, {"name": "infra_get_node"},
+          {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_list_apps"},
+          {"name": "infra_list_deployments"}, {"name": "infra_list_events"}, {"name": "infra_list_nodes"},
+          {"name": "infra_list_services"}, {"name": "infra_plan_action"}
+        ]}
+      }
+    }
+  ]
+}

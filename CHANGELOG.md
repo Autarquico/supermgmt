@@ -6,7 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer) and M4 (applications, GitHub and deployments). Pre-alpha: nothing is released.
+Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments) and M5 (MCP). Pre-alpha: nothing is released.
+
+### Added in M5
+
+- MCP server (`internal/mcp`, ADR-0031) on the official Go SDK v1.8.0: `sm mcp` over stdio and `/mcp` over stateless streamable HTTP (server mode, protocol versions 2026-07-28, 2025-11-25, 2025-06-18; `Origin` checked). Tools: `infra_list_nodes`, `infra_get_node`, `infra_list_services`, `infra_get_service`, `infra_get_service_logs`, `infra_list_apps`, `infra_list_deployments`, `infra_get_deployment`, `infra_list_events`, `infra_get_health`, `infra_plan_action`; with `mcp.write_tools_enabled: true` also `infra_submit_plan`, `infra_restart_service`, `infra_reboot_node`, `infra_create_deployment`, `infra_rollback_deployment`. Every tool is one or more API calls, so policy, audit and rate limits are the API's.
+- MCP clients (ADR-0032, migration `000006`): `sm mcp clients add|list|remove`, approval-gated registration, one token (`smm_`, mandatory expiry, default 90 days) issued once to a 0600 file or the OS keychain after a preflight, never printed; routes `GET|POST /api/v1/mcp/clients`, `POST /api/v1/mcp/clients/{id}/token`, `DELETE /api/v1/mcp/clients/{id}`. The local socket admits `smm_` tokens as the MCP caller. Restore revokes MCP credentials.
+- Remote MCP as an OAuth 2.0 protected resource (ADR-0033, RFC 9728, RFC 9068, RFC 7662): metadata at `/.well-known/oauth-protected-resource/mcp` (and the root path), `WWW-Authenticate` challenges, JWT (`at+jwt`) or authenticated introspection, `resource` equal to `<public_url>/mcp`, per-address and per-identity rate limits. SuperMgmt issues no OAuth tokens. New keys `mcp.oauth.introspection_client_id` and `introspection_client_secret_ref`.
+- Safety floors: an MCP identity can never approve, reject or resolve, nor perform credential-mode actions, client registration or deletion, or identity and role changes (`MCP_ACTION_FORBIDDEN`); with writes off every non-query action is denied (`MCP_WRITES_DISABLED`), including deployment admission before any row is stored. Tool output separates remote-discovered data under an `untrusted_remote_output` object, sanitized, scrubbed (`audit.ScrubCredentials`) and bounded.
+- Test infrastructure: `oauthfake` (JWKS and introspection fake with `PROVENANCE.md`), raw JSON-RPC goldens, the per-route writes-gate matrix, MCP security and secret-scrub suites, `make e2e-mcp` and CI job `e2e-mcp`. Examples in `examples/mcp/`.
+
+### Changed in M5
+
+- `mcp.oauth.resource` must equal `<server.public_url>/mcp`; `remote_enabled` requires server mode; `mcp.allow_interactive_exec: true` is refused.
+
+### Known limits in M5
+
+- **No real MCP client and no real OAuth authorization server was used.** Verification is the Go SDK client, raw JSON-RPC goldens and a fake authorization server. The real-client run (`docs/manual-checks/m5-real-mcp-clients.md`) is deferred; RFC 8707 `resource` handling at a real authorization server is unverified.
+- Output redaction is pattern-based; unknown secrets in remote text are not detected. The default policy gives MCP no `service.logs`. Root metadata discovery is a known RFC 9728 deviation. No MCP resources, prompts or interactive exec.
 
 ### Added in M4
 

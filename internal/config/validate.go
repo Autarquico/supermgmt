@@ -219,20 +219,84 @@ func httpsOrigin(raw string) bool {
 	return err == nil && httpsURL(raw) && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && !strings.HasSuffix(raw, "/")
 }
 
+// mcpResourcePath is where remote MCP is served; its OAuth resource is
+// server.public_url's origin followed by this path (ADR-0033).
+const mcpResourcePath = "/mcp"
+
 func (v *validator) mcp() {
 	m := v.cfg.MCP
+	if m.AllowInteractiveExec {
+		v.add("mcp.allow_interactive_exec", "true is not supported in this version: no MCP tool runs commands")
+	}
+	if m.OAuth.IntrospectionClientSecretRef != "" {
+		v.secretRefOnly("mcp.oauth.introspection_client_secret_ref", m.OAuth.IntrospectionClientSecretRef)
+	}
 	if !m.RemoteEnabled {
 		return
 	}
+	if v.cfg.Instance.Mode != ModeServer {
+		v.add("mcp.remote_enabled", "requires instance.mode server, got %q", v.cfg.Instance.Mode)
+	}
+	v.mcpOAuthComplete(m.OAuth)
+	v.mcpOAuthEndpoints(m.OAuth)
+	if m.OAuth.Resource != "" {
+		v.mcpResource(v.cfg.Server.PublicURL, m.OAuth.Resource)
+	}
+}
+
+func (v *validator) mcpOAuthComplete(o MCPOAuth) {
 	need := func(yamlPath string, ok bool, what string) {
 		if !ok {
 			v.add(yamlPath, "%s (mcp.remote_enabled requires complete mcp.oauth)", what)
 		}
 	}
-	need("mcp.oauth.issuer", m.OAuth.Issuer != "", "required")
-	need("mcp.oauth.resource", m.OAuth.Resource != "", "required")
-	need("mcp.oauth.jwks_url", m.OAuth.JWKSURL != "" || m.OAuth.IntrospectionURL != "", "jwks_url or introspection_url required")
-	need("mcp.oauth.required_scopes", len(m.OAuth.RequiredScopes) > 0, "must be non-empty")
+	need("mcp.oauth.issuer", o.Issuer != "", "required")
+	need("mcp.oauth.resource", o.Resource != "", "required")
+	need("mcp.oauth.jwks_url", o.JWKSURL != "" || o.IntrospectionURL != "", "jwks_url or introspection_url required")
+	need("mcp.oauth.required_scopes", len(o.RequiredScopes) > 0, "must be non-empty")
+	if o.IntrospectionURL != "" {
+		need("mcp.oauth.introspection_client_id", o.IntrospectionClientID != "", "required with introspection_url")
+		need("mcp.oauth.introspection_client_secret_ref", o.IntrospectionClientSecretRef != "", "required with introspection_url")
+	}
+}
+
+// mcpOAuthEndpoints requires https for the issuer and for every endpoint
+// SuperMgmt calls (§21.1 provider endpoints).
+func (v *validator) mcpOAuthEndpoints(o MCPOAuth) {
+	for _, f := range []struct{ path, value string }{
+		{"mcp.oauth.issuer", o.Issuer},
+		{"mcp.oauth.jwks_url", o.JWKSURL},
+		{"mcp.oauth.introspection_url", o.IntrospectionURL},
+	} {
+		if f.value != "" && !httpsURL(f.value) {
+			v.add(f.path, "must be an https URL, got %q", f.value)
+		}
+	}
+}
+
+// mcpResource enforces the resource identity of ADR-0033: server.public_url
+// is a bare https origin (prefix-mounted proxies are not supported) and the
+// resource is byte-equal to that origin followed by /mcp, so tokens are bound
+// to the MCP endpoint and nothing else (RFC 8707 §2, RFC 9728 §3.3).
+func (v *validator) mcpResource(publicURL, resource string) {
+	origin, ok := bareHTTPSOrigin(publicURL)
+	if !ok {
+		v.add("server.public_url", "must be an https URL with no path, query, fragment or userinfo when mcp.remote_enabled is true, got %q", publicURL)
+		return
+	}
+	if want := origin + mcpResourcePath; resource != want {
+		v.add("mcp.oauth.resource", "must be exactly %q (server.public_url's origin followed by %s), got %q", want, mcpResourcePath, resource)
+	}
+}
+
+// bareHTTPSOrigin returns scheme://host[:port] of an https URL whose path is
+// empty or "/" and that has no query, fragment or userinfo.
+func bareHTTPSOrigin(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || !httpsURL(raw) || strings.ContainsAny(raw, "?#") || (u.Path != "" && u.Path != "/") {
+		return "", false
+	}
+	return u.Scheme + "://" + u.Host, true
 }
 
 func (v *validator) environments() {

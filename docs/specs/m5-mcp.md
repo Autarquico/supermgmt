@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: L
 issue: null
-prs: []
+prs: [16]
 related_issues: [5]
 depends_on: [m4-apps-deployments]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-13
 ---
 
 # M5 — MCP
@@ -24,7 +24,7 @@ Master spec §31 M5. Exponer el grafo y las acciones a agentes de IA con la mism
 ## Scope
 
 **Entra:**
-- ADR de la versión de la spec de autorización MCP; columna de estado de cliente MCP (migración 000005).
+- ADR de la versión de la spec de autorización MCP; columna de estado de cliente MCP (migración 000006; 000005 es de M4).
 - Registro de clientes MCP y emisión única de token (§11.2); bridge stdio; streamable HTTP como protected resource (RFC 9728) con AS externo.
 - Herramientas de lectura, `infra_plan_action`; herramientas de escritura desactivadas por defecto.
 - Tests de seguridad MCP.

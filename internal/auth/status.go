@@ -35,9 +35,62 @@ func (s CredentialStatus) Status(ctx context.Context, cred domain.CredentialCont
 		return s.stateOf(row.RevokedAt, row.ExpiresAt, err)
 	case domain.CredentialGitHubOIDC:
 		return s.githubOIDCState(ctx, cred.ID)
-	case domain.CredentialMCPToken, domain.CredentialOAuthAccessToken:
+	case domain.CredentialMCPToken:
+		return s.withID(ctx, cred, s.mcpTokenState)
+	case domain.CredentialOAuthAccessToken:
+		return s.withID(ctx, cred, s.oauthAccessTokenState)
 	}
 	return "", smerr.New(smerr.CodeUnauthenticated, "", fmt.Sprintf("no credential store for kind %q", cred.Kind))
+}
+
+// withID judges a credential that lives in a table: one without an id is
+// malformed, not revoked.
+func (s CredentialStatus) withID(ctx context.Context, cred domain.CredentialContext, state func(context.Context, string) (app.CredentialState, error)) (app.CredentialState, error) {
+	if cred.ID == "" {
+		return "", smerr.New(smerr.CodeUnauthenticated, "", fmt.Sprintf("%s credential has no id", cred.Kind))
+	}
+	return state(ctx, cred.ID)
+}
+
+// mcpTokenState: revoked when the client is deleted, its token revoked, its
+// identity disabled, it never received a token, or the row is gone; otherwise
+// expired from the token's expiry.
+func (s CredentialStatus) mcpTokenState(ctx context.Context, id string) (app.CredentialState, error) {
+	client, err := database.GetMCPClient(ctx, s.DB.Reader(), domain.ID(id))
+	if err != nil {
+		return s.stateOf(nil, time.Time{}, err)
+	}
+	if client.State == database.MCPClientDeleted || client.TokenExpiresAt == nil {
+		return app.CredentialRevoked, nil
+	}
+	if s.identityDisabled(ctx, client.IdentityID) {
+		return app.CredentialRevoked, nil
+	}
+	return s.stateOf(client.RevokedAt, *client.TokenExpiresAt, nil)
+}
+
+// oauthAccessTokenState: revoked when the token row is revoked (client
+// deletion, restore), the client is deleted, or its identity is disabled;
+// otherwise expired from the token's own exp.
+func (s CredentialStatus) oauthAccessTokenState(ctx context.Context, id string) (app.CredentialState, error) {
+	token, err := database.GetOAuthAccessToken(ctx, s.DB.Reader(), domain.ID(id))
+	if err != nil {
+		return s.stateOf(nil, time.Time{}, err)
+	}
+	client, err := database.GetMCPClient(ctx, s.DB.Reader(), token.MCPClientID)
+	if err != nil {
+		return s.stateOf(nil, time.Time{}, err)
+	}
+	if client.State == database.MCPClientDeleted || s.identityDisabled(ctx, client.IdentityID) {
+		return app.CredentialRevoked, nil
+	}
+	return s.stateOf(token.RevokedAt, token.ExpiresAt, nil)
+}
+
+// identityDisabled fails closed: an identity that cannot be read counts as disabled.
+func (s CredentialStatus) identityDisabled(ctx context.Context, id domain.ID) bool {
+	identity, err := database.GetIdentity(ctx, s.DB.Reader(), id)
+	return err != nil || identity.DisabledAt != nil
 }
 
 // githubOIDCState: revoked when the row is revoked (unlinking the automation

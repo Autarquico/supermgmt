@@ -268,6 +268,20 @@ func (i *Inventory) applyApproved(ctx context.Context, q database.Querier, actor
 		}
 		_, err = i.applyRegisterLocal(ctx, q, actor, p)
 		return err
+	case actionMCPClientRegister:
+		p, err := payloadOf[mcpRegisterParams](job)
+		if err != nil {
+			return err
+		}
+		_, err = i.applyMCPClientRegister(ctx, q, actor, p, &job)
+		return err
+	case actionMCPClientDelete:
+		p, err := payloadOf[mcpDeleteParams](job)
+		if err != nil {
+			return err
+		}
+		_, err = i.applyMCPClientDelete(ctx, q, actor, p)
+		return err
 	}
 	return smerr.New(smerr.CodeInternal, "", "control_plane.apply: unsupported action "+action)
 }

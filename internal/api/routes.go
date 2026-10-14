@@ -96,6 +96,7 @@ func (s *Server) buildRoutes() []route {
 	r.repositories()
 	r.apps()
 	r.deployments()
+	r.mcpClients()
 	r.webhook()
 	r.nodes()
 	r.sessions()

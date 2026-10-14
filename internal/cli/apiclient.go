@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -30,7 +31,7 @@ func clientCommands(env []string) []*cobra.Command {
 		newNodesCmd(env), newServicesCmd(env), newJobsCmd(env), newApprovalsCmd(env),
 		newSSHCmd(env), newDockerCmd(env), newStatusCmd(env), newEventsCmd(env), newSSHKeyCmd(env),
 		newLoginCmd(env, defaultLoginDeps(env)), newLogoutCmd(env), newProfileCmd(env), newTokensCmd(env),
-		newSecretsCmd(env), newBackupCmd(env), newEnrollmentsCmd(env), newAppsCmd(env),
+		newSecretsCmd(env), newBackupCmd(env), newEnrollmentsCmd(env), newAppsCmd(env), newMCPCmd(env),
 	}
 }
 
@@ -57,11 +58,17 @@ func connect(cmd *cobra.Command, env []string) (*client.Client, target, error) {
 
 // newLocalClient dials the daemon the configuration file describes.
 func newLocalClient(env []string, configFlag string) (*client.Client, error) {
+	return newLocalClientWith(env, configFlag, "")
+}
+
+// newLocalClientWith is newLocalClient that sends token as the bearer
+// credential (an MCP client's token, ADR-0032); "" sends none.
+func newLocalClientWith(env []string, configFlag string, token audit.Secret) (*client.Client, error) {
 	socket, stateDir, err := daemonLocation(configFlag, env)
 	if err != nil {
 		return nil, err
 	}
-	opts := client.Options{Socket: socket}
+	opts := client.Options{Socket: socket, Token: token}
 	if v := envMap(env)[envNoAutostart]; v == "" || v == "0" {
 		exe, err := os.Executable()
 		if err != nil {

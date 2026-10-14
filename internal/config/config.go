@@ -170,12 +170,19 @@ type MCP struct {
 	WriteToolsEnabled    bool     `yaml:"write_tools_enabled"`
 }
 
+// MCPOAuth configures remote MCP as an OAuth 2.0 protected resource (spec
+// §24, ADR-0033). Resource must be exactly <server.public_url origin>/mcp.
+// Introspection (RFC 7662) authenticates SuperMgmt to the authorization
+// server with IntrospectionClientID and the secret behind
+// IntrospectionClientSecretRef (secret://).
 type MCPOAuth struct {
-	Issuer           string   `yaml:"issuer"`
-	Resource         string   `yaml:"resource"`
-	JWKSURL          string   `yaml:"jwks_url"`
-	IntrospectionURL string   `yaml:"introspection_url"`
-	RequiredScopes   []string `yaml:"required_scopes"`
+	Issuer                       string   `yaml:"issuer"`
+	Resource                     string   `yaml:"resource"`
+	JWKSURL                      string   `yaml:"jwks_url"`
+	IntrospectionURL             string   `yaml:"introspection_url"`
+	IntrospectionClientID        string   `yaml:"introspection_client_id"`
+	IntrospectionClientSecretRef string   `yaml:"introspection_client_secret_ref"`
+	RequiredScopes               []string `yaml:"required_scopes"`
 }
 
 type Backup struct {

@@ -13,13 +13,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
-// Query parameters of GET /deployments.
-const (
-	queryAppID       = "app_id"
-	queryAppTargetID = "app_target_id"
-	queryEnvID       = "environment_id"
-)
-
 // apps registers the app and app-target routes (spec §23). Without the apps
 // service the routes are not served at all.
 func (rs *routeSet) apps() {
@@ -231,7 +224,7 @@ func createDeploymentOf(req wire.CreateDeploymentRequest) app.CreateDeployment {
 
 func parseDeploymentFilter(v url.Values) (database.DeploymentFilter, error) {
 	var f database.DeploymentFilter
-	for name, dst := range map[string]*domain.ID{queryAppID: &f.AppID, queryAppTargetID: &f.AppTargetID, queryEnvID: &f.EnvironmentID} {
+	for name, dst := range map[string]*domain.ID{wire.QueryAppID: &f.AppID, wire.QueryAppTargetID: &f.AppTargetID, wire.QueryEnvironmentID: &f.EnvironmentID} {
 		if raw := v.Get(name); raw != "" {
 			id, err := domain.ParseID(raw)
 			if err != nil {

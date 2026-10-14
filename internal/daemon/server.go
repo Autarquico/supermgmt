@@ -75,7 +75,7 @@ func RunServer(ctx context.Context, o Options) error {
 	})
 }
 
-func (b *builder) serverServers(services api.Services) (*api.Server, *api.AdminServer, error) {
+func (b *builder) serverServers(ctx context.Context, services api.Services) (*api.Server, *api.AdminServer, error) {
 	proxy, err := b.proxy()
 	if err != nil {
 		return nil, nil, err
@@ -84,10 +84,19 @@ func (b *builder) serverServers(services api.Services) (*api.Server, *api.AdminS
 	if err != nil {
 		return nil, nil, err
 	}
-	remote, err := api.New(api.Options{
+	var remote *api.Server
+	mount, err := b.remoteMCP(ctx, func() *api.Server { return remote }, proxy)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts := api.Options{
 		Services: services, IDs: b.o.IDs, Resolver: resolver, GitHubWebhook: b.githubWebhook(), Proxy: proxy,
 		DB: b.db, Clock: b.o.Clock, RequestTimeout: b.cfg.Server.RequestTimeout, Log: b.o.Log, Ready: b.ready(),
-	})
+	}
+	if mount != nil {
+		opts.MCPRemote, opts.MCPRemotePaths = mount.handler, mount.paths
+	}
+	remote, err = api.New(opts)
 	if err != nil {
 		return nil, nil, err
 	}

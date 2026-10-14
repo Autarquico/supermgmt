@@ -10,7 +10,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
 	"github.com/autarquico/supermgmt/internal/auth"
-	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
 )
@@ -185,7 +184,7 @@ func TestALocalDaemonServesTheM4Routes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListApps: %v", err)
 	}
-	deployments, err := i.client().ListDeployments(context.Background(), client.DeploymentQuery{})
+	deployments, err := i.client().ListDeployments(context.Background(), wire.DeploymentQuery{})
 
 	if len(apps.Items) != 0 || err != nil || len(deployments.Items) != 0 {
 		t.Errorf("apps %v, deployments %v, err %v", apps.Items, deployments.Items, err)

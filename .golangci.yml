@@ -220,11 +220,43 @@ linters:
           files:
             - "**/*.go"
             - "!**/internal/auth/oidc/**"
+            - "!**/internal/auth/oauth*.go"
           deny:
             - pkg: github.com/coreos/go-oidc/v3
-              desc: only internal/auth/oidc talks to the IdP (ADR-0018)
+              desc: only internal/auth/oidc talks to the IdP (ADR-0018); internal/auth/oauth*.go verifies remote MCP access tokens with its key set (ADR-0033)
             - pkg: golang.org/x/oauth2
               desc: only internal/auth/oidc talks to the IdP (ADR-0018)
+        mcp-sdk-stays-in-mcp:
+          files:
+            - "**/*.go"
+            - "!**/internal/mcp/**"
+            - "!**/internal/cli/mcp_bridge*.go"
+            - "!**/test/**"
+          deny:
+            - pkg: github.com/modelcontextprotocol/go-sdk
+              desc: only internal/mcp and the stdio bridge speak MCP (ADR-0031)
+        mcp-is-an-api-client:
+          files:
+            - "**/internal/mcp/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/modelcontextprotocol/go-sdk
+            - github.com/autarquico/supermgmt/internal/mcp
+            - github.com/autarquico/supermgmt/internal/api/wire
+            - github.com/autarquico/supermgmt/internal/domain
+            - github.com/autarquico/supermgmt/internal/errors
+            - github.com/autarquico/supermgmt/internal/audit
+            - github.com/autarquico/supermgmt/internal/textsafe
+        oauth-fake-stays-in-tests:
+          files:
+            - "**/*.go"
+            - "!**/*_test.go"
+            - "!**/internal/auth/oauthfake/**"
+            - "!**/test/**"
+          deny:
+            - pkg: github.com/autarquico/supermgmt/internal/auth/oauthfake
+              desc: the fake authorization server is for tests only (ADR-0033)
         zstd-stays-in-backup:
           files:
             - "**/*.go"

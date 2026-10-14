@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "supermgmt": {
+      "command": "sm",
+      "args": ["mcp", "--token-file", "/Users/you/.config/supermgmt/mcp-claude-desktop.token"]
+    }
+  }
+}

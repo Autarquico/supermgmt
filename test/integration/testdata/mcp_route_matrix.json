@@ -1,0 +1,1187 @@
+{
+ "rows": [
+  {
+   "route": "GET /health/live",
+   "class": "exempt",
+   "path": "/health/live",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /health/ready",
+   "class": "exempt",
+   "path": "/health/ready",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/me",
+   "class": "exempt",
+   "path": "/api/v1/me",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/presence",
+   "class": "exempt",
+   "path": "/api/v1/presence",
+   "body": "",
+   "headers": null,
+   "stream": true,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/ssh-key",
+   "class": "query",
+   "path": "/api/v1/ssh-key",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/events",
+   "class": "query",
+   "path": "/api/v1/events",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/plans/{id}",
+   "class": "query",
+   "path": "/api/v1/plans/{plan}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/plans",
+   "class": "plan",
+   "path": "/api/v1/plans",
+   "body": "{\"action\":\"service.restart\",\"targets\":[{\"type\":\"service\",\"id\":\"{service}\"}]}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 201,
+    "plan_decision": "deny",
+    "created": {
+     "plans": 1
+    }
+   },
+   "on": {
+    "status": 201,
+    "plan_decision": "allow",
+    "created": {
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/plans/{id}/submit",
+   "class": "plan",
+   "path": "/api/v1/plans/{plan}/submit",
+   "body": "{\"plan_hash\":\"{plan_hash}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/approvals",
+   "class": "query",
+   "path": "/api/v1/approvals",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/jobs",
+   "class": "query",
+   "path": "/api/v1/jobs",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/jobs/{id}",
+   "class": "query",
+   "path": "/api/v1/jobs/{job}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/jobs/{id}/approve",
+   "class": "governance",
+   "path": "/api/v1/jobs/{job}/approve",
+   "body": "{\"plan_hash\":\"{job_plan_hash}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "DEFAULT_DENY"
+   },
+   "on": {
+    "status": 403,
+    "reason": "DEFAULT_DENY"
+   }
+  },
+  {
+   "route": "POST /api/v1/jobs/{id}/reject",
+   "class": "governance",
+   "path": "/api/v1/jobs/{job}/reject",
+   "body": "{\"plan_hash\":\"{job_plan_hash}\",\"reason\":\"not today\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "DEFAULT_DENY"
+   },
+   "on": {
+    "status": 403,
+    "reason": "DEFAULT_DENY"
+   }
+  },
+  {
+   "route": "POST /api/v1/jobs/{id}/cancel",
+   "class": "write",
+   "path": "/api/v1/jobs/{job}/cancel",
+   "body": "{\"plan_hash\":\"{job_plan_hash}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 200,
+    "created": {
+     "jobs WHERE state = 'cancelled'": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/jobs/{id}/resolve",
+   "class": "forbidden",
+   "path": "/api/v1/jobs/{job}/resolve",
+   "body": "{\"plan_hash\":\"{job_plan_hash}\",\"outcome\":\"failed\",\"note\":\"checked by hand\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "note": "job.resolve is human judgment over ambiguous evidence (spec §20.4): forbidden to an mcp actor in every mode."
+  },
+  {
+   "route": "GET /api/v1/providers",
+   "class": "query",
+   "path": "/api/v1/providers",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/providers",
+   "class": "write",
+   "path": "/api/v1/providers",
+   "body": "{\"type\":\"local\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/providers/{id}/refresh",
+   "class": "query",
+   "path": "/api/v1/providers/{provider_proxmox}/refresh",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/providers/{id}/repositories",
+   "class": "query",
+   "path": "/api/v1/providers/{provider_github}/repositories",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 502
+   },
+   "on": {
+    "status": 502
+   },
+   "note": "The rig has no GitHub: the request passes the gate and the provider call fails."
+  },
+  {
+   "route": "GET /api/v1/apps",
+   "class": "query",
+   "path": "/api/v1/apps",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/apps",
+   "class": "write",
+   "path": "/api/v1/apps",
+   "body": "{\"name\":\"blog\",\"deployed_service\":\"web\",\"compose_source\":\"control-plane\",\"compose_content\":\"services:\\n  web:\\n    image: example/web\\n\",\"image_policy\":{\"deployed\":\"web\"}}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/apps/{id}",
+   "class": "query",
+   "path": "/api/v1/apps/{app}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "PATCH /api/v1/apps/{id}",
+   "class": "write",
+   "path": "/api/v1/apps/{app}",
+   "body": "{\"manifest_path\":\".other.yaml\"}",
+   "headers": [
+    "If-Match",
+    "1"
+   ],
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/apps/{id}/targets",
+   "class": "query",
+   "path": "/api/v1/apps/{app}/targets",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/apps/{id}/targets",
+   "class": "write",
+   "path": "/api/v1/apps/{app}/targets",
+   "body": "{\"environment\":\"staging\",\"node_id\":\"{node}\",\"deployment_policy\":{\"rollback\":\"manual\"}}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/app-targets/{id}",
+   "class": "query",
+   "path": "/api/v1/app-targets/{app_target}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "PATCH /api/v1/app-targets/{id}",
+   "class": "write",
+   "path": "/api/v1/app-targets/{app_target}",
+   "body": "{\"deployment_policy\":{\"rollback\":\"manual\",\"stateful\":false}}",
+   "headers": [
+    "If-Match",
+    "1"
+   ],
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/deployments",
+   "class": "query",
+   "path": "/api/v1/deployments",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/deployments",
+   "class": "write",
+   "path": "/api/v1/deployments",
+   "body": "{deployment_body}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "deployments": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/deployments/{id}",
+   "class": "query",
+   "path": "/api/v1/deployments/{deployment}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/deployments/{id}/rollback",
+   "class": "write",
+   "path": "/api/v1/deployments/{deployment}/rollback",
+   "body": "{}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 500,
+    "reason": "ROLLBACK_UNAVAILABLE"
+   },
+   "note": "The rig has no executed deployment to return to: with writes on the request passes the gate and then ends in ROLLBACK_UNAVAILABLE."
+  },
+  {
+   "route": "POST /api/v1/deployments/{id}/cancel",
+   "class": "write",
+   "path": "/api/v1/deployments/{deployment}/cancel",
+   "body": "{}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/mcp/clients",
+   "class": "query",
+   "path": "/api/v1/mcp/clients",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/mcp/clients",
+   "class": "forbidden",
+   "path": "/api/v1/mcp/clients",
+   "body": "{\"name\":\"second\",\"origin\":\"local\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "POST /api/v1/mcp/clients/{id}/token",
+   "class": "forbidden",
+   "path": "/api/v1/mcp/clients/{mcp_client}/token",
+   "body": "{\"expires_at\":\"{expires_at}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "DELETE /api/v1/mcp/clients/{id}",
+   "class": "forbidden",
+   "path": "/api/v1/mcp/clients/{mcp_client}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes",
+   "class": "query",
+   "path": "/api/v1/nodes",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/nodes/ssh/host-key",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh/host-key",
+   "body": "{\"host\":\"127.0.0.1\",\"port\":1}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 502
+   },
+   "note": "With writes on the request passes the gate and fails dialing a closed loopback port."
+  },
+  {
+   "route": "POST /api/v1/nodes/ssh",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh",
+   "body": "{\"name\":\"new-1\",\"host\":\"127.0.0.1\",\"port\":22,\"admin_user\":\"admin\",\"host_public_key\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\",\"environment\":\"dev\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "PATCH /api/v1/nodes/{id}",
+   "class": "write",
+   "path": "/api/v1/nodes/{node_api}",
+   "body": "{\"tags\":[\"web\",\"edited\"]}",
+   "headers": [
+    "If-Match",
+    "1"
+   ],
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/nodes/{id}/probe",
+   "class": "write",
+   "path": "/api/v1/nodes/{node}/probe",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED",
+    "created": {
+     "plans": 1
+    }
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   },
+   "note": "OPEN QUESTION: with writes off a denied plan row is stored (plans +1), unlike the service actions, which store nothing."
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}/services",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}/services",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}/connect-info",
+   "class": "forbidden",
+   "path": "/api/v1/nodes/{node}/connect-info",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "POST /api/v1/nodes/{id}/sessions",
+   "class": "forbidden",
+   "path": "/api/v1/nodes/{node}/sessions",
+   "body": "{\"tool\":\"shell\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "POST /api/v1/nodes/{id}/sessions/{sid}/end",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}/sessions/{session}/end",
+   "body": "{\"reason\":\"exited\",\"exit_code\":0}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   },
+   "note": "The rig's session belongs to the local user: an mcp client can never open one, so it cannot end it either."
+  },
+  {
+   "route": "GET /api/v1/services/{id}",
+   "class": "query",
+   "path": "/api/v1/services/{service}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/services/{id}/logs",
+   "class": "query",
+   "path": "/api/v1/services/{service}/logs",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200,
+    "node_commands": 1
+   },
+   "on": {
+    "status": 200,
+    "node_commands": 1
+   }
+  },
+  {
+   "route": "POST /api/v1/services/{id}/actions/start",
+   "class": "write",
+   "path": "/api/v1/services/{service}/actions/start",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/services/{id}/actions/stop",
+   "class": "write",
+   "path": "/api/v1/services/{service}/actions/stop",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/services/{id}/actions/restart",
+   "class": "write",
+   "path": "/api/v1/services/{service}/actions/restart",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/auth/oidc/start",
+   "class": "exempt",
+   "path": "/api/v1/auth/oidc/start",
+   "body": "{\"redirect_uri\":\"http://127.0.0.1:1/callback\",\"code_challenge\":\"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
+   "route": "POST /api/v1/auth/oidc/exchange",
+   "class": "exempt",
+   "path": "/api/v1/auth/oidc/exchange",
+   "body": "{\"state\":\"x\",\"code\":\"y\",\"code_verifier\":\"z\",\"client\":\"cli\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
+   "route": "POST /api/v1/auth/oidc/device",
+   "class": "exempt",
+   "path": "/api/v1/auth/oidc/device",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
+   "route": "POST /api/v1/auth/oidc/device/poll",
+   "class": "exempt",
+   "path": "/api/v1/auth/oidc/device/poll",
+   "body": "{\"transaction_id\":\"nope\",\"client\":\"cli\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
+   "route": "POST /api/v1/auth/bootstrap",
+   "class": "exempt",
+   "path": "/api/v1/auth/bootstrap",
+   "body": "{\"code\":\"{bootstrap_code}\",\"display_name\":\"mcp admin\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 401
+   },
+   "on": {
+    "status": 401
+   }
+  },
+  {
+   "route": "POST /api/v1/auth/logout",
+   "class": "exempt",
+   "path": "/api/v1/auth/logout",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 400
+   },
+   "on": {
+    "status": 400
+   }
+  },
+  {
+   "route": "GET /api/v1/tokens",
+   "class": "exempt",
+   "path": "/api/v1/tokens",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/tokens",
+   "class": "forbidden",
+   "path": "/api/v1/tokens",
+   "body": "{\"name\":\"mine\",\"expires_at\":\"{expires_at}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "DELETE /api/v1/tokens/{id}",
+   "class": "exempt",
+   "path": "/api/v1/tokens/{api_token}",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 200,
+    "created": {
+     "api_tokens WHERE revoked_at IS NOT NULL": 1
+    }
+   },
+   "note": "Revoking another identity's token is token.revoke, a non-query action: refused while writes are off, allowed by the `*` grant once they are on."
+  },
+  {
+   "route": "POST /api/v1/secrets",
+   "class": "write",
+   "path": "/api/v1/secrets",
+   "body": "{\"name\":\"db/password\",\"value\":\"hunter2\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1,
+     "secrets": 1
+    }
+   },
+   "note": "With writes on the secret row is staged (secrets +1) before the job is approved; the job awaits approval."
+  },
+  {
+   "route": "POST /api/v1/secrets/master-key/rotate",
+   "class": "write",
+   "path": "/api/v1/secrets/master-key/rotate",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/secrets/master-key/retire",
+   "class": "write",
+   "path": "/api/v1/secrets/master-key/retire",
+   "body": "{\"kek_id\":\"{kek}\",\"external_backups_handled\":true}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/ssh-key/rotate",
+   "class": "write",
+   "path": "/api/v1/ssh-key/rotate",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "GET /api/v1/secrets/master-keys",
+   "class": "query",
+   "path": "/api/v1/secrets/master-keys",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/secrets/master-key/export",
+   "class": "write",
+   "path": "/api/v1/secrets/master-key/export",
+   "body": "{\"kek_id\":\"{kek}\",\"passphrase\":\"correct horse battery\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "DEFAULT_DENY"
+   },
+   "on": {
+    "status": 403,
+    "reason": "DEFAULT_DENY"
+   },
+   "note": "Refused with DEFAULT_DENY in both modes and over both transports, whatever the grant."
+  },
+  {
+   "route": "GET /api/v1/backups",
+   "class": "query",
+   "path": "/api/v1/backups",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/backups",
+   "class": "write",
+   "path": "/api/v1/backups",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   }
+  },
+  {
+   "route": "POST /api/v1/enrollments",
+   "class": "forbidden",
+   "path": "/api/v1/enrollments",
+   "body": "{\"tags\":[\"web\"],\"max_nodes\":1,\"expires_at\":\"{expires_at}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "POST /api/v1/enroll",
+   "class": "exempt",
+   "path": "/api/v1/enroll",
+   "body": "{\"token\":\"{join_token}\",\"host_public_key\":\"ssh-ed25519 AAAA\",\"hostname\":\"h\",\"addresses\":[\"10.0.0.9\"],\"ssh_port\":22}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 400
+   },
+   "on": {
+    "status": 400
+   },
+   "note": "Exempt route; over the Unix socket and in process the request has no source address, so it is refused before any token lookup."
+  },
+  {
+   "route": "GET /api/v1/events/stream",
+   "class": "query",
+   "path": "/api/v1/events/stream",
+   "body": "",
+   "headers": null,
+   "stream": true,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "DELETE /api/v1/nodes/{id}",
+   "class": "write",
+   "path": "/api/v1/nodes/{node_api}",
+   "body": "",
+   "headers": [
+    "If-Match",
+    "1"
+   ],
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 403,
+    "reason": "DESTRUCTIVE_GATE"
+   },
+   "note": "A destructive action needs more than a wildcard grant: DESTRUCTIVE_GATE with writes on."
+  }
+ ]
+}
