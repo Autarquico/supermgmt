@@ -52,6 +52,9 @@ const (
 	DefaultAccountID = "0123456789abcdef0123456789abcdef"
 	DefaultZone      = "example.test"
 	DefaultZoneID    = "fedcba9876543210fedcba9876543210"
+	// DefaultOneTimePINID is the one-time PIN identity provider every fake
+	// account starts with, as a Zero Trust organisation does.
+	DefaultOneTimePINID = "0a1b2c3d-0000-4000-8000-0000000000aa"
 
 	maxPerPage = 1000
 )
@@ -86,6 +89,7 @@ const (
 	OpServiceTokenNew  Op = "service_token.create"
 	OpServiceTokenList Op = "service_token.list"
 	OpServiceTokenDel  Op = "service_token.delete"
+	OpIdPList          Op = "idp.list"
 )
 
 // Request is one request the fake received.
@@ -157,6 +161,7 @@ type Fake struct {
 	policies []Policy
 	apps     []App
 	tokens   []ServiceToken
+	idps     []IdentityProvider
 }
 
 // New starts the fake. It is stopped when the test ends.
@@ -166,6 +171,7 @@ func New(t testing.TB, opts ...Option) *Fake {
 		t: t, mux: http.NewServeMux(), token: DefaultToken, account: DefaultAccountID,
 		zone: DefaultZone, zoneID: DefaultZoneID, pageSize: 100, faults: map[Op]*faultQueue{},
 	}
+	f.idps = []IdentityProvider{{ID: DefaultOneTimePINID, Name: "One-time PIN", Type: "onetimepin"}}
 	for _, opt := range opts {
 		opt(f)
 	}

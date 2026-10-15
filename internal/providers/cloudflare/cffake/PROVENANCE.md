@@ -30,6 +30,7 @@ assumptions" belongs in `docs/manual-checks/cloudflare-tunnel.md`.
 | `POST`/`PUT`/`GET`/`DELETE /accounts/{a}/access/policies` | `id`, `name`, `decision`, `include[]` (`email`, `service_token`), `exclude`, `require`, `reusable`, `created_at` | `non_identity` takes only service-token rules, `allow` only email rules; token IDs must exist; no name filter; a policy attached to an application cannot be deleted (409). |
 | `POST`/`GET`/`DELETE /accounts/{a}/access/apps` | `id`, `aud`, `name`, `domain`, `type`, `policies[]` (`id`, `precedence`), `allowed_idps`, `session_duration`, `created_at` | `self_hosted` only; policies must exist; a domain is unique among applications (409); filters `name` and `exact` (without `exact`, a substring search). |
 | `POST`/`GET`/`DELETE /accounts/{a}/access/service_tokens` | `id`, `name`, `client_id`, `client_secret` (creation only), `created_at`, `updated_at`, `expires_at`, `duration` | Duplicate names allowed; filter `name` is a substring search; the secret is never listed. |
+| `GET /accounts/{a}/access/identity_providers` | `id`, `name`, `type` | Every account starts with one `onetimepin` provider (assumption: a Zero Trust organisation that enabled One-time PIN); not verified against a real account. |
 
 Common behaviour: bearer token checked before routing (401 in the v4 envelope);
 another account in the path answers 403; an undeclared query parameter or

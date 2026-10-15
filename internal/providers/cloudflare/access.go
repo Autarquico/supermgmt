@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 const (
@@ -68,17 +70,6 @@ func (c *Client) FindAccessPolicies(ctx context.Context, name string) ([]AccessP
 	path, _ := c.accessPath("policies", "")
 	all, err := listAll(ctx, c, path, nil, decodeAccessPolicies)
 	return exactly(all, name, func(p AccessPolicy) string { return p.Name }, func(AccessPolicy) bool { return true }), err
-}
-
-// DeleteAccessPolicy deletes a reusable policy; one still attached to an
-// application is refused.
-func (c *Client) DeleteAccessPolicy(ctx context.Context, id string) error {
-	path, err := c.accessPath("policies", id)
-	if err != nil || id == "" {
-		return orInvalid(err, "a policy id is required")
-	}
-	_, err = c.do(ctx, http.MethodDelete, path, nil, nil, maxObjectBody)
-	return err
 }
 
 func policyOf(env envelope) (AccessPolicy, error) {
@@ -145,6 +136,10 @@ func orInvalid(err error, msg string) error {
 // CreateAccessApp creates a self-hosted Access application on spec.Domain.
 // The domain must be unique among the account's applications.
 func (c *Client) CreateAccessApp(ctx context.Context, spec AppSpec) (AccessApp, error) {
+	var err error
+	if spec.AllowedIdPs, err = c.ResolveAllowedIdPs(ctx, spec.AllowedIdPs); err != nil {
+		return AccessApp{}, err
+	}
 	body, err := appBody(spec)
 	if err != nil {
 		return AccessApp{}, err
@@ -164,6 +159,9 @@ func (c *Client) UpdateAccessApp(ctx context.Context, id string, spec AppSpec) (
 	path, err := c.accessPath("apps", id)
 	if err != nil || id == "" {
 		return AccessApp{}, orInvalid(err, "an application id is required")
+	}
+	if spec.AllowedIdPs, err = c.ResolveAllowedIdPs(ctx, spec.AllowedIdPs); err != nil {
+		return AccessApp{}, err
 	}
 	body, err := appBody(spec)
 	if err != nil {
@@ -191,15 +189,44 @@ func appBody(spec AppSpec) (map[string]any, error) {
 		"name": spec.Name, "domain": strings.ToLower(spec.Domain), "type": "self_hosted",
 		"session_duration": sessionDuration, "policies": policies, "app_launcher_visible": false,
 	}
-	if len(spec.AllowedIdPs) > 0 {
-		for _, id := range spec.AllowedIdPs {
-			if !validID(id) {
-				return nil, invalid("invalid identity provider id %q", id)
-			}
+	for _, id := range spec.AllowedIdPs {
+		if !validID(id) {
+			return nil, invalid("invalid identity provider id %q", id)
 		}
-		body["allowed_idps"] = spec.AllowedIdPs
 	}
+	body["allowed_idps"] = spec.AllowedIdPs
 	return body, nil
+}
+
+// --- identity providers ---
+
+const oneTimePINType = "onetimepin"
+
+// ListIdentityProviders lists the login methods of the account.
+func (c *Client) ListIdentityProviders(ctx context.Context) ([]IdentityProvider, error) {
+	path, _ := c.accessPath("identity_providers", "")
+	return listAll(ctx, c, path, nil, decodeIdentityProviders)
+}
+
+// ResolveAllowedIdPs returns the identity providers an application admits. A
+// configured list is used as it is. An empty one means the one-time PIN login
+// only: it is looked up in the account and sent explicitly, because an
+// application with no allowed_idps admits every provider the organisation has.
+func (c *Client) ResolveAllowedIdPs(ctx context.Context, configured []string) ([]string, error) {
+	if len(configured) > 0 {
+		return configured, nil
+	}
+	providers, err := c.ListIdentityProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range providers {
+		if p.Type == oneTimePINType {
+			return []string{p.ID}, nil
+		}
+	}
+	return nil, smerr.New(smerr.CodeCapabilityUnavailable, "",
+		"cloudflare: the account has no one-time PIN login method: enable One-time PIN in Zero Trust -> Settings -> Authentication, or set access_identity_providers")
 }
 
 func appOf(env envelope) (AccessApp, error) {

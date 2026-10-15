@@ -98,6 +98,19 @@ func FuzzDecodeDNS(f *testing.F) {
 	})
 }
 
+func FuzzDecodeIdentityProviders(f *testing.F) {
+	addSeeds(f, `{"id":"idp-1","name":"One-time PIN","type":"onetimepin"}`)
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if list, err := decodeIdentityProviders(raw); err == nil {
+			for _, p := range list {
+				if !validID(p.ID) || p.Type == "" {
+					t.Fatalf("malformed identity provider accepted: %+v", p)
+				}
+			}
+		}
+	})
+}
+
 func FuzzDecodeAccessApp(f *testing.F) {
 	addSeeds(f, appDoc)
 	f.Fuzz(func(t *testing.T, raw []byte) {

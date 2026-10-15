@@ -87,8 +87,9 @@ type AppSpec struct {
 	Domain string
 	// PolicyIDs are reusable policies, in precedence order.
 	PolicyIDs []string
-	// AllowedIdPs restricts the identity providers a login may use; empty
-	// allows every provider of the account (one-time PIN included).
+	// AllowedIdPs restricts the identity providers a login may use. Empty is
+	// never sent as such: Cloudflare would admit every provider of the
+	// account. The client resolves it to the one-time PIN provider.
 	AllowedIdPs []string
 }
 
@@ -152,3 +153,10 @@ type TokenInfo struct {
 
 // Active reports whether Cloudflare considers the token usable.
 func (t TokenInfo) Active() bool { return t.Status == "active" }
+
+// IdentityProvider is a login method of the account's Zero Trust organisation.
+type IdentityProvider struct {
+	ID   string
+	Name string
+	Type string
+}

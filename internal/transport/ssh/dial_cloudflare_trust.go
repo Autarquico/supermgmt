@@ -84,7 +84,7 @@ func securePrivateDir(dir string) error {
 		return smerr.New(smerr.CodeInternal, "", "the cloudflared home directory is not owned by the daemon's user")
 	}
 	if info.Mode().Perm() != 0o700 {
-		if err := os.Chmod(dir, 0o700); err != nil {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory: 0700 is the tightest usable mode
 			return smerr.Wrap(err, smerr.CodeInternal, "", "restrict the cloudflared home directory")
 		}
 	}
