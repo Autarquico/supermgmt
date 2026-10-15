@@ -128,7 +128,25 @@ func (p pinnedKey) callback(mismatch **hostKeyMismatch) cryptossh.HostKeyCallbac
 }
 
 func unreachable(what string, err error) error {
+	if cause := networkCause(err); cause != "" {
+		what += ": " + cause
+	}
 	return smerr.Wrap(err, smerr.CodeNodeUnreachable, "", what)
+}
+
+// networkCause names why a node could not be reached ("connect: no route to
+// host", "lookup web1: no such host") without the local addresses or the
+// resolver that the full error carries.
+func networkCause(err error) string {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "lookup " + dnsErr.Name + ": " + dnsErr.Err
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Err != nil {
+		return opErr.Err.Error()
+	}
+	return ""
 }
 
 func ctxError(what string, err error) error {

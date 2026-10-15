@@ -366,7 +366,8 @@ Diagnose configuration, paths and database health
 
 Diagnose this machine. --offline checks the configuration, paths and database files without contacting
 the service. Without it, doctor asks a running server what it can tell about itself over its admin
-socket (run it as root or the service user).
+socket (run it as root or the service user); a local installation has no such socket and gets the
+offline checks, with a running local daemon reported instead of failed.
 
 ```text
 sm doctor [flags]

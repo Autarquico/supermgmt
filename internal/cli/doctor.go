@@ -57,7 +57,8 @@ func newDoctorCmd(env []string) *cobra.Command {
 		Short: "Diagnose configuration, paths and database health",
 		Long: "Diagnose this machine. --offline checks the configuration, paths and database files without contacting\n" +
 			"the service. Without it, doctor asks a running server what it can tell about itself over its admin\n" +
-			"socket (run it as root or the service user).",
+			"socket (run it as root or the service user); a local installation has no such socket and gets the\n" +
+			"offline checks, with a running local daemon reported instead of failed.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configFlag, _ := cmd.Flags().GetString("config")
@@ -67,10 +68,14 @@ func newDoctorCmd(env []string) *cobra.Command {
 				report = offlineReport(cmd.Context(), configPath(configFlag, env), env)
 			} else {
 				checks, err := onlineChecks(cmd, env)
-				if err != nil {
+				switch {
+				case errors.Is(err, errLocalInstance):
+					report = localReport(cmd.Context(), configPath(configFlag, env), env)
+				case err != nil:
 					return err
+				default:
+					report = newDoctorReport(checks)
 				}
-				report = newDoctorReport(checks)
 			}
 			if err := writeDoctorReport(cmd.OutOrStdout(), report, asJSON); err != nil {
 				return err
@@ -85,17 +90,24 @@ func newDoctorCmd(env []string) *cobra.Command {
 	return cmd
 }
 
+// errLocalInstance reports that the configuration is local: only a server
+// has an admin socket, so a local daemon is checked offline.
+var errLocalInstance = errors.New("local instance")
+
 // onlineChecks asks the server's admin socket (spec §23.1) for its doctor
-// report. Only a server has that socket: a local daemon is checked offline.
+// report.
 func onlineChecks(cmd *cobra.Command, env []string) ([]check, error) {
 	configFlag, _ := cmd.Flags().GetString("config")
 	file := configPath(configFlag, env)
+	if !fileExists(file) {
+		return nil, errLocalInstance // the local daemon runs on built-in defaults
+	}
 	result, err := config.Load(file, env)
 	if err != nil {
 		return nil, usageErrorf("configuration %s is invalid: %s", file, joinProblems(configProblems(err)))
 	}
 	if result.Config.Instance.Mode != config.ModeServer {
-		return nil, usageErrorf("online doctor asks a server over its admin socket; this configuration is local: use --offline")
+		return nil, errLocalInstance
 	}
 	admin := adminClient(result.Config.Server.AdminSocket)
 	report, err := adminCall[wire.AdminDoctor](cmd.Context(), admin, http.MethodGet, wire.AdminPathDoctor, nil)
@@ -148,7 +160,17 @@ func writeDoctorReport(w io.Writer, r doctorReport, asJSON bool) error {
 // offlineReport runs every offline check and adds the schema versions the
 // installer reads: the database's (absent without a schema) and the binary's.
 func offlineReport(ctx context.Context, configFile string, env []string) doctorReport {
-	checks, databaseSchema := offlineChecks(ctx, configFile, env)
+	return checksReport(ctx, configFile, env, false)
+}
+
+// localReport is the offline report of a local installation, whose daemon
+// starts on demand: a daemon holding the database is its normal state.
+func localReport(ctx context.Context, configFile string, env []string) doctorReport {
+	return checksReport(ctx, configFile, env, true)
+}
+
+func checksReport(ctx context.Context, configFile string, env []string, daemonMayRun bool) doctorReport {
+	checks, databaseSchema := offlineChecks(ctx, configFile, env, daemonMayRun)
 	report := newDoctorReport(checks)
 	report.DatabaseSchemaVersion = databaseSchema
 	report.BinarySchemaVersion, _ = database.LatestSchemaVersion()
@@ -158,15 +180,29 @@ func offlineReport(ctx context.Context, configFile string, env []string) doctorR
 // offlineChecks runs every offline check. Checks that need the configuration
 // are omitted when it does not load. The second result is the database's
 // schema version, nil when it has none.
-func offlineChecks(ctx context.Context, configFile string, env []string) ([]check, *int) {
-	result, err := config.Load(configFile, env)
-	if err != nil {
-		return []check{{"config", statusFail, fmt.Sprintf("%s: %s", configFile, strings.Join(configProblems(err), "; "))}}, nil
+func offlineChecks(ctx context.Context, configFile string, env []string, daemonMayRun bool) ([]check, *int) {
+	configCheck := check{"config", statusOK, configFile}
+	var (
+		cfg      *config.Config
+		warnings []string
+	)
+	if daemonMayRun && !fileExists(configFile) {
+		result, err := config.LoadBytes([]byte(minimalLocalConfig), env)
+		if err != nil {
+			return []check{{"config", statusFail, "built-in defaults: " + strings.Join(configProblems(err), "; ")}}, nil
+		}
+		cfg, warnings = result.Config, result.Warnings
+		configCheck.Detail = configFile + ": none; the daemon runs on built-in defaults"
+	} else {
+		result, err := config.Load(configFile, env)
+		if err != nil {
+			return []check{{"config", statusFail, fmt.Sprintf("%s: %s", configFile, strings.Join(configProblems(err), "; "))}}, nil
+		}
+		cfg, warnings = result.Config, result.Warnings
 	}
-	cfg := result.Config
 	checks := []check{
-		{"config", statusOK, configFile},
-		environmentCheck(result.Warnings),
+		configCheck,
+		environmentCheck(warnings),
 		dataDirCheck(cfg.Instance.DataDir),
 		socketCheck(socketPath(cfg, env)),
 		databaseFileCheck(cfg.Storage.SQLite.Path),
@@ -174,7 +210,7 @@ func offlineChecks(ctx context.Context, configFile string, env []string) ([]chec
 	if cfg.Server.TLS.Mode == config.TLSDirect {
 		checks = append(checks, tlsCheck(cfg.Server.TLS.CertFile))
 	}
-	dbChecks, databaseSchema := databaseChecks(ctx, cfg.Storage.SQLite.Path, cfg.Security.KeysDir)
+	dbChecks, databaseSchema := databaseChecks(ctx, cfg.Storage.SQLite.Path, cfg.Security.KeysDir, daemonMayRun)
 	return append(checks, dbChecks...), databaseSchema
 }
 
@@ -251,14 +287,17 @@ func modeCheck(name, path string, mode, forbidden fs.FileMode, problem string) c
 }
 
 // databaseChecks holds the database lock for as long as it inspects the file,
-// so no daemon can start underneath it (spec §2.1.1).
-func databaseChecks(ctx context.Context, path, keysDir string) ([]check, *int) {
+// so no daemon can start underneath it (spec §2.1.1). When daemonMayRun, a
+// running daemon is reported, not failed, and the database is left to it.
+func databaseChecks(ctx context.Context, path, keysDir string, daemonMayRun bool) ([]check, *int) {
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
 		return []check{{"database_lock", statusWarn, "skipped: database directory does not exist"}}, nil
 	}
 	lock, err := database.AcquireDatabaseLock(path)
 	var held *database.LockHeldError
 	switch {
+	case errors.As(err, &held) && daemonMayRun:
+		return []check{{"database_lock", statusOK, heldDetail(held) + "; the database is inspected once the daemon exits when idle"}}, nil
 	case errors.As(err, &held):
 		return []check{{"database_lock", statusFail, heldDetail(held)}}, nil
 	case err != nil:

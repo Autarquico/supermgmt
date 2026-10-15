@@ -177,17 +177,18 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	return outcome, err
 }
 
-// requireBootstrap checks, before anything changes, that admin_user can do
-// what setup needs: be root, or run sudo without a password (ADR-0009 c).
+// requireBootstrap checks, before anything changes, that the node runs Linux
+// and that admin_user can do what setup needs: be root, or run sudo without a
+// password (ADR-0009 c).
 func (h setupHandler) requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool) error {
-	if asRoot {
-		return nil
-	}
 	snapshot, err := discovery.Probe(ctx, admin)
 	if err != nil {
 		return err
 	}
-	if !snapshot.PasswordlessSudo {
+	if !snapshot.IsLinux() {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "setup needs a Linux node; this one runs "+snapshot.KernelName())
+	}
+	if !asRoot && !snapshot.PasswordlessSudo {
 		return smerr.New(smerr.CodeCapabilityUnavailable, "", bootstrapRequirement)
 	}
 	return nil

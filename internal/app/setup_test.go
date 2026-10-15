@@ -286,8 +286,8 @@ func TestSetupAsRootRunsTheStepsDirectly(t *testing.T) {
 
 	mustf(t, s.run(), "setup")
 
-	if root.count("probe") != 0 || root.count("setup.user_add.sudo") != 0 || root.count("setup.dir") == 0 {
-		t.Errorf("root session ran %v; root needs neither the sudo preflight nor sudo variants", root.ran())
+	if root.count("setup.user_add.sudo") != 0 || root.count("setup.dir") == 0 {
+		t.Errorf("root session ran %v; root needs no sudo variants", root.ran())
 	}
 	if got := s.events("node.setup.privileged_session")[0].Data["via"]; got != "root" {
 		t.Errorf("via = %v", got)
@@ -310,6 +310,22 @@ func TestSetupRefusesAnAdminWithoutPasswordlessSudo(t *testing.T) {
 	}
 	if _, ok := s.setupCapability(); ok {
 		t.Error("capability recorded for a failed setup")
+	}
+}
+
+func TestSetupRefusesANodeThatIsNotLinux(t *testing.T) {
+	s := newSetting(t)
+	s.dialer.as("admin").reply("probe", strings.Replace(linuxProbe, "Linux 6.12.43-amd64 x86_64", "Darwin 25.0.0 arm64", 1))
+	s.setupPlan(defaultSetup())
+
+	err := s.run()
+
+	wantError(t, err, smerr.CodeCapabilityUnavailable, "")
+	if !strings.Contains(err.Error(), "setup needs a Linux node; this one runs Darwin") {
+		t.Errorf("error = %v", err)
+	}
+	if got := len(s.dialer.as("admin").ran()); got != 1 {
+		t.Errorf("ran %v; nothing may run after the preflight refused", s.dialer.as("admin").ran())
 	}
 }
 

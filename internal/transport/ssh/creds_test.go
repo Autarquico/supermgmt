@@ -148,6 +148,18 @@ func TestAgentUnavailableIsCapabilityUnavailable(t *testing.T) {
 	requireCode(t, err, smerr.CodeCapabilityUnavailable)
 }
 
+func TestAnEmptyAgentIsReportedAsSuch(t *testing.T) {
+	c, _ := resolver(t)
+	t.Setenv("SSH_AUTH_SOCK", serveAgent(t))
+
+	_, err := c.Resolve(context.Background(), "ssh-agent://default")
+
+	requireCode(t, err, smerr.CodeCapabilityUnavailable)
+	if !strings.Contains(err.Error(), "ssh-add") {
+		t.Errorf("the message must say how to load a key: %v", err)
+	}
+}
+
 func writeKeyFile(t *testing.T, dir string, mode os.FileMode) (string, []byte) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)

@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: no stable release yet.
 
+### Fixed: found testing the first pre-release on two Macs
+
+- `sm doctor` on a local installation runs the offline checks instead of asking for `--offline`, and reports a running local daemon instead of failing.
+- Node connection errors name the network cause (`scan host key: connect: no route to host`, `lookup web1: no such host`), and the daemon logs them with the correlation ID.
+- An empty ssh-agent is reported as such, `sm nodes add` warns when the agent cannot sign in, and an authentication failure says the node does not accept the offered keys.
+- macOS nodes: CPU usage (from `top`) and memory in use (from `vm_stat`) are measured; memory showed 100% and CPU 0%.
+- Setup refuses a node that is not Linux before changing anything, and the TUI offers it only on SSH nodes that are not macOS.
+- Troubleshooting covers macOS's Local Network permission, which can block `sm` from the LAN while `ssh` works.
+
 ### Added: website and documentation
 
 - A static website in `site/` (Astro and Starlight) with a landing page and the documentation, built from `docs/*.md` at build time; `docs/public-pages.txt` lists the public pages. Fonts are self-hosted, and the site source references no third-party script, font or analytics service. The `pages` workflow publishes it to GitHub Pages from release tags only; it is not published yet. The `site` CI job builds and checks it on every change.

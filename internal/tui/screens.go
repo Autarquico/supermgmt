@@ -270,8 +270,16 @@ func capabilityNames(n wire.Node) string {
 	return strings.Join(names, " ")
 }
 
+// setupSummary offers setup only where it can run: SSH nodes on Linux. The OS
+// is the probe's display name, and macOS is the one non-Linux system it names.
 func setupSummary(n wire.Node) string {
-	if n.Setup == nil {
+	switch {
+	case n.Setup != nil:
+	case n.Kind != "ssh":
+		return "not available (SSH nodes only)"
+	case strings.HasPrefix(n.OS, "macOS"):
+		return "not available (Linux only)"
+	default:
 		return "not done (/ setup " + safe(n.Name) + ")"
 	}
 	text := fmt.Sprintf("done · %d unit grant(s) · logs %s", len(n.Setup.Units), safe(n.Setup.LogsMode))

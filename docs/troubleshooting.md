@@ -9,6 +9,8 @@ sudo sm doctor              # asks the running server: mode, restore hold, admin
 sm doctor --offline --json  # files and database, with the service stopped
 ```
 
+On a laptop (local mode) `sm doctor` runs the offline checks; a running local daemon is reported, not failed.
+
 Installer exit codes are in [installation.md](installation.md#exit-codes).
 
 ## On your laptop
@@ -35,15 +37,37 @@ The socket is owned by another user, or its owner could not be identified, so `s
 
 Unix socket paths are short: 104 bytes on macOS, 108 on Linux. A long home directory or state directory pushes the default path over the limit, and `sm` says so instead of cutting the path (`TestOverlongSocketPathIsAnExplicitErrorNotASilentTruncation`). Set `daemon.socket` to a shorter path in your configuration file.
 
-### `SSH_AUTH_SOCK is not set` or `cannot reach the ssh-agent`
+### `SSH_AUTH_SOCK is not set`, `cannot reach the ssh-agent` or `the ssh-agent holds no keys`
 
-`CAPABILITY_UNAVAILABLE` (`TestAgentUnavailableIsCapabilityUnavailable`). Until a machine is set up, SuperMgmt logs in as your admin account through your SSH agent, and it is the daemon, not the command you typed, that talks to the agent. The daemon keeps the environment of the command that started it, so a daemon started from a shell without an agent cannot use the agent you load later.
+`CAPABILITY_UNAVAILABLE` (`TestAgentUnavailableIsCapabilityUnavailable`, `TestAnEmptyAgentIsReportedAsSuch`). `sm nodes add` warns about the same three cases right after adding the node (`TestNodesAddWarnsWhenTheAgentCannotSignIn`). SuperMgmt never asks for a password. Until a machine is set up, SuperMgmt logs in as your admin account through your SSH agent, and it is the daemon, not the command you typed, that talks to the agent. The daemon keeps the environment of the command that started it, so a daemon started from a shell without an agent cannot use the agent you load later.
 
 1. Check that `ssh-add -l` lists your key in your shell.
 2. Let the daemon go: it exits on its own after `daemon.idle_exit` (10 minutes by default) once no client is connected and no job is unfinished, including jobs waiting for approval. Or stop the `sm daemon` process.
 3. Run the command again from the shell where your agent works.
 
 This was read from the code (`internal/transport/ssh/creds.go`, `internal/client/autostart.go`), not seen on a laptop.
+
+### `ssh authentication failed for user ...: the node does not accept the offered keys`
+
+The agent has keys, but none is in the admin account's `~/.ssh/authorized_keys` on the machine. Being able to log in with a password is not enough. Authorize your key once, then check that a key alone gets in:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub alex@web1
+ssh -o PasswordAuthentication=no alex@web1 true
+```
+
+Seen on a Mac reached over SSH before its key was authorized (2026-10-15).
+
+### `scan host key: connect: no route to host` on macOS
+
+`ssh` and `nc` reach the machine, but `sm nodes add` does not. macOS blocks programs that are not Apple's from the local network unless the app they run under has the **Local Network** permission (System Settings → Privacy & Security → Local Network). The daemon runs under the terminal it was started from. Seen on macOS 26 with iTerm (2026-10-15): the switch showed iTerm allowed, yet every non-Apple program in it (`sm`, Python, Node) got `no route to host` on the LAN while reaching the Internet. Turning the switch off and on and restarting the terminal is the usual fix; starting the daemon from Terminal.app, which asks for the permission, worked:
+
+```bash
+pkill -f "sm daemon"   # in Terminal.app; the next command starts a daemon there
+sm nodes add --name web1 --host web1.local --admin-user alex
+```
+
+The daemon exits when idle; until the terminal's permission works, run the first `sm` command of a session from the terminal that has it.
 
 ### `SSH_HOST_KEY_MISMATCH`
 
@@ -60,7 +84,7 @@ sm nodes repin web1 --fingerprint SHA256:...         # or pass the fingerprint y
 
 ### Setup fails, or the machine shows no units
 
-See [If something goes wrong](getting-started.md#if-something-goes-wrong) in Getting started: the admin account needs `root` or passwordless `sudo`, an existing `supermgmt` account that differs makes setup fail with `CONFLICT`, and a Mac has no systemd, so it shows no units.
+See [If something goes wrong](getting-started.md#if-something-goes-wrong) in Getting started: the admin account needs `root` or passwordless `sudo`, an existing `supermgmt` account that differs makes setup fail with `CONFLICT`, and a Mac has no systemd, so it shows no units. Setup runs on Linux only: on any other system it fails with `setup needs a Linux node` before changing anything (`TestSetupRefusesANodeThatIsNotLinux`), and the TUI does not offer it.
 
 ## Installing
 

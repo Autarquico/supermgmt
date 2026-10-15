@@ -5,6 +5,7 @@
 package discovery
 
 import (
+	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/runtimes"
@@ -40,6 +41,18 @@ type Snapshot struct {
 	// cannot know it: the caller fills it from the stored capability.
 	Setup *runtimes.SetupMeta
 }
+
+// KernelName is the first word of Kernel ("Linux", "Darwin"), or "an unknown
+// kernel" when the probe did not learn it.
+func (s Snapshot) KernelName() string {
+	if name, _, _ := strings.Cut(s.Kernel, " "); name != "" {
+		return name
+	}
+	return "an unknown kernel"
+}
+
+// IsLinux: node.setup and everything it enables are Linux only.
+func (s Snapshot) IsLinux() bool { return s.KernelName() == "Linux" }
 
 type OSInfo struct{ ID, Name, Version string }
 

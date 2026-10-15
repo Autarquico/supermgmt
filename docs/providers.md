@@ -2,7 +2,7 @@
 
 A provider is a source of nodes. There are four:
 
-- **ssh**: a Linux machine reached over SSH.
+- **ssh**: a Linux machine reached over SSH. A Mac can be added too, read-only: the probe reads its system, CPU, memory and disk, but setup is Linux only.
 - **local**: the machine running `sm`.
 - **proxmox**: a Proxmox VE cluster ([below](#proxmox)).
 - **github**: a source of repositories, CI results and attestations, not of nodes ([below](#github)).

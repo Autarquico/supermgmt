@@ -116,8 +116,12 @@ func (s responder) writeError(w http.ResponseWriter, r *http.Request, err error)
 	}
 	public := publicError(err)
 	correlation := correlationOf(r)
-	if public.Code == smerr.CodeInternal {
+	switch public.Code { //nolint:exhaustive // only failures the caller cannot diagnose are logged
+	case smerr.CodeInternal:
 		s.log.ErrorContext(r.Context(), "request failed", slog.String("correlation_id", correlation.String()),
+			slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.Any("error", err))
+	case smerr.CodeNodeUnreachable, smerr.CodeTimeout:
+		s.log.WarnContext(r.Context(), "request could not reach a node", slog.String("correlation_id", correlation.String()),
 			slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.Any("error", err))
 	}
 	writeBytes(w, statusOf(public.Code), errorEnvelope(public, correlation))

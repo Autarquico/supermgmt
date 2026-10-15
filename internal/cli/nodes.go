@@ -187,14 +187,22 @@ func newNodesAddCmd(env []string) *cobra.Command {
 			"'yes' at the prompt. The confirmed key is pinned for every later connection.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			api, err := newClient(cmd, env)
+			api, where, err := connect(cmd, env)
 			if err != nil {
 				return err
 			}
 			if f.local {
 				return addLocal(cmd, api, f)
 			}
-			return addSSH(cmd, api, f)
+			if err := addSSH(cmd, api, f); err != nil {
+				return err
+			}
+			if where.remote == nil && isLocalMode(where.configFile, env) && usesAgent(f.request.AdminCredentialRef) {
+				if problem := agentProblem(cmd.Context(), env); problem != "" {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s; until then the node stays unreachable\n", problem)
+				}
+			}
+			return nil
 		},
 	}
 	r := &f.request
