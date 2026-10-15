@@ -9,6 +9,7 @@ Available Commands:
   approvals   List jobs awaiting approval with the plan hash to approve against
   apps        List, inspect and create applications and their targets
   backup      Create and list backups; restore one offline
+  cloudflare  Manage the instance's Cloudflare Tunnel integration
   completion  Generate a shell completion script
   config      Inspect and validate configuration
   daemon      Run the SuperMgmt daemon (started on demand by the other commands)

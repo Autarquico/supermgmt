@@ -31,7 +31,7 @@ func clientCommands(env []string) []*cobra.Command {
 		newNodesCmd(env), newServicesCmd(env), newJobsCmd(env), newApprovalsCmd(env),
 		newSSHCmd(env), newDockerCmd(env), newStatusCmd(env), newEventsCmd(env), newSSHKeyCmd(env),
 		newLoginCmd(env, defaultLoginDeps(env)), newLogoutCmd(env), newProfileCmd(env), newTokensCmd(env),
-		newSecretsCmd(env), newBackupCmd(env), newEnrollmentsCmd(env), newAppsCmd(env), newMCPCmd(env),
+		newSecretsCmd(env), newBackupCmd(env), newEnrollmentsCmd(env), newAppsCmd(env), newMCPCmd(env), newCloudflareCmd(env),
 	}
 }
 
