@@ -61,6 +61,7 @@ func targetOf(n domain.Node, user, credentialRef string) ssh.Target {
 	return ssh.Target{
 		NodeID: n.ID, Host: n.Endpoint.Host, Port: n.Endpoint.Port,
 		User: user, HostKey: n.Endpoint.HostPublicKey, CredentialRef: credentialRef,
+		Transport: n.Endpoint.Transport, TunnelHostname: n.Endpoint.TunnelHostname,
 	}
 }
 
