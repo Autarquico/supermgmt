@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
 )
@@ -44,10 +45,26 @@ func TestSetupMetaWireFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"setup_version":2,"systemctl_path":"/usr/bin/systemctl","units":[{"unit":"nginx.service","verbs":["restart"]}],` +
+	want := `{"setup_version":3,"systemctl_path":"/usr/bin/systemctl","units":[{"unit":"nginx.service","verbs":["restart"]}],` +
 		`"logs_mode":"broker","docker_access":true,"deploy_root":"/srv/supermgmt","key_ref":"secret://ssh/default","key_version":1,"key_fingerprint":"SHA256:abc"}`
 	if string(got) != want {
 		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestSetupMetaTunnelWireFormatAndCompatibility(t *testing.T) {
+	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	got, err := json.Marshal(SetupMeta{SetupVersion: SetupVersion, Tunnel: &TunnelMeta{Hostname: "ssh-web1.example.com", InstalledAt: at}})
+	if err != nil || !strings.Contains(string(got), `"tunnel":{"hostname":"ssh-web1.example.com","installed_at":"2026-10-15T12:00:00Z"}`) {
+		t.Errorf("got %s, %v", got, err)
+	}
+	if got, _ := json.Marshal(SetupMeta{SetupVersion: SetupVersion}); strings.Contains(string(got), "tunnel") {
+		t.Errorf("an unset tunnel must be omitted: %s", got)
+	}
+	var old SetupMeta
+	v2 := `{"setup_version":2,"systemctl_path":"/usr/bin/systemctl","units":[],"logs_mode":"broker","docker_access":false,"key_ref":"secret://ssh/default","key_version":1,"key_fingerprint":"SHA256:abc"}`
+	if err := json.Unmarshal([]byte(v2), &old); err != nil || old.Tunnel != nil || old.SetupVersion != 2 {
+		t.Errorf("v2 metadata = %+v, %v", old, err)
 	}
 }
 
