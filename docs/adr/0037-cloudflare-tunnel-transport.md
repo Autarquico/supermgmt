@@ -31,7 +31,7 @@ SSH nodes are dialled directly (`internal/transport/ssh/pool.go`, `hostkey.go`),
 ### Ownership and the operation record
 
 - Cloudflare offers no settable marker on tunnels (`metadata` is read-only), so names are the marker: tunnel `sm-<instance-id>-<node-id>`, Access application `supermgmt <instance-id> <node-id>`, policies `supermgmt service|owners <instance-id>`, service token `supermgmt-<instance-id>`; DNS records also carry the comment `supermgmt:<instance-id>:<node-id>`.
-- Migration `000007` adds the operation record: node, generation, account, zone, instance ID, phase, phase start time and every object ID. After an ambiguous response the job looks up by exact name (paginated) and adopts an object only if the record shows that phase started and the object was created no earlier than the phase start; otherwise it is a conflict and the job stops.
+- Migration `000007` adds the operation record: node, generation, account, zone, instance ID, phase, phase start time and every object ID. After an ambiguous response the job looks up by exact name (paginated) and adopts an object only if the record shows that phase started and the object was created no earlier than five minutes before the phase start (an allowance for the clock difference between this host and Cloudflare; the name carries both full UUIDs, so only this instance produces it); otherwise it is a conflict and the job stops.
 - Order of creation: tunnel, ingress, Access application and policies, then DNS. Order of removal: DNS and ingress, then Access, then the tunnel. The hostname is never routable without its Access application.
 
 ### Concurrency

@@ -11,8 +11,8 @@ import (
 
 // clockSkewAllowance is subtracted from the phase start when deciding whether
 // an object was created by this operation: Cloudflare stamps objects with its
-// own clock, at second resolution.
-const clockSkewAllowance = 2 * time.Second
+// own clock, and this host's clock may be minutes off (ADR-0037).
+const clockSkewAllowance = 5 * time.Minute
 
 // ownershipConflict means a Cloudflare object has the expected name but this
 // operation did not create it. It is never adopted (ADR-0037).
