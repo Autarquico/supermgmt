@@ -192,7 +192,7 @@ The daemon sent the service token to the node's tunnel hostname and Access answe
 
 ### `cloudflared` not found
 
-`CAPABILITY_UNAVAILABLE` naming `cloudflared`, or `sm doctor` failing `cloudflare_cloudflared`: the daemon host has no executable `cloudflared` in `/usr/local/bin`, `/opt/homebrew/bin` or `/usr/bin` (`TestMissingCloudflaredIsCapabilityUnavailable`). The `PATH` is never searched. Install it from Cloudflare's package repository (Linux) or Homebrew (macOS); in local mode one install on your machine serves the daemon and `sm ssh`. The doctor hint names `pkg.cloudflare.com` on any host. `sm ssh` fails the same way, with a message to install it on your own machine, when the client has none. A binary that group or others can write, or that is not owned by root or the daemon's user, is refused too.
+`CAPABILITY_UNAVAILABLE` naming `cloudflared`, or `sm doctor` failing `cloudflare_cloudflared`: the daemon host has no executable `cloudflared` in `/usr/local/bin`, `/opt/homebrew/bin` or `/usr/bin` (`TestMissingCloudflaredIsCapabilityUnavailable`). The `PATH` is never searched. Install it from Cloudflare's package repository (Linux) or Homebrew (macOS); in local mode one install on your machine serves the daemon and `sm ssh`. `sm doctor` gives the reason and the install route of the daemon host's OS (Homebrew on macOS, `pkg.cloudflare.com` otherwise). `sm ssh` fails the same way, with a message to install it on your own machine, when the client has none. A binary that group or others can write, or that is not owned by root or the daemon's user, is refused too.
 
 ### A tunnel setup keeps failing and I want to undo it
 
@@ -200,7 +200,7 @@ Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, hal
 
 ### The node name cannot be used with a tunnel
 
-`ssh-<node-name>.<zone>` must be a valid DNS name. The plan is refused before approval when the node name has dots, underscores or other characters outside letters, digits and hyphens, ends in a hyphen, or makes `ssh-<node-name>` longer than 63 characters (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`). Rename the node and plan again.
+`ssh-<node-name>.<zone>` must be a valid DNS name. The plan is refused before approval when the node name has dots, underscores or other characters outside letters, digits and hyphens, ends in a hyphen, or makes `ssh-<node-name>` longer than 63 characters (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`). No command renames a node: remove it (`sm nodes remove <node>`) and add it again under a DNS-safe name (`sm nodes add --name <new-name> ...`), then plan again.
 
 ### The account has no one-time PIN login method
 

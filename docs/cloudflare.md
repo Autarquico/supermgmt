@@ -34,12 +34,13 @@ Scope: SSH nodes running Debian 13 or Ubuntu 24.04. A node that was never reacha
   - Account: Access: Apps and Policies: Edit
   - Account: Access: Service Tokens: Edit
   - Zone: DNS: Edit, on the configured zone only
+  - Account: Access: Organizations, Identity Providers, and Groups: Read, needed to find the One-time PIN login method when `access_identity_providers` is empty (**to confirm on a real account**; without it the enable fails before the Access application exists)
 
   **Blast radius.** Whoever holds this token can create tunnels, Access applications and service tokens in the whole account, and edit DNS in the zone. SuperMgmt reads it only inside tunnel jobs, and you can revoke it once your nodes are provisioned ([below](#revoke-the-api-token-after-provisioning)). Whether the zone lookup needs a further read permission is not verified; if a job fails at the zone lookup, check this first.
 - **The owners' identities.** `owner_emails` are the addresses Access admits for interactive sessions, and `access_identity_providers` lists the Access identity provider IDs they may log in with (empty: see [Who can open `sm ssh`](#who-can-open-sm-ssh)).
 - **`cloudflared` on the machine that runs the SuperMgmt daemon**, for automated dialling. If it is missing, a tunnel node fails with `CAPABILITY_UNAVAILABLE` naming `cloudflared`, and `sm doctor` fails the `cloudflare_cloudflared` check (`TestMissingCloudflaredIsCapabilityUnavailable`). SuperMgmt looks in `/usr/local/bin`, `/opt/homebrew/bin` and `/usr/bin`, never in `PATH`. The daemon also refuses a binary that group or others can write, or that is not owned by root or the daemon's user, and applies the same test to the directories above it (`TestCloudflaredThatOthersCanReplaceIsNotTrusted`).
 - **`cloudflared` on your own machine**, for `sm ssh` and `s` in the TUI: it carries your own Access login. Same directories. In local mode the daemon and your machine are the same machine, so one install covers both.
-- **Installing `cloudflared`:** on Linux use Cloudflare's package repository (`pkg.cloudflare.com`); on macOS use Homebrew, which puts it in `/opt/homebrew/bin` or `/usr/local/bin`. The install steps are Cloudflare's; check their current documentation. `sm doctor`'s hint names `pkg.cloudflare.com` whatever the host is.
+- **Installing `cloudflared`:** on Linux use Cloudflare's package repository (`pkg.cloudflare.com`); on macOS use Homebrew, which puts it in `/opt/homebrew/bin` or `/usr/local/bin`. The install steps are Cloudflare's; check their current documentation. `sm doctor` gives the reason the binary was refused and the usual install route for the daemon host's OS (Homebrew on macOS, `pkg.cloudflare.com` otherwise).
 - **Outbound access from the node** to `pkg.cloudflare.com` (setup installs the package) and to Cloudflare's edge (`cloudflared` itself; the ports it needs are in Cloudflare's documentation and were not checked here).
 
 ### Configure
@@ -100,7 +101,7 @@ Limits of abandoning: the Access application and the tunnel are deleted only by 
 
 In Cloudflare, with `<instance>` and `<node-id>` the full IDs of the SuperMgmt instance and of the node, and `<node-name>` the node's name. Object names use the IDs and are the ownership marker, because Cloudflare offers no settable marker on tunnels; only the hostname uses the name.
 
-**Node name rule.** `ssh-<node-name>.<zone>` must be a valid DNS name, so the node name must be letters, digits and hyphens, with no dots or underscores, not ending in a hyphen, and `ssh-<node-name>` at most 63 characters. Uppercase letters are lowercased in the hostname. A name that breaks the rule is refused when the plan is created, with a message that says to rename the node (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`).
+**Node name rule.** `ssh-<node-name>.<zone>` must be a valid DNS name, so the node name must be letters, digits and hyphens, with no dots or underscores, not ending in a hyphen, and `ssh-<node-name>` at most 63 characters. Uppercase letters are lowercased in the hostname. A name that breaks the rule is refused when the plan is created, with a message that asks for a DNS-safe name; the way to get one is to remove the node and add it again (`sm nodes remove <node>`, then `sm nodes add --name <new-name> ...`), since no command renames a node (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`).
 
 | Object | Name | Notes |
 |---|---|---|
@@ -166,7 +167,12 @@ The node must be reachable directly again, because it is dialled directly from t
 
 ### Change who can open `sm ssh`
 
-`owner_emails` and `access_identity_providers` reach Cloudflare only when a tunnel setup runs. After editing the configuration, run `sm nodes setup <node> --tunnel` again on a tunnel node, with a valid API token in the store. The policies are per instance, so one run updates them for every node (the Access application is checked per node). Until then the old owners keep access.
+`owner_emails` and `access_identity_providers` reach Cloudflare only when a tunnel setup runs, with a valid API token in the store. Until then the old owners keep access.
+
+- **`owner_emails`**: the owners policy is per instance, so one `sm nodes setup <node> --tunnel` run on any tunnel node updates it for every node.
+- **`access_identity_providers`**: the allowed login methods are set on each node's own Access application, so a run updates only the node it runs on. To narrow them, run `sm nodes setup <node> --tunnel` on **every** tunnel node; a node you skip keeps admitting the old providers.
+
+A re-run uses the flags given on that run. Unit grants are kept when you pass no `--unit`, but Docker access and the logs mode are not: repeat the flags the node was set up with (`--docker-access`, `--logs-mode`), and check the plan preview before approving.
 
 ### Rotate the service token
 
