@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"math"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -129,6 +130,12 @@ func parseCPU(lines []string) CPU {
 	if n, err := strconv.Atoi(rows[0]); err == nil && n > 0 {
 		c.Cores = n
 	}
+	if len(rows) == 2 {
+		if idle, ok := topIdlePercent(rows[1]); ok {
+			c.UsagePercent = clamp(100-idle, 0, 100)
+			c.UsageKnown = true
+		}
+	}
 	if len(rows) >= 3 {
 		a, okA := cpuTimes(rows[1])
 		b, okB := cpuTimes(rows[2])
@@ -139,6 +146,21 @@ func parseCPU(lines []string) CPU {
 		}
 	}
 	return c
+}
+
+// topIdlePercent reads macOS top's "CPU usage: 9.39% user, 6.40% sys, 84.19% idle".
+func topIdlePercent(line string) (float64, bool) {
+	rest, ok := strings.CutPrefix(line, "CPU usage:")
+	if !ok {
+		return 0, false
+	}
+	for _, part := range strings.Split(rest, ",") {
+		if value, ok := strings.CutSuffix(strings.TrimSpace(part), "% idle"); ok {
+			idle, err := strconv.ParseFloat(value, 64)
+			return idle, err == nil && idle >= 0 && idle <= 100
+		}
+	}
+	return 0, false
 }
 
 type cpuSample struct{ total, idle uint64 }
@@ -177,7 +199,8 @@ func parseLoad(line string) [3]float64 {
 	return load
 }
 
-// parseMemory reads Linux meminfo lines (kB), or on macOS the hw.memsize bytes.
+// parseMemory reads Linux meminfo lines (kB), or on macOS the hw.memsize bytes
+// followed by vm_stat.
 func parseMemory(lines []string) Memory {
 	var m Memory
 	for _, l := range lines {
@@ -192,9 +215,36 @@ func parseMemory(lines []string) Memory {
 	if m.TotalKB == 0 {
 		if bytes, err := strconv.ParseUint(firstLine(lines), 10, 64); err == nil {
 			m.TotalKB = bytes / 1024
+			m.AvailableKB = min(vmStatAvailableKB(lines), m.TotalKB)
 		}
 	}
 	return m
+}
+
+// vmStatAvailableKB is what macOS can hand out without swapping: the free,
+// inactive and speculative pages of vm_stat, in its own page size. 0 when
+// vm_stat is missing.
+func vmStatAvailableKB(lines []string) uint64 {
+	var pageSize, pages uint64
+	for _, l := range lines {
+		if _, rest, ok := strings.Cut(l, "(page size of "); ok {
+			pageSize, _ = strconv.ParseUint(strings.TrimSuffix(rest, " bytes)"), 10, 64)
+			continue
+		}
+		name, value, ok := strings.Cut(l, ":")
+		if !ok {
+			continue
+		}
+		switch name {
+		case "Pages free", "Pages inactive", "Pages speculative":
+			n, _ := strconv.ParseUint(strings.TrimSuffix(strings.TrimSpace(value), "."), 10, 64)
+			pages += n
+		}
+	}
+	if pageSize == 0 || pages > math.MaxUint64/pageSize {
+		return 0 // a hostile or garbled vm_stat is "unknown", not a wrapped number
+	}
+	return pages * pageSize / 1024
 }
 
 // parseDisk reads the root filesystem line of `df -Pk /`.

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
@@ -148,5 +149,49 @@ func TestDoctorOfflineTLS_IsOmittedWithoutDirectTLS(t *testing.T) {
 
 	if strings.Contains(r.stdout, "tls") {
 		t.Errorf("a local configuration has no certificate to check:\n%s", r.stdout)
+	}
+}
+
+func TestDoctorOnALocalInstallationRunsTheOfflineChecks(t *testing.T) {
+	s := newSandbox(t)
+	s.migratedDatabase(t)
+
+	r := s.run("doctor", "--json")
+
+	if r.code != 0 {
+		t.Fatalf("code = %d, stdout %q stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if got := string(decodeDoctorJSON(t, r.stdout)["database_schema_version"]); got != "6" {
+		t.Errorf("database_schema_version = %q, want the offline inspection's 6", got)
+	}
+}
+
+func TestDoctorOnALocalInstallationReportsARunningDaemonWithoutFailing(t *testing.T) {
+	s := newSandbox(t)
+	s.migratedDatabase(t)
+	lock, err := database.AcquireDatabaseLock(s.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	local := s.run("doctor")
+	offline := s.run("doctor", "--offline")
+
+	if local.code != 0 || !strings.Contains(local.stdout, "a daemon is running") {
+		t.Errorf("sm doctor: exit %d, %q", local.code, local.stdout)
+	}
+	if offline.code == 0 {
+		t.Errorf("sm doctor --offline must still fail while a daemon holds the database: %q", offline.stdout)
+	}
+}
+
+func TestDoctorOnALocalInstallationWithoutAConfigFileUsesTheDaemonsDefaults(t *testing.T) {
+	s := newSandbox(t) // without --config, the default location under HOME has no file
+
+	r := runWithEnv(s.env, "doctor")
+
+	if r.code != 0 || !strings.Contains(r.stdout, "built-in defaults") {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 }

@@ -168,8 +168,13 @@ func TestParseIgnoresForgedHeadersAndUnknownFormats(t *testing.T) {
 
 func TestParseMacOSProbe(t *testing.T) {
 	body := map[string]string{
-		"uname": "Darwin 24.1.0 arm64", "os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.1", "cpu": "10",
-		"memory": "17179869184\nPages free: 100.", "pkgmgr": "brew", "systemd": "absent", "docker": "path=",
+		"uname": "Darwin 24.1.0 arm64", "os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.1",
+		"cpu": "10\nCPU usage: 9.39% user, 6.40% sys, 84.19% idle ",
+		"memory": "17179869184\nMach Virtual Memory Statistics: (page size of 16384 bytes)\n" +
+			"Pages free:                                    22198.\nPages active:                                 411945.\n" +
+			"Pages inactive:                               403328.\nPages speculative:                              7992.\n" +
+			"Pages throttled:                                   0.\nPages wired down:                             259671.",
+		"pkgmgr": "brew", "systemd": "absent", "docker": "path=",
 		"addresses": "lo0: flags=8049\n\tinet 127.0.0.1 netmask 0xff000000\n\tinet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255",
 	}
 	probe := "@@probe 1\n"
@@ -182,6 +187,35 @@ func TestParseMacOSProbe(t *testing.T) {
 	}
 	if s.OS.Name != "macOS 15.1" || s.CPU.Cores != 10 || s.Memory.TotalKB != 16*1024*1024 || s.Systemd.Active || len(s.Addresses) != 2 {
 		t.Errorf("snapshot = %+v", s)
+	}
+}
+
+func TestTopIdlePercentRefusesWhatIsNotAPercentage(t *testing.T) {
+	for _, line := range []string{"CPU usage: NaN% idle", "CPU usage: +Inf% idle", "CPU usage: 150% idle", "CPU usage: -1% idle", "CPU usage: 5% user"} {
+		if idle, ok := topIdlePercent(line); ok {
+			t.Errorf("topIdlePercent(%q) = %v, accepted", line, idle)
+		}
+	}
+}
+
+func TestParseMacOSProbeReadsUsageNotJustTotals(t *testing.T) {
+	probe := "@@probe 1\n"
+	for _, name := range templates.ProbeSections {
+		body := map[string]string{
+			"cpu":    "10\nCPU usage: 9.39% user, 6.40% sys, 84.19% idle ",
+			"memory": "17179869184\nMach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 1000.\nPages inactive: 2000.\nPages speculative: 100.\nPages wired down: 9999.",
+		}[name]
+		probe += "@@" + name + "\n" + body + "\n"
+	}
+	s, err := Parse([]byte(probe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.CPU.UsageKnown || math.Abs(s.CPU.UsagePercent-15.81) > 0.001 {
+		t.Errorf("cpu = %+v, want 15.81%% busy (100 - idle)", s.CPU)
+	}
+	if want := uint64(3100 * 16); s.Memory.AvailableKB != want {
+		t.Errorf("available = %d KiB, want free+inactive+speculative pages = %d", s.Memory.AvailableKB, want)
 	}
 }
 

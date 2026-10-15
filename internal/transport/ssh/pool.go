@@ -426,7 +426,7 @@ func classifyHandshake(ctx context.Context, err error, mismatch *hostKeyMismatch
 	case ctx.Err() != nil:
 		return smerr.Wrap(err, smerr.CodeNodeUnreachable, "", "ssh handshake timed out")
 	case strings.Contains(text, "unable to authenticate"):
-		return smerr.Wrap(err, smerr.CodeNodeUnreachable, "", "ssh authentication failed for user "+user)
+		return smerr.Wrap(err, smerr.CodeNodeUnreachable, "", "ssh authentication failed for user "+user+": the node does not accept the offered keys")
 	}
 	return unreachable("ssh handshake", err)
 }

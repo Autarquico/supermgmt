@@ -120,6 +120,10 @@ func (c *Credentials) fromAgent(ctx context.Context) (Credential, error) {
 		return Credential{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "cannot reach the ssh-agent")
 	}
 	client := agent.NewClient(conn)
+	if keys, err := client.List(); err == nil && len(keys) == 0 {
+		_ = conn.Close()
+		return Credential{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "the ssh-agent holds no keys: load yours with ssh-add")
+	}
 	return Credential{Auth: cryptossh.PublicKeysCallback(client.Signers), release: func() { _ = conn.Close() }}, nil
 }
 

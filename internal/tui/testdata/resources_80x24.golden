@@ -6,7 +6,7 @@
 │ ▼ ssh                    │ provider      local                               │
 │    ● db-1                │ metrics       no metrics yet                      │
 │    ○ lab-1 [stale]       │ capabilities  node.read                           │
-│    ● web-1               │ setup         not done (/ setup laptop)           │
+│    ● web-1               │ setup         not available (SSH nodes only)      │
 │                          │                                                   │
 │                          │                                                   │
 │                          │                                                   │

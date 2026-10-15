@@ -18,7 +18,8 @@ const ProbeFormatVersion = 1
 //	hostname   one line
 //	uptime     Linux: "/proc/uptime" ("<seconds> <idle>"); macOS: kern.boottime
 //	cpu        line 1: online CPU count; then, on Linux, two aggregate "cpu "
-//	           lines of /proc/stat taken one second apart (CPU% = delta of both)
+//	           lines of /proc/stat taken one second apart (CPU% = delta of both);
+//	           on macOS, the "CPU usage: ...% idle" line of a one-second top sample
 //	loadavg    Linux: /proc/loadavg; macOS: vm.loadavg
 //	memory     Linux: the first 8 /proc/meminfo lines (kB); macOS: hw.memsize
 //	           bytes, then vm_stat lines
@@ -53,7 +54,8 @@ s hostname; hostname 2>/dev/null | head -n 1
 s uptime; { cat /proc/uptime 2>/dev/null || sysctl -n kern.boottime 2>/dev/null; } | head -n 1
 s cpu
 getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null
-if [ -r /proc/stat ]; then head -n 1 /proc/stat; sleep 1; head -n 1 /proc/stat; fi
+if [ -r /proc/stat ]; then head -n 1 /proc/stat; sleep 1; head -n 1 /proc/stat
+elif command -v top >/dev/null 2>&1; then top -l 2 -n 0 -s 1 2>/dev/null | grep '^CPU usage' | tail -n 1; fi
 s loadavg; { cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null; } | head -n 1
 s memory
 if [ -r /proc/meminfo ]; then head -n 8 /proc/meminfo; else sysctl -n hw.memsize 2>/dev/null; vm_stat 2>/dev/null | head -n 8; fi

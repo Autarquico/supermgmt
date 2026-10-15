@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -47,6 +48,18 @@ func TestScanHostKeyFailures(t *testing.T) {
 	t.Run("closed port", func(t *testing.T) {
 		_, err := ScanHostKey(context.Background(), "127.0.0.1", closedPort(t))
 		requireCode(t, err, smerr.CodeNodeUnreachable)
+		var e *smerr.Error
+		if !errors.As(err, &e) || !strings.HasSuffix(e.Message, "connect: connection refused") {
+			t.Errorf("the message must name the network cause the caller can act on: %v", err)
+		}
+	})
+	t.Run("unknown host", func(t *testing.T) {
+		_, err := ScanHostKey(context.Background(), "no-such-host.invalid", 22)
+		requireCode(t, err, smerr.CodeNodeUnreachable)
+		var e *smerr.Error
+		if !errors.As(err, &e) || !strings.Contains(e.Message, "lookup no-such-host.invalid: ") {
+			t.Errorf("the message must name the failed lookup: %v", err)
+		}
 	})
 	t.Run("not an SSH server", func(t *testing.T) {
 		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
