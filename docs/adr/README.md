@@ -42,3 +42,4 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0034](0034-release-hardening-gates.md) | Release hardening gates | Proposed | M6 |
 | [0035](0035-upgrade-paths-migration-fixtures-crash-points.md) | Upgrade paths, migration fixtures and crash points | Proposed | M6 |
 | [0036](0036-distribution-notices-platform-claims.md) | Distribution, notices and platform claims | Proposed | M6 |
+| [0037](0037-cloudflare-tunnel-transport.md) | Reaching SSH nodes through Cloudflare Tunnel | Proposed | cloudflare-tunnel-transport |
