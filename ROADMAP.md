@@ -1,26 +1,24 @@
 # Roadmap
 
-Status as of 2026-10-14. SuperMgmt is **pre-alpha, with no stable release yet.** Pre-releases may exist; build from source is the recommended path. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
+Status as of 2026-10-15. SuperMgmt is **pre-alpha, with no stable release yet.** The first pre-release, [`v0.1.0-rc.1`](https://github.com/autarquico/supermgmt/releases/tag/v0.1.0-rc.1), is published and signed. Its installer ran on one clean Intel Mac in local mode (2026-10-15), and a second Mac was added as an SSH node from it; a Linux install from a published release is still open, so building from source stays the recommended path. The website is live at <https://autarquico.github.io/supermgmt/>. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
 
 What is verified today, claim by claim, is on one page: [Project status](docs/project-status.md). This page says what is built, what is left and what is deliberately not built.
 
 ## Before the first release
 
-These cannot be completed by code alone. The [release checklist](docs/release-checklist.md) holds the full list as numbered rows, each with an owner and a procedure; this table is the summary. None is done.
+These cannot be completed by code alone. The [release checklist](docs/release-checklist.md) holds the full list as numbered rows, each with an owner and a procedure; this table is the summary. Done so far: the release signing key, the first tag run (`v0.1.0-rc.1`), the first nightly run and a first clean-machine install on an Intel Mac; none of the rows below is complete.
 
 | Item | Needed before | Owner |
 |---|---|---|
-| Release gate: the first tag and the gates on a real run, a real Debian 13 VM, an Intel Mac, an upgrade from a signed release, the Homebrew tap, the GitHub repository settings, the legal reading of the notices, nightly results ([checklist](docs/manual-checks/m6-release.md)) | First release | Maintainer |
+| Release gate: a person checks the first tag run (`v0.1.0-rc.1`: gates, notices, SBOM, provenance, channel pointer, yank), a clean-machine install from the published pre-release, a real Debian 13 VM, an Intel Mac, an upgrade from a signed release, the Homebrew tap, the GitHub repository settings, the legal reading of the notices, a read of the first week of nightly results ([checklist](docs/manual-checks/m6-release.md)) | First release | Maintainer |
 | Real MCP clients (Claude Code and Claude Desktop over stdio, MCP Inspector against `/mcp`) and a real authorization server, including RFC 8707 `resource` at authorization and token exchange ([checklist](docs/manual-checks/m5-real-mcp-clients.md)); each row needs dated, versioned evidence | MCP acceptance, first version | Maintainer |
 | Real-GitHub run: GHCR, real attestations in a public and a private repository, real Actions OIDC, redirect behaviour, the GitHub TUF anchor and refresh ([checklist](docs/manual-checks/m4-real-github.md)); fills the GitHub rows of [Compatibility](docs/compatibility.md) | Deployments acceptance, first version | Maintainer |
 | Real-Proxmox run on a supported Proxmox VE 9.x host ([checklist](docs/manual-checks/m3-real-pve.md)); fills the real-host column of [Compatibility](docs/compatibility.md) | Proxmox acceptance, first version | Maintainer |
-| Release signing key generated and stored in the protected `release` environment (owner as required reviewer), public key embedded in `install.sh` and `scripts/join.sh`, fingerprint published out of band | First signed release | Maintainer |
 | Server-mode checks: macOS keychain, Linux `secret-tool`, a real OIDC provider, a real reverse proxy, a real VM install ([checklist](docs/manual-checks/m2-handoff.md)) | Server-mode sign-off | Maintainer |
 | Terminal emulators: the interactive handoff on real terminals ([checklist](docs/manual-checks/m1-handoff.md)) | TUI sign-off | Maintainer |
 | Decision on a separate public client for the OIDC device flow (Dex leaks the client secret) | Production use of the device flow | Maintainer |
 | Project name and trademark check (GitHub, registries, domain, trademark) | First public release | Maintainer |
 | Licence confirmation (Apache-2.0 by default) and dependency licence scan | First public release | Maintainer |
-| Replacement of the `<ORG>` placeholder in installer URLs | First release | Maintainer |
 | Dedicated security contact address | First release | Maintainer |
 
 ## What is built
@@ -36,13 +34,16 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 | Apps, GitHub and deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Implemented** against a fake GitHub, a virtual Sigstore and a local registry; the real-GitHub run is open |
 | MCP | MCP client registration, stdio bridge, remote MCP as an OAuth protected resource, read tools, plan submission, optional write tools off by default | **Implemented** against the Go SDK client, raw JSON-RPC goldens and a fake authorization server; the real-client run is open |
 | Hardening and release | Fuzz and race tests, security scans, compatibility matrix, migration tests, lifecycle tests across modes, the release gate | **Implemented**; the human rows of the release checklist are open |
-| Website and documentation | A static site built from `docs/`, a getting-started path, TUI and policy guides, a generated CLI reference, one status page | **In progress**; the site is built from release tags and is not published until the first one |
+| Website and documentation | A static site built from `docs/`, a getting-started path, TUI and policy guides, a generated CLI reference, one status page | **Implemented** and published: content from the latest release tag, site tooling from `main`, so a website fix never needs a release |
 
 "Done" for the first version means: install without cloning, a one-command Proxmox LXC, agentless SSH nodes, Proxmox, systemd and Docker discovery, the TUI, CI-gated Compose deploys with safe rollback, an audit timeline, remote server mode, MCP with approvals, tested backup, restore, upgrade and uninstall, and signed releases.
 
 ### What CI has run
 
-Every job of the `ci` workflow passed on `main` at commit `6f89609` on 2026-10-14 ([run 38573703589](https://github.com/autarquico/supermgmt/actions/runs/38573703589); the first attempt failed in job `secret-scan`, the second passed), including the lifecycle jobs on Ubuntu 24.04 amd64 and arm64 and macOS 15 arm64, the upgrade crash test, the upgrade chain, the deployment, MCP, appliance and fixture suites. Not run yet: the nightly workflow (mutation fuzzing, stress and flake loops) and the release workflow on a real tag.
+- `ci` on `main` at `90a2fc5`: every job passed ([run 38599733425](https://github.com/autarquico/supermgmt/actions/runs/38599733425)), including the lifecycle jobs on Ubuntu 24.04 amd64 and arm64 and macOS 15 arm64, the upgrade crash test and chain, and the deployment, MCP, appliance, fixture and website suites.
+- `nightly`, first run, at `90a2fc5`: passed ([run 38604246178](https://github.com/autarquico/supermgmt/actions/runs/38604246178)): fuzzing shards, race stress, the TUI flake loop (90 runs on macOS) and the daemon-restart flake loop (150 runs).
+- `release` on the tag `v0.1.0-rc.1`: gates, build and the approved signing job passed ([run 38613847284](https://github.com/autarquico/supermgmt/actions/runs/38613847284)). Its artefacts have not yet been checked by a person.
+- `pages`: the site built from `v0.1.0-rc.1` is published ([run 38640604619](https://github.com/autarquico/supermgmt/actions/runs/38640604619)).
 
 ## Known limits, by area
 
@@ -64,13 +65,12 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 ### Server, client, auth and releases
 
 - **Clean Debian VM acceptance: amended and deferred.** The CI gate is a Debian 13 container with systemd; a real VM run is not done.
-- **Production signing and provenance: unverified.** CI uses an ephemeral test key; the owner must create the release key and run a protected tag build.
+- **Production signing and provenance: unverified by a person.** The release key exists and signed `v0.1.0-rc.1` in a protected tag build; nobody has yet verified that release's signatures, SBOM and provenance from outside (release checklist H2).
 - Identity providers: Dex only, exercised by hand. Dex puts the client secret in the device-flow verification URL; a dedicated public device client needs a new configuration key and a spec change.
 - Cloudflare: a guide only, never run against a real account. No edge assertion is consumed.
 - macOS keychain and Linux `secret-tool` credential stores: unit-tested with fakes, manual checks pending.
 - The orphan-key report in `sm doctor` is not built.
 - The installer requires OpenSSH 8.2 or newer; the spec says 8.1.
-- A defect candidate: `sm login --bootstrap` on a server without OIDC sends no display name, which the server requires (`internal/cli/login.go`, `internal/app/auth.go`). Not verified end to end.
 
 ### Proxmox and the appliance installer
 
@@ -112,12 +112,18 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 
 ### Hardening and release
 
-- **No stable version is released.** The [release checklist](docs/release-checklist.md) maps each of its 52 rows to tests and jobs and lists 22 human-gated rows, all unchecked, each with an owner and a procedure.
+- **No stable version is released;** the signed pre-release `v0.1.0-rc.1` is. The [release checklist](docs/release-checklist.md) maps each of its 52 rows to tests and jobs and lists 22 human-gated rows, all unchecked, each with an owner and a procedure.
 - **Platforms.** Supported means CI runs every operation on that platform ([Compatibility](docs/compatibility.md#platforms-and-operations)): Ubuntu 24.04 amd64 and arm64 (server and local client) and macOS 15 arm64 (local client). Debian 13 is container-verified, the Proxmox appliance is fake-verified, Intel macOS is manual, and Debian as a local-client host and everything else are not claimed.
 - A second, unexplained failure mode of the daemon-restart test (`TestM1_DaemonKilledMidRestartReconciles`), seen once.
 - The residual of a TUI handoff that exits instantly; the case seen is fixed.
 - 25 parsers have no fuzz target yet.
 - The migration fixtures of the deployment and MCP stages contain no deployment and no OAuth access-token row.
+
+## Next, proposed
+
+| Item | Scope | Status |
+|---|---|---|
+| Reach nodes from any network | A per-node transport: direct SSH (today), an SSH bastion (ProxyJump), or a Cloudflare Tunnel with an Access service token, so the laptop running `sm` reaches its servers from any network without opening inbound ports. SSH stays end to end, with the pinned host key, the dedicated user, policy and approvals unchanged. `cloudflared` would run on the node (third-party, not SuperMgmt). Until then, a Tailscale or WireGuard network already works with plain SSH nodes | **Planned**; spec not written |
 
 ## Not built, after the first version
 
@@ -133,7 +139,7 @@ None of these is scheduled and any may be dropped:
 
 - Hetzner and OVH provider APIs; AWS, GCP and Azure connectors
 - Vercel API deployments and status (API-only resources)
-- Cloudflare DNS and Tunnel management
+- Cloudflare DNS management (Tunnel transport for nodes is proposed above)
 - Podman; Kubernetes read-only context
 - Optional outbound node agent
 - Headscale, Tailscale and WireGuard onboarding helpers
