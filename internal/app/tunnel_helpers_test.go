@@ -83,6 +83,9 @@ type chaosAPI struct {
 	clock func(time.Duration)
 	// afterMutation observes the state after every mutation, whatever its fault.
 	afterMutation func()
+	// onToken runs when the tunnel token is read, the last Cloudflare call
+	// before the node install.
+	onToken func()
 }
 
 var errCrash = errors.New("the worker died")
@@ -105,6 +108,14 @@ func (c *chaosAPI) after(err error) error {
 		c.clock(time.Minute)
 	}
 	return err
+}
+
+func (c *chaosAPI) TunnelToken(ctx context.Context, id string) (audit.Secret, error) {
+	token, err := c.CloudflareAPI.TunnelToken(ctx, id)
+	if c.onToken != nil {
+		c.onToken()
+	}
+	return token, err
 }
 
 func (c *chaosAPI) CreateTunnel(ctx context.Context, name string) (cloudflare.Tunnel, error) {

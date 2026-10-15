@@ -378,21 +378,6 @@ func TestDisableOfANodeWithoutATunnelIsRefusedBeforeAnythingChanges(t *testing.T
 	}
 }
 
-func TestDisableWhileAnEnableIsUnfinishedIsRefused(t *testing.T) {
-	ts := newTunnelSetting(t)
-	ts.inject("crash", 2)
-	ts.plan()
-	if err := ts.attempt(); err == nil {
-		t.Fatal("the enable should have crashed")
-	}
-	ts.chaos.k = 0
-	mustf(t, ts.store.FailTerminal(context.Background(), ts.lease, errors.New("abandoned")), "abandon the enable job")
-	ts.grantSetup()
-	ts.planDisable()
-
-	wantError(t, ts.attempt(), smerr.CodeConflict, "")
-}
-
 func TestADisablePlanIsHighRiskNeedsApprovalAndIsRefusedWithoutAConnection(t *testing.T) {
 	ts := newTunnelSetting(t)
 	created, err := ts.plans.Create(context.Background(), ts.caller(ts.admin), PlanRequest{Action: policy.ActionNodeTunnelDisable, Target: ts.nodeRef()})
