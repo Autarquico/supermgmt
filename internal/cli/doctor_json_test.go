@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,8 @@ func TestDoctorOfflineJSON_CarriesTheFormatAndSchemaVersions(t *testing.T) {
 		t.Fatalf("code = %d, stdout %q stderr %q", r.code, r.stdout, r.stderr)
 	}
 	fields := decodeDoctorJSON(t, r.stdout)
-	for name, want := range map[string]string{"format_version": "1", "ok": "true", "database_schema_version": "6", "binary_schema_version": "6"} {
+	latest := strconv.Itoa(latestSchema(t))
+	for name, want := range map[string]string{"format_version": "1", "ok": "true", "database_schema_version": latest, "binary_schema_version": latest} {
 		if got := string(fields[name]); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
@@ -161,8 +163,8 @@ func TestDoctorOnALocalInstallationRunsTheOfflineChecks(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("code = %d, stdout %q stderr %q", r.code, r.stdout, r.stderr)
 	}
-	if got := string(decodeDoctorJSON(t, r.stdout)["database_schema_version"]); got != "6" {
-		t.Errorf("database_schema_version = %q, want the offline inspection's 6", got)
+	if got := string(decodeDoctorJSON(t, r.stdout)["database_schema_version"]); got != strconv.Itoa(latestSchema(t)) {
+		t.Errorf("database_schema_version = %q, want the offline inspection's latest schema", got)
 	}
 }
 
@@ -194,4 +196,13 @@ func TestDoctorOnALocalInstallationWithoutAConfigFileUsesTheDaemonsDefaults(t *t
 	if r.code != 0 || !strings.Contains(r.stdout, "built-in defaults") {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
+}
+
+func latestSchema(t *testing.T) int {
+	t.Helper()
+	v, err := database.LatestSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }

@@ -191,6 +191,7 @@ github.com/autarquico/supermgmt/internal/domain.ParseRuntimeType  exempt: closed
 github.com/autarquico/supermgmt/internal/domain.ParseServiceKind  exempt: closed-set enum lookup; no input grammar
 github.com/autarquico/supermgmt/internal/domain.ParseServiceVerb  exempt: closed-set enum lookup; no input grammar
 github.com/autarquico/supermgmt/internal/domain.ParseSeverity  exempt: closed-set enum lookup; no input grammar
+github.com/autarquico/supermgmt/internal/domain.ParseTransport  exempt: closed-set enum lookup; no input grammar
 github.com/autarquico/supermgmt/internal/domain.parseEnum  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/domain/plan.Parse  FuzzPlanHash
 github.com/autarquico/supermgmt/internal/domain/plan.decodeArray  FuzzCanonicalizeJSON
@@ -283,8 +284,12 @@ github.com/autarquico/supermgmt/internal/providers/ssh.ParseHostKey  FuzzParseHo
 github.com/autarquico/supermgmt/internal/runtimes/docker.decodeInspect  FuzzDecodeInspect
 github.com/autarquico/supermgmt/internal/runtimes/docker.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/docker.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/systemd.keyringFingerprint  FuzzKeyringFingerprint
 github.com/autarquico/supermgmt/internal/runtimes/systemd.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/systemd.parseOSRelease  FuzzParseOSRelease
+github.com/autarquico/supermgmt/internal/runtimes/systemd.parsePackageStatus  FuzzParsePackageStatus
 github.com/autarquico/supermgmt/internal/runtimes/systemd.parseProps  FuzzParseProps
+github.com/autarquico/supermgmt/internal/runtimes/systemd.parseSHA256  FuzzParseSHA256
 github.com/autarquico/supermgmt/internal/runtimes/systemd.parseSudoList  FuzzParseSudoList
 github.com/autarquico/supermgmt/internal/runtimes/systemd.parseUnits  FuzzParseUnits
 github.com/autarquico/supermgmt/internal/runtimes/systemd.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
@@ -300,15 +305,18 @@ github.com/autarquico/supermgmt/internal/secrets.parseExportHeader  FuzzDecodeKe
 github.com/autarquico/supermgmt/internal/secrets.readKeyFile  exempt: key and check records the daemon wrote; raw key bytes have no grammar
 github.com/autarquico/supermgmt/internal/secrets.verifyCheckRecord  exempt: key and check records the daemon wrote; raw key bytes have no grammar
 github.com/autarquico/supermgmt/internal/textsafe.Sanitize  FuzzSanitize
+github.com/autarquico/supermgmt/internal/transport/ssh.ParseAccessToken  FuzzParseAccessToken
+github.com/autarquico/supermgmt/internal/transport/ssh.childConn.Read  exempt: net.Conn plumbing over the cloudflared child's stdout; bytes go to the SSH handshake, which is the parser
 github.com/autarquico/supermgmt/internal/transport/ssh.parsePinned  FuzzParsePinned
 github.com/autarquico/supermgmt/internal/transport/ssh.parseSecretRef  exempt: operator-configured secret ref and raw private key file; key parsing is x/crypto/ssh
 github.com/autarquico/supermgmt/internal/transport/ssh.readPrivateKeyFile  exempt: operator-configured secret ref and raw private key file; key parsing is x/crypto/ssh
+github.com/autarquico/supermgmt/internal/transport/ssh.sanitizeDiagnostic  FuzzSanitizeDiagnostic
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseBackupPath  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseImageSize  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseMarkerState  FuzzParseMarkerState
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.Render  FuzzMarkerStateRendering
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ValidateCleanPath  FuzzDeploymentValidatorsAdmitNoShellMetacharacters
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ValidateContainer  FuzzDeploymentValidatorsAdmitNoShellMetacharacters
-github.com/autarquico/supermgmt/internal/transport/ssh/templates.Render  FuzzMarkerStateRendering
 github.com/autarquico/supermgmt/internal/tui.Model.loadApprovals  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.Model.loadEvents  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.Model.loadJob  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing

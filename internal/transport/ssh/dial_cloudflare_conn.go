@@ -77,10 +77,13 @@ func startChild(s childSpec) (*childConn, error) {
 			"TUNNEL_SERVICE_TOKEN_SECRET=" + s.token.ClientSecret.Reveal(),
 			"HOME=" + s.home,
 		},
-		Dir:    s.home,
-		Stdin:  inR,
-		Stdout: outW,
-		Stderr: errW,
+		Dir: s.home,
+		// Its own process group: a terminal SIGINT aimed at the daemon must
+		// not reach the carrier; the daemon closes it itself.
+		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
+		Stdin:       inR,
+		Stdout:      outW,
+		Stderr:      errW,
 	}
 	startErr := cmd.Start()
 	closeAll(inR, outW, errW) // the child owns its ends now
