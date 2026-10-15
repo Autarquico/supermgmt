@@ -133,7 +133,7 @@ func (e *tunnelEngine) begin(ctx context.Context, lease jobs.Lease, job jobs.Job
 	if err := r.openOperation(ctx, database.TunnelEnable); err != nil {
 		return nil, err
 	}
-	return r, r.loadLastEnabled(ctx)
+	return r, r.findLastEnabled(ctx)
 }
 
 // newRun builds the provisioning client from the stored API token and looks
@@ -217,10 +217,10 @@ func (r *tunnelRun) createOperation(ctx context.Context, kind database.TunnelOpe
 	return err
 }
 
-// loadLastEnabled finds the committed enable the node's operations end with,
+// findLastEnabled finds the committed enable the node's operations end with,
 // ignoring the operation this run is working on. A node whose newest finished
 // operation is a disable has none.
-func (r *tunnelRun) loadLastEnabled(ctx context.Context) error {
+func (r *tunnelRun) findLastEnabled(ctx context.Context) error {
 	previous, err := database.ListTunnelOperations(ctx, r.cfg.DB.Reader(), r.node.ID)
 	if err != nil {
 		return err

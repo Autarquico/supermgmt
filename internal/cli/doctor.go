@@ -210,7 +210,12 @@ func offlineChecks(ctx context.Context, configFile string, env []string, daemonM
 	if cfg.Server.TLS.Mode == config.TLSDirect {
 		checks = append(checks, tlsCheck(cfg.Server.TLS.CertFile))
 	}
-	dbChecks, databaseSchema := databaseChecks(ctx, cfg.Storage.SQLite.Path, cfg.Security.KeysDir, daemonMayRun)
+	if cfg.Cloudflare != nil {
+		for _, c := range (daemon.CloudflareDoctor{Config: *cfg.Cloudflare}).Run(ctx) {
+			checks = append(checks, check{c.Name, c.Status, c.Detail})
+		}
+	}
+	dbChecks, databaseSchema := databaseChecks(ctx, cfg, daemonMayRun)
 	return append(checks, dbChecks...), databaseSchema
 }
 
@@ -289,7 +294,8 @@ func modeCheck(name, path string, mode, forbidden fs.FileMode, problem string) c
 // databaseChecks holds the database lock for as long as it inspects the file,
 // so no daemon can start underneath it (spec §2.1.1). When daemonMayRun, a
 // running daemon is reported, not failed, and the database is left to it.
-func databaseChecks(ctx context.Context, path, keysDir string, daemonMayRun bool) ([]check, *int) {
+func databaseChecks(ctx context.Context, cfg *config.Config, daemonMayRun bool) ([]check, *int) {
+	path, keysDir := cfg.Storage.SQLite.Path, cfg.Security.KeysDir
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
 		return []check{{"database_lock", statusWarn, "skipped: database directory does not exist"}}, nil
 	}
@@ -314,7 +320,30 @@ func databaseChecks(ctx context.Context, path, keysDir string, daemonMayRun bool
 	if orphans, ok := orphanKeysCheck(ctx, path, keysDir); ok {
 		checks = append(checks, orphans)
 	}
+	if cfg.Cloudflare != nil {
+		checks = append(checks, tunnelOperationsCheck(ctx, path))
+	}
 	return checks, schema
+}
+
+// tunnelOperationsCheck reads the unfinished tunnel operations from the
+// database file. A database that predates the table is not a failure.
+// The caller holds the database lock.
+func tunnelOperationsCheck(ctx context.Context, dbPath string) check {
+	const name = "cloudflare_tunnel_operations"
+	db, err := database.OpenReadOnly(ctx, dbPath)
+	if err != nil {
+		return check{name, statusWarn, "not checked: " + err.Error()}
+	}
+	defer func() { _ = db.Close() }()
+	if has, err := db.HasSchema(ctx); err != nil || !has {
+		return check{name, statusWarn, "not checked: the database has no schema yet"}
+	}
+	c := daemon.CloudflareOperationsCheck(ctx, db.Querier())
+	if c.Status == statusFail {
+		return check{name, statusWarn, "not checked: " + c.Detail}
+	}
+	return check{c.Name, c.Status, c.Detail}
 }
 
 func heldDetail(held *database.LockHeldError) string {

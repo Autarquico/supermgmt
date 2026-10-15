@@ -92,6 +92,11 @@ func NewCloudflareDialer(cfg CloudflareConfig) *CloudflareDialer {
 	return d
 }
 
+// LocateCloudflared finds cloudflared where the dialler would look for it, so
+// the doctor reports what a dial will use. A missing binary is
+// CAPABILITY_UNAVAILABLE naming it.
+func LocateCloudflared() (string, error) { return resolveCloudflared(CloudflareConfig{}) }
+
 func resolveCloudflared(cfg CloudflareConfig) (string, error) {
 	missing := smerr.New(smerr.CodeCapabilityUnavailable, "", "cloudflared is not installed on the control plane: install it to use the cloudflare transport")
 	candidates := []string{cfg.Path}

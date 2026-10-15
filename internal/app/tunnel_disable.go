@@ -97,7 +97,7 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 			return nil, err
 		}
 	}
-	return run, run.loadLastEnabled(ctx)
+	return run, run.findLastEnabled(ctx)
 }
 
 // requireEnabledNode refuses to disable a node whose newest finished operation
@@ -105,7 +105,7 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 // nothing of ours to take down, or it lives somewhere this instance does not
 // manage.
 func (r *disableRun) requireEnabledNode(ctx context.Context) error {
-	if err := r.loadLastEnabled(ctx); err != nil {
+	if err := r.findLastEnabled(ctx); err != nil {
 		return err
 	}
 	last := r.lastEnabled
