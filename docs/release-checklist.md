@@ -116,7 +116,7 @@ These are open on purpose. None is hidden by a retry or an exemption, and none i
 
 - **Downgrade audit (F6).** An `--allow-downgrade` upgrade writes a pending audit record before the swap. A target built before M6 cannot import it, so the event appears only once a binary of M6 or later has started. Row H12.
 - **Upgrade hold.** The hold is proven on real systemd by the lifecycle jobs only (`TestLifecycleVM_Server`), not inside an unprivileged Proxmox container.
-- **Fuzzing.** 25 parsers are listed as `gap` rows in `scripts/fuzz-inventory.txt` with no target yet. `sh scripts/fuzz.sh count` reports 55 targets today. The archive-reading target is slow, and the nightly budget (60 minutes per shard) has never been measured.
+- **Fuzzing.** 25 parsers are listed as `gap` rows in `scripts/fuzz-inventory.txt` with no target yet. `sh scripts/fuzz.sh count` reports 56 targets today. The archive-reading target is slow, and the nightly budget (60 minutes per shard) has never been measured.
 - **Migration fixtures.** The M4 and M5 worlds contain no deployment, and the M5 world has no OAuth access-token row; restore revocation of OAuth tokens is covered by `TestRestoreRevokesMCPCredentials` instead.
 - **Unrun on GitHub (to my knowledge):** the lifecycle, crash and chain jobs, the nightly workflow, the Homebrew audit and the reproducibility check on every platform. Rows H2, H5, H13.
 - **Shell tooling.** `shellcheck` was not available when the release scripts were written; `make install-test` runs it where it exists.

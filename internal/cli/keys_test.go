@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -610,6 +611,7 @@ type setupAPI struct {
 	*fakeAPI
 	plans     []wire.CreatePlanRequest
 	submitted []wire.PlanHashRequest
+	current   *wire.Setup // the node's recorded setup; nil before the first one
 }
 
 func newSetupAPI(t *testing.T, policy wire.Policy) *setupAPI {
@@ -617,6 +619,9 @@ func newSetupAPI(t *testing.T, policy wire.Policy) *setupAPI {
 	s.fakeAPI = newFakeAPI(t, router(routes{
 		"GET " + wire.PathNodes: func(w http.ResponseWriter, _ *http.Request) {
 			reply(w, 200, wire.Page[wire.Node]{Items: []wire.Node{{ID: idWeb, Name: "web-1"}}})
+		},
+		"GET " + wire.Path(wire.PathNode, string(idWeb)): func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Node{ID: idWeb, Name: "web-1", Kind: "ssh", Setup: s.current})
 		},
 		"POST " + wire.PathPlans: func(w http.ResponseWriter, r *http.Request) {
 			var req wire.CreatePlanRequest
@@ -697,6 +702,78 @@ func TestNodesSetupRefusesAPlanPolicyDenies(t *testing.T) {
 
 	if r.code == 0 || !strings.Contains(r.stderr, "deny") || len(s.submitted) != 0 {
 		t.Errorf("exit %d, stderr %q, %d submissions", r.code, r.stderr, len(s.submitted))
+	}
+}
+
+func TestNodesSetupGrantsTheUnitsAskedFor(t *testing.T) {
+	s := newSetupAPI(t, approvalPolicy)
+
+	r := s.run("nodes", "setup", "web-1", "--unit", "nginx.service", "--unit", "app.service:restart", "--yes")
+
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %s", r.code, r.stderr)
+	}
+	want := []any{"start nginx.service", "stop nginx.service", "restart nginx.service", "restart app.service"}
+	if got := s.plans[0].Parameters["grants"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("grants = %v, want %v", got, want)
+	}
+	if !strings.Contains(r.stderr, "units: nginx.service (start, stop, restart), app.service (restart)") {
+		t.Errorf("the plan must show the grants it writes: %q", r.stderr)
+	}
+}
+
+func TestNodesSetupKeepsTheNodesGrantsUnlessToldOtherwise(t *testing.T) {
+	current := &wire.Setup{Units: []wire.UnitGrant{{Unit: "nginx.service", Verbs: []domain.ServiceVerb{domain.VerbRestart}}}}
+	for name, tc := range map[string]struct {
+		args   []string
+		grants any
+		shown  string
+	}{
+		"re-run keeps them":    {nil, []any{"restart nginx.service"}, "units: nginx.service (restart) (kept from the previous setup)"},
+		"--unit replaces":      {[]string{"--unit", "app.service:stop"}, []any{"stop app.service"}, "units: app.service (stop) (was: nginx.service (restart))"},
+		"--no-units drops all": {[]string{"--no-units"}, nil, "units: none (was: nginx.service (restart))"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSetupAPI(t, approvalPolicy)
+			s.current = current
+
+			r := s.run(append([]string{"nodes", "setup", "web-1", "--yes"}, tc.args...)...)
+
+			if r.code != 0 {
+				t.Fatalf("exit %d, stderr %s", r.code, r.stderr)
+			}
+			if got := s.plans[0].Parameters["grants"]; !reflect.DeepEqual(got, tc.grants) {
+				t.Errorf("grants = %#v, want %#v", got, tc.grants)
+			}
+			if !strings.Contains(r.stderr, tc.shown) {
+				t.Errorf("stderr %q, want %q", r.stderr, tc.shown)
+			}
+		})
+	}
+}
+
+func TestNodesSetupMergesARepeatedUnit(t *testing.T) {
+	s := newSetupAPI(t, approvalPolicy)
+
+	r := s.run("nodes", "setup", "web-1", "--unit", "a.service:restart", "--unit", "a.service:start", "--yes")
+
+	if got, want := s.plans[0].Parameters["grants"], []any{"start a.service", "restart a.service"}; r.code != 0 || !reflect.DeepEqual(got, want) {
+		t.Errorf("exit %d, grants %v, want %v", r.code, got, want)
+	}
+	if !strings.Contains(r.stderr, "units: a.service (start, restart)") {
+		t.Errorf("stderr %q", r.stderr)
+	}
+}
+
+func TestNodesSetupRefusesUnitsWithNoUnitsAndBadVerbs(t *testing.T) {
+	for _, args := range [][]string{{"--unit", "a.service", "--no-units"}, {"--unit", "a.service:reload"}, {"--unit", ":restart"}} {
+		s := newSetupAPI(t, approvalPolicy)
+
+		r := s.run(append([]string{"nodes", "setup", "web-1", "--yes"}, args...)...)
+
+		if r.code != exitUsage || len(s.plans) != 0 {
+			t.Errorf("%v: exit %d, %d plans, stderr %q", args, r.code, len(s.plans), r.stderr)
+		}
 	}
 }
 

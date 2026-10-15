@@ -49,6 +49,9 @@ Without setup a node is read-only. Starting, stopping and restarting services, r
 sm nodes setup web1                          # logs via the journal group, no Docker
 sm nodes setup web1 --docker-access          # also join the docker group (root-equivalent)
 sm nodes setup web1 --logs-mode broker       # logs through the root-owned broker instead of the journal group
+sm nodes setup web1 --unit nginx.service     # allow start, stop and restart of nginx.service
+sm nodes setup web1 --unit app.service:restart   # allow only restart
+sm nodes setup web1 --no-units               # remove every unit grant
 ```
 
 or from the TUI palette:
@@ -57,7 +60,11 @@ or from the TUI palette:
 / setup web1                  logs via the journal group, no Docker
 / setup web1 docker           also join the docker group (root-equivalent)
 / setup web1 broker           logs through the root-owned broker instead of the journal group
+/ setup web1 unit nginx.service unit app.service:restart
+                              grant systemctl on those units
 ```
+
+`--unit` (or `unit` in the palette) takes `<unit>[:start,stop,restart]`; without verbs the unit gets all three. The units you pass replace the node's current grants, and the plan shows the old and new lists. Without any unit, re-running setup (after `sm ssh-key rotate`, say) keeps the grants the node has (`TestNodesSetupKeepsTheNodesGrantsUnlessToldOtherwise`). Each grant is one sudoers line, `systemctl <verb> <unit>`, and only units that pass the trust profile are granted.
 
 Both show a plan that names the bootstrap identity and, with Docker access, the warning that the docker group is equivalent to root. Confirm it (`y` in the TUI). The setup job is approval-gated; approve it from the Approvals screen (`4`, then `A`) or with `sm jobs approve`. Docker access is never implied: without `--docker-access` (or `docker` in the palette) it is off. How approvals work is in [Policies and approvals](policies.md).
 

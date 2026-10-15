@@ -18,6 +18,7 @@ github.com/autarquico/supermgmt/internal/api/wire.ParseJobQuery  FuzzParseQuerie
 github.com/autarquico/supermgmt/internal/api/wire.ParseLogQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseNodeQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParsePageQuery  FuzzParseQueries
+github.com/autarquico/supermgmt/internal/api/wire.ParseUnitSpec  FuzzParseUnitSpec
 github.com/autarquico/supermgmt/internal/app.DecodePendingAudit  FuzzDecodePendingAudit
 github.com/autarquico/supermgmt/internal/app.DeploymentEvidence.restoreDirectory  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.Deployments.readRequest  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
@@ -303,6 +304,7 @@ github.com/autarquico/supermgmt/internal/tui.deploymentsScreen.load  exempt: loa
 github.com/autarquico/supermgmt/internal/tui.load  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.parseCommit  exempt: operator-typed wizard text and daemon-built plan JSON shown in the TUI; bounded by the form
 github.com/autarquico/supermgmt/internal/tui.parseImages  exempt: operator-typed wizard text and daemon-built plan JSON shown in the TUI; bounded by the form
+github.com/autarquico/supermgmt/internal/tui.parseSetupWords  exempt: splits palette words the operator typed into flags; each unit word goes to wire.ParseUnitSpec, which is fuzzed
 github.com/autarquico/supermgmt/internal/tui.timelineScreen.loadDetail  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.timelineScreen.loadEvents  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/yamlstrict.Decode  FuzzDecode

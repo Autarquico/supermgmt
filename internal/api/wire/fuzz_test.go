@@ -2,8 +2,10 @@ package wire
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 
+	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
@@ -52,4 +54,26 @@ func wantFuzzQueryOutcome(t *testing.T, parser string, err error, inBounds bool)
 	if !inBounds {
 		t.Fatalf("%s query accepted an out-of-bounds value", parser)
 	}
+}
+
+func FuzzParseUnitSpec(f *testing.F) {
+	for _, seed := range []string{"nginx.service", "app.service:restart", "a.service:start,stop,start", ":restart", "a:reload", "a:", ""} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, spec string) {
+		g, err := ParseUnitSpec(spec)
+		if err != nil {
+			return
+		}
+		if g.Unit == "" || strings.Contains(g.Unit, ":") || len(g.Verbs) == 0 {
+			t.Fatalf("ParseUnitSpec(%q) = %+v", spec, g)
+		}
+		seen := map[domain.ServiceVerb]bool{}
+		for _, v := range g.Verbs {
+			if !v.Valid() || seen[v] {
+				t.Fatalf("ParseUnitSpec(%q): verbs %v are not distinct valid verbs", spec, g.Verbs)
+			}
+			seen[v] = true
+		}
+	})
 }

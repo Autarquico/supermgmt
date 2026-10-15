@@ -19,14 +19,18 @@ const (
 )
 
 func newNodesSetupCmd(env []string) *cobra.Command {
-	var dockerAccess, assumeYes bool
+	var dockerAccess, assumeYes, noUnits bool
 	var logsMode string
+	var units []string
 	cmd := &cobra.Command{
 		Use:   "setup <node>",
 		Short: "Provision the dedicated supermgmt account on a node (a job; may wait for approval)",
 		Long: "Run node.setup: create the supermgmt account on the node over your own admin account (root, or passwordless\n" +
 			"sudo), authorize the instance SSH key, grant systemctl on the units it may manage, and verify the result over\n" +
 			"a fresh session as that account. Re-run it after `sm ssh-key rotate` to authorize the new key.\n\n" +
+			"--unit grants systemctl on a unit: --unit nginx.service allows start, stop and restart; --unit\n" +
+			"nginx.service:restart only restart. Repeat it per unit; the list replaces the node's current grants.\n" +
+			"Without --unit a re-run keeps the grants the node has; --no-units removes them all.\n\n" +
 			"Docker access is explicit: it is off unless you pass --docker-access, and it is root-equivalent on the node.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -41,13 +45,21 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			node, err := api.GetNode(cmd.Context(), id, false)
+			if err != nil {
+				return err
+			}
+			grants, kept, err := wire.SetupUnits(units, noUnits, node.Setup)
+			if err != nil {
+				return usageErrorf("%s", err)
+			}
 			if dockerAccess {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", dockerAccessWarning)
 			}
 			plan, err := api.CreatePlan(cmd.Context(), wire.CreatePlanRequest{
 				Action:     "node.setup",
 				Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: id}},
-				Parameters: map[string]any{"docker_access": fmt.Sprint(dockerAccess), "logs_mode": logsMode},
+				Parameters: wire.SetupParameters(dockerAccess, logsMode, grants),
 			})
 			if err != nil {
 				return err
@@ -55,6 +67,7 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			if err := describePlan(cmd, args[0], plan); err != nil {
 				return err
 			}
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), wire.UnitsChange(node.Setup, grants, kept))
 			if err := confirm(cmd, "Submit this plan?", assumeYes); err != nil {
 				return err
 			}
@@ -67,6 +80,8 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dockerAccess, "docker-access", false, "also give the account docker access (root-equivalent on the node)")
 	cmd.Flags().StringVar(&logsMode, "logs-mode", logsModeJournalGroup, "how logs are read: "+logsModeJournalGroup+" or "+logsModeBroker)
+	cmd.Flags().StringArrayVar(&units, "unit", nil, "grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)")
+	cmd.Flags().BoolVar(&noUnits, "no-units", false, "remove every unit grant")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "do not ask for confirmation")
 	return cmd
 }
