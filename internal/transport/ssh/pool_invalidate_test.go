@@ -123,7 +123,7 @@ func TestTwoTargetsForOneNodeAndUserDoNotReplaceEachOtherForever(t *testing.T) {
 	eventually(t, "second target took the slot", func() bool {
 		r.pool.mu.Lock()
 		defer r.pool.mu.Unlock()
-		return r.pool.peers[connKey{r.nodeID, "supermgmt"}].target == second
+		return r.pool.peers[keyOf(second)].target == second
 	})
 	close(gate)
 

@@ -34,6 +34,10 @@ type Target struct {
 	User          string
 	HostKey       string
 	CredentialRef string
+	// Transport and TunnelHostname come from the node endpoint. Absent
+	// Transport means direct; TunnelHostname matters only for cloudflare.
+	Transport      domain.Transport
+	TunnelHostname string
 }
 
 // PoolConfig holds the ssh.* limits of spec §8.2.
@@ -67,10 +71,17 @@ type ConnState struct {
 // connKey: one connection per node and login user. A node switches from
 // admin_user to supermgmt after setup, and the setup verify step must reach
 // the node as supermgmt while the bootstrap session is still running.
+//
+// The transport is part of the key: a connection made through one transport is
+// never handed out for another, so the candidate transport can be verified
+// while the old one still serves.
 type connKey struct {
-	node domain.ID
-	user string
+	node      domain.ID
+	user      string
+	transport domain.Transport
 }
+
+func keyOf(t Target) connKey { return connKey{t.NodeID, t.User, t.Transport.Effective()} }
 
 // Pool owns the connections. It is safe for concurrent use.
 type Pool struct {
@@ -84,6 +95,7 @@ type Pool struct {
 	dials         chan struct{}
 	janitorOnce   sync.Once
 	mu            sync.Mutex
+	dialers       map[domain.Transport]Dialer
 	peers         map[connKey]*peer
 	retiring      map[*liveConn]struct{} // replaced or invalidated connections that still hold leases
 	janitorPeriod time.Duration
@@ -139,7 +151,7 @@ func NewPool(cfg PoolConfig, creds CredentialResolver, clock domain.Clock) *Pool
 	ctx, stop := context.WithCancel(context.Background())
 	return &Pool{
 		cfg: cfg, creds: creds, clock: clock, ctx: ctx, stop: stop,
-		dials: make(chan struct{}, cfg.MaxDialsInFlight), peers: map[connKey]*peer{}, retiring: map[*liveConn]struct{}{},
+		dials: make(chan struct{}, cfg.MaxDialsInFlight), peers: map[connKey]*peer{}, dialers: map[domain.Transport]Dialer{domain.TransportDirect: directDialer{}}, retiring: map[*liveConn]struct{}{},
 		janitorPeriod: max(cfg.IdleConnectionTTL/2, time.Second),
 	}
 }
@@ -220,7 +232,7 @@ func (p *Pool) acquire(ctx context.Context, t Target) (*liveConn, error) {
 			}
 			call = &dialCall{done: make(chan struct{})}
 			pe.dial = call
-			go p.dialPeer(ctx, connKey{t.NodeID, t.User}, pe, pe.epoch, t, call)
+			go p.dialPeer(ctx, keyOf(t), pe, pe.epoch, t, call)
 		}
 		p.mu.Unlock()
 
@@ -238,7 +250,7 @@ func (p *Pool) acquire(ctx context.Context, t Target) (*liveConn, error) {
 // peerFor returns the peer for t, replacing it when the target changed (new
 // address, key or credential): the old connection is closed, backoff resets.
 func (p *Pool) peerFor(t Target) *peer {
-	key := connKey{t.NodeID, t.User}
+	key := keyOf(t)
 	pe, ok := p.peers[key]
 	if ok && pe.target == t {
 		return pe
@@ -286,17 +298,35 @@ func (p *Pool) retireLocked(c *liveConn) {
 	p.retiring[c] = struct{}{}
 }
 
-// Invalidate drops the pooled connection of (node, user) so the next command
-// authenticates afresh, for use after setup changes the account, its groups or
-// its authorization. Commands in flight finish on the old connection; a dial
-// already under way is discarded and repeated.
+// Invalidate drops the pooled connections of (node, user), whatever their
+// transport, so the next command authenticates afresh, for use after setup
+// changes the account, its groups or its authorization. Commands in flight
+// finish on the old connection; a dial already under way is discarded and
+// repeated.
 func (p *Pool) Invalidate(node domain.ID, user string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	pe, ok := p.peers[connKey{node, user}]
-	if !ok {
-		return
+	for key, pe := range p.peers {
+		if key.node == node && key.user == user {
+			p.invalidateLocked(pe)
+		}
 	}
+}
+
+// InvalidateNode is Invalidate for every login user of a node: the app calls
+// it when the node's transport or tunnel hostname changes, so connections of
+// the old transport retire as their leases drain.
+func (p *Pool) InvalidateNode(node domain.ID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key, pe := range p.peers {
+		if key.node == node {
+			p.invalidateLocked(pe)
+		}
+	}
+}
+
+func (p *Pool) invalidateLocked(pe *peer) {
 	if pe.conn != nil {
 		p.retireLocked(pe.conn)
 		pe.conn = nil
@@ -370,6 +400,10 @@ func (p *Pool) connect(parent context.Context, t Target) (*liveConn, error) {
 	if err := validateTarget(t); err != nil {
 		return nil, err
 	}
+	dialer, err := p.dialerFor(t)
+	if err != nil {
+		return nil, err
+	}
 	select {
 	case p.dials <- struct{}{}:
 		defer func() { <-p.dials }()
@@ -398,16 +432,16 @@ func (p *Pool) connect(parent context.Context, t Target) (*liveConn, error) {
 		HostKeyCallback: pinned.callback(&mismatch), HostKeyAlgorithms: pinned.algorithms(),
 	}
 	addr := net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
-	nc, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	nc, err := dialer.DialContext(ctx, t)
 	if err != nil {
-		return nil, unreachable("connect to node", err)
+		return nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { _ = nc.Close() })
 	conn, chans, reqs, err := cryptossh.NewClientConn(nc, addr, cfg)
 	stop()
 	if err != nil {
 		_ = nc.Close()
-		return nil, classifyHandshake(ctx, err, mismatch, t.User)
+		return nil, classifyHandshake(ctx, err, mismatch, t.User, carrierNote(nc))
 	}
 	return &liveConn{
 		client:   cryptossh.NewClient(conn, chans, reqs),
@@ -416,7 +450,16 @@ func (p *Pool) connect(parent context.Context, t Target) (*liveConn, error) {
 	}, nil
 }
 
-func classifyHandshake(ctx context.Context, err error, mismatch *hostKeyMismatch, user string) error {
+// carrierNote is the sanitized reason a carrier gave for failing, read after
+// the connection is closed.
+func carrierNote(nc net.Conn) string {
+	if d, ok := nc.(Diagnoser); ok {
+		return d.Diagnostics()
+	}
+	return ""
+}
+
+func classifyHandshake(ctx context.Context, err error, mismatch *hostKeyMismatch, user, note string) error {
 	text := err.Error()
 	switch {
 	case mismatch != nil:
@@ -428,11 +471,18 @@ func classifyHandshake(ctx context.Context, err error, mismatch *hostKeyMismatch
 	case strings.Contains(text, "unable to authenticate"):
 		return smerr.Wrap(err, smerr.CodeNodeUnreachable, "", "ssh authentication failed for user "+user+": the node does not accept the offered keys")
 	}
-	return unreachable("ssh handshake", err)
+	what := "ssh handshake"
+	if note != "" {
+		what += " (" + note + ")"
+	}
+	return unreachable(what, err)
 }
 
 func validateTarget(t Target) error {
 	if err := validateEndpoint(t.Host, t.Port); err != nil {
+		return err
+	}
+	if err := validateTransport(t); err != nil {
 		return err
 	}
 	if t.User == "" || strings.HasPrefix(t.User, "-") || strings.ContainsAny(t.User, " \t\r\n\x00@") {
