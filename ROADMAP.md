@@ -1,12 +1,12 @@
 # Roadmap
 
-Status as of 2026-10-14. SuperMgmt is **pre-alpha, with no stable release yet.** The first pre-release, [`v0.1.0-rc.1`](https://github.com/autarquico/supermgmt/releases/tag/v0.1.0-rc.1), is published and signed; its installer has not been verified on a clean machine, so building from source stays the recommended path. The website is live at <https://autarquico.github.io/supermgmt/>. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
+Status as of 2026-10-15. SuperMgmt is **pre-alpha, with no stable release yet.** The first pre-release, [`v0.1.0-rc.1`](https://github.com/autarquico/supermgmt/releases/tag/v0.1.0-rc.1), is published and signed. Its installer ran on one clean Intel Mac in local mode (2026-10-15), and a second Mac was added as an SSH node from it; a Linux install from a published release is still open, so building from source stays the recommended path. The website is live at <https://autarquico.github.io/supermgmt/>. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
 
 What is verified today, claim by claim, is on one page: [Project status](docs/project-status.md). This page says what is built, what is left and what is deliberately not built.
 
 ## Before the first release
 
-These cannot be completed by code alone. The [release checklist](docs/release-checklist.md) holds the full list as numbered rows, each with an owner and a procedure; this table is the summary. Done so far: the release signing key, the first tag run (`v0.1.0-rc.1`) and the first nightly run; none of the rows below is done.
+These cannot be completed by code alone. The [release checklist](docs/release-checklist.md) holds the full list as numbered rows, each with an owner and a procedure; this table is the summary. Done so far: the release signing key, the first tag run (`v0.1.0-rc.1`), the first nightly run and a first clean-machine install on an Intel Mac; none of the rows below is complete.
 
 | Item | Needed before | Owner |
 |---|---|---|
