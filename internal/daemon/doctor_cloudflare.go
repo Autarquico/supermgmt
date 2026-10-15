@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -96,7 +98,7 @@ func cloudflaredCheck(locate func() (string, error)) wire.DoctorCheck {
 	if err != nil {
 		return wire.DoctorCheck{
 			Name: checkCloudflared, Status: checkFail,
-			Detail: "not found on this host: install cloudflared (https://pkg.cloudflare.com) to dial tunnelled nodes",
+			Detail: reasonOf(err) + "; " + cloudflaredInstallHint(runtime.GOOS) + " to dial tunnelled nodes",
 		}
 	}
 	return wire.DoctorCheck{Name: checkCloudflared, Status: checkOK, Detail: path}
@@ -263,4 +265,21 @@ func (b *builder) cloudflareChecks(ctx context.Context) []wire.DoctorCheck {
 			return cloudflare.New("", cf.AccountID, token)
 		},
 	}.Run(ctx)
+}
+
+// cloudflaredInstallHint names the usual install route on this operating system.
+func cloudflaredInstallHint(goos string) string {
+	if goos == "darwin" {
+		return "install it with `brew install cloudflared`"
+	}
+	return "install it from Cloudflare's package repository (https://pkg.cloudflare.com)"
+}
+
+// reasonOf is the public message of err: not found, or refused as unsafe.
+func reasonOf(err error) string {
+	var e *smerr.Error
+	if errors.As(err, &e) && e.Message != "" {
+		return e.Message
+	}
+	return err.Error()
 }

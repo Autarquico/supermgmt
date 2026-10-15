@@ -395,3 +395,19 @@ func TestDoctorRevokedAPITokenIsOnlyAWarningOnceEveryTunnelIsProvisioned(t *test
 		})
 	}
 }
+
+func TestTheCloudflaredCheckSaysWhyAndHowToInstallOnThisSystem(t *testing.T) {
+	refused := func() (string, error) {
+		return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "/usr/local/bin/cloudflared is writable by group or others")
+	}
+	c := cloudflaredCheck(refused)
+	if c.Status != checkFail || !strings.Contains(c.Detail, "writable by group or others") {
+		t.Errorf("check = %+v: it must carry the reason the binary was refused", c)
+	}
+	if hint := cloudflaredInstallHint("darwin"); !strings.Contains(hint, "brew install cloudflared") {
+		t.Errorf("macOS hint = %q", hint)
+	}
+	if hint := cloudflaredInstallHint("linux"); !strings.Contains(hint, "pkg.cloudflare.com") {
+		t.Errorf("Linux hint = %q", hint)
+	}
+}
