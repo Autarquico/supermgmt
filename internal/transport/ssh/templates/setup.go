@@ -26,7 +26,7 @@ const (
 // only these: tunnelFiles and tunnelDirs bound the remove steps below.
 const (
 	AptKeyringDir         = "/etc/apt/keyrings"
-	CloudflareKeyringPath = AptKeyringDir + "/cloudflare-main.gpg"
+	CloudflareKeyringPath = AptKeyringDir + "/supermgmt-cloudflare.gpg"
 	CloudflaredSourcePath = "/etc/apt/sources.list.d/cloudflared.list"
 	CloudflaredDir        = BrokerConfigDir + "/cloudflared"
 	CloudflaredTokenPath  = CloudflaredDir + "/token"

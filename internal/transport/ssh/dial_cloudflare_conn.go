@@ -152,12 +152,12 @@ func (c *childConn) Close() error {
 		select {
 		case <-c.exited:
 		default:
-			_ = c.cmd.Process.Signal(syscall.SIGTERM)
+			c.signalGroup(syscall.SIGTERM)
 			timer := time.NewTimer(c.grace)
 			select {
 			case <-c.exited:
 			case <-timer.C:
-				_ = c.cmd.Process.Kill()
+				c.signalGroup(syscall.SIGKILL)
 				<-c.exited
 			}
 			timer.Stop()
@@ -166,6 +166,14 @@ func (c *childConn) Close() error {
 		<-c.stderrDone
 	})
 	return nil
+}
+
+// signalGroup signals the child's whole process group: it runs with Setpgid,
+// so its own children are reached too and none outlives the connection.
+func (c *childConn) signalGroup(sig syscall.Signal) {
+	if err := syscall.Kill(-c.cmd.Process.Pid, sig); err != nil {
+		_ = c.cmd.Process.Signal(sig)
+	}
 }
 
 // Diagnostics is what the child said on stderr, scrubbed of the token and of

@@ -39,14 +39,6 @@ func (t TunnelParams) Validate() error {
 	return err
 }
 
-// TunnelOutcome is what a setup run with tunnel steps reports.
-type TunnelOutcome struct {
-	// PackageManaged is true when setup owns the cloudflared package: it
-	// installed it, or the apt source it wrote is still there. Only then does
-	// RemoveTunnel remove the package.
-	PackageManaged bool
-}
-
 // supportedDistributions maps /etc/os-release ID to the VERSION_CODENAME of the
 // one release of it that is supported (spec: Debian 13 and Ubuntu 24.04).
 var supportedDistributions = map[string]string{"debian": "trixie", "ubuntu": "noble"}
@@ -103,11 +95,34 @@ Wants=network-online.target
 [Service]
 Type=notify
 TimeoutStartSec=30
-ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token-file ` + templates.CloudflaredTokenPath + `
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token-file ${CREDENTIALS_DIRECTORY}/token
 Restart=on-failure
 RestartSec=5s
+# The token is handed over by systemd (read as root, exposed read-only to the
+# dynamic user); the process itself never runs as root.
+DynamicUser=yes
+LoadCredential=token:` + templates.CloudflaredTokenPath + `
+# cloudflared only dials out and notifies systemd over a unix socket.
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
@@ -120,49 +135,51 @@ func tokenFile(t TunnelParams) string { return t.Token.Reveal() + "\n" }
 // pinned key, nothing fetched), the token file and the SuperMgmt unit, and
 // starts it. Every file is rewritten only when its hash differs, so a re-run
 // changes nothing and a changed token is the only reason to restart.
-func (s stepper) ensureTunnel(ctx context.Context, t TunnelParams) (TunnelOutcome, error) {
+func (s stepper) ensureTunnel(ctx context.Context, t TunnelParams) error {
 	keyring, err := cloudflarePin.keyring()
 	if err != nil {
-		return TunnelOutcome{}, err
+		return err
 	}
 	if err := s.requireSupportedDistribution(ctx); err != nil {
-		return TunnelOutcome{}, err
+		return err
 	}
 	source := cloudflareSource()
 	installed, err := s.cloudflaredInstalled(ctx)
 	if err != nil {
-		return TunnelOutcome{}, err
+		return err
 	}
-	owned, err := s.ownsSource(ctx, source)
+	owned, foreign, err := s.sourceOwnership(ctx, source)
 	if err != nil {
-		return TunnelOutcome{}, err
+		return err
+	}
+	if !installed && foreign {
+		return smerr.New(smerr.CodeConflict, "", templates.CloudflaredSourcePath+" already exists with other content and cloudflared is not installed")
 	}
 	managed := !installed || owned
 	if managed {
 		if err := s.ensureRepository(ctx, string(keyring), source); err != nil {
-			return TunnelOutcome{}, err
+			return err
 		}
 		if !installed {
 			if err := s.installCloudflared(ctx); err != nil {
-				return TunnelOutcome{}, err
+				return err
 			}
 		}
 	}
-	return TunnelOutcome{PackageManaged: managed}, s.ensureTunnelService(ctx, t)
+	return s.ensureTunnelService(ctx, t)
 }
 
-// ownsSource reports whether the apt source file is exactly the one setup
-// writes. A file at that path with other content is somebody's own repository
-// configuration: setup neither replaces nor removes it.
-func (s stepper) ownsSource(ctx context.Context, source string) (bool, error) {
+// sourceOwnership reads the apt source file: owned when it is exactly the one
+// setup writes, foreign when a file with other content sits at that path
+// (Cloudflare's own install guide writes it). A foreign source is never
+// replaced or removed; it only stops setup from installing the package.
+func (s stepper) sourceOwnership(ctx context.Context, source string) (owned, foreign bool, err error) {
 	have, present, err := s.fileHash(ctx, templates.CloudflaredSourcePath)
 	if err != nil || !present {
-		return false, err
+		return false, false, err
 	}
-	if have != sha256Hex(source) {
-		return false, smerr.New(smerr.CodeConflict, "", templates.CloudflaredSourcePath+" already exists with other content")
-	}
-	return true, nil
+	owned = have == sha256Hex(source)
+	return owned, !owned, nil
 }
 
 func (s stepper) ensureRepository(ctx context.Context, keyring, source string) error {

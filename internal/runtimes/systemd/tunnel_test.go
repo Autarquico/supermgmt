@@ -232,24 +232,20 @@ func TestTunnelParamsValidation(t *testing.T) {
 func TestSetupInstallsTheTunnelBeforeTheKeyAndInTheRightOrder(t *testing.T) {
 	ring := pinTestKey(t)
 	node := newTunnelNode(t)
-	out, err := Setup(context.Background(), node, tunnelParams())
-	if err != nil {
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
 		t.Fatal(err)
-	}
-	if out.Tunnel == nil || !out.Tunnel.PackageManaged {
-		t.Errorf("outcome = %+v", out.Tunnel)
 	}
 	if node.files[templates.CloudflareKeyringPath] != string(ring) {
 		t.Error("the keyring on the node is not the pinned one")
 	}
-	if got, want := node.files[templates.CloudflaredSourcePath], "deb [signed-by=/etc/apt/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main\n"; got != want {
+	if got, want := node.files[templates.CloudflaredSourcePath], "deb [signed-by=/etc/apt/keyrings/supermgmt-cloudflare.gpg] https://pkg.cloudflare.com/cloudflared any main\n"; got != want {
 		t.Errorf("source = %q", got)
 	}
 	if got := node.files[templates.CloudflaredTokenPath]; got != tunnelToken+"\n" {
 		t.Error("the token file does not hold the token")
 	}
 	unit := node.files[templates.CloudflaredUnitPath]
-	if !strings.Contains(unit, "\nExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token-file /etc/supermgmt/cloudflared/token\n") {
+	if !strings.Contains(unit, "\nExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token-file ${CREDENTIALS_DIRECTORY}/token\n") {
 		t.Errorf("unit = %s", unit)
 	}
 	if strings.Contains(unit, tunnelToken) || strings.Contains(unit, "Environment") {
@@ -308,12 +304,8 @@ func TestTunnelSetupIsIdempotent(t *testing.T) {
 	}
 	node.account, node.members = ownAccount, "supermgmt systemd-journal"
 	before := len(node.calls)
-	out, err := Setup(context.Background(), node, tunnelParams())
-	if err != nil {
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
 		t.Fatal(err)
-	}
-	if out.Tunnel == nil || !out.Tunnel.PackageManaged {
-		t.Errorf("a re-run must still own the package: %+v", out.Tunnel)
 	}
 	rerun := &tunnelNode{setupNode: &setupNode{fakeNode: &fakeNode{calls: node.calls[before:]}}}
 	for _, path := range []string{templates.CloudflareKeyringPath, templates.CloudflaredSourcePath, templates.CloudflaredTokenPath, templates.CloudflaredUnitPath} {
@@ -527,12 +519,8 @@ func TestAnExistingCloudflaredIsUsedAndNeverManaged(t *testing.T) {
 	pinTestKey(t)
 	node := newTunnelNode(t)
 	node.installed = true
-	out, err := Setup(context.Background(), node, tunnelParams())
-	if err != nil {
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
 		t.Fatal(err)
-	}
-	if out.Tunnel == nil || out.Tunnel.PackageManaged {
-		t.Errorf("outcome = %+v", out.Tunnel)
 	}
 	for _, name := range []string{"setup.apt_update_cloudflared", "setup.apt_install_cloudflared"} {
 		if node.count(name) != 0 {
@@ -616,7 +604,7 @@ func TestRemoveTunnelLeavesAForeignRepositoryAndItsPackage(t *testing.T) {
 	node := newTunnelNode(t)
 	node.installed = true
 	node.files[templates.CloudflaredSourcePath] = "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main\n"
-	node.files[templates.CloudflareKeyringPath] = "their key"
+	node.files[theirKeyring] = "their key"
 	if err := RemoveTunnel(context.Background(), node, RemoveTunnelParams{AdminIsRoot: false}); err != nil {
 		t.Fatal(err)
 	}

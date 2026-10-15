@@ -55,7 +55,6 @@ func (p SetupParams) Validate() error {
 // SetupOutcome is what the job records in the node.setup capability metadata.
 type SetupOutcome struct {
 	SystemctlPath string
-	Tunnel        *TunnelOutcome // nil unless the run had tunnel steps
 }
 
 // Setup runs the ensure steps of ADR-0009 (f) 1-7 through ex, which runs as
@@ -83,7 +82,6 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 	if err != nil {
 		return SetupOutcome{}, err
 	}
-	var tunnel *TunnelOutcome
 	steps := []struct {
 		name string
 		run  func(context.Context) error
@@ -102,9 +100,7 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 			if p.Tunnel == nil {
 				return nil
 			}
-			out, err := s.ensureTunnel(ctx, *p.Tunnel)
-			tunnel = &out
-			return err
+			return s.ensureTunnel(ctx, *p.Tunnel)
 		}},
 		// The key goes in last: only an account that passed every check above
 		// ever becomes reachable with the instance identity.
@@ -115,7 +111,7 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 			return SetupOutcome{}, fmt.Errorf("node.setup step %s: %w", step.name, err)
 		}
 	}
-	return SetupOutcome{SystemctlPath: systemctl, Tunnel: tunnel}, nil
+	return SetupOutcome{SystemctlPath: systemctl}, nil
 }
 
 type renderedFiles struct{ authorizedKeys, sudoers, tmpfiles, allowedUnits string }
