@@ -75,6 +75,7 @@ type setupHandler struct {
 	conn     Connector
 	identity SSHIdentity
 	prober   *Prober
+	tunnel   *tunnelEngine // nil: no cloudflare: block, tunnel=true is refused
 }
 
 func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
@@ -102,18 +103,59 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id)
+	if req.Tunnel {
+		err = h.runTunnel(ctx, lease, job, node, req, deployRoot, id)
+	} else {
+		err = h.runDirect(ctx, lease, job, node, req, deployRoot, id)
+	}
+	if err != nil {
+		return err
+	}
+	_ = h.prober.Probe(ctx, node.ID, ProbeFull, nil) // best effort: the refresher repeats it
+	return nil
+}
+
+func (h setupHandler) runDirect(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) error {
+	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, nil)
 	if err != nil {
 		return err
 	}
 	if err := h.verify(ctx, node, req, id, outcome); err != nil {
 		return err
 	}
-	if err := h.record(ctx, lease, job, node, req, deployRoot, id, outcome); err != nil {
+	return h.record(ctx, lease, job, node, req, deployRoot, id, outcome)
+}
+
+// runTunnel is node.setup with tunnel=true (ADR-0037): the Cloudflare objects
+// in order, the node install, a verification through the candidate transport
+// and only then the switch. Any failure leaves the transport as it was and
+// the operation record resumable.
+func (h setupHandler) runTunnel(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) error {
+	if err := requireTunnelAllowed(h.tunnel != nil, node); err != nil {
 		return err
 	}
-	_ = h.prober.Probe(ctx, node.ID, ProbeFull, nil) // best effort: the refresher repeats it
-	return nil
+	run, err := h.tunnel.begin(ctx, lease, job, node, req, id)
+	if err != nil {
+		return err
+	}
+	token, err := run.provisionCloudflare(ctx)
+	if err != nil {
+		return err
+	}
+	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, &systemd.TunnelParams{Token: token})
+	if err != nil {
+		return run.step("node install", err)
+	}
+	if err := run.advance(ctx, database.PhaseInstalled, database.TunnelObjects{}, "", nil); err != nil {
+		return err
+	}
+	if err := h.verify(ctx, node, req, id, outcome); err != nil {
+		return run.step("verification of the dedicated account", err)
+	}
+	if err := h.verifyTunnelPath(ctx, run, req, id, outcome); err != nil {
+		return err
+	}
+	return h.commitTunnel(ctx, run, req, deployRoot, id, outcome)
 }
 
 func setupParamsOf(job jobs.Job) (map[string]any, error) {
@@ -146,7 +188,7 @@ func deployRootOf(params map[string]any) (string, error) {
 
 // provision runs the ensure steps as admin_user, bracketed by the audit events
 // of the privileged session.
-func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) (systemd.SetupOutcome, error) {
+func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, tunnel *systemd.TunnelParams) (systemd.SetupOutcome, error) {
 	if isLocal(node) {
 		return systemd.SetupOutcome{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "the local provider cannot be set up")
 	}
@@ -168,7 +210,7 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	h.sessionEvent(ctx, lease, job, node, "start", asRoot, nil)
 	outcome, err := systemd.Setup(ctx, admin, systemd.SetupParams{
 		User: node.Endpoint.User, InstanceID: instance.ID.String(), AuthorizedKey: id.AuthorizedKey,
-		Grants: req.Grants, LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, AdminIsRoot: asRoot,
+		Grants: req.Grants, LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, AdminIsRoot: asRoot, Tunnel: tunnel,
 	})
 	if err == nil {
 		err = ensureDeployRoot(ctx, admin, node.Endpoint.User, deployRoot, asRoot)
@@ -316,15 +358,18 @@ func pinnedIdentityRef(id secrets.Identity) string {
 
 func identityRef(id secrets.Identity) string { return "secret://" + id.Ref.Name }
 
-// record writes the node.setup capability, fenced: a worker that lost its
-// lease writes nothing.
-func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) error {
-	meta := runtimes.SetupMeta{
+func (h setupHandler) setupMeta(req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) runtimes.SetupMeta {
+	return runtimes.SetupMeta{
 		SetupVersion: runtimes.SetupVersion, SystemctlPath: outcome.SystemctlPath, Units: req.Grants,
 		LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, DeployRoot: deployRoot,
 		KeyRef: identityRef(id), KeyVersion: id.Ref.Version, KeyFingerprint: id.FingerprintSHA256,
 	}
-	capability, err := setupCapability(meta, h.cfg.Clock.Now())
+}
+
+// record writes the node.setup capability, fenced: a worker that lost its
+// lease writes nothing.
+func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) error {
+	capability, err := setupCapability(h.setupMeta(req, deployRoot, id, outcome), h.cfg.Clock.Now())
 	if err != nil {
 		return err
 	}
@@ -332,16 +377,20 @@ func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job
 		if err := lease.Fence(ctx, tx); err != nil {
 			return err
 		}
-		actor, err := loadActor(ctx, tx, job.ActorID, credentialOf(job))
-		if err != nil {
-			return err
-		}
 		if err := database.SetNodeCapability(ctx, tx, node.ID, capability); err != nil {
 			return err
 		}
-		return h.emit(ctx, tx, actor, eventSetupCompleted, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
-			"key_fingerprint": id.FingerprintSHA256, "docker_access": req.DockerAccess,
-			"logs_mode": string(req.LogsMode), "units": len(req.Grants), "deploy_root": deployRoot,
-		})
+		return h.emitSetupCompleted(ctx, tx, job, node, req, deployRoot, id)
+	})
+}
+
+func (h setupHandler) emitSetupCompleted(ctx context.Context, tx *database.Tx, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) error {
+	actor, err := loadActor(ctx, tx, job.ActorID, credentialOf(job))
+	if err != nil {
+		return err
+	}
+	return h.emit(ctx, tx, actor, eventSetupCompleted, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
+		"key_fingerprint": id.FingerprintSHA256, "docker_access": req.DockerAccess,
+		"logs_mode": string(req.LogsMode), "units": len(req.Grants), "deploy_root": deployRoot,
 	})
 }

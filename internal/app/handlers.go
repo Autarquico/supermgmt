@@ -32,6 +32,10 @@ type HandlersOptions struct {
 	// GitHub provider writes; without it those jobs fail loudly.
 	Apps *Apps
 
+	// Tunnel enables node.setup with tunnel=true; nil (no cloudflare: block)
+	// refuses it.
+	Tunnel *TunnelOptions
+
 	// Deploy enables deployment.create and deployment.rollback; without it the
 	// types have no handler.
 	Deploy *DeployOptions
@@ -66,9 +70,13 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	if o.Adapters == nil {
 		o.Adapters = DefaultAdapters()
 	}
+	tunnel, err := newTunnelEngine(c, o.Tunnel)
+	if err != nil {
+		return nil, err
+	}
 	h := &Handlers{
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
-		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober},
+		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober, tunnel: tunnel},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
 		apply:  applyHandler{inv: o.Inventory, apps: o.Apps},
 	}

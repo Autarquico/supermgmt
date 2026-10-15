@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/audit"
+	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/policy"
@@ -55,6 +56,10 @@ type Config struct {
 	// MCPWritesEnabled is mcp.write_tools_enabled. While false, an mcp actor is
 	// denied every action that is not a query (MCP_WRITES_DISABLED, ADR-0032).
 	MCPWritesEnabled bool
+
+	// Cloudflare is the cloudflare: block; nil means the tunnel feature is off
+	// and node.setup refuses tunnel=true (ADR-0037).
+	Cloudflare *config.Cloudflare
 }
 
 func (c Config) validated() (Config, error) {

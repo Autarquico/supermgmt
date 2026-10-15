@@ -12,6 +12,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain/plan"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/policy"
 )
 
 // lockModeByJobType is the mode a job takes on its own resource (spec §20.5).
@@ -41,6 +42,10 @@ var lockModeByJobType = map[string]domain.LockMode{
 	deploymentCreateAction:      domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
 	deploymentRollbackAction:    domain.LockExclusive,
 }
+
+// cloudflareInstanceLock serializes the jobs that touch the instance-wide
+// Cloudflare objects (service token, reusable policies) across every node.
+var cloudflareInstanceLock = domain.LockSpec{Key: "cloudflare:instance", Mode: domain.LockExclusive}
 
 // ownLock is the lock on the job's own resource. A service is locked through
 // what runs it (spec §20.5): its Compose project on the node when the service
@@ -116,6 +121,9 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 			return nil, err
 		}
 		specs = append(specs, held...)
+	}
+	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" {
+		specs = append(specs, cloudflareInstanceLock)
 	}
 	for _, in := range stored.Inputs {
 		ref := domain.ResourceRef{Type: domain.ResourceType(in.Type), ID: domain.ID(in.ID)}

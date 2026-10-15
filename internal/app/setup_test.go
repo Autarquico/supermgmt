@@ -26,6 +26,14 @@ func onATrustedNode(n *fakeNode) *fakeNode {
 		reply("setup.user_groups", "supermgmt systemd-journal\n").reply("setup.verify_groups", "supermgmt systemd-journal\n")
 }
 
+// scriptDedicated makes n pass the verification of the dedicated account.
+func scriptDedicated(n *fakeNode) *fakeNode {
+	onATrustedNode(n)
+	n.reply("setup.verify_id", "supermgmt\n")
+	n.reply("setup.verify_markers", "writable\n")
+	return n.exit("setup.verify_sudo", 1) // sudo -n -l fails: no sudo rights at all
+}
+
 const passwdEntry = "supermgmt:x:998:998::/var/lib/supermgmt:/bin/sh\n"
 
 // setting is a node fixture ready for node.setup: an instance row, a scripted
@@ -38,9 +46,9 @@ type setting struct {
 	lease    jobs.Lease
 }
 
-func newSetting(t *testing.T) *setting {
+func newSetting(t *testing.T, tweak ...func(*Config)) *setting {
 	t.Helper()
-	s := &setting{nodeFixture: newNodeFixture(t)}
+	s := &setting{nodeFixture: newNodeFixture(t, tweak...)}
 	s.inTx(func(ctx context.Context, tx *database.Tx) error {
 		return database.CreateInstance(ctx, tx, database.Instance{ID: s.ids.NewID(), Name: "test", CreatedAt: s.clock.Now()})
 	})
@@ -62,11 +70,7 @@ func newSetting(t *testing.T) *setting {
 	admin.reply("setup.user_groups", "supermgmt systemd-journal\n")
 	onATrustedNode(admin)
 
-	dedicated := s.dialer.as("supermgmt")
-	onATrustedNode(dedicated)
-	dedicated.reply("setup.verify_id", "supermgmt\n")
-	dedicated.reply("setup.verify_markers", "writable\n")
-	dedicated.exit("setup.verify_sudo", 1) // sudo -n -l fails: no sudo rights at all
+	scriptDedicated(s.dialer.as("supermgmt"))
 
 	prober, err := NewProber(s.cfg, s.conn, fakeAdapters(newFakeAdapter(domain.RuntimeSystemd), newFakeAdapter(domain.RuntimeDocker)))
 	mustf(t, err, "NewProber")

@@ -79,6 +79,7 @@ const (
 	ParamLogsMode     = "logs_mode"
 	ParamGrants       = "grants"
 	ParamDeployRoot   = "deploy_root"
+	ParamTunnel       = "tunnel" // "true" reaches the node through a Cloudflare Tunnel (ADR-0037)
 )
 
 var catalogIndex = sync.OnceValue(func() map[string]ActionSpec {
@@ -231,6 +232,7 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamLogsMode, Type: ParamString, Values: []string{"journal-group", "broker"}},
 		{Name: ParamGrants, Type: ParamStringList},
 		{Name: ParamDeployRoot, Type: ParamString},
+		{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}},
 	}
 
 	return []ActionSpec{

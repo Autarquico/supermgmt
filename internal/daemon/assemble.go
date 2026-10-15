@@ -58,6 +58,7 @@ type background struct {
 type system struct {
 	db        *database.DB
 	pool      *ssh.Pool
+	tunnel    *ssh.CloudflareDialer // nil without a cloudflare: block
 	residency *Residency
 	work      background
 	local     *api.Server
@@ -68,6 +69,9 @@ type system struct {
 // close releases what assemble opened. Background work must have stopped.
 func (s *system) close() error {
 	s.pool.Close()
+	if s.tunnel != nil {
+		s.tunnel.Close()
+	}
 	return s.db.Close()
 }
 
@@ -172,11 +176,14 @@ func wireUp(ctx context.Context, o Options, prepared *Prepared) (*system, error)
 		return nil, err
 	}
 	b.pool = ssh.NewPool(poolConfig(cfg), ssh.NewCredentials(kit.store), clock)
+	b.useCloudflareTransport()
 	sys, err := b.build(ctx)
 	if err != nil {
 		b.pool.Close()
+		b.closeTransport()
 		return nil, err
 	}
+	sys.tunnel = b.tunnel
 	o.Log.Info("daemon assembled", slog.String("mode", string(cfg.Instance.Mode)), slog.String("identity", b.caller.String()))
 	return sys, nil
 }
@@ -189,6 +196,8 @@ type builder struct {
 	db   *database.DB
 	kit  keyKit
 	pool *ssh.Pool
+	// tunnel is the cloudflare transport; nil without a cloudflare: block.
+	tunnel *ssh.CloudflareDialer
 
 	jobs   *jobs.Store
 	hold   *app.HoldService
@@ -213,6 +222,24 @@ type builder struct {
 	repos      *app.Repositories
 	finalizer  *app.DeploymentFinalizer // the deployments service of the API and the Finalizer of the CI watcher
 	ci         app.CIWatcher
+}
+
+// useCloudflareTransport registers the cloudflare dialler on the pool, only
+// when the configuration has a cloudflare: block. The dialler reads the
+// runtime service token from the secret store at dial time.
+func (b *builder) useCloudflareTransport() {
+	cf := b.cfg.Cloudflare
+	if cf == nil {
+		return
+	}
+	b.tunnel = ssh.NewCloudflareDialer(ssh.CloudflareConfig{Tokens: app.AccessTokens(b.kit.store, cf.AccessTokenRef)})
+	b.pool.UseDialer(domain.TransportCloudflare, b.tunnel)
+}
+
+func (b *builder) closeTransport() {
+	if b.tunnel != nil {
+		b.tunnel.Close()
+	}
 }
 
 // openGate builds the job store and loads the restore hold into it: from here
@@ -454,6 +481,7 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
 		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health},
+		Tunnel: b.tunnelOptions(),
 	})
 	if err != nil {
 		return nil, err
@@ -461,6 +489,14 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	table := h.Map()
 	table[app.JobBackupCreate] = b.backups.Handler()
 	return table, nil
+}
+
+// tunnelOptions enables the tunnel jobs; nil without a cloudflare: block.
+func (b *builder) tunnelOptions() *app.TunnelOptions {
+	if b.cfg.Cloudflare == nil {
+		return nil
+	}
+	return &app.TunnelOptions{Config: *b.cfg.Cloudflare, Secrets: b.kit.store}
 }
 
 func (b *builder) background(handlers map[string]jobs.Handler) (background, error) {
@@ -565,7 +601,7 @@ func appConfig(db *database.DB, o Options) (app.Config, []byte, error) {
 	return app.Config{
 		DB: db, Clock: o.Clock, IDs: o.IDs, Policy: pol, Credentials: auth.CredentialStatus{DB: db, Clock: o.Clock},
 		ApprovalTTL: o.Config.Security.ApprovalTTL, DefaultLogsMode: runtimes.LogsMode(o.Config.SSH.LogsMode), AllowSelfApproval: allowSelf,
-		MCPWritesEnabled: o.Config.MCP.WriteToolsEnabled,
+		MCPWritesEnabled: o.Config.MCP.WriteToolsEnabled, Cloudflare: o.Config.Cloudflare,
 	}, policyBytes, nil
 }
 
