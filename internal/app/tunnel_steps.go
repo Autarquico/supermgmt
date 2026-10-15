@@ -102,9 +102,15 @@ func (r *tunnelRun) ensureIngress(ctx context.Context, _ database.CloudflareStat
 
 func (r *tunnelRun) ensureAccessApp(ctx context.Context, state database.CloudflareState) error {
 	name := cloudflare.AccessAppName(r.instanceID, r.node.ID.String())
+	// Resolved before comparing, so an empty list (one-time PIN) matches the
+	// application Cloudflare stores and a re-run makes no update.
+	idps, err := r.api.ResolveAllowedIdPs(ctx, r.opts.Config.AccessIdentityProviders)
+	if err != nil {
+		return err
+	}
 	spec := cloudflare.AppSpec{
 		Name: name, Domain: r.hostname, PolicyIDs: []string{state.ServicePolicyID, state.OwnersPolicyID},
-		AllowedIdPs: r.opts.Config.AccessIdentityProviders,
+		AllowedIdPs: idps,
 	}
 	app, how, err := ensureNamed(ctx, r, namedObject[cloudflare.AccessApp]{
 		kind: "Access application", name: name, known: r.known().AccessAppID, recreate: r.op.Objects.AccessAppID == "",

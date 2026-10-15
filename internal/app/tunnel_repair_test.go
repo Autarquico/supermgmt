@@ -88,3 +88,24 @@ func TestARerunUpdatesTheAccessApplicationOnlyWhenTheIdentityProvidersChanged(t 
 		t.Errorf("%d access_app.updated events, want 1", got)
 	}
 }
+
+// An empty access_identity_providers means one-time PIN: Cloudflare stores the
+// PIN provider's ID, and a re-run must compare against that, not against [].
+func TestARerunWithOneTimePINMakesNoAccessApplicationUpdate(t *testing.T) {
+	ts := newTunnelSetting(t)
+	ts.handler.tunnel.opts.Config.AccessIdentityProviders = nil
+	ts.plan()
+	mustf(t, ts.attempt(), "tunnel setup with one-time PIN")
+
+	ts.plan()
+	mustf(t, ts.attempt(), "rerun with one-time PIN")
+
+	for _, m := range ts.cf.Mutations() {
+		if m.Op == cffake.OpAppUpdate && m.Committed {
+			t.Fatal("a rerun with an unchanged empty provider list updated the Access application")
+		}
+	}
+	if apps := ts.cf.Snapshot().Apps; len(apps) != 1 || len(apps[0].AllowedIdPs) != 1 {
+		t.Errorf("Access application = %+v, want exactly the one-time PIN provider", apps)
+	}
+}

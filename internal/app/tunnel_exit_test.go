@@ -367,7 +367,9 @@ func TestRecreatingAVanishedInstancePolicyReattachesTheOwnedAccessApplications(t
 		Name: app.Name, Domain: app.Domain, PolicyIDs: []string{ts.state().OwnersPolicyID}, AllowedIdPs: app.AllowedIdPs,
 	})
 	mustf(t, err, "detach the Service Auth policy from the application") // Cloudflare refuses to delete an attached policy
-	mustf(t, client.DeleteAccessPolicy(context.Background(), dead), "delete the Service Auth policy")
+	if !ts.cf.RemovePolicy(dead) {
+		t.Fatal("the Service Auth policy was not in Cloudflare")
+	}
 	ts.planRotation() // an instance-wide job: no node is being enabled
 
 	mustf(t, ts.attempt(), "rotation")

@@ -139,6 +139,21 @@ func (f *Fake) SeedPolicy(name, email string) Policy {
 	return p
 }
 
+// RemovePolicy deletes a reusable policy without a request, as someone in the
+// dashboard would; it reports whether one was there. An application still
+// pointing at it keeps the dangling ID.
+func (f *Fake) RemovePolicy(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, p := range f.policies {
+		if p.ID == id {
+			f.policies = append(f.policies[:i], f.policies[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // SeedApp adds an Access application without a request.
 func (f *Fake) SeedApp(name, domain string, policyIDs ...string) App {
 	f.mu.Lock()

@@ -32,6 +32,7 @@ type CloudflareAPI interface {
 	FindAccessPolicies(ctx context.Context, name string) ([]cloudflare.AccessPolicy, error)
 	CreateAccessApp(ctx context.Context, spec cloudflare.AppSpec) (cloudflare.AccessApp, error)
 	UpdateAccessApp(ctx context.Context, id string, spec cloudflare.AppSpec) (cloudflare.AccessApp, error)
+	ResolveAllowedIdPs(ctx context.Context, configured []string) ([]string, error)
 	FindAccessApps(ctx context.Context, name string) ([]cloudflare.AccessApp, error)
 	DeleteAccessApp(ctx context.Context, id string) error
 
