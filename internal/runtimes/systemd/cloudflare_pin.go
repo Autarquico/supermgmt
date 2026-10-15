@@ -15,19 +15,19 @@ import (
 // and checks on the node that the installed file is these bytes; nothing is
 // downloaded, so the node's network cannot substitute the key.
 //
-// TO BE FILLED BY THE MAINTAINER from a key whose fingerprint was checked
-// out of band (Cloudflare's documentation or dashboard), never from a fetch
-// whose result is trusted on sight:
+// Provenance (2026-10-15): fetched from https://pkg.cloudflare.com/cloudflare-main.gpg
+// (2279 bytes, sha256 1bd95f4082b320d541bee351560fc2765aa9f9cd8efa4c9e32135e63f252721d); the
+// primary fingerprint matched keyserver.ubuntu.com, uid "CloudFlare Software Packaging 2025
+// <help@cloudflare.com>", created 2025-10-23. Cloudflare publishes no fingerprint in its docs, so
+// the maintainer confirms it on the real-account checklist. When Cloudflare rotates its key, setup
+// fails closed until this pin is updated:
 //
 //	curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o cloudflare-main.gpg   # already binary, not armored
 //	gpg --show-keys --with-colons cloudflare-main.gpg | awk -F: '$1=="fpr"{print $10; exit}'
 //	base64 -w0 cloudflare-main.gpg
-//
-// While either field is empty, tunnel setup fails closed before it contacts
-// the node.
 var cloudflarePin = pinnedKey{
-	fingerprint:   "", // 40 hex digits, the primary key's V4 fingerprint
-	keyringBase64: "", // the binary keyring, base64
+	fingerprint:   "CC94B39C77AE7342A68B89628A682D308D4E5E73",
+	keyringBase64: "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",
 }
 
 type pinnedKey struct{ fingerprint, keyringBase64 string }

@@ -133,7 +133,7 @@ func TestSetupProvisionsVerifiesAndOnlyThenRecordsTheCapability(t *testing.T) {
 		t.Fatal("node.setup capability not recorded")
 	}
 	want := runtimes.SetupMeta{
-		SetupVersion: 2, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup, DeployRoot: "/srv/supermgmt",
+		SetupVersion: runtimes.SetupVersion, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup, DeployRoot: "/srv/supermgmt",
 		KeyRef: "secret://ssh/default", KeyVersion: 1, KeyFingerprint: "SHA256:identity",
 	}
 	if meta.SetupVersion != want.SetupVersion || meta.SystemctlPath != want.SystemctlPath || meta.LogsMode != want.LogsMode ||
@@ -219,8 +219,8 @@ func TestRerunningSetupUpgradesAVersion1Node(t *testing.T) {
 	mustf(t, s.run(), "setup")
 
 	meta, ok := s.setupCapability()
-	if !ok || meta.SetupVersion != 2 || meta.DeployRoot != "/srv/supermgmt" {
-		t.Errorf("metadata = %+v, want setup_version 2 with the default deploy_root", meta)
+	if !ok || meta.SetupVersion != runtimes.SetupVersion || meta.DeployRoot != "/srv/supermgmt" {
+		t.Errorf("metadata = %+v, want the current setup_version with the default deploy_root", meta)
 	}
 }
 

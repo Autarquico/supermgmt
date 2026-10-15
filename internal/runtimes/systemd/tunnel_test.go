@@ -193,7 +193,16 @@ func TestPinnedKeyMustMatchItsFingerprint(t *testing.T) {
 	}
 }
 
+func TestTheBuildPinsAUsableCloudflareKey(t *testing.T) {
+	if _, err := cloudflarePin.keyring(); err != nil {
+		t.Fatalf("the embedded pin is unusable: %v", err)
+	}
+}
+
 func TestSetupWithTunnelFailsClosedWhileTheKeyIsNotPinned(t *testing.T) {
+	previous := cloudflarePin
+	cloudflarePin = pinnedKey{}
+	t.Cleanup(func() { cloudflarePin = previous })
 	node := newTunnelNode(t)
 	if _, err := Setup(context.Background(), node, tunnelParams()); err == nil || !strings.Contains(err.Error(), "not pinned") {
 		t.Fatalf("got %v", err)
@@ -233,7 +242,7 @@ func TestSetupInstallsTheTunnelBeforeTheKeyAndInTheRightOrder(t *testing.T) {
 	if node.files[templates.CloudflareKeyringPath] != string(ring) {
 		t.Error("the keyring on the node is not the pinned one")
 	}
-	if got, want := node.files[templates.CloudflaredSourcePath], "deb [signed-by=/etc/apt/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared trixie main\n"; got != want {
+	if got, want := node.files[templates.CloudflaredSourcePath], "deb [signed-by=/etc/apt/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main\n"; got != want {
 		t.Errorf("source = %q", got)
 	}
 	if got := node.files[templates.CloudflaredTokenPath]; got != tunnelToken+"\n" {
@@ -459,13 +468,13 @@ func TestTunnelSetupRefusesUnsupportedDistributionsAndForeignSources(t *testing.
 			}
 		})
 	}
-	t.Run("ubuntu 24.04 uses noble", func(t *testing.T) {
+	t.Run("ubuntu 24.04 is accepted with the same source", func(t *testing.T) {
 		node := newTunnelNode(t)
 		node.os = "ubuntu noble\n"
 		if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(node.files[templates.CloudflaredSourcePath], " noble main\n") {
+		if !strings.Contains(node.files[templates.CloudflaredSourcePath], "/cloudflared any main\n") {
 			t.Errorf("source = %q", node.files[templates.CloudflaredSourcePath])
 		}
 	})

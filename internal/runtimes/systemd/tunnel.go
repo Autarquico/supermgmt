@@ -86,8 +86,10 @@ func sha256Hex(content string) string {
 }
 
 // cloudflareSource is the apt source line of the one repository setup adds.
-func cloudflareSource(codename string) string {
-	return "deb [signed-by=" + templates.CloudflareKeyringPath + "] https://pkg.cloudflare.com/cloudflared " + codename + " main\n"
+// cloudflareSource is the apt source line of Cloudflare's install guide, whose
+// suite is "any" for every Debian and Ubuntu release.
+func cloudflareSource() string {
+	return "deb [signed-by=" + templates.CloudflareKeyringPath + "] https://pkg.cloudflare.com/cloudflared any main\n"
 }
 
 // cloudflaredUnit is the SuperMgmt-owned unit. The token is read from its
@@ -123,11 +125,10 @@ func (s stepper) ensureTunnel(ctx context.Context, t TunnelParams) (TunnelOutcom
 	if err != nil {
 		return TunnelOutcome{}, err
 	}
-	codename, err := s.codename(ctx)
-	if err != nil {
+	if err := s.requireSupportedDistribution(ctx); err != nil {
 		return TunnelOutcome{}, err
 	}
-	source := cloudflareSource(codename)
+	source := cloudflareSource()
 	installed, err := s.cloudflaredInstalled(ctx)
 	if err != nil {
 		return TunnelOutcome{}, err
@@ -234,12 +235,15 @@ func (s stepper) tunnelActive(ctx context.Context) (bool, error) {
 	return parseProps(string(res.Stdout)).first("ActiveState") == "active", nil
 }
 
-func (s stepper) codename(ctx context.Context) (string, error) {
+// requireSupportedDistribution refuses a node that is not Debian 13 or Ubuntu
+// 24.04, the releases the tunnel transport is tested on.
+func (s stepper) requireSupportedDistribution(ctx context.Context) error {
 	out, err := succeeded(ctx, s.ex, "setup.os_release", nil)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return parseOSRelease(out)
+	_, err = parseOSRelease(out)
+	return err
 }
 
 func (s stepper) cloudflaredInstalled(ctx context.Context) (bool, error) {
@@ -351,12 +355,8 @@ func (s stepper) removeTunnelFiles(ctx context.Context) error {
 }
 
 func (s stepper) removeCloudflared(ctx context.Context) error {
-	codename, err := s.codename(ctx)
-	if err != nil {
-		return err
-	}
 	have, present, err := s.fileHash(ctx, templates.CloudflaredSourcePath)
-	if err != nil || !present || have != sha256Hex(cloudflareSource(codename)) {
+	if err != nil || !present || have != sha256Hex(cloudflareSource()) {
 		return err // the repository is not ours: neither it nor the package is touched
 	}
 	installed, err := s.cloudflaredInstalled(ctx)
