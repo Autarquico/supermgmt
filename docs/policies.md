@@ -163,7 +163,7 @@ The catalog is the complete list of actions a rule can name ([`internal/policy/c
 |---|---|
 | read | `node.read`, `service.read`, `service.logs`, `app.read`, `app_target.read`, `deployment.read`, `environment.read`, `provider.read`, `job.read`, `plan.read`, `event.read`, `config.read`, `identity.read`, `backup.read`, `node.connect`, `plan.create`, `node.probe` |
 | operational | `service.start`, `service.stop`, `service.restart`, `proxmox.vm.power` (`stop` is high), `proxmox.snapshot.create`, `proxmox.backup.create`, `node.backup_template.run`, `deployment.create`, `deployment.rollback`, `backup.create`, `node.add`, `node.update`, `app.write`, `app_target.write`, `mcp_client.delete`, `token.revoke`, and the credential-issuing `token.create`, `mcp_client.issue_token`, `enrollment.create` |
-| high | `node.reboot`, `node.shutdown`, `proxmox.snapshot.rollback`, `node.setup`, `sudoers.write`, `log_broker.install`, `provider.write`, `environment.write`, `config.write`, `secret.write`, `identity.write`, `role_binding.write`, `mcp_client.register` |
+| high | `node.reboot`, `node.shutdown`, `proxmox.snapshot.rollback`, `node.setup`, `node.tunnel.disable` (also abandons an unfinished tunnel setup), `cloudflare.access_token.rotate`, `sudoers.write`, `log_broker.install`, `provider.write`, `environment.write`, `config.write`, `secret.write`, `identity.write`, `role_binding.write`, `mcp_client.register` |
 | destructive | `node.remove`, `provider.delete`, `proxmox.snapshot.delete` |
 | governance | `approval.grant`, `approval.reject`, `job.cancel`, `job.resolve` |
 

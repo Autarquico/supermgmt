@@ -192,11 +192,27 @@ The daemon sent the service token to the node's tunnel hostname and Access answe
 
 ### `cloudflared` not found
 
-`CAPABILITY_UNAVAILABLE` naming `cloudflared`, or `sm doctor` failing `cloudflare_cloudflared`: the daemon host has no executable `cloudflared` in `/usr/local/bin`, `/opt/homebrew/bin` or `/usr/bin` (`TestMissingCloudflaredIsCapabilityUnavailable`). The `PATH` is never searched. Install it from Cloudflare's package repository or your package manager. `sm ssh` fails the same way, with a message to install it on your own machine, when the client has none.
+`CAPABILITY_UNAVAILABLE` naming `cloudflared`, or `sm doctor` failing `cloudflare_cloudflared`: the daemon host has no executable `cloudflared` in `/usr/local/bin`, `/opt/homebrew/bin` or `/usr/bin` (`TestMissingCloudflaredIsCapabilityUnavailable`). The `PATH` is never searched. Install it from Cloudflare's package repository (Linux) or Homebrew (macOS); in local mode one install on your machine serves the daemon and `sm ssh`. The doctor hint names `pkg.cloudflare.com` on any host. `sm ssh` fails the same way, with a message to install it on your own machine, when the client has none. A binary that group or others can write, or that is not owned by root or the daemon's user, is refused too.
+
+### A tunnel setup keeps failing and I want to undo it
+
+Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, halted, failed or interrupted, checks the direct path first, and removes the route, Access application and tunnel recorded for the node, even when the node never completed setup (`TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing`). The node stays on direct SSH. To try again instead, run `sm nodes setup <node> --tunnel`. An object that setup created but never recorded is not deleted by name; remove it in the dashboard. Details: [Cloudflare](cloudflare.md#when-a-setup-does-not-finish).
+
+### The node name cannot be used with a tunnel
+
+`ssh-<node-name>.<zone>` must be a valid DNS name. The plan is refused before approval when the node name has dots, underscores or other characters outside letters, digits and hyphens, ends in a hyphen, or makes `ssh-<node-name>` longer than 63 characters (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`). Rename the node and plan again.
+
+### The account has no one-time PIN login method
+
+With `access_identity_providers` empty, SuperMgmt allows exactly the account's One-time PIN provider. If there is none, setup stops before it creates the application with `CAPABILITY_UNAVAILABLE` (`TestAccess_NoOneTimePINFailsBeforeTheApplicationIsCreated`). Enable One-time PIN in Zero Trust (Settings, Authentication), or list the provider IDs you use in `access_identity_providers`, then run setup again.
+
+### `sm doctor` warns that the API token is not available
+
+`cloudflare_api_token` warns when the token is not in the store, or when Cloudflare rejects it while every tunnel is provisioned (`TestDoctorRevokedAPITokenIsOnlyAWarningOnceEveryTunnelIsProvisioned`). Dialling is unaffected. Setup, disable and rotation need a valid token: create one and run `sm secrets import --name cloudflare/api-token`. Before the first node is on the tunnel, or while an operation is unfinished, the same condition is a failure.
 
 ### Doctor warns about a tunnel operation that did not finish
 
-`cloudflare_tunnel_operations` warns for any operation that is running, interrupted or halted, naming the phase it stopped at (`TestDoctorReportsTunnelOperationsThatDidNotFinish`). Run the same command again, `sm nodes setup <node> --tunnel` or `sm nodes tunnel disable <node>`: the operation resumes from its record. The warning stays while an operation is genuinely running.
+`cloudflare_tunnel_operations` warns for any operation that is running, interrupted or halted, naming the phase it stopped at (`TestDoctorReportsTunnelOperationsThatDidNotFinish`). Run the same command again, `sm nodes setup <node> --tunnel` or `sm nodes tunnel disable <node>`: the operation resumes from its record. To give up on an unfinished setup, run `sm nodes tunnel disable <node>`; it abandons it. The warning stays while an operation is genuinely running.
 
 ### A tunnel job stops with a conflict
 

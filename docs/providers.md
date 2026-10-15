@@ -113,7 +113,7 @@ Service actions are jobs. In an environment with `risk_level: production` they w
 A node's transport is `direct` (the default; a node without the field is direct) or `cloudflare`. With `direct`, SuperMgmt dials `host:port` itself. With `cloudflare` it runs `cloudflared access ssh` to the node's tunnel hostname and speaks SSH over its standard input and output; the pinned host key, the accounts and every command template are unchanged. Unknown transport values are rejected.
 
 - It is **experimental** and tested against fakes only: [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel) has the prerequisites, the steps and the limits.
-- Switch with `sm nodes setup <node> --tunnel` and back with `sm nodes tunnel disable <node>`. Both are approval-gated jobs. The transport is changed only by those jobs: reapplying the configuration file never changes it (`TestReconcileNeverWritesTheTunnelFields`).
+- Switch with `sm nodes setup <node> --tunnel` and back with `sm nodes tunnel disable <node>`, which also abandons an unfinished setup. Both are approval-gated jobs, and the hostname `ssh-<node-name>.<zone>` is validated when the plan is created. The transport is changed only by those jobs: reapplying the configuration file never changes it (`TestReconcileNeverWritesTheTunnelFields`).
 - `sm nodes get` shows the transport; `sm nodes list` adds a column once a node uses a tunnel.
 - The daemon host needs `cloudflared`. A missing one is reported as `CAPABILITY_UNAVAILABLE` naming it, and `sm doctor` flags it.
 
