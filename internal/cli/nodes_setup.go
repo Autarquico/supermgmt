@@ -19,7 +19,7 @@ const (
 )
 
 func newNodesSetupCmd(env []string) *cobra.Command {
-	var dockerAccess, assumeYes, noUnits bool
+	var dockerAccess, assumeYes, noUnits, tunnel bool
 	var logsMode string
 	var units []string
 	cmd := &cobra.Command{
@@ -31,6 +31,8 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			"--unit grants systemctl on a unit: --unit nginx.service allows start, stop and restart; --unit\n" +
 			"nginx.service:restart only restart. Repeat it per unit; the list replaces the node's current grants.\n" +
 			"Without --unit a re-run keeps the grants the node has; --no-units removes them all.\n\n" +
+			"--tunnel also installs cloudflared on the node and moves its SSH reachability behind a Cloudflare Tunnel; undo it\n" +
+			"with `sm nodes tunnel disable`.\n\n" +
 			"Docker access is explicit: it is off unless you pass --docker-access, and it is root-equivalent on the node.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,32 +58,25 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			if dockerAccess {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", dockerAccessWarning)
 			}
-			plan, err := api.CreatePlan(cmd.Context(), wire.CreatePlanRequest{
-				Action:     "node.setup",
+			parameters := wire.SetupParameters(dockerAccess, logsMode, grants)
+			details := []string{wire.UnitsChange(node.Setup, grants, kept)}
+			if tunnel {
+				parameters[paramTunnel] = "true"
+				details = append([]string{transportPreview(node.Endpoint.TunnelHostname)}, details...)
+			}
+			req := wire.CreatePlanRequest{
+				Action:     actionNodeSetup,
 				Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: id}},
-				Parameters: wire.SetupParameters(dockerAccess, logsMode, grants),
-			})
-			if err != nil {
-				return err
+				Parameters: parameters,
 			}
-			if err := describePlan(cmd, args[0], plan); err != nil {
-				return err
-			}
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), wire.UnitsChange(node.Setup, grants, kept))
-			if err := confirm(cmd, "Submit this plan?", assumeYes); err != nil {
-				return err
-			}
-			submission, err := api.SubmitPlan(cmd.Context(), plan.PlanID, plan.PlanHash)
-			if err != nil {
-				return err
-			}
-			return submissionOutput(cmd, submission)
+			return submitPlan(cmd, api, args[0], req, details, assumeYes)
 		},
 	}
 	cmd.Flags().BoolVar(&dockerAccess, "docker-access", false, "also give the account docker access (root-equivalent on the node)")
 	cmd.Flags().StringVar(&logsMode, "logs-mode", logsModeJournalGroup, "how logs are read: "+logsModeJournalGroup+" or "+logsModeBroker)
 	cmd.Flags().StringArrayVar(&units, "unit", nil, "grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)")
 	cmd.Flags().BoolVar(&noUnits, "no-units", false, "remove every unit grant")
+	cmd.Flags().BoolVar(&tunnel, "tunnel", false, "reach the node through a Cloudflare Tunnel (needs the cloudflare: block)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "do not ask for confirmation")
 	return cmd
 }

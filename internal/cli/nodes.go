@@ -30,7 +30,7 @@ func newNodesCmd(env []string) *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(newNodesListCmd(env), newNodesGetCmd(env), newNodesAddCmd(env), newNodesRemoveCmd(env), newNodesProbeCmd(env),
-		newNodesSetupCmd(env), newNodesRepinCmd(env), newNodesPowerCmd(env))
+		newNodesSetupCmd(env), newNodesTunnelCmd(env), newNodesRepinCmd(env), newNodesPowerCmd(env))
 	return cmd
 }
 
@@ -76,14 +76,22 @@ func newNodesListCmd(env []string) *cobra.Command {
 }
 
 func writeNodes(w io.Writer, page wire.Page[wire.Node]) error {
+	header := []string{"ID", "NAME", "ENVIRONMENT", "MANAGEMENT", "REACHABILITY", "CONNECTION", "ENDPOINT"}
+	withTransport := slices.ContainsFunc(page.Items, func(n wire.Node) bool { return n.Endpoint.Transport.Effective() != domain.TransportDirect })
+	if withTransport {
+		header = append(header, "TRANSPORT")
+	}
 	rows := make([][]string, len(page.Items))
 	for i, n := range page.Items {
 		rows[i] = []string{
 			string(n.ID), n.Name, orDash(n.Environment), string(n.ManagementState),
 			string(n.Reachability) + staleSuffix(n.Stale), string(n.Connection.State), endpointOf(n),
 		}
+		if withTransport {
+			rows[i] = append(rows[i], string(n.Endpoint.Transport.Effective()))
+		}
 	}
-	if err := table(w, []string{"ID", "NAME", "ENVIRONMENT", "MANAGEMENT", "REACHABILITY", "CONNECTION", "ENDPOINT"}, rows); err != nil {
+	if err := table(w, header, rows); err != nil {
 		return err
 	}
 	moreHint(w, page.NextCursor)
@@ -138,6 +146,8 @@ func writeNode(w io.Writer, n wire.Node) error {
 		{"reachability", string(n.Reachability) + staleSuffix(n.Stale)},
 		{"connection", string(n.Connection.State)},
 		{"endpoint", endpointOf(n)},
+		{"transport", string(n.Endpoint.Transport.Effective())},
+		{"tunnel hostname", orDash(n.Endpoint.TunnelHostname)},
 		{"host key", orDash(n.Endpoint.HostKeyFingerprintSHA256)},
 		{"os", strings.TrimSpace(n.OS + " " + n.Arch)},
 		{"tags", orDash(strings.Join(n.Tags, ","))},
