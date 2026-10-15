@@ -42,6 +42,7 @@ func (b *builder) doctor(ctx context.Context) (wire.AdminDoctor, error) {
 	if b.cfg.Server.TLS.Mode == config.TLSDirect {
 		report.Checks = append(report.Checks, TLSCertificateCheck(b.cfg.Server.TLS.CertFile, b.o.Clock.Now()))
 	}
+	report.Checks = append(report.Checks, b.cloudflareChecks(ctx)...)
 	return report, nil
 }
 

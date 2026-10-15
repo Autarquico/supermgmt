@@ -19,9 +19,9 @@ import (
 // Audit events of the service-token rotation.
 const (
 	eventRotationStarted  = "cloudflare.access_token.rotation_started"
-	eventTokenAdmitted    = "cloudflare.access_token.admitted"
-	eventTokenSwitched    = "cloudflare.access_token.switched"
-	eventTokenRetired     = "cloudflare.access_token.retired"
+	eventTokenAdmitted    = "cloudflare.access_token.admitted" //nolint:gosec // an audit action name, not a credential
+	eventTokenSwitched    = "cloudflare.access_token.switched" //nolint:gosec // an audit action name, not a credential
+	eventTokenRetired     = "cloudflare.access_token.retired"  //nolint:gosec // an audit action name, not a credential
 	eventRotationFinished = "cloudflare.access_token.rotated"
 )
 
