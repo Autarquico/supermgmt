@@ -231,6 +231,28 @@ github.com/autarquico/supermgmt/internal/mcp.versionsInBody  exempt: gap: untrus
 github.com/autarquico/supermgmt/internal/netguard.cappedBody.Read  FuzzActionsOIDCToken
 github.com/autarquico/supermgmt/internal/policy.Parse  FuzzParsePolicy
 github.com/autarquico/supermgmt/internal/policy.decode  FuzzEvaluate
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessApp  FuzzDecodeAccessApp
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessApps  FuzzDecodeAccessApp
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessPolicies  FuzzDecodeAccessPolicy
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessPolicy  FuzzDecodeAccessPolicy
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDNSRecord  FuzzDecodeDNS
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDNSRecords  FuzzDecodeDNS
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeEnvelope  FuzzDecodeEnvelope
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeObject  FuzzDecodeTunnel
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeObjects  FuzzDecodeTunnel
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeServiceToken  FuzzDecodeServiceToken
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeServiceTokens  FuzzDecodeServiceToken
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeTokenInfo  FuzzDecodeServiceToken
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeTunnel  FuzzDecodeTunnel
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeTunnelConfig  FuzzDecodeTunnel
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeTunnelToken  FuzzDecodeTunnel
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeTunnels  FuzzDecodeTunnel
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeZones  FuzzDecodeDNS
+github.com/autarquico/supermgmt/internal/providers/cloudflare.includeEmail  FuzzDecodeAccessPolicy
+github.com/autarquico/supermgmt/internal/providers/cloudflare.includeServiceToken  FuzzDecodeAccessPolicy
+github.com/autarquico/supermgmt/internal/providers/cloudflare.parseBaseURL  FuzzParseBaseURL
+github.com/autarquico/supermgmt/internal/providers/cloudflare.policyRefID  FuzzDecodeAccessApp
+github.com/autarquico/supermgmt/internal/providers/cloudflare/cffake.call.decode  exempt: test-only fake reading the client's own request bodies
 github.com/autarquico/supermgmt/internal/providers/github.MatchClaims  FuzzMatchClaims
 github.com/autarquico/supermgmt/internal/providers/github.TrustRoots.readCache  exempt: TUF cache read of a verified root, or a test-only fake
 github.com/autarquico/supermgmt/internal/providers/github.client.Attestations  exempt: typed GitHub API call; the answer is decoded by the shared JSON helper
