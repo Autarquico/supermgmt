@@ -25,21 +25,23 @@ const (
 
 // Config is the whole master configuration (spec §8.2).
 type Config struct {
-	Version      int           `yaml:"version"`
-	Instance     Instance      `yaml:"instance"`
-	Server       Server        `yaml:"server"`
-	Daemon       Daemon        `yaml:"daemon"`
-	UI           UI            `yaml:"ui"`
-	Refresh      Refresh       `yaml:"refresh"`
-	Storage      Storage       `yaml:"storage"`
-	Security     Security      `yaml:"security"`
-	Auth         Auth          `yaml:"auth"`
-	SSH          SSH           `yaml:"ssh"`
-	Jobs         Jobs          `yaml:"jobs"`
-	Health       Health        `yaml:"health"`
-	Outbound     Outbound      `yaml:"outbound"`
-	GitHub       GitHub        `yaml:"github"`
-	MCP          MCP           `yaml:"mcp"`
+	Version  int      `yaml:"version"`
+	Instance Instance `yaml:"instance"`
+	Server   Server   `yaml:"server"`
+	Daemon   Daemon   `yaml:"daemon"`
+	UI       UI       `yaml:"ui"`
+	Refresh  Refresh  `yaml:"refresh"`
+	Storage  Storage  `yaml:"storage"`
+	Security Security `yaml:"security"`
+	Auth     Auth     `yaml:"auth"`
+	SSH      SSH      `yaml:"ssh"`
+	Jobs     Jobs     `yaml:"jobs"`
+	Health   Health   `yaml:"health"`
+	Outbound Outbound `yaml:"outbound"`
+	GitHub   GitHub   `yaml:"github"`
+	MCP      MCP      `yaml:"mcp"`
+	// Cloudflare is nil when the block is absent: the feature is off.
+	Cloudflare   *Cloudflare   `yaml:"cloudflare"`
 	Environments []Environment `yaml:"environments"`
 	Providers    []Provider    `yaml:"providers"`
 	Backup       Backup        `yaml:"backup"`
@@ -184,6 +186,24 @@ type MCPOAuth struct {
 	IntrospectionClientSecretRef string   `yaml:"introspection_client_secret_ref"`
 	RequiredScopes               []string `yaml:"required_scopes"`
 }
+
+// Cloudflare connects SuperMgmt to one Cloudflare account and zone for node
+// tunnels (ADR-0037). Both references are secret:// only; the API token is
+// read by tunnel jobs alone, the Access service token by the dialler.
+type Cloudflare struct {
+	AccountID               string   `yaml:"account_id"`
+	Zone                    string   `yaml:"zone"`
+	APITokenRef             string   `yaml:"api_token_ref"`
+	AccessTokenRef          string   `yaml:"access_token_ref"`
+	OwnerEmails             []string `yaml:"owner_emails"`
+	AccessIdentityProviders []string `yaml:"access_identity_providers"`
+}
+
+// Default Cloudflare secret references (ADR-0037).
+const (
+	DefaultCloudflareAPITokenRef    = "secret://cloudflare/api-token"
+	DefaultCloudflareAccessTokenRef = "secret://cloudflare/access-service-token"
+)
 
 type Backup struct {
 	Schedule  string `yaml:"schedule"`

@@ -617,6 +617,7 @@ func connectInfoOf(n domain.Node) wire.ConnectInfo {
 	return wire.ConnectInfo{
 		NodeID: n.ID, Host: n.Endpoint.Host, Port: n.Endpoint.Port, User: n.Endpoint.AdminUser,
 		HostPublicKey: n.Endpoint.HostPublicKey, HostKeyAlias: "sm-" + n.ID.String(),
+		Transport: n.Endpoint.Transport, TunnelHostname: n.Endpoint.TunnelHostname,
 	}
 }
 

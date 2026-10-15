@@ -122,12 +122,22 @@ func ListProviders(ctx context.Context, q Querier) ([]domain.Provider, error) {
 // ---- nodes -----------------------------------------------------------------
 
 type endpointRecord struct {
-	Host               string `json:"host"`
-	Port               int    `json:"port"`
-	User               string `json:"user"`
-	AdminUser          string `json:"admin_user"`
-	AdminCredentialRef string `json:"admin_credential_ref"`
-	HostPublicKey      string `json:"host_public_key"`
+	Host               string           `json:"host"`
+	Port               int              `json:"port"`
+	User               string           `json:"user"`
+	AdminUser          string           `json:"admin_user"`
+	AdminCredentialRef string           `json:"admin_credential_ref"`
+	HostPublicKey      string           `json:"host_public_key"`
+	Transport          domain.Transport `json:"transport,omitempty"`
+	TunnelHostname     string           `json:"tunnel_hostname,omitempty"`
+}
+
+// encodeEndpoint refuses an endpoint whose tunnel fields would not read back.
+func encodeEndpoint(e domain.NodeEndpoint) (string, error) {
+	if err := e.Validate(); err != nil {
+		return "", err
+	}
+	return encodeJSON(endpointRecord(e))
 }
 
 const nodeColumns = `id, provider_id, native_id, name, kind, environment_id, management_state, reachability,
@@ -155,6 +165,9 @@ func scanNode(row scanner) (domain.Node, error) {
 		return domain.Node{}, err
 	}
 	n.Endpoint = domain.NodeEndpoint(rec)
+	if err := n.Endpoint.Validate(); err != nil {
+		return domain.Node{}, err
+	}
 	n.EnvironmentID = idOf(environment)
 	n.CreatedAt, n.UpdatedAt = domain.FromUnixMillis(createdMs), domain.FromUnixMillis(updatedMs)
 	n.LastSeenAt = timeOf(lastSeen)
@@ -163,7 +176,7 @@ func scanNode(row scanner) (domain.Node, error) {
 
 // CreateNode stores n and its tags.
 func CreateNode(ctx context.Context, q Querier, n domain.Node) (domain.Node, error) {
-	endpoint, err := encodeJSON(endpointRecord(n.Endpoint))
+	endpoint, err := encodeEndpoint(n.Endpoint)
 	if err != nil {
 		return domain.Node{}, err
 	}
@@ -251,7 +264,7 @@ func tagsOf(ctx context.Context, q Querier, where string, args ...any) (map[doma
 // otherwise it returns CONFLICT. Observed fields (reachability, os, arch,
 // metadata, last_seen_at) are never written here. n.UpdatedAt stamps the row.
 func UpdateNodeSpec(ctx context.Context, q Querier, n domain.Node, expectedRev int64) (domain.Node, error) {
-	endpoint, err := encodeJSON(endpointRecord(n.Endpoint))
+	endpoint, err := encodeEndpoint(n.Endpoint)
 	if err != nil {
 		return domain.Node{}, err
 	}

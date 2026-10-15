@@ -99,6 +99,10 @@ func (c *Config) applyModeDefaults(local Paths) {
 			}
 		}
 	}
+	if cf := c.Cloudflare; cf != nil {
+		setDefault(&cf.APITokenRef, DefaultCloudflareAPITokenRef)
+		setDefault(&cf.AccessTokenRef, DefaultCloudflareAccessTokenRef)
+	}
 	if c.Security.AllowSelfApproval == nil {
 		allow := c.Instance.Mode != ModeServer
 		c.Security.AllowSelfApproval = &allow
