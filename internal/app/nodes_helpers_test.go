@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -165,6 +166,9 @@ type fakeDialer struct {
 	mu     sync.Mutex
 	nodes  map[string]*fakeNode
 	routes map[domain.ID]*fakeNode // a node with its own behavior, whoever logs in
+	// tunnel answers the cloudflare transport by login user; a user without an
+	// entry cannot be reached through it.
+	tunnel map[string]*fakeNode
 	states map[domain.ID]ssh.ConnState
 	dialed []ssh.Target
 	// invalidated lists "<node>/<user>" of every dropped connection, in order.
@@ -172,7 +176,7 @@ type fakeDialer struct {
 }
 
 func newFakeDialer(t *testing.T) *fakeDialer {
-	return &fakeDialer{t: t, nodes: map[string]*fakeNode{}, routes: map[domain.ID]*fakeNode{}, states: map[domain.ID]ssh.ConnState{}}
+	return &fakeDialer{t: t, nodes: map[string]*fakeNode{}, tunnel: map[string]*fakeNode{}, routes: map[domain.ID]*fakeNode{}, states: map[domain.ID]ssh.ConnState{}}
 }
 
 // as returns the fake node reached as user.
@@ -196,11 +200,35 @@ func (d *fakeDialer) For(t ssh.Target) transport.Executor {
 	d.mu.Lock()
 	d.dialed = append(d.dialed, t)
 	routed := d.routes[t.NodeID]
+	viaTunnel, tunnelled := d.tunnel[t.User], t.Transport == domain.TransportCloudflare
 	d.mu.Unlock()
+	if tunnelled {
+		if viaTunnel == nil {
+			return unreachable{errors.New("the tunnel does not answer")}
+		}
+		return viaTunnel
+	}
 	if routed != nil {
 		return routed
 	}
 	return d.as(t.User)
+}
+
+// unreachable is an executor whose every command fails to connect.
+type unreachable struct{ err error }
+
+func (u unreachable) Run(context.Context, templates.Command) (transport.Result, error) {
+	return transport.Result{}, u.err
+}
+
+// through returns the fake node reached as user over the cloudflare transport.
+func (d *fakeDialer) through(user string) *fakeNode {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.tunnel[user] == nil {
+		d.tunnel[user] = newFakeNode(d.t).reply("probe", linuxProbe)
+	}
+	return d.tunnel[user]
 }
 
 // Invalidate records that a connection was dropped.
@@ -208,6 +236,13 @@ func (d *fakeDialer) Invalidate(node domain.ID, user string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.invalidated = append(d.invalidated, node.String()+"/"+user)
+}
+
+// InvalidateNode records that every connection of the node was dropped.
+func (d *fakeDialer) InvalidateNode(node domain.ID) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.invalidated = append(d.invalidated, node.String()+"/*")
 }
 
 func (d *fakeDialer) State(node domain.ID) ssh.ConnState {

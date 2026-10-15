@@ -30,6 +30,10 @@ type Dialer interface {
 	Invalidate(node domain.ID, user string)
 }
 
+// nodeInvalidator is implemented by pools that can retire every connection of
+// a node at once (*ssh.Pool does).
+type nodeInvalidator interface{ InvalidateNode(node domain.ID) }
+
 // Connector turns a node into the Executor that reaches it, applying the
 // connection-user rule of ADR-0009 (b) in one place.
 type Connector struct {
@@ -71,6 +75,16 @@ func (c Connector) Invalidate(n domain.Node, user string) {
 	if !isLocal(n) && c.Remote != nil {
 		c.Remote.Invalidate(n.ID, user)
 	}
+}
+
+// InvalidateNode retires every pooled connection of the node, whatever the
+// transport, after a tunnel job changed how the node is reached.
+func (c Connector) InvalidateNode(n domain.Node) {
+	if pool, ok := c.Remote.(nodeInvalidator); ok && !isLocal(n) {
+		pool.InvalidateNode(n.ID)
+		return
+	}
+	c.Invalidate(n, n.Endpoint.User)
 }
 
 // State is the pool's view of the node's connection; it never dials.

@@ -78,6 +78,9 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 		if err != nil {
 			return CreatedPlan{}, err
 		}
+		if err := p.requireTunnelAvailable(ctx, tx, req); err != nil {
+			return CreatedPlan{}, err
+		}
 		if err := p.requireMayPlan(ctx, tx, actor, b.target); err != nil {
 			return CreatedPlan{}, err
 		}
@@ -97,6 +100,23 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 			domain.ResultSucceeded, map[string]any{"action": req.Action, "plan_hash": rec.PlanHash})
 		return CreatedPlan{Record: rec, Plan: parsed, Policy: res}, err
 	})
+}
+
+// requireTunnelAvailable refuses a node.setup with tunnel=true when the
+// instance has no cloudflare: block or the node is not an ssh node, so the
+// operator is told when asking, not when the job runs.
+func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, req PlanRequest) error {
+	if req.Action != policy.ActionNodeSetup {
+		return nil
+	}
+	if tunnel, err := tunnelRequested(req.Parameters[policy.ParamTunnel]); err != nil || !tunnel {
+		return err
+	}
+	node, err := database.GetNode(ctx, q, req.Target.ID)
+	if err != nil {
+		return err
+	}
+	return requireTunnelAllowed(p.cfg.Cloudflare != nil, node)
 }
 
 // withDefaults fills what a plan may leave out, so the plan (and its hash)
