@@ -203,7 +203,20 @@ func (m *Model) nodeFacts(n wire.Node, w int) []string {
 	if n.Proxmox == nil {
 		lines = append(lines, m.kv("setup", setupSummary(n), w))
 	}
+	if n.Endpoint.Transport.Effective() != domain.TransportDirect {
+		lines = append(lines, m.kv("transport", transportText(n), w))
+	}
 	return lines
+}
+
+// transportText is "cloudflare · ssh-web1.example.com"; shown only for nodes
+// that are not direct, so the common case keeps its layout.
+func transportText(n wire.Node) string {
+	text := safe(string(n.Endpoint.Transport.Effective()))
+	if n.Endpoint.TunnelHostname != "" {
+		text += " · " + safe(n.Endpoint.TunnelHostname)
+	}
+	return text
 }
 
 const proxmoxClusterNode = "node"

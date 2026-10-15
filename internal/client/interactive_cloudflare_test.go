@@ -38,7 +38,7 @@ func TestInteractiveCommandCloudflareOnlyChangesTheProxyCommand(t *testing.T) {
 	tunnel.Transport, tunnel.TunnelHostname = domain.TransportCloudflare, "ssh-web1.example.com"
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cloudflared")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // an executable stand-in
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	defer client.WithCloudflaredDirs(dir)()
