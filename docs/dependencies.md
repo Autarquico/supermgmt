@@ -34,6 +34,8 @@ Licence families below were read from the licence file of each module in the mod
 
 The last two are imported only by test code, so they are not in the `sm` binary and not in `THIRD_PARTY_LICENSES`.
 
+`cloudflared` is a runtime dependency of the Cloudflare tunnel feature only, not of `sm`: the daemon host needs it to dial tunnel nodes, your own machine for `sm ssh` to them, and each tunnel node gets it from Cloudflare's package repository. It is third-party software, not linked into `sm` and not covered by `THIRD_PARTY_LICENSES`; SuperMgmt does not pin a version on the daemon host, and on the node apt provides whatever version the repository serves.
+
 ### Tools pinned outside `go.mod`
 
 Run with `go run <module>@<version>`, or downloaded by a pinned workflow step. Versions at the time of writing; the files named win.
@@ -53,7 +55,7 @@ The licences of the tools are not recorded here. They are build-time tools: none
 
 ## Egress
 
-SuperMgmt makes no request that you did not configure or trigger, and it has no update check and no telemetry. Evidence: the literal `https://` URLs in non-test Go code are the GitHub API default (`internal/config/github.go`), the GitHub TUF mirror (`internal/providers/github/trustroot.go`), the GitHub Actions issuer (`internal/providers/github/types.go`) and documentation links; none names a release or an update endpoint. A destination missing from the table below is a defect.
+SuperMgmt makes no request that you did not configure or trigger, and it has no update check and no telemetry. Evidence: the literal `https://` URLs in non-test Go code are the GitHub API default (`internal/config/github.go`), the Cloudflare API default (`internal/providers/cloudflare/client.go`), the GitHub TUF mirror (`internal/providers/github/trustroot.go`), the GitHub Actions issuer (`internal/providers/github/types.go`) and documentation links; none names a release or an update endpoint. A destination missing from the table below is a defect.
 
 Requests from the control plane to a URL an operator supplies pass the outbound filter (`internal/netguard`: a name is resolved once; metadata, loopback, link-local, multicast and reserved ranges are refused; see [security.md](security.md)). Proxmox endpoints are the exception that allows private ranges, since a PVE host usually sits on one.
 
@@ -66,6 +68,10 @@ Requests from the control plane to a URL an operator supplies pass the outbound 
 | The `auth.oidc.issuer` (discovery document, token, device authorization and JWKS endpoints) | The control plane | A login through OIDC; discovery runs on first use, not at start | Leave `auth.oidc` unset |
 | The `mcp.oauth.jwks_url` and `mcp.oauth.introspection_url` | The control plane | A remote MCP request carrying a bearer token (JWKS is refetched once on an unknown `kid`; introspection is never cached) | `mcp.remote_enabled: false`. The stdio bridge (`sm mcp`) talks only to the daemon's Unix socket |
 | A Proxmox VE endpoint (`https://host:8006`) | The control plane | A Proxmox provider exists: sync, power actions, `providers check` | Remove the provider |
+| `api.cloudflare.com` | The control plane | A `cloudflare:` block exists and a tunnel job runs (`sm nodes setup --tunnel`, `sm nodes tunnel disable`, `sm cloudflare rotate-access-token`); `sm doctor` with the server running makes read-only calls with the API token if it is stored; reconciliation after `sm admin restore-complete` reads | Remove the `cloudflare:` block. Without the block no Cloudflare call is made |
+| `ssh-<node>.<zone>` (the tunnel hostname, served by Cloudflare Access) | The control plane (one HTTPS preflight with the service-token headers) and the `cloudflared` child it starts | Every new connection to a node with the `cloudflare` transport | `sm nodes tunnel disable <node>` returns the node to a direct dial |
+| `pkg.cloudflare.com` | `apt-get` on the node | `sm nodes setup <node> --tunnel` installs `cloudflared`, and later when you update the node's packages | `sm nodes tunnel disable <node>` removes the repository if setup installed it |
+| Cloudflare's edge | `cloudflared` on the node | While a tunnel node's service runs (a persistent outbound connection) | `sm nodes tunnel disable <node>` |
 | Managed nodes, over SSH (port 22 by default) | The control plane | Discovery, node setup, deployments, health checks | Remove the node |
 | Container registries named in the Compose file | The node's Docker, never the control plane | A deployment pulls an image; `docker manifest inspect` runs on the node for the disk preflight | Do not deploy |
 | URLs of `health.http` checks | `curl` on the node | A deployment's health check | Do not define the check |

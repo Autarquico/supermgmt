@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: no stable release yet.
 
+### Added: reach nodes through Cloudflare Tunnel (experimental)
+
+- A node can have the transport `cloudflare`: `sm nodes setup <node> --tunnel` provisions a Cloudflare Tunnel, an Access application with a service-token policy and an owners policy, and a DNS record, installs `cloudflared` on the node from Cloudflare's package repository (key fingerprint pinned in the build), verifies the tunnel over a fresh connection with the pinned host key, and only then switches. `sm nodes tunnel disable <node>` returns the node to direct SSH and removes what was created. `sm cloudflare rotate-access-token` rotates the instance's Access service token with overlap.
+- New optional `cloudflare:` configuration block (`account_id`, `zone`, `api_token_ref`, `access_token_ref`, `owner_emails`, `access_identity_providers`). Without it nothing changes.
+- The provisioning API token and the runtime service token are separate; dialling never reads the API token, which can be removed after provisioning. `sm doctor` gains `cloudflare_*` checks, and says "not verifiable" for edit rights.
+- `sm ssh` and the TUI's `s` on a tunnel node go through the operator's own Access login and `cloudflared`; `sm nodes list` and `sm nodes get` show the transport.
+- Database migration `000007_cloudflare_tunnels` adds the operation records. Backups keep them and never plaintext credentials; a restored instance changes nothing in Cloudflare until `sm admin restore-complete`, then reports missing or recreated objects.
+- Experimental: tested against a Cloudflare API fake and a fake `cloudflared` only. The real-account checklist (`docs/manual-checks/cloudflare-tunnel.md`) is open.
+- Docs: `docs/cloudflare.md` rewritten (node tunnels first, the server guide as its own section), and updates to providers, security, configuration, troubleshooting, dependencies (egress to the Cloudflare API, Access and `pkg.cloudflare.com`), architecture and project status.
+
 ### Added: unit grants at setup
 
 - `sm nodes setup --unit <unit>[:start,stop,restart]` (repeatable) and `--no-units`, and `unit <unit>[:verbs]` / `no-units` in the TUI palette, grant systemctl on units. Before, neither sent any grant, so unit actions after setup were refused. A re-run without units keeps the node's grants; the plan shows the old and new lists.

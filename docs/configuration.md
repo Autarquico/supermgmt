@@ -27,6 +27,7 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 - `ssh.*` timeouts and pool limits: `connect_timeout`, `command_timeout`, `keepalive_interval`, `max_dials_in_flight`, `max_connections`, `max_sessions_per_connection`, `idle_connection_ttl`
 - `ssh.logs_mode`: the log mode a `node.setup` plan gets when the request names none (`internal/daemon/assemble.go`, `internal/app/plans.go`; `TestASetupPlanTakesTheConfiguredLogsModeWhenNoneIsGiven`). The plan then states the mode, so it is part of the plan hash. `sm nodes setup` and the TUI always name one (`journal-group` unless you ask for `broker`), so the default applies to requests that leave it out, such as API calls. After setup, a node's log mode is the one recorded by its setup.
 - `refresh.*`, `jobs.*`, `server.shutdown_timeout`
+- `cloudflare.*`, optional; see [Cloudflare](#cloudflare)
 - `environments` and SSH `providers`, applied when the daemon starts
 - Proxmox `providers`, applied when the daemon starts and then synced every `sync_interval`; see [providers.md](providers.md#proxmox)
 - GitHub `providers`, applied when the daemon starts; see [GitHub](#github)
@@ -212,6 +213,35 @@ Dex specifics found while testing:
 - A Dex confidential client rejects a loopback redirect with a port it has not registered. Register one fixed redirect (`http://127.0.0.1:5555/callback`, say) and sign in with `sm login --callback-port 5555`.
 - With the device grant, Dex puts the `client_secret` into the verification URL shown in the browser. See [security.md](security.md#oidc-and-the-device-flow-client-secret) before enabling the device flow with Dex.
 - Register Dex's `/device/callback` for the device flow; use an issuer at the root of the host (an issuer path puts that callback outside it).
+
+## Cloudflare
+
+Optional. Without the block the feature is off: no Cloudflare call, no `cloudflared` requirement, and `sm nodes setup --tunnel` is refused saying the connection is not configured (`TestCloudflareAbsentMeansTheFeatureIsOff`). **Experimental**; how to use it: [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel).
+
+```yaml
+cloudflare:
+  account_id: 0123456789abcdef0123456789abcdef
+  zone: example.com
+  api_token_ref: secret://cloudflare/api-token
+  access_token_ref: secret://cloudflare/access-service-token
+  owner_emails:
+    - alice@example.com
+  access_identity_providers: []
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `account_id` | none, required | The Cloudflare account ID: 32 lowercase hexadecimal characters |
+| `zone` | none, required | The DNS zone. Node hostnames are `ssh-<node>.<zone>`. A lowercase DNS name of at least two labels, not an IP address |
+| `api_token_ref` | `secret://cloudflare/api-token` | The provisioning token. Read only by tunnel jobs; may be removed from the store after provisioning |
+| `access_token_ref` | `secret://cloudflare/access-service-token` | The Access service token SuperMgmt creates and the dialler reads, stored as `client_id:client_secret` |
+| `owner_emails` | none, required, non-empty | Addresses Access admits for interactive sessions. One plain address each, no wildcards, no display name |
+| `access_identity_providers` | empty | Access identity provider IDs (letters, digits, hyphens) the owners may log in with. Empty means Cloudflare's one-time PIN |
+
+- Both references must be `secret://` references; any other scheme is rejected. The defaults are applied when the block exists (`TestCloudflareBlockGetsItsDefaults`, `TestCloudflareRefsMustBeSecretReferences`).
+- Validation reports every problem by key path in one pass (`TestCloudflareValidationReportsEveryProblemByPath`), rejects unknown keys (`TestCloudflareRejectsUnknownKeys`) and requires `owner_emails` (`TestCloudflareOwnerEmailsAreRequired`).
+- The block has no environment-variable overrides.
+- Changing `account_id` or `zone` after nodes were provisioned does not move them: disabling a node's tunnel refuses a tunnel recorded in another account or zone.
 
 ## Backup
 

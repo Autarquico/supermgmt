@@ -182,6 +182,34 @@ The fixed rate limits were exceeded (`/auth/*` and `/enroll`: 10 per minute; wri
 - **`ROLLBACK_UNAVAILABLE`**: a secret version or snapshot the known-good deployment bound is gone; the rollback is refused before anything changes.
 - **Deployments from GitHub fail verification**: the GitHub path was only exercised against fakes; see the deferred list in [compatibility.md](compatibility.md#deployments).
 
+## Cloudflare tunnel nodes
+
+Experimental; see [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel). These entries come from the code and its tests, not from a run against a real Cloudflare account.
+
+### `Cloudflare Access did not admit the service token`
+
+The daemon sent the service token to the node's tunnel hostname and Access answered with its login page instead of letting it through, so nothing was started (`TestTunnelRefusesWithoutSpawningWhenAccessRedirectsToLogin`). Usual causes, none checked for you: the Access application or its Service Auth policy was changed or deleted in the dashboard; the service token expired or was deleted; the secret at `cloudflare.access_token_ref` is not the token Cloudflare knows. Run `sm doctor` (the `cloudflare_service_token` row), then `sm nodes setup <node> --tunnel` again to repair the objects, or `sm cloudflare rotate-access-token` for the token.
+
+### `cloudflared` not found
+
+`CAPABILITY_UNAVAILABLE` naming `cloudflared`, or `sm doctor` failing `cloudflare_cloudflared`: the daemon host has no executable `cloudflared` in `/usr/local/bin`, `/opt/homebrew/bin` or `/usr/bin` (`TestMissingCloudflaredIsCapabilityUnavailable`). The `PATH` is never searched. Install it from Cloudflare's package repository or your package manager. `sm ssh` fails the same way, with a message to install it on your own machine, when the client has none.
+
+### Doctor warns about a tunnel operation that did not finish
+
+`cloudflare_tunnel_operations` warns for any operation that is running, interrupted or halted, naming the phase it stopped at (`TestDoctorReportsTunnelOperationsThatDidNotFinish`). Run the same command again, `sm nodes setup <node> --tunnel` or `sm nodes tunnel disable <node>`: the operation resumes from its record. The warning stays while an operation is genuinely running.
+
+### A tunnel job stops with a conflict
+
+An object in Cloudflare has the name SuperMgmt expected for this node but the record does not show SuperMgmt created it (a leftover from another instance, a restored copy, or something made by hand). SuperMgmt never adopts it (`TestAnObjectWithTheExpectedNameButAnotherOwnerIsAConflictNeverAdopted`). Look at the object in the Cloudflare dashboard, delete or rename it if it is yours to remove, and run the command again. Do not run two SuperMgmt instances, or a restored copy and its original, against one account.
+
+### A tunnel job is refused during the restore hold
+
+After a restore every write returns `CONFLICT` with `RESTORE_HOLD`, tunnel jobs included, so nothing in Cloudflare changes ([above](#every-write-returns-conflict-with-restore_hold)). After `sudo sm admin restore-complete` the daemon compares its records with Cloudflare and writes audit events for missing or recreated objects; rerun `sm nodes setup <node> --tunnel` to repair them.
+
+### A tunnel node fails verification after setup
+
+The job names the step and leaves the transport `direct`. A different SSH host key over the tunnel is refused like any host-key mismatch ([`SSH_HOST_KEY_MISMATCH`](#ssh_host_key_mismatch)); it is never repinned for you. If the dedicated account fails over the tunnel, the transport also stays `direct` (`TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`).
+
 ## Still stuck
 
 Collect `sm version`, `sm doctor` output, the exit code and the message, and open an issue; follow [SECURITY.md](../SECURITY.md) instead when the problem looks like a vulnerability. Do not paste tokens, archives or key exports.

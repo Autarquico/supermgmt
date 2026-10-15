@@ -108,9 +108,18 @@ Current limits:
 
 Service actions are jobs. In an environment with `risk_level: production` they wait in `awaiting_approval`. The risks that come with these grants (whole-journal read, Docker as root, unit trust) are in [security.md](security.md#trust-boundaries-in-one-page).
 
+### Transport: direct or Cloudflare Tunnel
+
+A node's transport is `direct` (the default; a node without the field is direct) or `cloudflare`. With `direct`, SuperMgmt dials `host:port` itself. With `cloudflare` it runs `cloudflared access ssh` to the node's tunnel hostname and speaks SSH over its standard input and output; the pinned host key, the accounts and every command template are unchanged. Unknown transport values are rejected.
+
+- It is **experimental** and tested against fakes only: [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel) has the prerequisites, the steps and the limits.
+- Switch with `sm nodes setup <node> --tunnel` and back with `sm nodes tunnel disable <node>`. Both are approval-gated jobs. The transport is changed only by those jobs: reapplying the configuration file never changes it (`TestReconcileNeverWritesTheTunnelFields`).
+- `sm nodes get` shows the transport; `sm nodes list` adds a column once a node uses a tunnel.
+- The daemon host needs `cloudflared`. A missing one is reported as `CAPABILITY_UNAVAILABLE` naming it, and `sm doctor` flags it.
+
 ### Interactive tools
 
-`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. `lazydocker` is never installed for you; when it is missing, install it on the node yourself. SuperMgmt does not offer lazydocker on a local machine over an SSH Docker context.
+`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. On a tunnel node the session goes through your own `cloudflared` and your own Access login instead of SuperMgmt's service token; `cloudflared` must be installed on your machine ([Cloudflare](cloudflare.md#using-a-tunnel-node)). `lazydocker` is never installed for you; when it is missing, install it on the node yourself. SuperMgmt does not offer lazydocker on a local machine over an SSH Docker context.
 
 ## Local provider
 
