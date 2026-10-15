@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "Reach SSH nodes through Cloudflare Tunnel"
+title: Reach SSH nodes through Cloudflare Tunnel
 type: epic
-status: draft
+status: active
 priority: P1
 size: XL
 issue: null
 prs: []
-related_issues: []
+related_issues: [31]
 depends_on: []
 supersedes: []
 related_specs: []
