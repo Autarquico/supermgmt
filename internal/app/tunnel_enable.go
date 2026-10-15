@@ -167,7 +167,7 @@ func (e *tunnelEngine) newInstanceRun(ctx context.Context, lease jobs.Lease, job
 	if err != nil {
 		return nil, smerr.New(smerr.CodeInvalidArgument, "", "the Cloudflare API token is unusable: check cloudflare.api_token_ref")
 	}
-	return &tunnelRun{tunnelEngine: e, api: api, lease: lease, job: job, instanceID: instance.ID.String()}, nil
+	return &tunnelRun{tunnelEngine: e, api: gateOnRestoreHold(api, e.cfg.DB.Reader()), lease: lease, job: job, instanceID: instance.ID.String()}, nil
 }
 
 func tunnelCredentialError(err error) error {

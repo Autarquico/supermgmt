@@ -486,9 +486,31 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.reconcileTunnelsAfterRestore(h.TunnelReconciler())
 	table := h.Map()
 	table[app.JobBackupCreate] = b.backups.Handler()
 	return table, nil
+}
+
+// reconcileTunnelsAfterRestore compares the tunnel records with Cloudflare
+// once an admin ends a restore hold (ADR-0037). It only reads Cloudflare and
+// audits; the work runs off the restore-complete request.
+func (b *builder) reconcileTunnelsAfterRestore(rec *app.TunnelReconciler) {
+	if rec == nil {
+		return
+	}
+	b.hold.AfterRelease(func(ctx context.Context) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+			defer cancel()
+			report, err := rec.Run(ctx)
+			if err != nil {
+				b.o.Log.Warn("tunnel reconciliation after restore", slog.Any("error", err))
+				return
+			}
+			b.o.Log.Info("tunnel reconciliation after restore", slog.Int("checked", report.Checked), slog.Int("findings", len(report.Findings)))
+		}()
+	})
 }
 
 // tunnelOptions enables the tunnel jobs; nil without a cloudflare: block.
