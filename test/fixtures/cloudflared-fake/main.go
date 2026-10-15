@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,7 +51,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cloudflared-fake: no forward address")
 		os.Exit(4)
 	}
-	conn, err := net.Dial("tcp", forward)
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", forward)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cloudflared-fake: dial:", err)
 		os.Exit(4)

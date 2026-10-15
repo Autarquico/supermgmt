@@ -12,13 +12,15 @@ package tunnel
 
 import (
 	"context"
-	"encoding/json"
 	"crypto/x509"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,20 +61,28 @@ type stack struct {
 	clock domain.Clock
 	ids   *domaintest.SequentialIDs
 
-	db      *database.DB
-	cf      *cffake.Fake
-	cfgBlk  config.Cloudflare
-	store   *secrets.Store
-	keysDir string
-	pool    *sshtransport.Pool
-	dialer  *sshtransport.CloudflareDialer
-	home    string // the carrier's HOME: its behaviour and records live here
+	db     *database.DB
+	cf     *cffake.Fake
+	cfgBlk config.Cloudflare
+	store  *secrets.Store
+	keys   *secrets.FileKeys
+	// commands is every command the control plane ran on a node; logs is what
+	// the job engine reported as infrastructure errors.
+	commands *transcript
+	logs     *transcript
+	keysDir  string
+	pool     *sshtransport.Pool
+	dialer   *sshtransport.CloudflareDialer
+	home     string // the carrier's HOME: its behaviour and records live here
 
 	appCfg app.Config
 	jobs   *jobs.Store
 	plans  *app.Plans
 	appr   *app.Approvals
 	admin  app.Caller
+
+	// denyAccess makes Access refuse every service token.
+	denyAccess atomic.Bool
 }
 
 type stackOptions struct {
@@ -107,9 +117,10 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	}))
 
 	repo := app.NewSecretsKeyRepo(s.db, clock)
-	keys, err := secrets.OpenFileKeys(ctx, s.keysDir, repo, s.ids)
+	s.keys, err = secrets.OpenFileKeys(ctx, s.keysDir, repo, s.ids)
 	must(t, err)
-	s.store = secrets.NewStore(keys, repo, s.ids, clock)
+	s.store = secrets.NewStore(s.keys, repo, s.ids, clock)
+	s.commands, s.logs = &transcript{}, &transcript{}
 
 	pol, err := policy.Default()
 	must(t, err)
@@ -127,7 +138,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 
 	var tunnelOptions *app.TunnelOptions
 	if !o.withoutCloudflare {
-		s.cf = cffake.New(t, append([]cffake.Option{cffake.WithToken(seededAPIToken)}, o.cfOptions...)...)
+		s.cf = cffake.New(t, append([]cffake.Option{cffake.WithToken(seededAPIToken), cffake.WithClock(clock.Now)}, o.cfOptions...)...)
 		s.cfgBlk = config.Cloudflare{
 			AccountID: s.cf.AccountID(), Zone: zoneOf(s.cf), APITokenRef: config.DefaultCloudflareAPITokenRef,
 			AccessTokenRef: config.DefaultCloudflareAccessTokenRef, OwnerEmails: []string{"owner@example.test"},
@@ -142,7 +153,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		}
 		s.dialer = sshtransport.NewCloudflareDialer(sshtransport.CloudflareConfig{
 			Path: carrier, HomeDir: s.home, Tokens: app.AccessTokens(s.store, s.cfgBlk.AccessTokenRef),
-			Preflight: admitAll(), KillGrace: time.Second,
+			Preflight: s.preflight(), KillGrace: time.Second,
 		})
 		t.Cleanup(s.dialer.Close)
 		s.pool.UseDialer(domain.TransportCloudflare, s.dialer)
@@ -152,8 +163,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		tunnelOptions = &app.TunnelOptions{
 			Config: s.cfgBlk, Secrets: s.store,
 			NewAPI: func(account string, token audit.Secret) (app.CloudflareAPI, error) {
-				return cloudflare.New(s.cf.Endpoint(), account, token,
-					cloudflare.WithNetguardOptions(netguard.WithRootCAs(roots), netguard.WithTestDialer(s.cf.Dial)))
+				return s.cloudflareClient(roots, account, token)
 			},
 		}
 	}
@@ -170,7 +180,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	s.appr, err = app.NewApprovals(s.appCfg, s.jobs)
 	must(t, err)
 
-	conn := app.Connector{Remote: s.pool}
+	conn := app.Connector{Remote: recordingDialer{inner: s.pool, log: s.commands}}
 	inventory, err := app.NewInventory(s.appCfg, app.InventoryOptions{Store: s.jobs, Connector: conn, Mode: config.ModeLocal})
 	must(t, err)
 	prober, err := app.NewProber(s.appCfg, conn, nil)
@@ -199,12 +209,33 @@ func defaultPoolConfig() sshtransport.PoolConfig {
 	}
 }
 
-// admitAll is the Access preflight of a Cloudflare that admits the token: the
-// dialler's probe of the tunnel hostname needs neither DNS nor TLS here.
-func admitAll() *http.Client {
-	return &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}}, nil
+// preflight is the Access probe of the dialler against a Cloudflare that
+// behaves like Access: it admits a request only when the presented service
+// token is a live token of cffake that a Service Auth policy lists, and
+// answers the login redirect otherwise (or always, while denyAccess is set).
+func (s *stack) preflight() *http.Client {
+	return &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		if !s.denyAccess.Load() && s.admits(r.Header.Get("CF-Access-Client-Id"), r.Header.Get("CF-Access-Client-Secret")) {
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}, Request: r}, nil
+		}
+		header := http.Header{"Location": []string{"https://team.cloudflareaccess.com/cdn-cgi/access/login/" + r.URL.Hostname()}}
+		return &http.Response{StatusCode: http.StatusFound, Body: http.NoBody, Header: header, Request: r}, nil
 	})}
+}
+
+func (s *stack) admits(clientID, clientSecret string) bool {
+	snap := s.cf.Snapshot()
+	for _, tok := range snap.ServiceTokens {
+		if tok.ClientID != clientID || tok.ClientSecret != clientSecret {
+			continue
+		}
+		for _, p := range snap.Policies {
+			if p.Decision == "non_identity" && slices.Contains(p.ServiceTokenIDs, tok.ID) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type roundTripper func(*http.Request) (*http.Response, error)
@@ -269,6 +300,7 @@ func (s *stack) runEngine(handlers map[string]jobs.Handler) {
 	engine, err := jobs.NewEngine(jobs.EngineConfig{
 		Store: s.jobs, Handlers: handlers, Workers: 2,
 		PollInterval: 5 * time.Millisecond, HeartbeatInterval: 100 * time.Millisecond, ReconcileInterval: time.Hour,
+		OnError: func(err error) { s.logs.add("engine", err.Error()) },
 	})
 	must(s.t, err)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -373,14 +405,6 @@ func (s *stack) carrierStarts() int {
 	return len(s.carrierRecords())
 }
 
-func jsonString(v string) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
-}
-
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -392,8 +416,7 @@ func (s *stack) wait(id domain.ID, within time.Duration) jobs.Job {
 	for time.Now().Before(deadline) {  //nolint:forbidigo // see above
 		job, err := s.jobs.Get(context.Background(), s.db.Reader(), id)
 		must(s.t, err)
-		switch job.State {
-		case domain.JobSucceeded, domain.JobFailed, domain.JobCancelled:
+		if slices.Contains([]domain.JobState{domain.JobSucceeded, domain.JobFailed, domain.JobCancelled}, job.State) {
 			return job
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -472,4 +495,16 @@ func unreachable(t *testing.T) domain.NodeEndpoint {
 		Host: "192.0.2.10", Port: 22, User: "supermgmt", AdminUser: "admin", AdminCredentialRef: "ssh-agent://default",
 		HostPublicKey: hostKey(t),
 	}
+}
+
+func (s *stack) cloudflareClient(roots *x509.CertPool, account string, token audit.Secret) (*cloudflare.Client, error) {
+	return cloudflare.New(s.cf.Endpoint(), account, token,
+		cloudflare.WithNetguardOptions(netguard.WithRootCAs(roots), netguard.WithTestDialer(s.cf.Dial)))
+}
+
+// newCloudflareClient is a client for the test's own reads of the fake.
+func (s *stack) newCloudflareClient() (*cloudflare.Client, error) {
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(s.cf.CAPEM())
+	return s.cloudflareClient(roots, s.cf.AccountID(), audit.Secret(s.cf.Token()))
 }

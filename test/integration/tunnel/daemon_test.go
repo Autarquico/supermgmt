@@ -16,7 +16,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/daemon"
-	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
@@ -106,16 +105,6 @@ func (d *liveDaemon) nodes() []wire.Node {
 	page, err := d.api.ListNodes(context.Background(), wire.NodeQuery{})
 	must(d.t, err)
 	return page.Items
-}
-
-func (d *liveDaemon) planSetup(node domain.ID, tunnel string) error {
-	d.t.Helper()
-	_, err := d.api.CreatePlan(context.Background(), wire.CreatePlanRequest{
-		Action:     "node.setup",
-		Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: node}},
-		Parameters: map[string]any{"tunnel": tunnel, "logs_mode": "journal-group"},
-	})
-	return err
 }
 
 func codeOf(err error) smerr.Code { return smerr.CodeOf(err) }
