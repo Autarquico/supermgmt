@@ -248,7 +248,8 @@ func (r *tunnelRun) resume(ctx context.Context, op database.TunnelOperation, kin
 	case op.Phase == database.PhaseConflict && r.job.Attempts > 1:
 		// An automatic retry must not undo the halt; a new job (an operator who
 		// resolved the object in Cloudflare) resumes it.
-		return newOwnershipConflict("object", "recorded in the operation")
+		return &ownershipConflict{inner: smerr.New(smerr.CodeConflict, "",
+			"the tunnel operation of this node stopped on a Cloudflare object it does not own; resolve it in Cloudflare and run setup again")}
 	case op.Phase == database.PhaseConflict:
 		var resumed database.TunnelOperation
 		err := r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
