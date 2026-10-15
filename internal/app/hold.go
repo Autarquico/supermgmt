@@ -100,7 +100,8 @@ func guardHold(ctx context.Context, q database.Querier, action string, by Caller
 // the persisted setting and refuses writes while the hold is in force.
 type HoldService struct {
 	core
-	jobs *jobs.Store
+	jobs         *jobs.Store
+	afterRelease []func()
 }
 
 var _ Hold = (*HoldService)(nil)
@@ -164,6 +165,14 @@ func (h *HoldService) Complete(ctx context.Context, peerUID int) error {
 	})
 	if err == nil && released {
 		h.jobs.SetRestoreHold(false)
+		for _, fn := range h.afterRelease {
+			fn()
+		}
 	}
 	return err
 }
+
+// AfterRelease registers work to start once a restore hold ended (the tunnel
+// reconciliation). fn runs after the gate opened and must not block: it is
+// called on the restore-complete request.
+func (h *HoldService) AfterRelease(fn func()) { h.afterRelease = append(h.afterRelease, fn) }
