@@ -259,6 +259,14 @@ func (r *tunnelRun) ensurePolicy(ctx context.Context, state database.CloudflareS
 	} else {
 		next.OwnersPolicyID = policy.ID
 	}
+	if recorded != "" {
+		// The policy was recreated under a new ID: every application of the
+		// instance still refers to the dead one. Repair them before the new ID
+		// is recorded, so a crash in between repeats the repair.
+		if err := r.reattachAccessApps(ctx, next); err != nil {
+			return state, err
+		}
+	}
 	return r.saveState(ctx, next, action, map[string]any{"policy_id": policy.ID, "name": spec.Name})
 }
 
@@ -282,4 +290,66 @@ func lower(in []string) []string {
 		out[i] = strings.ToLower(s)
 	}
 	return out
+}
+
+// reattachAccessApps points every Access application this instance owns at the
+// policies of state. Applications that are gone or already right are left
+// alone.
+func (r *tunnelRun) reattachAccessApps(ctx context.Context, state database.CloudflareState) error {
+	nodes, err := database.ListNodes(ctx, r.cfg.DB.Reader())
+	if err != nil {
+		return err
+	}
+	want := []string{state.ServicePolicyID, state.OwnersPolicyID}
+	for _, node := range nodes {
+		recorded, err := r.recordedAccessApp(ctx, node.ID)
+		if err != nil {
+			return err
+		}
+		if recorded == "" {
+			continue
+		}
+		name := cloudflare.AccessAppName(r.instanceID, node.ID.String())
+		apps, err := r.api.FindAccessApps(ctx, name)
+		if err != nil {
+			return err
+		}
+		for _, app := range apps {
+			if app.ID != recorded || slices.Equal(app.PolicyIDs, want) {
+				continue
+			}
+			if err := r.mayMutate(ctx); err != nil {
+				return err
+			}
+			spec := cloudflare.AppSpec{Name: app.Name, Domain: app.Domain, PolicyIDs: want, AllowedIdPs: app.AllowedIdPs}
+			if _, err := r.api.UpdateAccessApp(ctx, app.ID, spec); err != nil {
+				return err
+			}
+			if err := r.auditInstance(ctx, eventAccessAppUpdated, map[string]any{"access_app_id": app.ID, "name": app.Name, "node_id": node.ID.String()}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// recordedAccessApp is the ID of the node's Access application as its newest
+// operation record holds it, "" for a node without one in the configured
+// account (never tunnelled, or disabled since).
+func (r *tunnelRun) recordedAccessApp(ctx context.Context, nodeID domain.ID) (string, error) {
+	ops, err := database.ListTunnelOperations(ctx, r.cfg.DB.Reader(), nodeID)
+	if err != nil {
+		return "", err
+	}
+	for _, op := range ops {
+		switch {
+		case op.AccountID != r.opts.Config.AccountID:
+			return "", nil
+		case op.Kind == database.TunnelDisable && op.Phase.Finished():
+			return "", nil
+		case op.Objects.AccessAppID != "":
+			return op.Objects.AccessAppID, nil
+		}
+	}
+	return "", nil
 }

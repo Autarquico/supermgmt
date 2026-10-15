@@ -178,6 +178,29 @@ func AdvanceTunnelPhase(ctx context.Context, q Querier, id domain.ID, generation
 	return GetTunnelOperation(ctx, q, id)
 }
 
+// ResumeHaltedTunnelOperation moves a halted operation back to the phase it
+// held, keeping phase_started_at: the objects an earlier attempt of that phase
+// created stay adoptable. It fails like AdvanceTunnelPhase when the stored
+// generation or halted phase differ.
+func ResumeHaltedTunnelOperation(ctx context.Context, q Querier, id domain.ID, generation int64,
+	halted TunnelPhase, now time.Time,
+) (TunnelOperation, error) {
+	if !halted.Halted() {
+		return TunnelOperation{}, smerr.New(smerr.CodeInvalidArgument, "", "only a failed or conflict operation can be resumed")
+	}
+	res, err := q.ExecContext(ctx, `
+		UPDATE tunnel_operations SET phase = halted_phase, halted_phase = NULL, last_error = '', updated_at = ?
+		WHERE id = ? AND generation = ? AND phase = ? AND halted_phase IS NOT NULL`,
+		millis(now), id, generation, halted)
+	if err != nil {
+		return TunnelOperation{}, fmt.Errorf("resume tunnel operation: %w", err)
+	}
+	if err := requireTunnelRow(ctx, q, res, id, generation, halted); err != nil {
+		return TunnelOperation{}, err
+	}
+	return GetTunnelOperation(ctx, q, id)
+}
+
 // HaltTunnelOperation marks the operation failed or conflict, keeping the phase it was in as
 // HaltedPhase, under the same expectation as AdvanceTunnelPhase. lastError must already be sanitized.
 func HaltTunnelOperation(ctx context.Context, q Querier, id domain.ID, generation int64,

@@ -142,6 +142,9 @@ func (h setupHandler) runTunnel(ctx context.Context, lease jobs.Lease, job jobs.
 	if err != nil {
 		return err
 	}
+	if err := run.mayMutate(ctx); err != nil {
+		return err
+	}
 	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, &systemd.TunnelParams{Token: token})
 	if err != nil {
 		return run.step("node install", err)

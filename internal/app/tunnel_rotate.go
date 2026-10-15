@@ -30,6 +30,12 @@ const (
 // the runtime secret.
 const pendingSecretSuffix = "-pending"
 
+// retiredCredential replaces the pending credential once the rotation is
+// over. The store keeps every version and has no delete, so the latest
+// version of the pending secret is overwritten with a value that is no
+// credential.
+const retiredCredential = audit.Secret("retired")
+
 // tunnelRotateHandler executes cloudflare.access_token.rotate (ADR-0037):
 // create the new token, admit it next to the old one in the owned Service Auth
 // policy, switch the runtime secret, remove the old token from the policy and
@@ -202,6 +208,9 @@ func (r *tunnelRun) rotationRetire(ctx context.Context, state database.Cloudflar
 		if err := r.api.DeleteServiceToken(ctx, old.ID); err != nil && !cloudflare.IsNotFound(err) {
 			return state, err
 		}
+	}
+	if _, err := r.opts.Secrets.Put(ctx, r.pendingSecretName(), retiredCredential, map[string]any{"purpose": "cloudflare access service token (rotation finished)"}); err != nil {
+		return state, err
 	}
 	state.Rotation, state.Pending = database.RotationIdle, nil
 	return r.saveState(ctx, state, eventTokenRetired, map[string]any{"token_id": old.ID})

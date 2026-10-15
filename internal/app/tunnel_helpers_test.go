@@ -181,6 +181,7 @@ type tunnelSetting struct {
 	current jobs.Handler // the handler attempt runs; the setup handler when nil
 	disable tunnelDisableHandler
 	rotate  tunnelRotateHandler
+	slept   []time.Duration // the backoff waits requested instead of taken
 }
 
 const (
@@ -204,6 +205,7 @@ func newTunnelSetting(t *testing.T, cfOptions ...cffake.Option) *tunnelSetting {
 	ts.chaos = &chaosAPI{clock: s.clock.Advance}
 	engine, err := newTunnelEngine(s.handler.core, &TunnelOptions{
 		Config: cfg, Secrets: ts.secrets,
+		Sleep: func(_ context.Context, d time.Duration) { ts.slept = append(ts.slept, d) },
 		NewAPI: func(account string, token audit.Secret) (CloudflareAPI, error) {
 			client, err := cloudflare.New(ts.cf.Endpoint(), account, token,
 				cloudflare.WithNetguardOptions(netguard.WithRootCAs(pool), netguard.WithTestDialer(ts.cf.Dial)))

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"slices"
 
@@ -30,6 +31,9 @@ type disableRun struct {
 	*tunnelRun
 	conn Connector
 	meta runtimes.SetupMeta
+	// hasSetup is false for a node that never completed setup: only an
+	// unfinished first enable can be taken down from such a node.
+	hasSetup bool
 }
 
 func (h tunnelDisableHandler) Run(ctx context.Context, lease jobs.Lease) error {
@@ -63,21 +67,29 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 	if err != nil {
 		return nil, err
 	}
-	if meta == nil {
+	unfinished, err := unfinishedEnable(ctx, h.cfg.DB.Reader(), node.ID)
+	if err != nil {
+		return nil, err
+	}
+	if meta == nil && unfinished.ID == "" {
 		return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", "the node has not completed setup, so it has no tunnel to disable")
 	}
-	hostname := node.Endpoint.TunnelHostname
-	if hostname == "" {
-		if hostname, err = cloudflare.TunnelHostname(node.Name, h.tunnel.opts.Config.Zone); err != nil {
-			return nil, smerr.New(smerr.CodeInvalidArgument, "", err.Error())
-		}
+	hostname, err := h.hostnameOf(node, unfinished)
+	if err != nil {
+		return nil, err
 	}
 	base, err := h.tunnel.newRun(ctx, lease, job, node, hostname)
 	if err != nil {
 		return nil, err
 	}
 	base.disabling = true
-	run := &disableRun{tunnelRun: base, conn: h.conn, meta: *meta}
+	run := &disableRun{tunnelRun: base, conn: h.conn, hasSetup: meta != nil}
+	if meta != nil {
+		run.meta = *meta
+	}
+	if unfinished.ID != "" {
+		return run, run.takeOverEnable(ctx, unfinished)
+	}
 	found, err := run.resumeActive(ctx, database.TunnelDisable)
 	if err != nil {
 		return nil, err
@@ -87,7 +99,9 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 			return nil, err
 		}
 	}
-	if !found || run.op.Phase == database.PhaseStarted {
+	// A direct path proven before the switch is proven again after a crash:
+	// the proof may be arbitrarily old once the phase reaches the switch.
+	if !found || phaseIndex(run.op.Phase) < phaseIndex(database.PhaseSwitched) {
 		if err := run.verifyDirect(ctx); err != nil {
 			return nil, err
 		}
@@ -100,6 +114,48 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 	return run, run.findLastEnabled(ctx)
 }
 
+// unfinishedEnable is the node's enable that has not finished (running, halted
+// or failed), or the zero operation.
+func unfinishedEnable(ctx context.Context, q database.Querier, nodeID domain.ID) (database.TunnelOperation, error) {
+	op, err := database.ActiveTunnelOperation(ctx, q, nodeID)
+	switch {
+	case smerr.CodeOf(err) == smerr.CodeNotFound:
+		return database.TunnelOperation{}, nil
+	case err != nil || op.Kind != database.TunnelEnable:
+		return database.TunnelOperation{}, err
+	}
+	return op, nil
+}
+
+// hostnameOf is the hostname the disable works on: the one the enable
+// recorded, else the node's tunnel hostname, else the derived one.
+func (h tunnelDisableHandler) hostnameOf(node domain.Node, unfinished database.TunnelOperation) (string, error) {
+	if hostname := cmp.Or(unfinished.Hostname, node.Endpoint.TunnelHostname); hostname != "" {
+		return hostname, nil
+	}
+	return tunnelHostnameOf(node.Name, h.tunnel.opts.Config.Zone)
+}
+
+// takeOverEnable lets a disable end an enable that is unfinished, halted or
+// failing: it proves the direct path (the node never switched, so its
+// endpoint stays as it is), closes the enable and starts the disable, which
+// takes down whatever the enable recorded.
+func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelOperation) error {
+	if enable.AccountID != r.opts.Config.AccountID || enable.Zone != r.opts.Config.Zone {
+		return smerr.New(smerr.CodeConflict, "", "the unfinished tunnel enable of this node belongs to another Cloudflare account or zone than the configured one")
+	}
+	if err := r.verifyDirect(ctx); err != nil {
+		return err
+	}
+	if err := r.abandonEnable(ctx, enable); err != nil {
+		return err
+	}
+	if err := r.createOperation(ctx, database.TunnelDisable); err != nil {
+		return err
+	}
+	return r.findLastEnabled(ctx)
+}
+
 // requireEnabledNode refuses to disable a node whose newest finished operation
 // is not a committed enable in the configured account and zone: there is
 // nothing of ours to take down, or it lives somewhere this instance does not
@@ -108,7 +164,7 @@ func (r *disableRun) requireEnabledNode(ctx context.Context) error {
 	if err := r.findLastEnabled(ctx); err != nil {
 		return err
 	}
-	last := r.lastEnabled
+	last := r.lastEnabled // committed, or abandoned with objects to take down
 	switch {
 	case last.ID == "":
 		return smerr.New(smerr.CodeInvalidArgument, "", "the node has no tunnel to disable")
@@ -167,6 +223,9 @@ func (r *disableRun) verifyDirect(ctx context.Context) error {
 	}
 	if err := requireBootstrap(ctx, admin, direct.Endpoint.AdminUser == adminRoot); err != nil {
 		return r.step("verification of the direct path (admin account)", err)
+	}
+	if !r.hasSetup {
+		return nil // the dedicated account was never set up
 	}
 	req := setupRequest{Grants: r.meta.Units, LogsMode: r.meta.LogsMode, DockerAccess: r.meta.DockerAccess}
 	if err := verifyDedicated(ctx, r.conn, direct, sshnode.PinnedRef(r.meta), r.meta.SystemctlPath, req); err != nil {
@@ -303,8 +362,8 @@ func (r *disableRun) removeAccess(ctx context.Context) error {
 	}
 	found := false
 	for _, app := range apps {
-		if app.ID != recorded && (recorded != "" || app.Domain != r.hostname) {
-			continue
+		if app.ID != recorded {
+			continue // an application of this name that was never recorded is not provably ours
 		}
 		found = true
 		if err := r.mayMutate(ctx); err != nil {
@@ -338,8 +397,8 @@ func (r *disableRun) deleteTunnel(ctx context.Context) error {
 	}
 	found := false
 	for _, tunnel := range tunnels {
-		if tunnel.ID != recorded && recorded != "" {
-			continue
+		if tunnel.ID != recorded {
+			continue // a tunnel of this name that was never recorded is not provably ours
 		}
 		found = true
 		if err := r.mayMutate(ctx); err != nil {
@@ -366,15 +425,18 @@ func (r *disableRun) deleteTunnel(ctx context.Context) error {
 // finish records the operation as done and drops the tunnel from the node's
 // setup metadata, in one fenced transaction.
 func (r *disableRun) finish(ctx context.Context) error {
-	meta := r.meta
-	meta.Tunnel = nil
-	capability, err := setupCapability(meta, r.cfg.Clock.Now())
-	if err != nil {
-		return err
+	var withCapability func(context.Context, *database.Tx) error
+	if r.hasSetup {
+		meta := r.meta
+		meta.Tunnel = nil
+		capability, err := setupCapability(meta, r.cfg.Clock.Now())
+		if err != nil {
+			return err
+		}
+		withCapability = func(ctx context.Context, tx *database.Tx) error {
+			return database.SetNodeCapability(ctx, tx, r.node.ID, capability)
+		}
 	}
 	return r.advanceWith(ctx, database.PhaseDone, database.TunnelObjects{}, eventTunnelDisabled,
-		map[string]any{"hostname": r.hostname, "tunnel_id": r.known().TunnelID},
-		func(ctx context.Context, tx *database.Tx) error {
-			return database.SetNodeCapability(ctx, tx, r.node.ID, capability)
-		})
+		map[string]any{"hostname": r.hostname, "tunnel_id": r.known().TunnelID}, withCapability)
 }
