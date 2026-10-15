@@ -90,8 +90,10 @@ type UnitGrant struct {
 	Verbs []domain.ServiceVerb `json:"verbs"`
 }
 
-// SetupVersion is the setup_version this build writes (ADR-0009 f).
-const SetupVersion = 2
+// SetupVersion is the setup_version this build writes (ADR-0009 f). Version 3
+// adds the optional tunnel state (ADR-0037); versions 1 and 2 stay readable and
+// read as "no tunnel", and every check that asks for version 2 accepts 3.
+const SetupVersion = 3
 
 // SupportedComposeVersion is the only Compose CLI release deployments run on
 // (ADR-0006). On the node fixture `docker compose version --short` prints it
@@ -118,6 +120,15 @@ type SetupMeta struct {
 	KeyRef         string      `json:"key_ref"`
 	KeyVersion     int         `json:"key_version"`
 	KeyFingerprint string      `json:"key_fingerprint"`
+	Tunnel         *TunnelMeta `json:"tunnel,omitempty"`
+}
+
+// TunnelMeta records that setup installed the Cloudflare tunnel connector on
+// the node (ADR-0037). It holds no credential: the token lives only in the
+// node's root-only file and in the secret store.
+type TunnelMeta struct {
+	Hostname    string    `json:"hostname"`
+	InstalledAt time.Time `json:"installed_at"`
 }
 
 // Granted reports whether setup granted verb on unit.
