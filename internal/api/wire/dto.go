@@ -111,6 +111,9 @@ type Endpoint struct {
 	AdminUser                string `json:"admin_user"`
 	HostPublicKey            string `json:"host_public_key"`
 	HostKeyFingerprintSHA256 string `json:"host_key_fingerprint_sha256"`
+	// Transport is absent for direct nodes (ADR-0037).
+	Transport      domain.Transport `json:"transport,omitempty"`
+	TunnelHostname string           `json:"tunnel_hostname,omitempty"`
 }
 
 type Capability struct {
@@ -219,6 +222,10 @@ type ConnectInfo struct {
 	User          string    `json:"user"`
 	HostPublicKey string    `json:"host_public_key"`
 	HostKeyAlias  string    `json:"host_key_alias"`
+	// Transport is absent for direct nodes; clients treat anything but
+	// "cloudflare" as direct and reject unknown values (ADR-0037).
+	Transport      domain.Transport `json:"transport,omitempty"`
+	TunnelHostname string           `json:"tunnel_hostname,omitempty"`
 }
 
 // ---- interactive sessions --------------------------------------------------

@@ -235,6 +235,8 @@ func (s *StaticReconciler) syncSSHNode(ctx context.Context, q database.Querier, 
 	current := nodes[i]
 	want := current
 	want.Endpoint, want.CredentialRef, want.EnvironmentID = e.NodeEndpoint(), e.CredentialRef, environment
+	// The tunnel jobs own these two fields (ADR-0037); the file never carries them.
+	want.Endpoint.Transport, want.Endpoint.TunnelHostname = current.Endpoint.Transport, current.Endpoint.TunnelHostname
 	want.Tags = slices.Sorted(slices.Values(p.Tags))
 	want.ManagementState, want.UpdatedAt = domain.ManagementManaged, s.cfg.Clock.Now()
 	changed := changedFields(current, want)

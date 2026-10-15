@@ -164,7 +164,7 @@ func metadataString(m map[string]any, key string) string {
 func (v viewer) endpoint(n domain.Node) wire.Endpoint {
 	e := wire.Endpoint{
 		Host: n.Endpoint.Host, Port: n.Endpoint.Port, User: n.Endpoint.User, AdminUser: n.Endpoint.AdminUser,
-		HostPublicKey: n.Endpoint.HostPublicKey,
+		HostPublicKey: n.Endpoint.HostPublicKey, Transport: n.Endpoint.Transport, TunnelHostname: n.Endpoint.TunnelHostname,
 	}
 	if n.Endpoint.HostPublicKey != "" {
 		if fp, err := sshnode.Fingerprint(n.Endpoint.HostPublicKey); err == nil {
