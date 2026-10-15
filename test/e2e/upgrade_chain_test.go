@@ -30,19 +30,22 @@ const (
 // TestM6_UpgradeChainOldestToLatestInOneJump
 //
 // Given the M2 release serving the data of its fixture. When it is upgraded to the latest release.
-// Then: the doctor reports the latest schema (6), every row the fixture seeded survives, and the
+// Then: the doctor reports the latest schema (6), every row the old release serves survives, and the
 // doctor finds the service sound under the master key of the fixture.
 func TestM6_UpgradeChainOldestToLatestInOneJump(t *testing.T) {
 	h := newPreviousServer(t)
 	h.stageNext()
 	fixture := chainFixtureDatabase(t)
-	seeded := chainRows(t, fixture)
 	h.loadFixtureWorld(fixture)
 
 	if got := h.schema(prevBinary); got != chainOldestSchem {
 		t.Fatalf("%s serves schema %d, want %d", prevVersion, got, chainOldestSchem)
 	}
-	chainAssertRows(t, "before the upgrade", seeded, h.databaseRows())
+	// The baseline is what the old release serves, not the fixture file: on start it retires rows
+	// by wall-clock age (idempotency records, observations, expired secrets), so a fixture older
+	// than those TTLs loses them before any upgrade runs. The upgrade must keep everything else.
+	seeded := h.databaseRows()
+	t.Logf("%s retired %d of the fixture's rows by age before the upgrade", prevVersion, chainCount(chainRows(t, fixture))-chainCount(seeded))
 
 	res := h.upgrade(nextBinary)
 	if res.Code != 0 {
@@ -60,7 +63,7 @@ func TestM6_UpgradeChainOldestToLatestInOneJump(t *testing.T) {
 		}
 	})
 
-	t.Run("every row the fixture seeded survives", func(t *testing.T) {
+	t.Run("every row the old release served survives", func(t *testing.T) {
 		chainAssertRows(t, "after the upgrade", seeded, h.databaseRows())
 	})
 
@@ -158,6 +161,14 @@ func chainRows(t *testing.T, path string) map[string][]string {
 		rows[table] = chainColumn(t, db, fmt.Sprintf(`SELECT %s FROM %s`, strings.Join(chainConcat(keys), " || '|' || "), table))
 	}
 	return rows
+}
+
+func chainCount(rows map[string][]string) int {
+	n := 0
+	for _, keys := range rows {
+		n += len(keys)
+	}
+	return n
 }
 
 func chainConcat(columns []string) []string {
