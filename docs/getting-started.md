@@ -130,7 +130,7 @@ sm jobs get <job-id>
 
 In local mode you may approve your own plans. When the job succeeds, `sm nodes get web1` shows the node as set up.
 
-You can do the same from the TUI: press `/`, type `setup web1` (or `setup web1 docker`), press `y` to submit, then `4` for the Approvals screen and `A` to approve.
+You can do the same from the TUI: press `/`, type `setup web1` (or `setup web1 docker`, or `setup web1 unit nginx.service`), press `y` to submit, then `4` for the Approvals screen and `A` to approve.
 
 ## 7. Use it
 
@@ -147,7 +147,7 @@ The TUI shows the same: the Dashboard, the Node and Services screens, logs, jobs
 What setup lets you change:
 
 - **Docker containers:** start, stop and restart, if you chose `--docker-access`. `sm services restart <service-id>` submits the job.
-- **systemd units:** `sm nodes setup` and the TUI palette do not yet grant any unit, so a unit restart is refused with `CAPABILITY_UNAVAILABLE`. This was read from the code, not from a run.
+- **systemd units:** the units you granted at setup, with the verbs you granted: `sm nodes setup web1 --unit nginx.service` allows start, stop and restart of `nginx.service`; `--unit nginx.service:restart` only restart. A unit without a grant is refused with `CAPABILITY_UNAVAILABLE`.
 
 Every action is a job. In an environment marked `production`, it waits for approval like the setup did.
 

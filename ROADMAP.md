@@ -51,7 +51,6 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 
 ### Local daemon, SSH nodes and TUI
 
-- `node.setup` from the CLI or the TUI grants no systemd unit yet, so a unit restart after setup is refused. Container actions work with `--docker-access`.
 - No automated node teardown (manual steps in [Security](docs/security.md)), and no standalone `sudoers.write` or `log_broker.install` jobs: re-run setup instead. Whether setup from a server works against a real node was not verified.
 - SSH CA trust and per-node keys: not scheduled. `ssh.known_hosts_file` is only the file that goes into a backup.
 - The local TUI polls in tiers; remote profiles use SSE. There is no `sm daemon install-user-unit`; a resident daemon is `sm install local --resident`.

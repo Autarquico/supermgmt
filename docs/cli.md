@@ -959,6 +959,10 @@ Run node.setup: create the supermgmt account on the node over your own admin acc
 sudo), authorize the instance SSH key, grant systemctl on the units it may manage, and verify the result over
 a fresh session as that account. Re-run it after `sm ssh-key rotate` to authorize the new key.
 
+--unit grants systemctl on a unit: --unit nginx.service allows start, stop and restart; --unit
+nginx.service:restart only restart. Repeat it per unit; the list replaces the node's current grants.
+Without --unit a re-run keeps the grants the node has; --no-units removes them all.
+
 Docker access is explicit: it is off unless you pass --docker-access, and it is root-equivalent on the node.
 
 ```text
@@ -969,6 +973,8 @@ Flags:
 
 - `--docker-access` (bool): also give the account docker access (root-equivalent on the node)
 - `--logs-mode` (string, default `journal-group`): how logs are read: journal-group or broker
+- `--no-units` (bool): remove every unit grant
+- `--unit` (stringArray): grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)
 - `--yes` (bool): do not ask for confirmation
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.

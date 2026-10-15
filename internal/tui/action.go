@@ -86,6 +86,7 @@ type confirmation struct {
 	seq      int
 	title    string
 	warnings []string
+	details  []string // shown above the plan once it arrives
 	lines    []string
 	planning bool
 	blocked  string // why it cannot be submitted
@@ -122,7 +123,7 @@ func (m *Model) onPlan(msg planMsg) {
 	}
 	c := m.confirm
 	c.planning = false
-	c.lines = planLines(msg.plan)
+	c.lines = append(slices.Clone(c.details), planLines(msg.plan)...)
 	switch {
 	case msg.plan.Policy.Decision != decisionAllow:
 		c.blocked = "policy: " + textsafe.Line(msg.plan.Policy.Decision)
@@ -222,20 +223,64 @@ func hasVerb(verbs []domain.ServiceVerb, verb domain.ServiceVerb) bool {
 	return false
 }
 
-func (m *Model) setupNode(n wire.Node, docker, broker bool) tea.Cmd {
+// setupNode plans node.setup from the palette words after the node name.
+// Without unit words the node keeps the grants it has.
+func (m *Model) setupNode(n wire.Node, words []string) tea.Cmd {
+	w, err := parseSetupWords(words)
+	if err != nil {
+		m.notice = notice{text: "setup: " + err.Error(), isErr: true}
+		return nil
+	}
+	grants, kept, err := wire.SetupUnits(w.units, w.noUnits, n.Setup)
+	if err != nil {
+		m.notice = notice{text: "setup: " + err.Error(), isErr: true}
+		return nil
+	}
 	mode := logsModeDefault
-	if broker {
+	if w.broker {
 		mode = logsModeBroker
 	}
 	var warnings []string
-	if docker {
+	if w.docker {
 		warnings = append(warnings, dockerRootWarning)
 	}
-	return m.planFor("Set up "+textsafe.Line(n.Name), warnings, wire.CreatePlanRequest{
+	cmd := m.planFor("Set up "+textsafe.Line(n.Name), warnings, wire.CreatePlanRequest{
 		Action:     "node.setup",
 		Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: n.ID}},
-		Parameters: map[string]any{"docker_access": fmt.Sprint(docker), "logs_mode": mode},
+		Parameters: wire.SetupParameters(w.docker, mode, grants),
 	})
+	m.confirm.details = []string{textsafe.Line(wire.UnitsChange(n.Setup, grants, kept))}
+	return cmd
+}
+
+type setupWords struct {
+	docker, broker, noUnits bool
+	units                   []string
+}
+
+// parseSetupWords reads "docker", "broker", "no-units" and "unit <spec>"
+// (repeatable) in one pass; the word after "unit" is always a unit.
+func parseSetupWords(words []string) (setupWords, error) {
+	var w setupWords
+	for i := 0; i < len(words); i++ {
+		switch words[i] {
+		case "docker":
+			w.docker = true
+		case "broker":
+			w.broker = true
+		case "no-units":
+			w.noUnits = true
+		case "unit":
+			if i+1 == len(words) {
+				return setupWords{}, fmt.Errorf("unit needs a unit name, as in unit nginx.service")
+			}
+			i++
+			w.units = append(w.units, words[i])
+		default:
+			return setupWords{}, fmt.Errorf("unknown word %q (docker, broker, unit <unit>[:verbs], no-units)", words[i])
+		}
+	}
+	return w, nil
 }
 
 func (m *Model) probeNode(n wire.Node) tea.Cmd {
@@ -328,7 +373,7 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] [unit <unit>[:verbs]]… [no-units] · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
 	paletteShortcut = "ssh · logs · services · setup · probe · power · refresh · deploy · rollback   (? arguments)"
 )
 
@@ -500,22 +545,13 @@ func (m *Model) commandOnNode(cmd string, args []string) tea.Cmd {
 	case "probe":
 		return m.probeNode(n)
 	case "setup":
-		return m.setupNode(n, containsWord(rest, "docker"), containsWord(rest, "broker"))
+		return m.setupNode(n, rest)
 	}
 	tool := wire.ToolShell
 	if len(rest) > 0 {
 		tool = wire.Tool(rest[0])
 	}
 	return m.startHandoff(n, tool)
-}
-
-func containsWord(words []string, want string) bool {
-	for _, w := range words {
-		if w == want {
-			return true
-		}
-	}
-	return false
 }
 
 // resolveNode finds a node by id, exact name, or unique name prefix.

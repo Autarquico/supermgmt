@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: no stable release yet.
 
+### Added: unit grants at setup
+
+- `sm nodes setup --unit <unit>[:start,stop,restart]` (repeatable) and `--no-units`, and `unit <unit>[:verbs]` / `no-units` in the TUI palette, grant systemctl on units. Before, neither sent any grant, so unit actions after setup were refused. A re-run without units keeps the node's grants; the plan shows the old and new lists.
+
 ### Fixed: found testing the first pre-release on two Macs
 
 - `sm doctor` on a local installation runs the offline checks instead of asking for `--offline`, and reports a running local daemon instead of failing.

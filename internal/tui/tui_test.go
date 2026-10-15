@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -469,6 +470,79 @@ func TestSetupViaPaletteWarnsAboutDockerAccess(t *testing.T) {
 		t.Errorf("docker_access = %v without the docker word, want false", got)
 	}
 	lacks(t, h.view(), "equivalent to root")
+}
+
+func TestSetupViaPaletteGrantsUnitsAndKeepsThemOnARerun(t *testing.T) {
+	api := newFake()
+	api.nodes[0].Setup.Units = []wire.UnitGrant{{Unit: "sm-demo.service", Verbs: []domain.ServiceVerb{domain.VerbRestart}}}
+	h := newHarness(t, api, 120, 28)
+	h.start()
+
+	h.press("/")
+	h.typeText("setup web unit nginx.service:restart unit app.service")
+	h.press("enter")
+	want := []any{"restart nginx.service", "start app.service", "stop app.service", "restart app.service"}
+	if got := api.planRequests[0].Parameters["grants"]; !reflect.DeepEqual(toAny(got), want) {
+		t.Errorf("grants = %#v, want %#v", got, want)
+	}
+	contains(t, h.view(), "units: nginx.service (restart), app.service (start, stop, restart)")
+
+	h.press("esc", "/")
+	h.typeText("setup web")
+	h.press("enter")
+	if got := api.planRequests[1].Parameters["grants"]; !reflect.DeepEqual(toAny(got), []any{"restart sm-demo.service"}) {
+		t.Errorf("a re-run without unit words must keep the node's grants: %#v", got)
+	}
+	contains(t, h.view(), "(kept from the previous setup)")
+}
+
+func TestSetupViaPaletteShowsWhatAReplacementRemoves(t *testing.T) {
+	api := newFake()
+	api.nodes[0].Setup.Units = []wire.UnitGrant{{Unit: "sm-demo.service", Verbs: []domain.ServiceVerb{domain.VerbRestart}}}
+	h := newHarness(t, api, 120, 28)
+	h.start()
+
+	h.press("/")
+	h.typeText("setup web unit nginx.service:restart")
+	h.press("enter")
+
+	contains(t, h.view(), "(was: sm-demo.service (restart))")
+}
+
+func TestSetupViaPaletteReadsTheWordAfterUnitAsAUnit(t *testing.T) {
+	api := newFake()
+	h := newHarness(t, api, 120, 28)
+	h.start()
+
+	h.press("/")
+	h.typeText("setup web unit docker")
+	h.press("enter")
+	if got := api.planRequests[0].Parameters["docker_access"]; got != "false" {
+		t.Errorf("docker_access = %v; the word after unit is a unit name, not the docker flag", got)
+	}
+
+	for _, words := range []string{"setup web unit", "setup web dockr"} {
+		h.press("esc", "/")
+		h.typeText(words)
+		h.press("enter")
+		if len(api.planRequests) != 1 {
+			t.Errorf("%q planned anyway", words)
+		}
+		contains(t, h.view(), "setup: ")
+	}
+}
+
+// toAny turns the []string the TUI builds into the []any a JSON round trip gives.
+func toAny(v any) any {
+	list, ok := v.([]string)
+	if !ok {
+		return v
+	}
+	out := make([]any, len(list))
+	for i, s := range list {
+		out[i] = s
+	}
+	return out
 }
 
 func TestCancelJobAsksFirstAndSendsThePlanHash(t *testing.T) {
