@@ -201,7 +201,7 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 		return systemd.SetupOutcome{}, err
 	}
 	asRoot := node.Endpoint.AdminUser == adminRoot
-	if err := h.requireBootstrap(ctx, admin, asRoot); err != nil {
+	if err := requireBootstrap(ctx, admin, asRoot); err != nil {
 		return systemd.SetupOutcome{}, err
 	}
 	if err := requireJQ(ctx, admin); err != nil {
@@ -222,7 +222,7 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 // requireBootstrap checks, before anything changes, that the node runs Linux
 // and that admin_user can do what setup needs: be root, or run sudo without a
 // password (ADR-0009 c).
-func (h setupHandler) requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool) error {
+func requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool) error {
 	snapshot, err := discovery.Probe(ctx, admin)
 	if err != nil {
 		return err
@@ -277,7 +277,7 @@ func ensureDeployRoot(ctx context.Context, ex transport.Executor, user, deployRo
 
 // sessionEvent audits the start or end of the privileged bootstrap session.
 // A lost lease or a failed write must not mask the setup's own outcome.
-func (h setupHandler) sessionEvent(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, phase string, asRoot bool, cause error) {
+func (c core) sessionEvent(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, phase string, asRoot bool, cause error) {
 	via, result := "sudo", domain.ResultSucceeded
 	if asRoot {
 		via = adminRoot
@@ -285,7 +285,7 @@ func (h setupHandler) sessionEvent(ctx context.Context, lease jobs.Lease, job jo
 	if cause != nil {
 		result = domain.ResultFailed
 	}
-	_ = h.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+	_ = c.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		if err := lease.Fence(ctx, tx); err != nil {
 			return err
 		}
@@ -293,7 +293,7 @@ func (h setupHandler) sessionEvent(ctx context.Context, lease jobs.Lease, job jo
 		if err != nil {
 			return err
 		}
-		return h.emit(ctx, tx, actor, eventPrivilegedSession, nodeRef(node.ID), result, map[string]any{
+		return c.emit(ctx, tx, actor, eventPrivilegedSession, nodeRef(node.ID), result, map[string]any{
 			"phase": phase, "admin_user": node.Endpoint.AdminUser, "via": via, "job_id": job.ID.String(),
 		})
 	})
@@ -302,13 +302,20 @@ func (h setupHandler) sessionEvent(ctx context.Context, lease jobs.Lease, job jo
 // verify is ADR-0009 (f) step 8: a fresh session as the dedicated user, with
 // the key version just authorized.
 func (h setupHandler) verify(ctx context.Context, node domain.Node, req setupRequest, id secrets.Identity, outcome systemd.SetupOutcome) error {
-	h.conn.Invalidate(node, node.Endpoint.User)
-	dedicated, err := h.conn.Dedicated(node, pinnedIdentityRef(id))
+	return verifyDedicated(ctx, h.conn, node, pinnedIdentityRef(id), outcome.SystemctlPath, req)
+}
+
+// verifyDedicated opens a fresh session as the dedicated user of node with
+// credentialRef and checks it as setup left it: the identity, the sudo
+// commands and the groups. node says which path (direct or tunnel) is proven.
+func verifyDedicated(ctx context.Context, conn Connector, node domain.Node, credentialRef, systemctlPath string, req setupRequest) error {
+	conn.Invalidate(node, node.Endpoint.User)
+	dedicated, err := conn.Dedicated(node, credentialRef)
 	if err != nil {
 		return err
 	}
 	if err := systemd.Verify(ctx, dedicated, systemd.VerifyParams{
-		User: node.Endpoint.User, SystemctlPath: outcome.SystemctlPath, Grants: req.Grants, LogsMode: req.LogsMode,
+		User: node.Endpoint.User, SystemctlPath: systemctlPath, Grants: req.Grants, LogsMode: req.LogsMode,
 	}); err != nil {
 		return err
 	}

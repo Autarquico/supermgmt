@@ -43,6 +43,7 @@ func (f *Fake) routes() {
 	f.handle(OpPolicyDelete, "DELETE "+access+"/policies/{id}", nil, f.policyDelete)
 	f.handle(OpAppCreate, "POST "+access+"/apps", nil, f.appCreate)
 	f.handle(OpAppList, "GET "+access+"/apps", append([]string{"name", "exact"}, paging...), f.appList)
+	f.handle(OpAppUpdate, "PUT "+access+"/apps/{id}", nil, func(c *call) reply { return f.appWrite(c, c.path("id")) })
 	f.handle(OpAppDelete, "DELETE "+access+"/apps/{id}", nil, f.appDelete)
 	f.handle(OpServiceTokenNew, "POST "+access+"/service_tokens", nil, f.serviceTokenCreate)
 	f.handle(OpServiceTokenList, "GET "+access+"/service_tokens", append([]string{"name"}, paging...), f.serviceTokenList)
@@ -430,7 +431,10 @@ func appJSON(a App) map[string]any {
 	}
 }
 
-func (f *Fake) appCreate(c *call) reply {
+func (f *Fake) appCreate(c *call) reply { return f.appWrite(c, "") }
+
+// appWrite creates an application (id "") or replaces one.
+func (f *Fake) appWrite(c *call, id string) reply {
 	var in struct {
 		Name               string `json:"name"`
 		Domain             string `json:"domain"`
@@ -457,10 +461,19 @@ func (f *Fake) appCreate(c *call) reply {
 		}
 		a.PolicyIDs = append(a.PolicyIDs, p.ID)
 	}
+	existing := slices.IndexFunc(f.apps, func(other App) bool { return other.ID == id })
+	if id != "" && existing < 0 {
+		return notFound(12130, "application")
+	}
 	for _, other := range f.apps {
-		if other.Domain == domain {
+		if other.Domain == domain && other.ID != id {
 			return fail(http.StatusConflict, 12130, "An application with this domain already exists")
 		}
+	}
+	if id != "" {
+		a.ID, a.CreatedAt, a.seq = id, f.apps[existing].CreatedAt, f.apps[existing].seq
+		f.apps[existing] = a
+		return ok(appJSON(a))
 	}
 	a.ID = f.newID(3)
 	f.apps = append(f.apps, a)

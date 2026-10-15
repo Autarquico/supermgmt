@@ -255,6 +255,12 @@ func build(ctx context.Context, q database.Querier, action string, actorID domai
 		return built{}, err
 	}
 	revision := target.revision
+	if action == policy.ActionNodeTunnelDisable {
+		// The job moves the node's endpoint itself, partway through; a
+		// takeover re-claims it, and the claim must not find its own change
+		// a reason to call the plan stale (ADR-0037).
+		revision = 0
+	}
 	subs, planned := compositeOf(action, params, target.target)
 	return built{
 		spec:   spec,

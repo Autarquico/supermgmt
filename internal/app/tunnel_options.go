@@ -20,6 +20,8 @@ type CloudflareAPI interface {
 	CreateTunnel(ctx context.Context, name string) (cloudflare.Tunnel, error)
 	FindTunnels(ctx context.Context, name string) ([]cloudflare.Tunnel, error)
 	GetTunnel(ctx context.Context, id string) (cloudflare.Tunnel, error)
+	DeleteTunnel(ctx context.Context, id string) error
+	CleanupTunnelConnections(ctx context.Context, id string) error
 	PutTunnelIngress(ctx context.Context, id string, ingress []cloudflare.IngressRule) (cloudflare.TunnelConfig, error)
 	GetTunnelConfig(ctx context.Context, id string) (cloudflare.TunnelConfig, error)
 	TunnelToken(ctx context.Context, id string) (audit.Secret, error)
@@ -28,10 +30,13 @@ type CloudflareAPI interface {
 	UpdateAccessPolicy(ctx context.Context, id string, spec cloudflare.PolicySpec) (cloudflare.AccessPolicy, error)
 	FindAccessPolicies(ctx context.Context, name string) ([]cloudflare.AccessPolicy, error)
 	CreateAccessApp(ctx context.Context, spec cloudflare.AppSpec) (cloudflare.AccessApp, error)
+	UpdateAccessApp(ctx context.Context, id string, spec cloudflare.AppSpec) (cloudflare.AccessApp, error)
 	FindAccessApps(ctx context.Context, name string) ([]cloudflare.AccessApp, error)
+	DeleteAccessApp(ctx context.Context, id string) error
 
 	CreateTunnelCNAME(ctx context.Context, zoneID, hostname, tunnelID, comment string) (cloudflare.DNSRecord, error)
 	FindDNSRecords(ctx context.Context, zoneID, hostname string) ([]cloudflare.DNSRecord, error)
+	DeleteDNSRecord(ctx context.Context, zoneID, recordID string) error
 
 	CreateServiceToken(ctx context.Context, name string) (cloudflare.NewServiceToken, error)
 	FindServiceTokens(ctx context.Context, name string) ([]cloudflare.ServiceToken, error)

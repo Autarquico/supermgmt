@@ -81,6 +81,7 @@ const (
 	OpPolicyDelete     Op = "policy.delete"
 	OpAppCreate        Op = "app.create"
 	OpAppList          Op = "app.list"
+	OpAppUpdate        Op = "app.update"
 	OpAppDelete        Op = "app.delete"
 	OpServiceTokenNew  Op = "service_token.create"
 	OpServiceTokenList Op = "service_token.list"

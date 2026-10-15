@@ -29,6 +29,12 @@ import (
 type memSecrets struct {
 	mu   sync.Mutex
 	vals map[string][]audit.Secret
+	// crashAfterPut makes the k-th Put (1-based; 0 never) store its value and
+	// then fail, as a worker that dies right after it. afterPut observes every
+	// stored value.
+	crashAfterPut int
+	puts          int
+	afterPut      func()
 }
 
 func newMemSecrets() *memSecrets { return &memSecrets{vals: map[string][]audit.Secret{}} }
@@ -45,9 +51,17 @@ func (m *memSecrets) Get(_ context.Context, ref secrets.Ref) (audit.Secret, erro
 
 func (m *memSecrets) Put(_ context.Context, name string, plaintext audit.Secret, _ map[string]any) (secrets.Ref, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.vals[name] = append(m.vals[name], plaintext)
-	return secrets.Ref{Name: name, Version: len(m.vals[name])}, nil
+	m.puts++
+	ref, crash, observe := secrets.Ref{Name: name, Version: len(m.vals[name])}, m.puts == m.crashAfterPut, m.afterPut
+	m.mu.Unlock()
+	if observe != nil {
+		observe()
+	}
+	if crash {
+		return ref, errCrash
+	}
+	return ref, nil
 }
 
 func (m *memSecrets) versions(name string) int {
@@ -67,11 +81,16 @@ type chaosAPI struct {
 	count int
 	fired bool
 	clock func(time.Duration)
+	// afterMutation observes the state after every mutation, whatever its fault.
+	afterMutation func()
 }
 
 var errCrash = errors.New("the worker died")
 
 func (c *chaosAPI) after(err error) error {
+	if c.afterMutation != nil {
+		c.afterMutation()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.count++
@@ -123,6 +142,27 @@ func (c *chaosAPI) CreateServiceToken(ctx context.Context, name string) (cloudfl
 	return t, c.after(err)
 }
 
+func (c *chaosAPI) UpdateAccessApp(ctx context.Context, id string, spec cloudflare.AppSpec) (cloudflare.AccessApp, error) {
+	a, err := c.CloudflareAPI.UpdateAccessApp(ctx, id, spec)
+	return a, c.after(err)
+}
+
+func (c *chaosAPI) DeleteAccessApp(ctx context.Context, id string) error {
+	return c.after(c.CloudflareAPI.DeleteAccessApp(ctx, id))
+}
+
+func (c *chaosAPI) DeleteDNSRecord(ctx context.Context, zone, id string) error {
+	return c.after(c.CloudflareAPI.DeleteDNSRecord(ctx, zone, id))
+}
+
+func (c *chaosAPI) DeleteTunnel(ctx context.Context, id string) error {
+	return c.after(c.CloudflareAPI.DeleteTunnel(ctx, id))
+}
+
+func (c *chaosAPI) CleanupTunnelConnections(ctx context.Context, id string) error {
+	return c.after(c.CloudflareAPI.CleanupTunnelConnections(ctx, id))
+}
+
 func (c *chaosAPI) DeleteServiceToken(ctx context.Context, id string) error {
 	return c.after(c.CloudflareAPI.DeleteServiceToken(ctx, id))
 }
@@ -138,6 +178,9 @@ type tunnelSetting struct {
 	cfg     config.Cloudflare
 	files   map[string]string // what the admin session installed on the node
 	queued  jobs.Job
+	current jobs.Handler // the handler attempt runs; the setup handler when nil
+	disable tunnelDisableHandler
+	rotate  tunnelRotateHandler
 }
 
 const (
@@ -170,6 +213,8 @@ func newTunnelSetting(t *testing.T, cfOptions ...cffake.Option) *tunnelSetting {
 	})
 	mustf(t, err, "newTunnelEngine")
 	s.handler.tunnel = engine
+	ts.disable = tunnelDisableHandler{core: s.handler.core, store: s.store, conn: s.conn, prober: s.handler.prober, tunnel: engine}
+	ts.rotate = tunnelRotateHandler{store: s.store, tunnel: engine}
 	ts.scriptNode(s.dialer.as("admin"))
 	s.dialer.tunnel["admin"] = s.dialer.as("admin") // once switched, the admin session goes through the tunnel too
 	scriptDedicated(s.dialer.through("supermgmt"))
@@ -199,6 +244,10 @@ func (ts *tunnelSetting) scriptNode(admin *fakeNode) {
 				return transport.Result{ExitStatus: 3}, nil
 			}
 			return transport.Result{Stdout: []byte(sha256Of(content) + "  -\n")}, nil
+		})
+		admin.on("setup.file_remove"+suffix, func(c templates.Command) (transport.Result, error) {
+			delete(ts.files, argument(c.Line, -1))
+			return transport.Result{}, nil
 		})
 		admin.on("setup.apt_install_cloudflared"+suffix, func(templates.Command) (transport.Result, error) {
 			installed = true
@@ -231,7 +280,11 @@ func (ts *tunnelSetting) attempt() error {
 		ts.t.Fatal("no job to claim")
 	}
 	ts.lease = claimed.Lease
-	err := ts.handler.Run(context.Background(), claimed.Lease)
+	var handler jobs.Handler = ts.handler
+	if ts.current != nil {
+		handler = ts.current
+	}
+	err := handler.Run(context.Background(), claimed.Lease)
 	if err == nil {
 		mustf(ts.t, ts.store.Succeed(context.Background(), claimed.Lease), "Succeed")
 	}
