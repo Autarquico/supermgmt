@@ -240,6 +240,7 @@ github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessPolicy
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDNSRecord  FuzzDecodeDNS
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDNSRecords  FuzzDecodeDNS
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeEnvelope  FuzzDecodeEnvelope
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeIdentityProviders  FuzzDecodeIdentityProviders
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeObject  FuzzDecodeTunnel
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeObjects  FuzzDecodeTunnel
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeServiceToken  FuzzDecodeServiceToken

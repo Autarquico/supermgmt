@@ -98,6 +98,7 @@ type Pool struct {
 	dialers       map[domain.Transport]Dialer
 	peers         map[connKey]*peer
 	retiring      map[*liveConn]struct{} // replaced or invalidated connections that still hold leases
+	closing       []*liveConn            // to close once mu is released; guarded by mu
 	janitorPeriod time.Duration
 }
 
@@ -163,7 +164,7 @@ func (p *Pool) For(t Target) transport.Executor { return executor{pool: p, targe
 // State reports what the pool knows about a node without dialing.
 func (p *Pool) State(node domain.ID) ConnState {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	state := ConnState{Status: ConnUnknown}
 	for key, pe := range p.peers {
 		if key.node != node {
@@ -181,21 +182,54 @@ func (p *Pool) State(node domain.ID) ConnState {
 	return state
 }
 
-// Close stops background work and closes every connection.
+// Close stops background work and closes every connection, in parallel: a
+// carrier that is slow to exit costs one grace period, not one per node.
 func (p *Pool) Close() {
 	p.stop()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	for _, pe := range p.peers {
 		if pe.conn != nil {
-			pe.conn.close()
+			p.closeLater(pe.conn)
 			pe.conn = nil
 		}
 	}
 	for c := range p.retiring {
-		c.close()
+		p.closeLater(c)
 	}
 	clear(p.retiring)
+	p.unlock()
+}
+
+// closeLater queues c to be closed when mu is released. Closing a connection
+// can wait for its carrier child to exit, which must never happen under mu.
+func (p *Pool) closeLater(c *liveConn) { p.closing = append(p.closing, c) }
+
+// unlock releases mu, then closes what was queued, a bounded number at a time.
+func (p *Pool) unlock() {
+	conns := p.closing
+	p.closing = nil
+	p.mu.Unlock()
+	closeConns(conns)
+}
+
+const maxParallelCloses = 16
+
+func closeConns(conns []*liveConn) {
+	if len(conns) == 1 {
+		conns[0].close()
+		return
+	}
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, maxParallelCloses)
+	for _, c := range conns {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			c.close()
+		}()
+	}
+	wg.Wait()
 }
 
 func backoffDelay(failures int) time.Duration {
@@ -216,25 +250,25 @@ func (p *Pool) acquire(ctx context.Context, t Target) (*liveConn, error) {
 		if c := pe.conn; c != nil && !c.isClosed() {
 			c.active++
 			c.lastUsed = now
-			p.mu.Unlock()
+			p.unlock()
 			return c, nil
 		}
 		call := pe.dial
 		if call == nil {
 			if now.Before(pe.nextDial) {
 				err := pe.lastErr
-				p.mu.Unlock()
+				p.unlock()
 				return nil, err
 			}
 			if err := p.makeRoomLocked(); err != nil {
-				p.mu.Unlock()
+				p.unlock()
 				return nil, err
 			}
 			call = &dialCall{done: make(chan struct{})}
 			pe.dial = call
 			go p.dialPeer(ctx, keyOf(t), pe, pe.epoch, t, call)
 		}
-		p.mu.Unlock()
+		p.unlock()
 
 		select {
 		case <-call.done:
@@ -281,7 +315,7 @@ func (p *Pool) makeRoomLocked() error {
 			return smerr.New(smerr.CodeNodeUnreachable, "",
 				"ssh connection limit reached: every pooled connection is busy")
 		}
-		victim.conn.close()
+		p.closeLater(victim.conn)
 		victim.conn = nil
 	}
 	return nil
@@ -291,7 +325,7 @@ func (p *Pool) makeRoomLocked() error {
 // commands already running on it are never cut short.
 func (p *Pool) retireLocked(c *liveConn) {
 	if c.active == 0 {
-		c.close()
+		p.closeLater(c)
 		return
 	}
 	c.retired = true
@@ -305,7 +339,7 @@ func (p *Pool) retireLocked(c *liveConn) {
 // repeated.
 func (p *Pool) Invalidate(node domain.ID, user string) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	for key, pe := range p.peers {
 		if key.node == node && key.user == user {
 			p.invalidateLocked(pe)
@@ -318,7 +352,7 @@ func (p *Pool) Invalidate(node domain.ID, user string) {
 // the old transport retire as their leases drain.
 func (p *Pool) InvalidateNode(node domain.ID) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	for key, pe := range p.peers {
 		if key.node == node {
 			p.invalidateLocked(pe)
@@ -369,7 +403,7 @@ func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, startEpoch i
 	conn, err := p.connect(dialCtx, t)
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	defer close(call.done)
 	pe.dial = nil
 	now := p.clock.Now()
@@ -382,10 +416,10 @@ func (p *Pool) dialPeer(ctx context.Context, key connKey, pe *peer, startEpoch i
 		pe.nextDial = now.Add(backoffDelay(pe.failures))
 		call.err = err
 	case p.peers[key] == pe && pe.epoch != startEpoch && p.ctx.Err() == nil:
-		conn.close()
+		p.closeLater(conn)
 		call.err, call.retry = errSuperseded, true
 	case p.peers[key] != pe || p.ctx.Err() != nil:
-		conn.close()
+		p.closeLater(conn)
 		call.err = errReplaced
 	default:
 		conn.lastUsed = now
@@ -498,7 +532,7 @@ func (p *Pool) watch(pe *peer, c *liveConn) {
 		_ = c.client.Wait()
 		c.close()
 		p.mu.Lock()
-		defer p.mu.Unlock()
+		defer p.unlock()
 		delete(p.retiring, c)
 		if pe.conn == c {
 			pe.conn = nil
@@ -565,11 +599,11 @@ func (p *Pool) janitor() {
 // reapIdle closes connections idle for at least idle_connection_ttl.
 func (p *Pool) reapIdle() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	now := p.clock.Now()
 	for _, pe := range p.peers {
 		if c := pe.conn; c != nil && c.active == 0 && now.Sub(c.lastUsed) >= p.cfg.IdleConnectionTTL {
-			c.close()
+			p.closeLater(c)
 			pe.conn = nil
 		}
 	}
@@ -577,11 +611,11 @@ func (p *Pool) reapIdle() {
 
 func (p *Pool) release(c *liveConn) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	c.active--
 	c.lastUsed = p.clock.Now()
 	if c.retired && c.active == 0 {
-		c.close()
+		p.closeLater(c)
 		delete(p.retiring, c)
 	}
 }

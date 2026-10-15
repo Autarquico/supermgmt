@@ -342,19 +342,11 @@ func TestAccess_PoliciesAppsAndTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Removal order: the policy is held by the application until it is deleted.
-	if err := c.DeleteAccessPolicy(ctx(t), svc.ID); !IsConflict(err) {
-		t.Errorf("deleting an attached policy = %v", err)
-	}
+	// The policies are instance-wide and outlive any one application.
 	if err := c.DeleteAccessApp(ctx(t), app.ID); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{svc.ID, owners.ID} {
-		if err := c.DeleteAccessPolicy(ctx(t), id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if snap := f.Snapshot(); len(snap.Apps)+len(snap.Policies) != 0 {
+	if snap := f.Snapshot(); len(snap.Apps) != 0 || len(snap.Policies) != 2 {
 		t.Errorf("left behind: %+v", snap)
 	}
 }
@@ -767,5 +759,48 @@ func TestVerifyToken_FallsBackToTheUserEndpoint(t *testing.T) {
 	var api *APIError
 	if _, err := wrong.VerifyToken(ctx(t)); !errors.As(err, &api) || api.ErrorCode() != smerr.CodeUnauthenticated {
 		t.Errorf("wrong token = %v", err)
+	}
+}
+
+// SEC-1: an empty access_identity_providers means one-time PIN only; Cloudflare
+// reads a missing allowed_idps as every provider of the organisation.
+func TestAccess_EmptyIdentityProvidersMeanOneTimePINOnly(t *testing.T) {
+	f, c := newEnv(t)
+	zone, _ := f.Zone()
+	f.SeedIdentityProvider("Company SSO", "oidc")
+	pol := must[AccessPolicy](t)(c.CreateAccessPolicy(ctx(t), PolicySpec{Name: OwnersPolicyName(instanceID), Kind: PolicyAllow, Emails: []string{"o@example.com"}}))
+	spec := AppSpec{Name: AccessAppName(instanceID, nodeID), Domain: "ssh-a." + zone, PolicyIDs: []string{pol.ID}}
+
+	app := must[AccessApp](t)(c.CreateAccessApp(ctx(t), spec))
+	if len(app.AllowedIdPs) != 1 || app.AllowedIdPs[0] != cffake.DefaultOneTimePINID {
+		t.Fatalf("allowed_idps = %v, want exactly the one-time PIN provider", app.AllowedIdPs)
+	}
+	spec.AllowedIdPs = nil
+	updated := must[AccessApp](t)(c.UpdateAccessApp(ctx(t), app.ID, spec))
+	if len(updated.AllowedIdPs) != 1 || updated.AllowedIdPs[0] != cffake.DefaultOneTimePINID {
+		t.Errorf("update allowed_idps = %v", updated.AllowedIdPs)
+	}
+	if got := must[[]string](t)(c.ResolveAllowedIdPs(ctx(t), []string{"mine"})); len(got) != 1 || got[0] != "mine" {
+		t.Errorf("a configured list must be used as it is: %v", got)
+	}
+}
+
+func TestAccess_NoOneTimePINFailsBeforeTheApplicationIsCreated(t *testing.T) {
+	f, c := newEnv(t)
+	zone, _ := f.Zone()
+	f.ClearIdentityProviders()
+	f.SeedIdentityProvider("Company SSO", "oidc")
+	pol := must[AccessPolicy](t)(c.CreateAccessPolicy(ctx(t), PolicySpec{Name: OwnersPolicyName(instanceID), Kind: PolicyAllow, Emails: []string{"o@example.com"}}))
+	_, err := c.CreateAccessApp(ctx(t), AppSpec{Name: AccessAppName(instanceID, nodeID), Domain: "ssh-a." + zone, PolicyIDs: []string{pol.ID}})
+	if smerr.CodeOf(err) != smerr.CodeCapabilityUnavailable || !strings.Contains(err.Error(), "One-time PIN in Zero Trust") || !strings.Contains(err.Error(), "access_identity_providers") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.Apps()) != 0 {
+		t.Error("an application was created without a login method")
+	}
+	for _, m := range f.Mutations() {
+		if m.Op == cffake.OpAppCreate {
+			t.Error("the create request was sent")
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"net"
@@ -112,13 +113,23 @@ func resolveCloudflared(cfg CloudflareConfig) (string, error) {
 	} else if !filepath.IsAbs(cfg.Path) {
 		return "", smerr.New(smerr.CodeInvalidArgument, "", "the cloudflared path must be absolute")
 	}
+	var refusal error
 	for _, c := range candidates {
 		if !filepath.IsAbs(c) {
 			continue
 		}
-		if info, err := os.Stat(c); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
-			return c, nil
+		info, err := os.Stat(c)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			continue
 		}
+		if err := requireTrustedExecutable(c); err != nil {
+			refusal = cmp.Or(refusal, err)
+			continue
+		}
+		return c, nil
+	}
+	if refusal != nil {
+		return "", refusal
 	}
 	return "", missing
 }
@@ -145,8 +156,8 @@ func (d *CloudflareDialer) homeDir() (string, error) {
 		d.home, d.ownHome = dir, true
 		return dir, nil
 	}
-	if err := os.MkdirAll(d.home, 0o700); err != nil {
-		return "", smerr.Wrap(err, smerr.CodeInternal, "", "create the cloudflared home directory")
+	if err := securePrivateDir(d.home); err != nil {
+		return "", err
 	}
 	return d.home, nil
 }
@@ -203,26 +214,29 @@ func (d *CloudflareDialer) checkAdmitted(ctx context.Context, hostname string, t
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-	if isAccessLogin(resp) {
+	if accessRefused(resp) {
 		return smerr.New(smerr.CodeNodeUnreachable, "", "Cloudflare Access did not admit the service token for "+hostname+
 			": check that the token is in the application's service policy")
 	}
 	return nil
 }
 
-// isAccessLogin recognises Access's redirect to its login page.
-func isAccessLogin(resp *http.Response) bool {
+// accessLoginPath is the path prefix cloudflared itself treats as Access's
+// login redirect (carrier/carrier.go IsAccessResponse, cloudflared 2026.10.1).
+const accessLoginPath = "/cdn-cgi/access/login"
+
+// accessRefused recognises an answer after which cloudflared would start its
+// login flow (the same rule as cloudflared: 302 to the login path, whatever
+// the host) or which says outright that the token is not admitted (401, 403).
+func accessRefused(resp *http.Response) bool {
 	switch resp.StatusCode {
-	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-	default:
-		return false
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return true
+	case http.StatusFound:
+		loc, err := url.Parse(resp.Header.Get("Location"))
+		return err == nil && strings.HasPrefix(loc.Path, accessLoginPath)
 	}
-	loc, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(loc.Hostname())
-	return host == "cloudflareaccess.com" || strings.HasSuffix(host, ".cloudflareaccess.com")
+	return false
 }
 
 // sanitizedError hides the token from an error that could echo a request.

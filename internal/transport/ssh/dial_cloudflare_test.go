@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -59,6 +60,13 @@ func runFakeCloudflared() {
 		_, _ = io.WriteString(os.Stderr, b.Stderr)
 	}
 	switch b.Mode {
+	case "spawn": // a carrier with a child of its own, in the same process group
+		if os.Getenv("FAKE_GRANDCHILD") == "" {
+			grandchild := exec.CommandContext(context.Background(), os.Args[0], "access", "ssh")
+			grandchild.Env = append(os.Environ(), "FAKE_GRANDCHILD=1")
+			_ = grandchild.Start()
+		}
+		time.Sleep(time.Hour)
 	case "die":
 		os.Exit(3)
 	case "ignoreterm":

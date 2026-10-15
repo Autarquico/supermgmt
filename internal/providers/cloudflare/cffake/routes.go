@@ -48,6 +48,7 @@ func (f *Fake) routes() {
 	f.handle(OpServiceTokenNew, "POST "+access+"/service_tokens", nil, f.serviceTokenCreate)
 	f.handle(OpServiceTokenList, "GET "+access+"/service_tokens", append([]string{"name"}, paging...), f.serviceTokenList)
 	f.handle(OpServiceTokenDel, "DELETE "+access+"/service_tokens/{id}", nil, f.serviceTokenDelete)
+	f.handle(OpIdPList, "GET "+access+"/identity_providers", paging, f.idpList)
 }
 
 func notFound(code int, what string) reply { return fail(http.StatusNotFound, code, what+" not found") }
@@ -556,4 +557,10 @@ func (f *Fake) serviceTokenDelete(c *call) reply {
 		}
 	}
 	return notFound(12130, "service token")
+}
+
+func (f *Fake) idpList(c *call) reply {
+	return listed(c, f.idps, func(i IdentityProvider) any {
+		return map[string]any{"id": i.ID, "name": i.Name, "type": i.Type}
+	})
 }

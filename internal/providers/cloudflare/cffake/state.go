@@ -47,6 +47,9 @@ type App struct {
 	seq                    int
 }
 
+// IdentityProvider is a login method of the account's Zero Trust organisation.
+type IdentityProvider struct{ ID, Name, Type string }
+
 // ServiceToken is a stored Access service token.
 type ServiceToken struct {
 	ID, Name, ClientID, ClientSecret string
@@ -210,4 +213,22 @@ func (f *Fake) protected(hostname string) bool {
 
 func (f *Fake) policyExists(id string) bool {
 	return slices.ContainsFunc(f.policies, func(p Policy) bool { return p.ID == id })
+}
+
+// SeedIdentityProvider adds a login method of the given type ("onetimepin",
+// "github", "oidc", ...) without a request.
+func (f *Fake) SeedIdentityProvider(name, kind string) IdentityProvider {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	idp := IdentityProvider{ID: f.newID(8), Name: name, Type: kind}
+	f.idps = append(f.idps, idp)
+	return idp
+}
+
+// ClearIdentityProviders removes every login method, one-time PIN included: an
+// organisation where nothing was ever enabled.
+func (f *Fake) ClearIdentityProviders() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.idps = nil
 }

@@ -407,3 +407,20 @@ func (w wireTokenInfo) info() (TokenInfo, error) {
 func decodeTokenInfo(raw []byte) (TokenInfo, error) {
 	return decodeObject(raw, wireTokenInfo.info)
 }
+
+type wireIdentityProvider struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+func (w wireIdentityProvider) provider() (IdentityProvider, error) {
+	if !validID(w.ID) || !cleanText(w.Type) || !cleanText(w.Name) {
+		return IdentityProvider{}, errUnreadable
+	}
+	return IdentityProvider(w), nil
+}
+
+func decodeIdentityProviders(raw []byte) ([]IdentityProvider, error) {
+	return decodeObjects(raw, wireIdentityProvider.provider)
+}
