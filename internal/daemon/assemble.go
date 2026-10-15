@@ -499,9 +499,9 @@ func (b *builder) reconcileTunnelsAfterRestore(rec *app.TunnelReconciler) {
 	if rec == nil {
 		return
 	}
-	b.hold.AfterRelease(func() {
+	b.hold.AfterRelease(func(ctx context.Context) {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 			defer cancel()
 			report, err := rec.Run(ctx)
 			if err != nil {
