@@ -47,7 +47,10 @@ func (r *tunnelRun) emitInstance(ctx context.Context, tx *database.Tx, action st
 	if err != nil {
 		return err
 	}
-	data["job_id"], data["operation_id"] = r.job.ID.String(), r.op.ID.String()
+	data["job_id"] = r.job.ID.String()
+	if r.op.ID != "" {
+		data["operation_id"] = r.op.ID.String()
+	}
 	return r.emit(ctx, tx, actor, action, r.instanceRef(), domain.ResultSucceeded, data)
 }
 
@@ -92,8 +95,12 @@ func (r *tunnelRun) ensureServiceToken(ctx context.Context) (database.Cloudflare
 		if state.Rotation != database.RotationIdle {
 			return state, nil // a rotation owns the token until it finishes
 		}
-		healthy, err := r.tokenHealthy(ctx, state, name)
+		healthy, err := r.tokenHealthy(ctx, state)
 		if err != nil || healthy {
+			return state, err
+		}
+		// The recorded token (which a rotation may have renamed) is replaced.
+		if err := r.deleteTokensNamed(ctx, state.Token.Name); err != nil {
 			return state, err
 		}
 	case smerr.CodeOf(err) != smerr.CodeNotFound:
@@ -121,14 +128,14 @@ func (r *tunnelRun) ensureServiceToken(ctx context.Context) (database.Cloudflare
 
 // tokenHealthy reports whether the recorded token still exists and the stored
 // secret belongs to it.
-func (r *tunnelRun) tokenHealthy(ctx context.Context, state database.CloudflareState, name string) (bool, error) {
-	tokens, err := r.api.FindServiceTokens(ctx, name)
+func (r *tunnelRun) tokenHealthy(ctx context.Context, state database.CloudflareState) (bool, error) {
+	tokens, err := r.api.FindServiceTokens(ctx, state.Token.Name)
 	if err != nil {
 		return false, err
 	}
 	i := slices.IndexFunc(tokens, func(t cloudflare.ServiceToken) bool { return t.ID == state.Token.ID })
 	if i < 0 {
-		return false, nil
+		return false, r.auditVanished(ctx, "service token", state.Token.ID)
 	}
 	stored, err := r.opts.Secrets.Get(ctx, secrets.Ref{Name: r.accessSecretName()})
 	if smerr.CodeOf(err) == smerr.CodeNotFound {

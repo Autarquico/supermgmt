@@ -19,13 +19,13 @@ import (
 func (r *tunnelRun) known() database.TunnelObjects {
 	known := r.op.Objects
 	if known.TunnelID == "" {
-		known.TunnelID = r.inherited.TunnelID
+		known.TunnelID = r.lastEnabled.Objects.TunnelID
 	}
 	if known.AccessAppID == "" {
-		known.AccessAppID = r.inherited.AccessAppID
+		known.AccessAppID = r.lastEnabled.Objects.AccessAppID
 	}
 	if known.DNSRecordID == "" {
-		known.DNSRecordID = r.inherited.DNSRecordID
+		known.DNSRecordID = r.lastEnabled.Objects.DNSRecordID
 	}
 	return known
 }
@@ -67,7 +67,7 @@ func (r *tunnelRun) provisionCloudflare(ctx context.Context) (audit.Secret, erro
 func (r *tunnelRun) ensureTunnel(ctx context.Context, _ database.CloudflareState) error {
 	name := cloudflare.TunnelName(r.instanceID, r.node.ID.String())
 	tunnel, how, err := ensureNamed(ctx, r, namedObject[cloudflare.Tunnel]{
-		kind: "tunnel", name: name, known: r.known().TunnelID,
+		kind: "tunnel", name: name, known: r.known().TunnelID, recreate: r.op.Objects.TunnelID == "",
 		find:   func(ctx context.Context) ([]cloudflare.Tunnel, error) { return r.api.FindTunnels(ctx, name) },
 		create: func(ctx context.Context) (cloudflare.Tunnel, error) { return r.api.CreateTunnel(ctx, name) },
 		idOf:   func(t cloudflare.Tunnel) string { return t.ID },
@@ -107,7 +107,7 @@ func (r *tunnelRun) ensureAccessApp(ctx context.Context, state database.Cloudfla
 		AllowedIdPs: r.opts.Config.AccessIdentityProviders,
 	}
 	app, how, err := ensureNamed(ctx, r, namedObject[cloudflare.AccessApp]{
-		kind: "Access application", name: name, known: r.known().AccessAppID,
+		kind: "Access application", name: name, known: r.known().AccessAppID, recreate: r.op.Objects.AccessAppID == "",
 		find:   func(ctx context.Context) ([]cloudflare.AccessApp, error) { return r.api.FindAccessApps(ctx, name) },
 		create: func(ctx context.Context) (cloudflare.AccessApp, error) { return r.api.CreateAccessApp(ctx, spec) },
 		idOf:   func(a cloudflare.AccessApp) string { return a.ID },
@@ -119,9 +119,30 @@ func (r *tunnelRun) ensureAccessApp(ctx context.Context, state database.Cloudfla
 	if err != nil {
 		return err
 	}
+	if how != foundCreated {
+		if err := r.reconcileAccessApp(ctx, app, spec); err != nil {
+			return err
+		}
+	}
 	return r.advance(ctx, database.PhaseAccessReady, database.TunnelObjects{AccessAppID: app.ID},
 		tunnelEvent(how, eventAccessAppCreated, eventAccessAppAdopted),
 		map[string]any{"access_app_id": app.ID, "name": name, "hostname": r.hostname})
+}
+
+// reconcileAccessApp brings an existing application to what the configuration
+// and the instance state say: its policies (a policy recreated after it
+// vanished has a new ID) and the identity providers owners may log in with.
+func (r *tunnelRun) reconcileAccessApp(ctx context.Context, app cloudflare.AccessApp, spec cloudflare.AppSpec) error {
+	if slices.Equal(app.PolicyIDs, spec.PolicyIDs) && sameSet(app.AllowedIdPs, spec.AllowedIdPs) {
+		return nil
+	}
+	if err := r.mayMutate(ctx); err != nil {
+		return err
+	}
+	if _, err := r.api.UpdateAccessApp(ctx, app.ID, spec); err != nil {
+		return err
+	}
+	return r.auditNode(ctx, eventAccessAppUpdated, map[string]any{"access_app_id": app.ID, "name": spec.Name, "hostname": r.hostname})
 }
 
 func (r *tunnelRun) ensureDNS(ctx context.Context, _ database.CloudflareState) error {
@@ -129,24 +150,51 @@ func (r *tunnelRun) ensureDNS(ctx context.Context, _ database.CloudflareState) e
 		return smerr.New(smerr.CodeInternal, "", "the DNS record is created only after the Access application is recorded")
 	}
 	tunnelID, comment := r.known().TunnelID, cloudflare.DNSComment(r.instanceID, r.node.ID.String())
-	record, how, err := ensureNamed(ctx, r, namedObject[cloudflare.DNSRecord]{
-		kind: "DNS record", name: r.hostname, known: r.known().DNSRecordID,
-		find: func(ctx context.Context) ([]cloudflare.DNSRecord, error) {
-			return r.api.FindDNSRecords(ctx, r.zoneID, r.hostname)
-		},
-		create: func(ctx context.Context) (cloudflare.DNSRecord, error) {
-			return r.api.CreateTunnelCNAME(ctx, r.zoneID, r.hostname, tunnelID, comment)
-		},
-		idOf: func(d cloudflare.DNSRecord) string { return d.ID },
-		adoptable: func(d cloudflare.DNSRecord) bool {
-			return r.createdSince(d.CreatedOn) && d.Type == "CNAME" && d.Comment == comment && d.Content == cloudflare.TunnelTarget(tunnelID)
-		},
-	})
+	object := func(known string) namedObject[cloudflare.DNSRecord] {
+		return namedObject[cloudflare.DNSRecord]{
+			kind: "DNS record", name: r.hostname, known: known, recreate: r.op.Objects.DNSRecordID == "",
+			find: func(ctx context.Context) ([]cloudflare.DNSRecord, error) {
+				return r.api.FindDNSRecords(ctx, r.zoneID, r.hostname)
+			},
+			create: func(ctx context.Context) (cloudflare.DNSRecord, error) {
+				return r.api.CreateTunnelCNAME(ctx, r.zoneID, r.hostname, tunnelID, comment)
+			},
+			idOf: func(d cloudflare.DNSRecord) string { return d.ID },
+			adoptable: func(d cloudflare.DNSRecord) bool {
+				return r.createdSince(d.CreatedOn) && d.Type == "CNAME" && d.Comment == comment && d.Content == cloudflare.TunnelTarget(tunnelID)
+			},
+		}
+	}
+	record, how, err := ensureNamed(ctx, r, object(r.known().DNSRecordID))
 	if err != nil {
 		return err
 	}
+	if how == foundRecorded && record.Content != cloudflare.TunnelTarget(tunnelID) {
+		// The tunnel was recreated, so the record points at the old one. There
+		// is no update call: delete it (the Access application is in place, so
+		// the hostname stays protected) and create it again.
+		if record, how, err = r.replaceStaleDNS(ctx, record, object); err != nil {
+			return err
+		}
+	}
 	return r.advance(ctx, database.PhaseDNSCreated, database.TunnelObjects{DNSRecordID: record.ID},
 		tunnelEvent(how, eventDNSCreated, eventDNSAdopted), map[string]any{"dns_record_id": record.ID, "hostname": r.hostname})
+}
+
+func (r *tunnelRun) replaceStaleDNS(ctx context.Context, stale cloudflare.DNSRecord, object func(string) namedObject[cloudflare.DNSRecord]) (cloudflare.DNSRecord, howFound, error) {
+	if r.op.Objects.DNSRecordID != "" {
+		return stale, 0, smerr.New(smerr.CodeConflict, "", "the DNS record recorded for this node points at another tunnel; reconcile before running setup again")
+	}
+	if err := r.mayMutate(ctx); err != nil {
+		return stale, 0, err
+	}
+	if err := r.api.DeleteDNSRecord(ctx, r.zoneID, stale.ID); err != nil && !cloudflare.IsNotFound(err) {
+		return stale, 0, err
+	}
+	if err := r.auditNode(ctx, eventDNSReplaced, map[string]any{"dns_record_id": stale.ID, "hostname": r.hostname}); err != nil {
+		return stale, 0, err
+	}
+	return ensureNamed(ctx, r, object(""))
 }
 
 // tunnelEvent picks the audit action: objects that already existed under their

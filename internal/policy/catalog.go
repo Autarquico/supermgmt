@@ -69,6 +69,8 @@ const (
 	ActionNodeSetup             = "node.setup"
 	ActionSudoersWrite          = "sudoers.write"
 	ActionLogBrokerInstall      = "log_broker.install"
+	ActionNodeTunnelDisable     = "node.tunnel.disable"
+	ActionCloudflareRotate      = "cloudflare.access_token.rotate"
 )
 
 // node.setup parameters (ADR-0009). docker_access has no default: the caller
@@ -268,6 +270,8 @@ func buildCatalog() []ActionSpec {
 		job("deployment.create", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
 		job("deployment.rollback", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
 		setup,
+		job(ActionNodeTunnelDisable, domain.ResourceNode, high, idem, "node.ssh", 3),
+		job(ActionCloudflareRotate, domain.ResourceInstance, high, idem, "", 3),
 		job(ActionSudoersWrite, domain.ResourceNode, high, noRun, "node.ssh", 1),
 		job(ActionLogBrokerInstall, domain.ResourceNode, high, noRun, "node.ssh", 1),
 		job("backup.create", domain.ResourceInstance, op, idem, "", 3),

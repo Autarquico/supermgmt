@@ -41,8 +41,10 @@ type namedObject[T any] struct {
 	name string
 	// known is the recorded ID, empty when nothing was recorded yet.
 	known string
-	// recreate allows creating a new object when the recorded one is gone;
-	// recorded IDs of operation objects are immutable, so those fail instead.
+	// recreate allows creating a new object when the known one is gone, after
+	// auditing it. The IDs the operation itself recorded are immutable, so
+	// those objects fail instead; only an ID inherited from an earlier
+	// operation (or kept in the instance state) is repaired.
 	recreate bool
 	find     func(ctx context.Context) ([]T, error)
 	create   func(ctx context.Context) (T, error)
@@ -70,9 +72,14 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 		}
 		others = append(others, obj)
 	}
-	if o.known != "" && !o.recreate {
-		return zero, 0, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
-			"the %s recorded for this node no longer exists in Cloudflare; reconcile before running setup again", o.kind))
+	if o.known != "" {
+		if !o.recreate {
+			return zero, 0, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+				"the %s recorded for this node no longer exists in Cloudflare; reconcile before running setup again", o.kind))
+		}
+		if err := r.auditVanished(ctx, o.kind, o.known); err != nil {
+			return zero, 0, err
+		}
 	}
 	if obj, verdict := pickAdoption(others, o.adoptable); verdict != adoptNone {
 		if verdict == adoptConflict {

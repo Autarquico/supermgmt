@@ -23,24 +23,26 @@ import (
 //     node exclusively, the conservative reading.
 //   - node.probe only reads the node, so it shares it.
 var lockModeByJobType = map[string]domain.LockMode{
-	"node.probe":                domain.LockShared,
-	"node.reboot":               domain.LockExclusive,
-	"node.shutdown":             domain.LockExclusive,
-	"proxmox.vm.power":          domain.LockExclusive,
-	"proxmox.snapshot.create":   domain.LockExclusive,
-	"proxmox.snapshot.rollback": domain.LockExclusive,
-	"proxmox.snapshot.delete":   domain.LockExclusive,
-	"proxmox.backup.create":     domain.LockExclusive,
-	"node.setup":                domain.LockExclusive,
-	"control_plane.apply":       domain.LockExclusive,
-	"sudoers.write":             domain.LockExclusive,
-	"log_broker.install":        domain.LockExclusive,
-	"service.start":             domain.LockExclusive,
-	"service.stop":              domain.LockExclusive,
-	"service.restart":           domain.LockExclusive,
-	"backup.create":             domain.LockExclusive,
-	deploymentCreateAction:      domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
-	deploymentRollbackAction:    domain.LockExclusive,
+	"node.probe":                     domain.LockShared,
+	"node.reboot":                    domain.LockExclusive,
+	"node.shutdown":                  domain.LockExclusive,
+	"proxmox.vm.power":               domain.LockExclusive,
+	"proxmox.snapshot.create":        domain.LockExclusive,
+	"proxmox.snapshot.rollback":      domain.LockExclusive,
+	"proxmox.snapshot.delete":        domain.LockExclusive,
+	"proxmox.backup.create":          domain.LockExclusive,
+	"node.setup":                     domain.LockExclusive,
+	"node.tunnel.disable":            domain.LockExclusive,
+	"cloudflare.access_token.rotate": domain.LockExclusive,
+	"control_plane.apply":            domain.LockExclusive,
+	"sudoers.write":                  domain.LockExclusive,
+	"log_broker.install":             domain.LockExclusive,
+	"service.start":                  domain.LockExclusive,
+	"service.stop":                   domain.LockExclusive,
+	"service.restart":                domain.LockExclusive,
+	"backup.create":                  domain.LockExclusive,
+	deploymentCreateAction:           domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
+	deploymentRollbackAction:         domain.LockExclusive,
 }
 
 // cloudflareInstanceLock serializes the jobs that touch the instance-wide
@@ -122,7 +124,7 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		}
 		specs = append(specs, held...)
 	}
-	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" {
+	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" || job.Type == policy.ActionCloudflareRotate {
 		specs = append(specs, cloudflareInstanceLock)
 	}
 	for _, in := range stored.Inputs {

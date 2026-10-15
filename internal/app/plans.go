@@ -21,6 +21,7 @@ var readActionFor = map[domain.ResourceType]string{
 	domain.ResourceService:   "service.read",
 	domain.ResourceApp:       "app.read",
 	domain.ResourceAppTarget: "app_target.read",
+	domain.ResourceInstance:  "config.read",
 }
 
 // Plans creates and submits plans (spec §23 "Plans").
@@ -102,15 +103,24 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 	})
 }
 
-// requireTunnelAvailable refuses a node.setup with tunnel=true when the
-// instance has no cloudflare: block or the node is not an ssh node, so the
+// requireTunnelAvailable refuses the tunnel actions when the instance has no
+// cloudflare: block or the node is not an ssh node: node.setup with
+// tunnel=true, node.tunnel.disable and the service-token rotation. The
 // operator is told when asking, not when the job runs.
 func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, req PlanRequest) error {
-	if req.Action != policy.ActionNodeSetup {
+	switch req.Action {
+	case policy.ActionCloudflareRotate:
+		if p.cfg.Cloudflare == nil {
+			return requireTunnelAllowed(false, domain.Node{})
+		}
 		return nil
-	}
-	if tunnel, err := tunnelRequested(req.Parameters[policy.ParamTunnel]); err != nil || !tunnel {
-		return err
+	case policy.ActionNodeTunnelDisable:
+	case policy.ActionNodeSetup:
+		if tunnel, err := tunnelRequested(req.Parameters[policy.ParamTunnel]); err != nil || !tunnel {
+			return err
+		}
+	default:
+		return nil
 	}
 	node, err := database.GetNode(ctx, q, req.Target.ID)
 	if err != nil {

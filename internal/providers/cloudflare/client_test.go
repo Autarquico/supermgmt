@@ -311,6 +311,15 @@ func TestAccess_PoliciesAppsAndTokens(t *testing.T) {
 	if _, err := c.CreateAccessApp(ctx(t), AppSpec{Name: "dup", Domain: host, PolicyIDs: []string{svc.ID}}); !IsConflict(err) {
 		t.Errorf("a second application on the domain = %v", err)
 	}
+	updated := must[AccessApp](t)(c.UpdateAccessApp(ctx(t), app.ID, AppSpec{
+		Name: app.Name, Domain: host, PolicyIDs: []string{svc.ID, owners.ID}, AllowedIdPs: []string{"idp-1", "idp-2"},
+	}))
+	if updated.ID != app.ID || len(updated.AllowedIdPs) != 2 || !updated.CreatedAt.Equal(app.CreatedAt) {
+		t.Errorf("updated app = %+v, want the same application with two identity providers", updated)
+	}
+	if _, err := c.UpdateAccessApp(ctx(t), "missing", AppSpec{Name: "n", Domain: host, PolicyIDs: []string{svc.ID}}); !IsNotFound(err) {
+		t.Errorf("updating an unknown application = %v, want not found", err)
+	}
 
 	// Rotation: the service policy lists both tokens, then only the new one.
 	next := must[NewServiceToken](t)(c.CreateServiceToken(ctx(t), ServiceTokenName(instanceID)))

@@ -40,15 +40,18 @@ const (
 	maxRecordedErrorLength = 300
 )
 
-// enablePhases is the order the enable state machine walks; a phase is a step
-// that completed.
-var enablePhases = []database.TunnelPhase{
+// phaseOrder is the order the state machines walk; a phase is a step that
+// completed. Enable and disable share only the first phase, so one list orders
+// both.
+var phaseOrder = []database.TunnelPhase{
 	database.PhaseStarted, database.PhaseTokenReady, database.PhaseTunnelCreated, database.PhaseIngressSet,
 	database.PhaseAccessReady, database.PhaseDNSCreated, database.PhaseInstalled, database.PhaseVerified,
 	database.PhaseCommitted,
+	database.PhaseDirectVerified, database.PhaseSwitched, database.PhaseServiceRemoved, database.PhaseRouteClosed,
+	database.PhaseAccessRemoved, database.PhaseTunnelDeleted, database.PhaseDone,
 }
 
-func phaseIndex(p database.TunnelPhase) int { return slices.Index(enablePhases, p) }
+func phaseIndex(p database.TunnelPhase) int { return slices.Index(phaseOrder, p) }
 
 // placeholderTunnelToken has the shape of a tunnel token. It lets the setup
 // parameters be validated, with the pin check, before anything is created.
@@ -87,9 +90,11 @@ type tunnelRun struct {
 	zoneID     string
 	hostname   string
 	op         database.TunnelOperation
-	// inherited are the objects of the node's previous committed enable: a
-	// rerun uses them instead of treating them as foreign.
-	inherited database.TunnelObjects
+	// lastEnabled is the node's previous committed enable, if the node's
+	// newest finished operation is one: a rerun or a disable uses its objects
+	// instead of treating them as foreign.
+	lastEnabled database.TunnelOperation
+	disabling   bool // names the failing step as a disable's
 }
 
 // requireTunnelAllowed is the refusal of tunnel=true: the feature needs the
@@ -106,7 +111,7 @@ func requireTunnelAllowed(configured bool, node domain.Node) error {
 }
 
 // begin validates everything that can be validated without a mutation, builds
-// the client and finds or starts the operation record.
+// the client and finds or starts the enable operation record.
 func (e *tunnelEngine) begin(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, id secrets.Identity) (*tunnelRun, error) {
 	if err := requireTunnelAllowed(true, node); err != nil {
 		return nil, err
@@ -121,6 +126,34 @@ func (e *tunnelEngine) begin(ctx context.Context, lease jobs.Lease, job jobs.Job
 	if err != nil {
 		return nil, smerr.New(smerr.CodeInvalidArgument, "", err.Error())
 	}
+	r, err := e.newRun(ctx, lease, job, node, hostname)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.openOperation(ctx, database.TunnelEnable); err != nil {
+		return nil, err
+	}
+	return r, r.loadLastEnabled(ctx)
+}
+
+// newRun builds the provisioning client from the stored API token and looks
+// the zone up. It reads Cloudflare but changes nothing.
+func (e *tunnelEngine) newRun(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, hostname string) (*tunnelRun, error) {
+	r, err := e.newInstanceRun(ctx, lease, job)
+	if err != nil {
+		return nil, err
+	}
+	r.node, r.hostname = node, hostname
+	zone, err := r.api.ZoneByName(ctx, e.opts.Config.Zone)
+	if err != nil {
+		return nil, r.step("zone lookup", err)
+	}
+	r.zoneID = zone.ID
+	return r, nil
+}
+
+// newInstanceRun is a run that is not about one node: service-token rotation.
+func (e *tunnelEngine) newInstanceRun(ctx context.Context, lease jobs.Lease, job jobs.Job) (*tunnelRun, error) {
 	instance, err := database.GetInstance(ctx, e.cfg.DB.Reader())
 	if err != nil {
 		return nil, err
@@ -134,16 +167,7 @@ func (e *tunnelEngine) begin(ctx context.Context, lease jobs.Lease, job jobs.Job
 	if err != nil {
 		return nil, smerr.New(smerr.CodeInvalidArgument, "", "the Cloudflare API token is unusable: check cloudflare.api_token_ref")
 	}
-	r := &tunnelRun{tunnelEngine: e, api: api, lease: lease, job: job, node: node, instanceID: instance.ID.String(), hostname: hostname}
-	zone, err := api.ZoneByName(ctx, e.opts.Config.Zone)
-	if err != nil {
-		return nil, r.step("zone lookup", err)
-	}
-	r.zoneID = zone.ID
-	if err := r.openOperation(ctx, job); err != nil {
-		return nil, err
-	}
-	return r, nil
+	return &tunnelRun{tunnelEngine: e, api: api, lease: lease, job: job, instanceID: instance.ID.String()}, nil
 }
 
 func tunnelCredentialError(err error) error {
@@ -153,30 +177,36 @@ func tunnelCredentialError(err error) error {
 	return err
 }
 
-// openOperation resumes the node's unfinished operation or starts one.
-func (r *tunnelRun) openOperation(ctx context.Context, job jobs.Job) error {
+// openOperation resumes the node's unfinished operation or starts one of kind.
+func (r *tunnelRun) openOperation(ctx context.Context, kind database.TunnelOperationKind) error {
+	found, err := r.resumeActive(ctx, kind)
+	if err != nil || found {
+		return err
+	}
+	return r.createOperation(ctx, kind)
+}
+
+// resumeActive picks up the node's unfinished operation, if it has one.
+func (r *tunnelRun) resumeActive(ctx context.Context, kind database.TunnelOperationKind) (bool, error) {
 	op, err := database.ActiveTunnelOperation(ctx, r.cfg.DB.Reader(), r.node.ID)
 	switch {
 	case err == nil:
-		return r.resume(ctx, job, op)
+		return true, r.resume(ctx, op, kind)
 	case smerr.CodeOf(err) != smerr.CodeNotFound:
-		return err
+		return false, err
 	}
-	previous, err := database.ListTunnelOperations(ctx, r.cfg.DB.Reader(), r.node.ID)
-	if err != nil {
-		return err
-	}
-	if len(previous) > 0 && previous[0].Kind == database.TunnelEnable && previous[0].Phase == database.PhaseCommitted {
-		r.inherited = previous[0].Objects
-	}
+	return false, nil
+}
+
+func (r *tunnelRun) createOperation(ctx context.Context, kind database.TunnelOperationKind) error {
 	var created database.TunnelOperation
-	err = r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+	err := r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		if err := r.lease.Fence(ctx, tx); err != nil {
 			return err
 		}
 		var err error
 		created, err = database.CreateTunnelOperation(ctx, tx, database.TunnelOperation{
-			ID: r.cfg.IDs.NewID(), NodeID: r.node.ID, Kind: database.TunnelEnable, AccountID: r.opts.Config.AccountID,
+			ID: r.cfg.IDs.NewID(), NodeID: r.node.ID, Kind: kind, AccountID: r.opts.Config.AccountID,
 			Zone: r.opts.Config.Zone, InstanceID: r.instanceID, Hostname: r.hostname, CreatedAt: r.cfg.Clock.Now(),
 		})
 		return err
@@ -187,15 +217,35 @@ func (r *tunnelRun) openOperation(ctx context.Context, job jobs.Job) error {
 	return err
 }
 
-func (r *tunnelRun) resume(ctx context.Context, job jobs.Job, op database.TunnelOperation) error {
+// loadLastEnabled finds the committed enable the node's operations end with,
+// ignoring the operation this run is working on. A node whose newest finished
+// operation is a disable has none.
+func (r *tunnelRun) loadLastEnabled(ctx context.Context) error {
+	previous, err := database.ListTunnelOperations(ctx, r.cfg.DB.Reader(), r.node.ID)
+	if err != nil {
+		return err
+	}
+	for _, op := range previous {
+		if op.ID == r.op.ID {
+			continue
+		}
+		if op.Kind == database.TunnelEnable && op.Phase == database.PhaseCommitted {
+			r.lastEnabled = op
+		}
+		return nil
+	}
+	return nil
+}
+
+func (r *tunnelRun) resume(ctx context.Context, op database.TunnelOperation, kind database.TunnelOperationKind) error {
 	switch {
-	case op.Kind != database.TunnelEnable:
-		return smerr.New(smerr.CodeConflict, "", "a tunnel disable is unfinished on this node; finish it first")
+	case op.Kind != kind:
+		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("a tunnel %s is unfinished on this node; finish it first", op.Kind))
 	case op.AccountID != r.opts.Config.AccountID || op.Zone != r.opts.Config.Zone || op.Hostname != r.hostname:
 		return smerr.New(smerr.CodeConflict, "", "an unfinished tunnel operation was started for another Cloudflare account, zone or hostname")
 	case op.Phase == database.PhaseFailed:
 		return smerr.New(smerr.CodeConflict, "", "the tunnel operation of this node failed and needs reconciling")
-	case op.Phase == database.PhaseConflict && job.Attempts > 1:
+	case op.Phase == database.PhaseConflict && r.job.Attempts > 1:
 		// An automatic retry must not undo the halt; a new job (an operator who
 		// resolved the object in Cloudflare) resumes it.
 		return newOwnershipConflict("object", "recorded in the operation")
@@ -229,6 +279,9 @@ func (r *tunnelRun) mayMutate(ctx context.Context) error {
 func (r *tunnelRun) step(name string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if r.disabling {
+		return fmt.Errorf("tunnel disable failed at %s: %w", name, err)
 	}
 	return fmt.Errorf("tunnel setup failed at %s: %w", name, err)
 }
@@ -269,6 +322,12 @@ func (r *tunnelRun) emitFor(ctx context.Context, tx *database.Tx, action string,
 // the audit event commit together under the lease fence. A phase already
 // reached is not recorded again.
 func (r *tunnelRun) advance(ctx context.Context, next database.TunnelPhase, objects database.TunnelObjects, action string, data map[string]any) error {
+	return r.advanceWith(ctx, next, objects, action, data, nil)
+}
+
+// advanceWith is advance plus a change that must commit with the phase: the
+// switch of the endpoint, the capability.
+func (r *tunnelRun) advanceWith(ctx context.Context, next database.TunnelPhase, objects database.TunnelObjects, action string, data map[string]any, with func(context.Context, *database.Tx) error) error {
 	if phaseIndex(r.op.Phase) >= phaseIndex(next) {
 		return nil
 	}
@@ -276,6 +335,11 @@ func (r *tunnelRun) advance(ctx context.Context, next database.TunnelPhase, obje
 	err := r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		if err := r.lease.Fence(ctx, tx); err != nil {
 			return err
+		}
+		if with != nil {
+			if err := with(ctx, tx); err != nil {
+				return err
+			}
 		}
 		var err error
 		advanced, err = database.AdvanceTunnelPhase(ctx, tx, r.op.ID, r.op.Generation, r.op.Phase, next, objects, r.cfg.Clock.Now())

@@ -145,13 +145,45 @@ func orInvalid(err error, msg string) error {
 // CreateAccessApp creates a self-hosted Access application on spec.Domain.
 // The domain must be unique among the account's applications.
 func (c *Client) CreateAccessApp(ctx context.Context, spec AppSpec) (AccessApp, error) {
+	body, err := appBody(spec)
+	if err != nil {
+		return AccessApp{}, err
+	}
+	path, _ := c.accessPath("apps", "")
+	env, err := c.do(ctx, http.MethodPost, path, nil, body, maxObjectBody)
+	if err != nil {
+		return AccessApp{}, err
+	}
+	return appOf(env)
+}
+
+// UpdateAccessApp replaces the policies and allowed identity providers of an
+// application (the body of CreateAccessApp), so a re-run of setup can apply a
+// changed access_identity_providers.
+func (c *Client) UpdateAccessApp(ctx context.Context, id string, spec AppSpec) (AccessApp, error) {
+	path, err := c.accessPath("apps", id)
+	if err != nil || id == "" {
+		return AccessApp{}, orInvalid(err, "an application id is required")
+	}
+	body, err := appBody(spec)
+	if err != nil {
+		return AccessApp{}, err
+	}
+	env, err := c.do(ctx, http.MethodPut, path, nil, body, maxObjectBody)
+	if err != nil {
+		return AccessApp{}, err
+	}
+	return appOf(env)
+}
+
+func appBody(spec AppSpec) (map[string]any, error) {
 	if !cleanName(spec.Name) || !validHostname(strings.ToLower(spec.Domain)) || len(spec.PolicyIDs) == 0 {
-		return AccessApp{}, invalid("an application needs a name, a domain and at least one policy")
+		return nil, invalid("an application needs a name, a domain and at least one policy")
 	}
 	policies := make([]map[string]any, 0, len(spec.PolicyIDs))
 	for i, id := range spec.PolicyIDs {
 		if !validID(id) {
-			return AccessApp{}, invalid("invalid policy id %q", id)
+			return nil, invalid("invalid policy id %q", id)
 		}
 		policies = append(policies, map[string]any{"id": id, "precedence": i + 1})
 	}
@@ -162,16 +194,15 @@ func (c *Client) CreateAccessApp(ctx context.Context, spec AppSpec) (AccessApp, 
 	if len(spec.AllowedIdPs) > 0 {
 		for _, id := range spec.AllowedIdPs {
 			if !validID(id) {
-				return AccessApp{}, invalid("invalid identity provider id %q", id)
+				return nil, invalid("invalid identity provider id %q", id)
 			}
 		}
 		body["allowed_idps"] = spec.AllowedIdPs
 	}
-	path, _ := c.accessPath("apps", "")
-	env, err := c.do(ctx, http.MethodPost, path, nil, body, maxObjectBody)
-	if err != nil {
-		return AccessApp{}, err
-	}
+	return body, nil
+}
+
+func appOf(env envelope) (AccessApp, error) {
 	app, err := decodeAccessApp(env.Result)
 	if err != nil {
 		return AccessApp{}, &outcomeUnknown{msg: "cloudflare: application answer", err: err}

@@ -43,12 +43,15 @@ type HandlersOptions struct {
 
 // Handlers are the executors of the job types M1 adds.
 type Handlers struct {
-	probe  probeHandler
-	setup  setupHandler
-	action actionHandler
-	apply  applyHandler
-	power  *proxmoxPowerHandler // nil unless Proxmox is configured
-	deploy *deployHandler       // nil unless deployments are configured
+	probe probeHandler
+	setup setupHandler
+	// disable and rotate are nil without a cloudflare: block.
+	disable *tunnelDisableHandler
+	rotate  *tunnelRotateHandler
+	action  actionHandler
+	apply   applyHandler
+	power   *proxmoxPowerHandler // nil unless Proxmox is configured
+	deploy  *deployHandler       // nil unless deployments are configured
 }
 
 // NewHandlers validates the options.
@@ -80,6 +83,10 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
 		apply:  applyHandler{inv: o.Inventory, apps: o.Apps},
 	}
+	if tunnel != nil {
+		h.disable = &tunnelDisableHandler{core: c, store: o.Store, conn: o.Connector, prober: o.Prober, tunnel: tunnel}
+		h.rotate = &tunnelRotateHandler{store: o.Store, tunnel: tunnel}
+	}
 	if o.Proxmox != nil {
 		h.power = &proxmoxPowerHandler{
 			core: c, store: o.Store, sync: o.Proxmox, settle: o.Settle.withDefaults(),
@@ -103,6 +110,10 @@ func (h *Handlers) Map() map[string]jobs.Handler {
 	}
 	for _, verb := range domain.AllServiceVerbs() {
 		table[verb.Action()] = h.action
+	}
+	if h.disable != nil {
+		table[policy.ActionNodeTunnelDisable] = h.disable
+		table[policy.ActionCloudflareRotate] = h.rotate
 	}
 	if h.power != nil {
 		table[policy.ActionProxmoxVMPower] = h.power
