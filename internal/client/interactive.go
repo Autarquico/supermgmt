@@ -212,7 +212,7 @@ func validateConnectInfo(info wire.ConnectInfo) error {
 
 // cloudflaredDirs is the fixed list searched for the client's own cloudflared,
 // the same as the daemon's dialler; PATH is never consulted.
-var cloudflaredDirs = []string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"}
+var cloudflaredDirs = domain.CloudflaredSearchDirs()
 
 func findCloudflared() (string, error) {
 	for _, dir := range cloudflaredDirs {

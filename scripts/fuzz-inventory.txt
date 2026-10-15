@@ -116,6 +116,7 @@ github.com/autarquico/supermgmt/internal/client.Client.followOnce  exempt: typed
 github.com/autarquico/supermgmt/internal/client.LoadProfiles  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/client.call  exempt: typed daemon API call, stream plumbing or CA file read; frames are parsed by FuzzReadFrames
 github.com/autarquico/supermgmt/internal/client.closedFrameError  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/client.cloudflareProxyCommand  FuzzCloudflareProxyCommand
 github.com/autarquico/supermgmt/internal/client.decodeError  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/client.fileStore.load  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/client.readCAFile  exempt: typed daemon API call, stream plumbing or CA file read; frames are parsed by FuzzReadFrames

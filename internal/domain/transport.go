@@ -105,3 +105,7 @@ func validateDNSLabel(label string) error {
 	}
 	return nil
 }
+
+// CloudflaredSearchDirs is the fixed list, in order, where the daemon and the
+// client look for cloudflared. The inherited PATH is never consulted.
+func CloudflaredSearchDirs() []string { return []string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"} }

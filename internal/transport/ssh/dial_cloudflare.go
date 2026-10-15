@@ -46,7 +46,7 @@ type AccessTokenSource interface {
 
 // defaultCloudflaredDirs is searched, in order, when no path is configured. The
 // inherited PATH is never consulted.
-var defaultCloudflaredDirs = []string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"}
+var defaultCloudflaredDirs = domain.CloudflaredSearchDirs()
 
 // CloudflareConfig configures the cloudflare dialler.
 type CloudflareConfig struct {
