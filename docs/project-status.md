@@ -34,6 +34,7 @@ Each claim has exactly one level:
 | Every module compiled into `sm` has an allowed open-source licence | The `sm` binary | job `licenses`, passed at `6f89609` | implemented and tested in CI | Whether the shipped licence notices are legally sufficient is an open human check |
 | Signed releases with checksums, SBOM and provenance, verified by the installer before anything runs | Release pipeline and `install.sh` | Snapshot builds signed with a throwaway key (job `release-snapshot`) and installer tamper tests (job `install-sh`) | tested against fakes | Tested with a throwaway key and a local mirror. No stable release yet. The first run of this pipeline on a real tag is the pre-release `v0.1.0-rc.1`; until a person has checked that run (release checklist H2), signing, SBOM and provenance on real tags count as unverified |
 | No telemetry, no update check, no request you did not configure | The `sm` binary | Egress inventory in [Dependencies and egress](dependencies.md#egress) | not verified | Assembled from reading the code, not from capturing the traffic of a running instance |
+| Reach an SSH node through Cloudflare Tunnel from any network, with the host key still pinned and no secret in a plan, log or argument | SSH nodes on Debian 13 and Ubuntu 24.04; **experimental** | `TestTunnelSetupProvisionsEverythingProvesTheTunnelAndOnlyThenSwitches`, `TestAFailedTunnelVerificationLeavesTheNodeDirectAndTheOperationResumable`, `TestAnObjectWithTheExpectedNameButAnotherOwnerIsAConflictNeverAdopted`, `TestRotationUnderEveryFaultNeverLeavesTheDialerWithoutAnAdmittedToken`, `TestTunnelEnforcesThePinnedHostKeyAndReapsTheChild`, `TestTunnelSpawnsCloudflaredWithExactArgvAndEnvironment` (job `test`) | tested against fakes | A hand-written Cloudflare API fake and a fake `cloudflared`. Nothing ran against a real Cloudflare account or a real `cloudflared`: the permission labels, the Access behaviour, the pinned package key and the absence of the tunnel credential from the node's journal are unconfirmed ([checklist](manual-checks/cloudflare-tunnel.md)). Needs `cloudflared` on the daemon host and a Cloudflare API token that can provision |
 | Cloudflare Tunnel and Access can sit in front of a server | Server mode | [Cloudflare guide](cloudflare.md) | not verified | A guide only; never tried against a real Cloudflare account |
 
 ## The CI run behind these claims
@@ -55,7 +56,7 @@ Nothing on this list has been tried. Do not rely on it.
 - Any identity provider other than Dex for OIDC login.
 - A real Debian 13 machine (only a container), an Intel Mac, or the real macOS keychain and Linux `secret-tool`.
 - Linux distributions other than Debian 13 and Ubuntu 24.04 as managed nodes, and RHEL-family systems anywhere.
-- A real Cloudflare account.
+- A real Cloudflare account: node tunnels have run only against fakes, and the server-in-front-of-Cloudflare guide has never been tried.
 - Homebrew and Linux packages (`.deb`, `.rpm`): there are none.
 - The project name: "SuperMgmt" is a working name and may change before the first release.
 
@@ -67,6 +68,7 @@ Nothing on this list has been tried. Do not rely on it.
 | Run a shared server | Not with `install.sh` until an install from a published release is verified on a clean machine; `sm install server` from a binary you built works. The steps are in [Installation](installation.md) |
 | Install on Proxmox VE | Not verified: no install from a published release on a clean host, and never tried on a real Proxmox VE host |
 | Deploy Compose apps from GitHub | Implemented, never run against real GitHub. See [Applications and deployments](deployments.md) |
+| Reach a node with no inbound path | Experimental: Cloudflare Tunnel, tested against fakes only. See [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel) |
 | Connect an AI agent | Implemented, never tried with a real MCP client. See [MCP](mcp.md) |
 
 Per-platform detail, operation by operation: [Compatibility](compatibility.md#platforms-and-operations).
@@ -81,6 +83,7 @@ These need a person, a real host or a real account. Each is a checklist with a p
 - [Real MCP clients and authorization server](manual-checks/m5-real-mcp-clients.md)
 - [Server mode: keychain, identity providers, reverse proxy, VM install](manual-checks/m2-handoff.md)
 - [Terminal emulators](manual-checks/m1-handoff.md)
+- [Cloudflare Tunnel: real account](manual-checks/cloudflare-tunnel.md)
 
 ## References
 
