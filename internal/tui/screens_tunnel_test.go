@@ -20,7 +20,7 @@ func TestSetupViaPaletteSendsTunnelAndPreviewsTheTransport(t *testing.T) {
 	if req.Action != "node.setup" || req.Parameters["tunnel"] != "true" {
 		t.Errorf("setup request = %+v", req)
 	}
-	contains(t, h.view(), "transport: cloudflare")
+	contains(t, h.view(), "transport: cloudflare (experimental)")
 
 	h.press("esc", "/")
 	h.typeText("setup web")
@@ -45,7 +45,7 @@ func TestTunnelDisableViaPalettePlansTheNodeAction(t *testing.T) {
 	if req.Action != "node.tunnel.disable" || req.Targets[0].ID != api.nodes[0].ID {
 		t.Errorf("request = %+v", req)
 	}
-	contains(t, h.view(), "transport: cloudflare -> direct")
+	contains(t, h.view(), "transport: cloudflare -> direct (Cloudflare Tunnel support is experimental)")
 }
 
 func TestParseSetupWordsReadsTunnel(t *testing.T) {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -25,6 +26,8 @@ import (
 const (
 	eventTunnelEnabled     = "node.tunnel.enabled"
 	eventTunnelConflict    = "node.tunnel.conflict"
+	eventTunnelFailed      = "node.tunnel.failed"
+	eventTunnelAbandoned   = "node.tunnel.enable_abandoned"
 	eventTunnelCreated     = "cloudflare.tunnel.created"
 	eventTunnelAdopted     = "cloudflare.tunnel.adopted"
 	eventIngressSet        = "cloudflare.tunnel.ingress_set"
@@ -110,6 +113,18 @@ func requireTunnelAllowed(configured bool, node domain.Node) error {
 	return nil
 }
 
+// tunnelHostnameOf is the public hostname of the node, or an INVALID_ARGUMENT
+// that says what to change when the node name does not make a DNS name.
+func tunnelHostnameOf(nodeName, zone string) (string, error) {
+	hostname, err := cloudflare.TunnelHostname(nodeName, zone)
+	if err != nil {
+		return "", smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf(
+			"the node name %q cannot be used with a tunnel: its hostname ssh-<node-name>.%s must be a valid DNS name; rename the node to lowercase letters, digits and hyphens, without dots, so that \"ssh-<node-name>\" stays within 63 characters",
+			nodeName, zone))
+	}
+	return hostname, nil
+}
+
 // begin validates everything that can be validated without a mutation, builds
 // the client and finds or starts the enable operation record.
 func (e *tunnelEngine) begin(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, id secrets.Identity) (*tunnelRun, error) {
@@ -122,9 +137,9 @@ func (e *tunnelEngine) begin(ctx context.Context, lease jobs.Lease, job jobs.Job
 	}).Validate(); err != nil {
 		return nil, err
 	}
-	hostname, err := cloudflare.TunnelHostname(node.Name, e.opts.Config.Zone)
+	hostname, err := tunnelHostnameOf(node.Name, e.opts.Config.Zone)
 	if err != nil {
-		return nil, smerr.New(smerr.CodeInvalidArgument, "", err.Error())
+		return nil, err
 	}
 	r, err := e.newRun(ctx, lease, job, node, hostname)
 	if err != nil {
@@ -217,24 +232,39 @@ func (r *tunnelRun) createOperation(ctx context.Context, kind database.TunnelOpe
 	return err
 }
 
-// findLastEnabled finds the committed enable the node's operations end with,
-// ignoring the operation this run is working on. A node whose newest finished
-// operation is a disable has none.
+// findLastEnabled gathers what the node's earlier enables left behind,
+// ignoring the operation this run is working on: the objects of its finished
+// enables, newest ID first. The newest finished disable ends the search, since
+// it took its objects down. A rerun or a disable uses these objects instead of
+// treating them as foreign.
 func (r *tunnelRun) findLastEnabled(ctx context.Context) error {
 	previous, err := database.ListTunnelOperations(ctx, r.cfg.DB.Reader(), r.node.ID)
 	if err != nil {
 		return err
 	}
+	r.lastEnabled = database.TunnelOperation{}
 	for _, op := range previous {
 		if op.ID == r.op.ID {
 			continue
 		}
-		if op.Kind == database.TunnelEnable && op.Phase == database.PhaseCommitted {
-			r.lastEnabled = op
+		if op.Kind != database.TunnelEnable || !op.Phase.Finished() {
+			return nil
 		}
-		return nil
+		r.lastEnabled = inheritObjects(r.lastEnabled, op)
 	}
 	return nil
+}
+
+// inheritObjects is newer, with the IDs it lacks taken from older.
+func inheritObjects(newer, older database.TunnelOperation) database.TunnelOperation {
+	if newer.ID == "" {
+		return older
+	}
+	o := &newer.Objects
+	o.TunnelID = cmp.Or(o.TunnelID, older.Objects.TunnelID)
+	o.DNSRecordID = cmp.Or(o.DNSRecordID, older.Objects.DNSRecordID)
+	o.AccessAppID = cmp.Or(o.AccessAppID, older.Objects.AccessAppID)
+	return newer
 }
 
 func (r *tunnelRun) resume(ctx context.Context, op database.TunnelOperation, kind database.TunnelOperationKind) error {
@@ -243,8 +273,18 @@ func (r *tunnelRun) resume(ctx context.Context, op database.TunnelOperation, kin
 		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("a tunnel %s is unfinished on this node; finish it first", op.Kind))
 	case op.AccountID != r.opts.Config.AccountID || op.Zone != r.opts.Config.Zone || op.Hostname != r.hostname:
 		return smerr.New(smerr.CodeConflict, "", "an unfinished tunnel operation was started for another Cloudflare account, zone or hostname")
+	case op.Phase == database.PhaseFailed && r.job.Attempts > 1:
+		// As with a conflict, an automatic retry must not undo the halt.
+		return &recordGone{inner: smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+			"the tunnel operation of this node failed (%s); run setup again to repair it, or `sm nodes tunnel disable %s` to abandon the tunnel",
+			op.LastError, r.node.Name))}
 	case op.Phase == database.PhaseFailed:
-		return smerr.New(smerr.CodeConflict, "", "the tunnel operation of this node failed and needs reconciling")
+		// A new job closes the failed enable and starts a generation that
+		// inherits what it recorded: the IDs of a record never change.
+		if err := r.abandonEnable(ctx, op); err != nil {
+			return err
+		}
+		return r.createOperation(ctx, kind)
 	case op.Phase == database.PhaseConflict && r.job.Attempts > 1:
 		// An automatic retry must not undo the halt; a new job (an operator who
 		// resolved the object in Cloudflare) resumes it.
@@ -257,8 +297,7 @@ func (r *tunnelRun) resume(ctx context.Context, op database.TunnelOperation, kin
 				return err
 			}
 			var err error
-			resumed, err = database.AdvanceTunnelPhase(ctx, tx, op.ID, op.Generation, database.PhaseConflict, op.HaltedPhase,
-				database.TunnelObjects{}, r.cfg.Clock.Now())
+			resumed, err = database.ResumeHaltedTunnelOperation(ctx, tx, op.ID, op.Generation, database.PhaseConflict, r.cfg.Clock.Now())
 			return err
 		})
 		op = resumed
@@ -287,26 +326,64 @@ func (r *tunnelRun) step(name string, err error) error {
 	return fmt.Errorf("tunnel setup failed at %s: %w", name, err)
 }
 
-// fail records an ownership conflict in the operation record (the node stays
-// held until an operator resolves it) and returns err.
+// fail halts the operation record when err ends it: an ownership conflict
+// (the node stays held until an operator resolves it in Cloudflare) or a
+// recorded object that cannot be repaired in place (failed). It returns err.
 func (r *tunnelRun) fail(ctx context.Context, err error) error {
-	var conflict *ownershipConflict
-	if errors.As(err, &conflict) && !r.op.Phase.Halted() {
-		message := textsafe.Line(audit.ScrubString(err.Error()))
-		if utf8.RuneCountInString(message) > maxRecordedErrorLength {
-			message = string([]rune(message)[:maxRecordedErrorLength])
-		}
-		_ = r.write(context.WithoutCancel(ctx), func(ctx context.Context, tx *database.Tx) error {
-			if err := r.lease.Fence(ctx, tx); err != nil {
-				return err
-			}
-			if _, err := database.HaltTunnelOperation(ctx, tx, r.op.ID, r.op.Generation, r.op.Phase, database.PhaseConflict, message, r.cfg.Clock.Now()); err != nil {
-				return err
-			}
-			return r.emitFor(ctx, tx, eventTunnelConflict, domain.ResultFailed, map[string]any{"phase": string(r.op.Phase)})
-		})
+	var (
+		conflict *ownershipConflict
+		gone     *recordGone
+		halt     database.TunnelPhase
+		event    string
+	)
+	switch {
+	case errors.As(err, &conflict):
+		halt, event = database.PhaseConflict, eventTunnelConflict
+	case errors.As(err, &gone):
+		halt, event = database.PhaseFailed, eventTunnelFailed
+	default:
+		return err
 	}
+	if r.op.Phase.Halted() {
+		return err
+	}
+	message := textsafe.Line(audit.ScrubString(err.Error()))
+	if utf8.RuneCountInString(message) > maxRecordedErrorLength {
+		message = string([]rune(message)[:maxRecordedErrorLength])
+	}
+	_ = r.write(context.WithoutCancel(ctx), func(ctx context.Context, tx *database.Tx) error {
+		if err := r.lease.Fence(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := database.HaltTunnelOperation(ctx, tx, r.op.ID, r.op.Generation, r.op.Phase, halt, message, r.cfg.Clock.Now()); err != nil {
+			return err
+		}
+		return r.emitFor(ctx, tx, event, domain.ResultFailed, map[string]any{"phase": string(r.op.Phase)})
+	})
 	return err
+}
+
+// abandonEnable closes an enable that will not finish. The schema lets an
+// enable end only as committed, so the record ends there (the endpoint does
+// not move; the audit event says it was abandoned), which releases the node
+// and keeps the IDs for the next enable to repair or for a disable to take
+// down.
+func (r *tunnelRun) abandonEnable(ctx context.Context, op database.TunnelOperation) error {
+	r.op = op
+	phase := op.Phase
+	if op.Phase.Halted() {
+		phase = op.HaltedPhase
+	}
+	return r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := r.lease.Fence(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := database.AdvanceTunnelPhase(ctx, tx, op.ID, op.Generation, op.Phase, database.PhaseCommitted,
+			database.TunnelObjects{}, r.cfg.Clock.Now()); err != nil {
+			return err
+		}
+		return r.emitFor(ctx, tx, eventTunnelAbandoned, domain.ResultSucceeded, map[string]any{"phase": string(phase)})
+	})
 }
 
 // emitFor emits an event on the node as the job's actor.

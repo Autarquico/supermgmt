@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/config"
@@ -60,6 +61,17 @@ type TunnelOptions struct {
 	// NewAPI builds the provisioning client from the API token at job time;
 	// nil builds the production client.
 	NewAPI func(accountID string, token audit.Secret) (CloudflareAPI, error)
+	// Sleep waits between lookups of an object whose creation was ambiguous;
+	// nil is a real timer.
+	Sleep func(ctx context.Context, d time.Duration)
+}
+
+func (o TunnelOptions) sleep(ctx context.Context, d time.Duration) error {
+	if o.Sleep == nil {
+		o.Sleep = sleepFor
+	}
+	o.Sleep(ctx, d)
+	return ctx.Err()
 }
 
 func (o TunnelOptions) api(token audit.Secret) (CloudflareAPI, error) {

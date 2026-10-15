@@ -183,7 +183,7 @@ func (r *tunnelRun) ensureDNS(ctx context.Context, _ database.CloudflareState) e
 
 func (r *tunnelRun) replaceStaleDNS(ctx context.Context, stale cloudflare.DNSRecord, object func(string) namedObject[cloudflare.DNSRecord]) (cloudflare.DNSRecord, howFound, error) {
 	if r.op.Objects.DNSRecordID != "" {
-		return stale, 0, smerr.New(smerr.CodeConflict, "", "the DNS record recorded for this node points at another tunnel; reconcile before running setup again")
+		return stale, 0, r.newRecordGone("the DNS record recorded for this node points at another tunnel")
 	}
 	if err := r.mayMutate(ctx); err != nil {
 		return stale, 0, err

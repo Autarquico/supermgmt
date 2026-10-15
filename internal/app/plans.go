@@ -126,7 +126,14 @@ func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, 
 	if err != nil {
 		return err
 	}
-	return requireTunnelAllowed(p.cfg.Cloudflare != nil, node)
+	if err := requireTunnelAllowed(p.cfg.Cloudflare != nil, node); err != nil {
+		return err
+	}
+	if req.Action == policy.ActionNodeTunnelDisable && node.Endpoint.TunnelHostname != "" {
+		return nil // the node already has its hostname
+	}
+	_, err = tunnelHostnameOf(node.Name, p.cfg.Cloudflare.Zone)
+	return err
 }
 
 // withDefaults fills what a plan may leave out, so the plan (and its hash)

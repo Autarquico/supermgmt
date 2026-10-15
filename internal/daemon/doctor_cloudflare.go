@@ -59,21 +59,36 @@ func (d CloudflareDoctor) Run(ctx context.Context) []wire.DoctorCheck {
 	}
 	checks := []wire.DoctorCheck{cloudflaredCheck(locate)}
 	online := d.Secrets != nil && d.NewProber != nil
+	var nodes []domain.Node
+	var nodesErr error
+	if d.DB != nil {
+		nodes, nodesErr = database.ListNodes(ctx, d.DB)
+	}
 	if online {
-		checks = append(checks, d.apiChecks(ctx)...)
+		checks = append(checks, d.apiChecks(ctx, d.provisioned(ctx, nodes, nodesErr))...)
 	}
 	if d.DB == nil {
 		return checks
 	}
 	if online {
-		nodes, err := database.ListNodes(ctx, d.DB)
-		if err != nil {
-			checks = append(checks, wire.DoctorCheck{Name: checkCFServiceToken, Status: checkFail, Detail: err.Error()})
+		if nodesErr != nil {
+			checks = append(checks, wire.DoctorCheck{Name: checkCFServiceToken, Status: checkFail, Detail: nodesErr.Error()})
 		} else {
 			checks = append(checks, d.serviceTokenCheck(ctx, nodes))
 		}
 	}
 	return append(checks, CloudflareOperationsCheck(ctx, d.DB))
+}
+
+// provisioned reports whether the API token is not needed for now: a node
+// dials through the tunnel and no tunnel operation is unfinished. Only then is
+// a token Cloudflare rejects a warning instead of a failure.
+func (d CloudflareDoctor) provisioned(ctx context.Context, nodes []domain.Node, nodesErr error) bool {
+	if d.DB == nil || nodesErr != nil || !usesCloudflare(nodes) {
+		return false
+	}
+	ops, err := database.ListActiveTunnelOperations(ctx, d.DB)
+	return err == nil && len(ops) == 0
 }
 
 func cloudflaredCheck(locate func() (string, error)) wire.DoctorCheck {
@@ -87,7 +102,7 @@ func cloudflaredCheck(locate func() (string, error)) wire.DoctorCheck {
 	return wire.DoctorCheck{Name: checkCloudflared, Status: checkOK, Detail: path}
 }
 
-func (d CloudflareDoctor) apiChecks(ctx context.Context) []wire.DoctorCheck {
+func (d CloudflareDoctor) apiChecks(ctx context.Context, provisioned bool) []wire.DoctorCheck {
 	name := strings.TrimPrefix(d.Config.APITokenRef, "secret://")
 	token, err := d.Secrets.Get(ctx, secrets.Ref{Name: name})
 	switch {
@@ -103,15 +118,23 @@ func (d CloudflareDoctor) apiChecks(ctx context.Context) []wire.DoctorCheck {
 	if err != nil {
 		return []wire.DoctorCheck{{Name: checkCFAPIToken, Status: checkFail, Detail: "unusable: check cloudflare.api_token_ref"}}
 	}
-	return apiProbeChecks(prober.Probe(ctx, d.Config.Zone))
+	return apiProbeChecks(prober.Probe(ctx, d.Config.Zone), provisioned)
 }
 
 // apiProbeChecks turns a probe into rows: validity, the reads that succeeded,
 // and edit rights, which Cloudflare cannot prove without mutating.
-func apiProbeChecks(r cloudflare.ProbeReport) []wire.DoctorCheck {
+func apiProbeChecks(r cloudflare.ProbeReport, provisioned bool) []wire.DoctorCheck {
+	failure := checkFail
+	if provisioned {
+		failure = checkWarn // dialling does not use the API token
+	}
 	token := wire.DoctorCheck{Name: checkCFAPIToken, Status: checkOK, Detail: "valid and active"}
-	if c := r.Check(cloudflare.CheckToken); !c.OK() {
-		token.Status, token.Detail = checkFail, c.Err.Error()
+	rejected := !r.Check(cloudflare.CheckToken).OK()
+	if rejected {
+		token.Status, token.Detail = failure, r.Check(cloudflare.CheckToken).Err.Error()
+		if provisioned {
+			token.Detail = "provisioning unavailable (not needed for dialling): " + token.Detail
+		}
 	}
 	var proven, failed []string
 	for _, c := range r.Checks {
@@ -126,6 +149,9 @@ func apiProbeChecks(r cloudflare.ProbeReport) []wire.DoctorCheck {
 	reads := wire.DoctorCheck{Name: checkCFAPIReads, Status: checkOK, Detail: "can read " + strings.Join(proven, ", ")}
 	if len(failed) > 0 {
 		reads.Status = checkFail
+		if rejected {
+			reads.Status = failure
+		}
 		reads.Detail = "cannot read " + strings.Join(failed, "; ")
 		if len(proven) > 0 {
 			reads.Detail += "; can read " + strings.Join(proven, ", ")
@@ -177,13 +203,13 @@ func (d CloudflareDoctor) serviceTokenCheck(ctx context.Context, nodes []domain.
 	check.Detail = "expires " + expires.UTC().Format(time.RFC3339)
 	switch remaining := expires.Sub(d.Now); {
 	case remaining <= 0:
-		check.Status, check.Detail = checkFail, "expired "+expires.UTC().Format(time.RFC3339)+": run sm cloudflare rotate-access-token"
+		check.Status, check.Detail = checkFail, "expired "+expires.UTC().Format(time.RFC3339)+": run sm cloudflare rotate-access-token (needs the API token in the store)"
 		if !needed {
 			check.Status = checkWarn
 		}
 	case remaining <= serviceTokenExpiryWarning:
 		check.Status = checkWarn
-		check.Detail += ": run sm cloudflare rotate-access-token"
+		check.Detail += ": run sm cloudflare rotate-access-token (needs the API token in the store)"
 	}
 	return check
 }

@@ -255,12 +255,6 @@ func build(ctx context.Context, q database.Querier, action string, actorID domai
 		return built{}, err
 	}
 	revision := target.revision
-	if action == policy.ActionNodeTunnelDisable {
-		// The job moves the node's endpoint itself, partway through; a
-		// takeover re-claims it, and the claim must not find its own change
-		// a reason to call the plan stale (ADR-0037).
-		revision = 0
-	}
 	subs, planned := compositeOf(action, params, target.target)
 	return built{
 		spec:   spec,
@@ -315,7 +309,30 @@ func rebuildCurrent(ctx context.Context, q database.Querier, rec database.PlanRe
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
 		return built{}, planStale()
 	}
+	if err == nil && rec.Action == policy.ActionNodeTunnelDisable {
+		err = acceptOwnSwitch(ctx, q, current, t)
+	}
 	return current, err
+}
+
+// acceptOwnSwitch lets a takeover re-claim a node.tunnel.disable whose job
+// moved the node's endpoint itself (ADR-0037): the one revision the switch to
+// the direct path produced is not drift, any other change is.
+func acceptOwnSwitch(ctx context.Context, q database.Querier, current built, stored plan.Target) error {
+	have, want := current.plan.Targets[0].SpecRevision, stored.SpecRevision
+	if have == nil || want == nil || *have == *want {
+		return nil
+	}
+	ops, err := database.ListTunnelOperations(ctx, q, domain.ID(stored.ID))
+	if err != nil {
+		return err
+	}
+	if *have != *want+1 || len(ops) == 0 || ops[0].Kind != database.TunnelDisable ||
+		phaseIndex(ops[0].Phase) < phaseIndex(database.PhaseSwitched) {
+		return nil // drift: the hash comparison refuses the plan
+	}
+	*have = *want
+	return nil
 }
 
 // rebuild is rebuildCurrent plus the staleness check: the plan hash covers

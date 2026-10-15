@@ -261,9 +261,9 @@ func (m *Model) setupNode(n wire.Node, words []string) tea.Cmd {
 
 func transportPreview(hostname string) string {
 	if hostname == "" {
-		return "transport: cloudflare"
+		return "transport: cloudflare (experimental)"
 	}
-	return "transport: cloudflare via " + hostname
+	return "transport: cloudflare (experimental) via " + hostname
 }
 
 // disableTunnel plans node.tunnel.disable: the node goes back to direct SSH.
@@ -272,7 +272,7 @@ func (m *Model) disableTunnel(n wire.Node) tea.Cmd {
 		Action:  "node.tunnel.disable",
 		Targets: []wire.ResourceRef{{Type: domain.ResourceNode, ID: n.ID}},
 	})
-	m.confirm.details = []string{textsafe.Line("transport: " + string(n.Endpoint.Transport.Effective()) + " -> direct")}
+	m.confirm.details = []string{textsafe.Line("transport: " + string(n.Endpoint.Transport.Effective()) + " -> direct (Cloudflare Tunnel support is experimental)")}
 	return cmd
 }
 

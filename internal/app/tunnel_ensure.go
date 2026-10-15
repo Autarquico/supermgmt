@@ -21,6 +21,24 @@ type ownershipConflict struct{ inner *smerr.Error }
 func (e *ownershipConflict) Error() string { return e.inner.Error() }
 func (e *ownershipConflict) Unwrap() error { return e.inner }
 
+// recordGone means a Cloudflare object this operation recorded no longer
+// exists or no longer fits, and the record cannot change its IDs. The
+// operation ends as failed; a new setup starts a fresh generation that
+// inherits the objects, and `sm nodes tunnel disable` abandons them.
+type recordGone struct{ inner *smerr.Error }
+
+func (e *recordGone) Error() string { return e.inner.Error() }
+func (e *recordGone) Unwrap() error { return e.inner }
+
+func (r *tunnelRun) newRecordGone(what string) error {
+	return &recordGone{inner: smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+		"%s; run setup again to repair it, or `sm nodes tunnel disable %s` to abandon the tunnel", what, r.node.Name))}
+}
+
+// lookupBackoff is the wait before each lookup that follows an ambiguous or
+// conflicting create: Cloudflare may list a new object a few seconds late.
+var lookupBackoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
 func newOwnershipConflict(kind, name string) error {
 	return &ownershipConflict{inner: smerr.New(smerr.CodeConflict, "",
 		fmt.Sprintf("a Cloudflare %s named %q already exists and was not created by this operation; resolve it in Cloudflare and run setup again", kind, name))}
@@ -56,8 +74,8 @@ type namedObject[T any] struct {
 }
 
 // ensureNamed returns the object, creating it at most once. It looks up by
-// name first; after an ambiguous or conflicting create it looks up again
-// (twice in all) before declaring a conflict. The lease is checked before the
+// name first; after an ambiguous or conflicting create it looks up again with
+// a backoff, and declares a conflict only for an object it can see. The lease is checked before the
 // only mutation.
 func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T, howFound, error) {
 	var zero T
@@ -74,8 +92,7 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 	}
 	if o.known != "" {
 		if !o.recreate {
-			return zero, 0, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
-				"the %s recorded for this node no longer exists in Cloudflare; reconcile before running setup again", o.kind))
+			return zero, 0, r.newRecordGone(fmt.Sprintf("the %s recorded for this node no longer exists in Cloudflare", o.kind))
 		}
 		if err := r.auditVanished(ctx, o.kind, o.known); err != nil {
 			return zero, 0, err
@@ -98,7 +115,10 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 	if !ambiguous && !cloudflare.IsConflict(err) {
 		return zero, 0, err
 	}
-	for range 2 {
+	for _, wait := range lookupBackoff {
+		if err := r.opts.sleep(ctx, wait); err != nil {
+			return zero, 0, err
+		}
 		if found, ferr := o.find(ctx); ferr != nil {
 			return zero, 0, ferr
 		} else if len(found) > 0 {
@@ -108,10 +128,9 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 			return zero, 0, newOwnershipConflict(o.kind, o.name)
 		}
 	}
-	if ambiguous {
-		return zero, 0, err // nothing visible yet: the retry looks again
-	}
-	return zero, 0, newOwnershipConflict(o.kind, o.name)
+	// Nothing is visible after the backoff: the object may be this operation's
+	// own and not listed yet, so it is not a conflict. The retry looks again.
+	return zero, 0, err
 }
 
 type adoption int

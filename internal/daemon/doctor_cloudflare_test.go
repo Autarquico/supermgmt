@@ -361,3 +361,37 @@ func TestDoctorShowsNoCloudflareCheckWithoutTheBlock(t *testing.T) {
 		t.Errorf("checks = %v, want none without a cloudflare: block", checks)
 	}
 }
+
+func TestDoctorRevokedAPITokenIsOnlyAWarningOnceEveryTunnelIsProvisioned(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(box *cloudflareBox)
+		want    string
+	}{
+		{"nothing tunnelled yet", func(*cloudflareBox) {}, "fail"},
+		{"a node dials through the tunnel", func(box *cloudflareBox) { box.addNode("web-1", domain.TransportCloudflare) }, "warn"},
+		{"a tunnel operation is unfinished", func(box *cloudflareBox) {
+			box.startOperation(box.addNode("web-1", domain.TransportCloudflare), database.TunnelEnable, database.PhaseStarted)
+		}, "fail"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			box := newCloudflareBox(t)
+			box.shelf.vals["cloudflare/api-token"] = "revoked-token"
+			tc.prepare(box)
+
+			checks := box.doctor(true).Run(context.Background())
+
+			got := checkNamed(t, checks, checkCFAPIToken)
+			if got.Status != tc.want {
+				t.Fatalf("token check = %+v, want %s", got, tc.want)
+			}
+			if tc.want == "warn" && !strings.Contains(got.Detail, "provisioning unavailable (not needed for dialling)") {
+				t.Errorf("detail = %q, want the provisioning-unavailable wording", got.Detail)
+			}
+			if reads := checkNamed(t, checks, checkCFAPIReads); reads.Status != tc.want {
+				t.Errorf("reads check = %+v, want %s", reads, tc.want)
+			}
+		})
+	}
+}

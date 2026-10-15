@@ -48,8 +48,8 @@ func TestNodesSetupTunnelSendsTheParameterAndPreviewsTheTransport(t *testing.T) 
 		endpoint wire.Endpoint
 		preview  string
 	}{
-		"hostname not known yet": {wire.Endpoint{}, "transport: cloudflare\n"},
-		"hostname known":         {wire.Endpoint{Transport: domain.TransportCloudflare, TunnelHostname: "ssh-web-1.example.com"}, "transport: cloudflare via ssh-web-1.example.com\n"},
+		"hostname not known yet": {wire.Endpoint{}, "transport: cloudflare (experimental)\n"},
+		"hostname known":         {wire.Endpoint{Transport: domain.TransportCloudflare, TunnelHostname: "ssh-web-1.example.com"}, "transport: cloudflare (experimental) via ssh-web-1.example.com\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newTunnelAPI(t, tc.endpoint, approvalPolicy)
@@ -95,7 +95,7 @@ func TestNodesTunnelDisablePlansPreviewsConfirmsAndSubmits(t *testing.T) {
 	if plan := s.plans[0]; plan.Action != "node.tunnel.disable" || plan.Targets[0].ID != idWeb || plan.Targets[0].Type != domain.ResourceNode {
 		t.Errorf("plan = %+v", plan)
 	}
-	if !strings.Contains(r.stderr, "transport: cloudflare -> direct") || !strings.Contains(r.stdout, "job-tunnel") {
+	if !strings.Contains(r.stderr, "transport: cloudflare -> direct (Cloudflare Tunnel support is experimental)") || !strings.Contains(r.stdout, "job-tunnel") {
 		t.Errorf("stdout %q, stderr %q", r.stdout, r.stderr)
 	}
 }
@@ -118,6 +118,9 @@ func TestCloudflareRotateAccessTokenTargetsTheInstance(t *testing.T) {
 	}
 	if plan := s.plans[0]; plan.Action != "cloudflare.access_token.rotate" || plan.Targets[0].Type != domain.ResourceInstance {
 		t.Errorf("plan = %+v", plan)
+	}
+	if !strings.Contains(r.stderr, "Cloudflare Tunnel support is experimental") {
+		t.Errorf("the rotation preview does not say the feature is experimental: %q", r.stderr)
 	}
 	declined := newTunnelAPI(t, wire.Endpoint{}, approvalPolicy)
 	if r := declined.runIn("", "cloudflare", "rotate-access-token"); r.code != exitUsage || len(declined.submitted) != 0 {

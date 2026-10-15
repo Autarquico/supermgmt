@@ -76,7 +76,7 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 	cmd.Flags().StringVar(&logsMode, "logs-mode", logsModeJournalGroup, "how logs are read: "+logsModeJournalGroup+" or "+logsModeBroker)
 	cmd.Flags().StringArrayVar(&units, "unit", nil, "grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)")
 	cmd.Flags().BoolVar(&noUnits, "no-units", false, "remove every unit grant")
-	cmd.Flags().BoolVar(&tunnel, "tunnel", false, "reach the node through a Cloudflare Tunnel (needs the cloudflare: block)")
+	cmd.Flags().BoolVar(&tunnel, "tunnel", false, "reach the node through a Cloudflare Tunnel (experimental; needs the cloudflare: block)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "do not ask for confirmation")
 	return cmd
 }
