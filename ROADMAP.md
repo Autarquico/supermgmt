@@ -71,7 +71,6 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 - macOS keychain and Linux `secret-tool` credential stores: unit-tested with fakes, manual checks pending.
 - The orphan-key report in `sm doctor` is not built.
 - The installer requires OpenSSH 8.2 or newer; the spec says 8.1.
-- A defect candidate: `sm login --bootstrap` on a server without OIDC sends no display name, which the server requires (`internal/cli/login.go`, `internal/app/auth.go`). Not verified end to end.
 
 ### Proxmox and the appliance installer
 
