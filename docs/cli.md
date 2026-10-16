@@ -994,7 +994,9 @@ Without --unit a re-run keeps the grants the node has; --no-units removes them a
 --tunnel also installs cloudflared on the node and moves its SSH reachability behind a Cloudflare Tunnel; undo it
 with `sm nodes tunnel disable`.
 
-Docker access is explicit: it is off unless you pass --docker-access, and it is root-equivalent on the node.
+A re-run keeps the node's docker access, logs mode and tunnel unless you pass --docker-access, --logs-mode or
+--tunnel; --docker-access=false removes docker access. On a first setup docker access is off unless you pass
+--docker-access, and it is root-equivalent on the node.
 
 ```text
 sm nodes setup <node> [flags]

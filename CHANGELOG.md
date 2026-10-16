@@ -18,6 +18,10 @@ Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, au
 - Experimental: tested against a Cloudflare API fake and a fake `cloudflared` only. The real-account checklist (`docs/manual-checks/cloudflare-tunnel.md`) is open.
 - Docs: `docs/cloudflare.md` rewritten (node tunnels first, the server guide as its own section), and updates to providers, security, configuration, troubleshooting, dependencies (egress to the Cloudflare API, Access and `pkg.cloudflare.com`), architecture and project status.
 
+### Changed: a setup re-run keeps the node's choices
+
+- `sm nodes setup` and the TUI palette keep the node's Docker access, logs mode and tunnel on a re-run unless a flag or word says otherwise (`--docker-access=false`, `--logs-mode`, palette `no-docker`, `journal`), as they already did for unit grants. Before, a bare re-run silently removed Docker access. A setup without the tunnel on a tunnelled node is refused.
+
 ### Added: unit grants at setup
 
 - `sm nodes setup --unit <unit>[:start,stop,restart]` (repeatable) and `--no-units`, and `unit <unit>[:verbs]` / `no-units` in the TUI palette, grant systemctl on units. Before, neither sent any grant, so unit actions after setup were refused. A re-run without units keeps the node's grants; the plan shows the old and new lists.

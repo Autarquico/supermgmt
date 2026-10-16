@@ -236,17 +236,14 @@ func (m *Model) setupNode(n wire.Node, words []string) tea.Cmd {
 		m.notice = notice{text: "setup: " + err.Error(), isErr: true}
 		return nil
 	}
-	mode := logsModeDefault
-	if w.broker {
-		mode = logsModeBroker
-	}
+	docker, mode, tunnel := wire.SetupAccess(n, w.docker, w.logs, w.tunnel)
 	var warnings []string
-	if w.docker {
+	if docker {
 		warnings = append(warnings, dockerRootWarning)
 	}
-	params := wire.SetupParameters(w.docker, mode, grants)
+	params := wire.SetupParameters(docker, mode, grants)
 	details := []string{textsafe.Line(wire.UnitsChange(n.Setup, grants, kept))}
-	if w.tunnel {
+	if tunnel {
 		params["tunnel"] = "true"
 		details = append([]string{textsafe.Line(transportPreview(n.Endpoint.TunnelHostname))}, details...)
 	}
@@ -277,8 +274,10 @@ func (m *Model) disableTunnel(n wire.Node) tea.Cmd {
 }
 
 type setupWords struct {
-	docker, broker, noUnits, tunnel bool
-	units                           []string
+	docker, tunnel wire.SetupChoice[bool]
+	logs           wire.SetupChoice[string]
+	noUnits        bool
+	units          []string
 }
 
 // parseSetupWords reads "docker", "broker", "tunnel", "no-units" and "unit <spec>"
@@ -289,12 +288,12 @@ func parseSetupWords(words []string) (setupWords, error) {
 		word := words[0]
 		words = words[1:]
 		switch word {
-		case "docker":
-			w.docker = true
-		case "broker":
-			w.broker = true
+		case "docker", "no-docker":
+			w.docker = wire.SetupChoice[bool]{Value: word == "docker", Set: true}
+		case "broker", "journal":
+			w.logs = wire.SetupChoice[string]{Value: map[string]string{"broker": logsModeBroker, "journal": logsModeDefault}[word], Set: true}
 		case "tunnel":
-			w.tunnel = true
+			w.tunnel = wire.SetupChoice[bool]{Value: true, Set: true}
 		case "no-units":
 			w.noUnits = true
 		case "unit":
@@ -304,7 +303,7 @@ func parseSetupWords(words []string) (setupWords, error) {
 			w.units = append(w.units, words[0])
 			words = words[1:]
 		default:
-			return setupWords{}, fmt.Errorf("unknown word %q (docker, broker, tunnel, unit <unit>[:verbs], no-units)", word)
+			return setupWords{}, fmt.Errorf("unknown word %q (docker, no-docker, broker, journal, tunnel, unit <unit>[:verbs], no-units)", word)
 		}
 	}
 	return w, nil
@@ -400,7 +399,7 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] [tunnel] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker|no-docker] [broker|journal] [tunnel] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
 	paletteShortcut = "ssh · logs · services · setup · tunnel-disable · probe · power · refresh · deploy · rollback   (? arguments)"
 )
 

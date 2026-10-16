@@ -612,6 +612,7 @@ type setupAPI struct {
 	plans     []wire.CreatePlanRequest
 	submitted []wire.PlanHashRequest
 	current   *wire.Setup // the node's recorded setup; nil before the first one
+	endpoint  wire.Endpoint
 }
 
 func newSetupAPI(t *testing.T, policy wire.Policy) *setupAPI {
@@ -621,7 +622,7 @@ func newSetupAPI(t *testing.T, policy wire.Policy) *setupAPI {
 			reply(w, 200, wire.Page[wire.Node]{Items: []wire.Node{{ID: idWeb, Name: "web-1"}}})
 		},
 		"GET " + wire.Path(wire.PathNode, string(idWeb)): func(w http.ResponseWriter, _ *http.Request) {
-			reply(w, 200, wire.Node{ID: idWeb, Name: "web-1", Kind: "ssh", Setup: s.current})
+			reply(w, 200, wire.Node{ID: idWeb, Name: "web-1", Kind: "ssh", Setup: s.current, Endpoint: s.endpoint})
 		},
 		"POST " + wire.PathPlans: func(w http.ResponseWriter, r *http.Request) {
 			var req wire.CreatePlanRequest
@@ -747,6 +748,29 @@ func TestNodesSetupKeepsTheNodesGrantsUnlessToldOtherwise(t *testing.T) {
 			}
 			if !strings.Contains(r.stderr, tc.shown) {
 				t.Errorf("stderr %q, want %q", r.stderr, tc.shown)
+			}
+		})
+	}
+}
+
+func TestNodesSetupRerunKeepsDockerLogsAndTunnelUnlessGiven(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args                 []string
+		docker, logs, tunnel any
+	}{
+		"bare re-run keeps them":     {nil, "true", "broker", "true"},
+		"explicit flags change them": {[]string{"--docker-access=false", "--logs-mode", "journal-group"}, "false", "journal-group", "true"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSetupAPI(t, approvalPolicy)
+			s.current = &wire.Setup{DockerAccess: true, LogsMode: "broker"}
+			s.endpoint = wire.Endpoint{Transport: domain.TransportCloudflare, TunnelHostname: "ssh-web-1.example.com"}
+
+			r := s.run(append([]string{"nodes", "setup", "web-1", "--yes"}, tc.args...)...)
+
+			p := s.plans[0].Parameters
+			if r.code != 0 || p["docker_access"] != tc.docker || p["logs_mode"] != tc.logs || p["tunnel"] != tc.tunnel {
+				t.Errorf("exit %d, parameters %v, want docker %v, logs %v, tunnel %v", r.code, p, tc.docker, tc.logs, tc.tunnel)
 			}
 		})
 	}

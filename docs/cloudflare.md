@@ -172,7 +172,7 @@ The node must be reachable directly again, because it is dialled directly from t
 - **`owner_emails`**: the owners policy is per instance, so one `sm nodes setup <node> --tunnel` run on any tunnel node updates it for every node.
 - **`access_identity_providers`**: the allowed login methods are set on each node's own Access application, so a run updates only the node it runs on. To narrow them, run `sm nodes setup <node> --tunnel` on **every** tunnel node; a node you skip keeps admitting the old providers.
 
-A re-run uses the flags given on that run. Unit grants are kept when you pass no `--unit`, but Docker access and the logs mode are not: repeat the flags the node was set up with (`--docker-access`, `--logs-mode`), and check the plan preview before approving.
+A re-run keeps what the node already has: its unit grants, Docker access, logs mode and tunnel, unless you pass `--unit`, `--docker-access`, `--logs-mode` or `--tunnel` (`--docker-access=false` removes Docker access; `TestNodesSetupRerunKeepsDockerLogsAndTunnelUnlessGiven`). In the TUI palette the words are `docker`/`no-docker` and `broker`/`journal`. A setup without the tunnel on a tunnelled node is refused (`TestASetupWithoutTheTunnelOnATunnelledNodeIsRefused`). Check the plan preview before approving.
 
 ### Rotate the service token
 

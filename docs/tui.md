@@ -108,7 +108,7 @@ Press `/`, type a command, press `enter`. `esc` closes the palette without runni
 | `ssh <node> [tool]` | Opens a session on the node. `tool` is `shell` (the default), `lazydocker`, `btop` or `tmux` |
 | `logs <service>` | Opens the service's logs. The service must already be loaded: open its node's services first |
 | `services <node>` | Opens the node's services |
-| `setup <node> [docker] [broker] [tunnel] [unit <unit>[:verbs]]… [no-units]` | Plans the node setup. `docker` grants Docker access; `broker` uses the log broker instead of the default journal access; `tunnel` reaches the node through a Cloudflare Tunnel (experimental; the preview says `transport: cloudflare (experimental)`) |
+| `setup <node> [docker\|no-docker] [broker\|journal] [tunnel] [unit <unit>[:verbs]]… [no-units]` | Plans the node setup. `docker`/`no-docker` grant or remove Docker access; `broker`/`journal` choose the log broker or the journal group; `tunnel` reaches the node through a Cloudflare Tunnel (experimental; the preview says `transport: cloudflare (experimental)`). Anything you leave out is kept from the node's current setup |
 | `tunnel-disable <node>` | Plans returning a node to direct SSH, or abandoning its unfinished tunnel setup (experimental, high risk). The node detail shows a `transport` line once a node uses a tunnel |
 | `probe <node>` | Probes the node now |
 | `power <node> <start\|shutdown\|reboot\|stop>` | Plans a power action on a Proxmox VM or container. `stop` cuts power without a clean shutdown and is high risk |

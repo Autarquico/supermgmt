@@ -33,7 +33,9 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			"Without --unit a re-run keeps the grants the node has; --no-units removes them all.\n\n" +
 			"--tunnel also installs cloudflared on the node and moves its SSH reachability behind a Cloudflare Tunnel; undo it\n" +
 			"with `sm nodes tunnel disable`.\n\n" +
-			"Docker access is explicit: it is off unless you pass --docker-access, and it is root-equivalent on the node.",
+			"A re-run keeps the node's docker access, logs mode and tunnel unless you pass --docker-access, --logs-mode or\n" +
+			"--tunnel; --docker-access=false removes docker access. On a first setup docker access is off unless you pass\n" +
+			"--docker-access, and it is root-equivalent on the node.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if logsMode != logsModeJournalGroup && logsMode != logsModeBroker {
@@ -55,6 +57,11 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			if err != nil {
 				return usageErrorf("%s", err)
 			}
+			flags := cmd.Flags()
+			dockerAccess, logsMode, tunnel = wire.SetupAccess(node,
+				wire.SetupChoice[bool]{Value: dockerAccess, Set: flags.Changed("docker-access")},
+				wire.SetupChoice[string]{Value: logsMode, Set: flags.Changed("logs-mode")},
+				wire.SetupChoice[bool]{Value: tunnel, Set: flags.Changed("tunnel")})
 			if dockerAccess {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", dockerAccessWarning)
 			}

@@ -452,6 +452,7 @@ func TestServiceVerbMissingFromActionsIsRefused(t *testing.T) {
 
 func TestSetupViaPaletteWarnsAboutDockerAccess(t *testing.T) {
 	api := newFake()
+	api.nodes[0].Setup.DockerAccess = false // a node set up without docker: only the palette words decide
 	h := newHarness(t, api, 100, 28)
 	h.start()
 	h.press("/")
@@ -511,6 +512,7 @@ func TestSetupViaPaletteShowsWhatAReplacementRemoves(t *testing.T) {
 
 func TestSetupViaPaletteReadsTheWordAfterUnitAsAUnit(t *testing.T) {
 	api := newFake()
+	api.nodes[0].Setup.DockerAccess = false // a node set up without docker: only the palette words decide
 	h := newHarness(t, api, 120, 28)
 	h.start()
 

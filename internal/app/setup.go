@@ -103,6 +103,10 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
+	if !req.Tunnel && node.Endpoint.Transport == domain.TransportCloudflare {
+		return smerr.New(smerr.CodeConflict, "",
+			"this node is reached through a Cloudflare Tunnel: re-run setup with --tunnel (the CLI and TUI keep it), or remove the tunnel first with `sm nodes tunnel disable`")
+	}
 	if req.Tunnel {
 		err = h.runTunnel(ctx, lease, job, node, req, deployRoot, id)
 	} else {

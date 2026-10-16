@@ -498,3 +498,21 @@ func TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval(t *test
 		})
 	}
 }
+
+// A setup without the tunnel on a tunnelled node would rewrite its setup record
+// without the tunnel while the node is still dialled through it: refused.
+func TestASetupWithoutTheTunnelOnATunnelledNodeIsRefused(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	before := len(ts.cf.Mutations())
+
+	ts.queued = ts.setupPlan(defaultSetup())
+	err := ts.attempt()
+
+	wantError(t, err, smerr.CodeConflict, "")
+	if !strings.Contains(err.Error(), "--tunnel") {
+		t.Errorf("error = %v: it must say how to keep or remove the tunnel", err)
+	}
+	if got := len(ts.cf.Mutations()); got != before {
+		t.Errorf("%d Cloudflare mutations after the refusal", got-before)
+	}
+}

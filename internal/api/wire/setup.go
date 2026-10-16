@@ -137,3 +137,31 @@ func DescribeUnits(grants []UnitGrant) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// SetupChoice is one setup option as the user gave it: Set false means "not
+// given", so a re-run keeps what the node already has.
+type SetupChoice[T any] struct {
+	Value T
+	Set   bool
+}
+
+// SetupAccess decides docker access, the logs mode and the tunnel of a
+// node.setup run the way SetupUnits decides unit grants: what the user gave,
+// else what the node has (its setup, or a tunnel on its endpoint), else the
+// defaults (no docker, journal-group, direct).
+func SetupAccess(node Node, docker SetupChoice[bool], logsMode SetupChoice[string], tunnel SetupChoice[bool]) (bool, string, bool) {
+	d, mode, t := false, "journal-group", node.Endpoint.Transport == domain.TransportCloudflare
+	if node.Setup != nil {
+		d, mode = node.Setup.DockerAccess, node.Setup.LogsMode
+	}
+	if docker.Set {
+		d = docker.Value
+	}
+	if logsMode.Set {
+		mode = logsMode.Value
+	}
+	if tunnel.Set {
+		t = tunnel.Value
+	}
+	return d, mode, t
+}

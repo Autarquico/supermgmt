@@ -50,7 +50,7 @@ func TestTunnelDisableViaPalettePlansTheNodeAction(t *testing.T) {
 
 func TestParseSetupWordsReadsTunnel(t *testing.T) {
 	w, err := parseSetupWords([]string{"tunnel", "docker"})
-	if err != nil || !w.tunnel || !w.docker {
+	if err != nil || !w.tunnel.Value || !w.tunnel.Set || !w.docker.Value || !w.docker.Set {
 		t.Errorf("got %+v, %v", w, err)
 	}
 	if _, err := parseSetupWords([]string{"tunnels"}); err == nil {
@@ -67,5 +67,28 @@ func TestNodeFactsShowTransportOnlyForTunnelNodes(t *testing.T) {
 	}
 	if got := transportText(tunnel); got != "cloudflare · ssh-web.example.com" {
 		t.Errorf("transportText = %q", got)
+	}
+}
+
+func TestASetupRerunFromThePaletteKeepsDockerLogsAndTunnel(t *testing.T) {
+	api := newFake()
+	api.nodes[0].Setup.DockerAccess, api.nodes[0].Setup.LogsMode = true, "broker"
+	api.nodes[0].Endpoint.Transport, api.nodes[0].Endpoint.TunnelHostname = domain.TransportCloudflare, "ssh-web-1.example.com"
+	h := newHarness(t, api, 120, 28)
+	h.start()
+
+	h.press("/")
+	h.typeText("setup web")
+	h.press("enter")
+	p := api.planRequests[0].Parameters
+	if p["docker_access"] != "true" || p["logs_mode"] != "broker" || p["tunnel"] != "true" {
+		t.Errorf("parameters = %v: a bare re-run must keep docker access, the logs mode and the tunnel", p)
+	}
+
+	h.press("esc", "/")
+	h.typeText("setup web no-docker journal")
+	h.press("enter")
+	if p := api.planRequests[1].Parameters; p["docker_access"] != "false" || p["logs_mode"] != "journal-group" {
+		t.Errorf("parameters = %v: no-docker and journal must change them", p)
 	}
 }
