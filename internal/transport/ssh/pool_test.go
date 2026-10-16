@@ -543,6 +543,34 @@ func TestMaxConnectionsWithEveryConnectionBusyRefusesInsteadOfExceeding(t *testi
 	close(release)
 }
 
+func TestDialsAreRefusedWhileTooManyConnectionsAreStillClosing(t *testing.T) { // CODE-15
+	r := newRig(t, defaultConfig(), nil)
+	r.pool.mu.Lock()
+	r.pool.closesRunning = maxParallelCloses
+	r.pool.mu.Unlock()
+
+	_, err := r.run("x")
+	requireCode(t, err, smerr.CodeNodeUnreachable)
+	if n := r.server.connections.Load(); n != 0 {
+		t.Errorf("%d connections dialed while the closing bound was reached", n)
+	}
+
+	r.pool.mu.Lock()
+	r.pool.closesRunning = 0
+	r.pool.mu.Unlock()
+	if _, err := r.run("x"); err != nil {
+		t.Fatalf("dial after the closes finished: %v", err)
+	}
+	target := r.target()
+	r.pool.Invalidate(target.NodeID, target.User)
+	r.pool.mu.Lock()
+	running := r.pool.closesRunning
+	r.pool.mu.Unlock()
+	if running != 0 {
+		t.Errorf("closesRunning = %d after the closes finished, want 0", running)
+	}
+}
+
 func TestChangedTargetReplacesTheConnection(t *testing.T) {
 	r := newRig(t, defaultConfig(), nil)
 	if _, err := r.run("x"); err != nil {

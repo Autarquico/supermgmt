@@ -219,7 +219,5 @@ func (r *tunnelRun) rotationRetire(ctx context.Context, state database.Cloudflar
 // setServiceTokens makes the owned Service Auth policy admit exactly ids. A
 // policy that vanished is created again with them.
 func (r *tunnelRun) setServiceTokens(ctx context.Context, state database.CloudflareState, ids []string) (database.CloudflareState, error) {
-	return r.ensurePolicy(ctx, state, state.ServicePolicyID, cloudflare.PolicySpec{
-		Name: cloudflare.ServicePolicyName(r.instanceID), Kind: cloudflare.PolicyServiceAuth, ServiceTokenIDs: ids,
-	})
+	return r.ensurePolicyPair(ctx, state, ids)
 }

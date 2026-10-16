@@ -13,7 +13,8 @@ import (
 // requireTrustedExecutable refuses a cloudflared the daemon should not hand the
 // Access service token to: the resolved file must be a regular file that only
 // root or the daemon's own uid owns and that neither group nor others can
-// write, and no directory above it may be replaceable by somebody else.
+// write, and no directory above it, or above the symlink that names it, may be
+// replaceable by somebody else.
 func requireTrustedExecutable(path string) error {
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -29,7 +30,17 @@ func requireTrustedExecutable(path string) error {
 	if !ownedByRootOrDaemon(info) {
 		return untrusted(path, "it is owned by another user")
 	}
-	for dir := filepath.Dir(real); ; dir = filepath.Dir(dir) {
+	// The directories of the target and of the path as given, which holds the
+	// symlink itself: whoever can write either can swap what runs.
+	if err := requireSafeDirectories(path, filepath.Dir(real)); err != nil {
+		return err
+	}
+	return requireSafeDirectories(path, filepath.Dir(path))
+}
+
+// requireSafeDirectories checks start and every directory above it.
+func requireSafeDirectories(path, start string) error {
+	for dir := start; ; dir = filepath.Dir(dir) {
 		dinfo, err := os.Stat(dir)
 		if err != nil {
 			return untrusted(path, "its directory cannot be read")
@@ -74,18 +85,18 @@ func untrusted(path, reason string) error {
 // that is not a directory or that another user owns.
 func securePrivateDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return smerr.Wrap(err, smerr.CodeInternal, "", "create the cloudflared home directory")
+		return smerr.Wrap(err, smerr.CodeCapabilityUnavailable, "", "cannot create the cloudflared home directory")
 	}
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() {
-		return smerr.New(smerr.CodeInternal, "", "the cloudflared home directory is not a directory")
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "the cloudflared home directory is not a directory: remove "+dir+" or choose a directory the daemon's user owns")
 	}
 	if !ownedBy(info, os.Getuid()) {
-		return smerr.New(smerr.CodeInternal, "", "the cloudflared home directory is not owned by the daemon's user")
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "the cloudflared home directory is not owned by the daemon's user: remove "+dir+" or choose a directory the daemon's user owns")
 	}
 	if info.Mode().Perm() != 0o700 {
 		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory: 0700 is the tightest usable mode
-			return smerr.Wrap(err, smerr.CodeInternal, "", "restrict the cloudflared home directory")
+			return smerr.Wrap(err, smerr.CodeCapabilityUnavailable, "", "cannot restrict the cloudflared home directory to its owner: fix the permissions of "+dir+" or choose another directory")
 		}
 	}
 	return nil

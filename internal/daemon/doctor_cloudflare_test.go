@@ -19,6 +19,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare"
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare/cffake"
 	"github.com/autarquico/supermgmt/internal/secrets"
+	"github.com/autarquico/supermgmt/internal/transport/ssh"
 )
 
 // secretShelf is the secret store as the doctor reads it.
@@ -403,6 +404,11 @@ func TestTheCloudflaredCheckSaysWhyAndHowToInstallOnThisSystem(t *testing.T) {
 	c := cloudflaredCheck(refused)
 	if c.Status != checkFail || !strings.Contains(c.Detail, "writable by group or others") {
 		t.Errorf("check = %+v: it must carry the reason the binary was refused", c)
+	}
+	if _, err := ssh.LocateCloudflared(); ssh.CloudflaredMissing(err) {
+		if got := cloudflaredFailure(err, "linux"); strings.Count(got, "install it") != 1 {
+			t.Errorf("detail = %q: the install advice must appear once", got)
+		}
 	}
 	if hint := cloudflaredInstallHint("darwin"); !strings.Contains(hint, "brew install cloudflared") {
 		t.Errorf("macOS hint = %q", hint)

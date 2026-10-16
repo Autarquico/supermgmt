@@ -195,24 +195,66 @@ func (r *tunnelRun) createServiceToken(ctx context.Context, name string) (cloudf
 // Service Auth policy admitting the service token and the Allow policy for the
 // owners. Their IDs are recorded in the instance state.
 func (r *tunnelRun) ensurePolicies(ctx context.Context, state database.CloudflareState) (database.CloudflareState, error) {
-	service := cloudflare.PolicySpec{
-		Name: cloudflare.ServicePolicyName(r.instanceID), Kind: cloudflare.PolicyServiceAuth, ServiceTokenIDs: []string{state.Token.ID},
-	}
+	ids := []string{state.Token.ID}
 	if state.Rotation != database.RotationIdle {
-		service.ServiceTokenIDs = nil // a rotation owns the token list; only existence is ensured
+		ids = nil // a rotation owns the token list; only existence is ensured
+	}
+	return r.ensurePolicyPair(ctx, state, ids)
+}
+
+// policyChange is a policy whose ID is not the recorded one.
+type policyChange struct {
+	recorded string
+	action   string
+	data     map[string]any
+}
+
+// ensurePolicyPair makes both policies exist (the Service Auth policy admitting
+// exactly serviceTokenIDs, or only existing when there are none) and records
+// their IDs in one write. A policy recreated under a new ID leaves every
+// application of the instance pointing at the dead one, so they are
+// re-attached once with the complete pair before the IDs are recorded: a crash
+// in between repeats the repair.
+func (r *tunnelRun) ensurePolicyPair(ctx context.Context, state database.CloudflareState, serviceTokenIDs []string) (database.CloudflareState, error) {
+	service := cloudflare.PolicySpec{
+		Name: cloudflare.ServicePolicyName(r.instanceID), Kind: cloudflare.PolicyServiceAuth, ServiceTokenIDs: serviceTokenIDs,
 	}
 	owners := cloudflare.PolicySpec{
 		Name: cloudflare.OwnersPolicyName(r.instanceID), Kind: cloudflare.PolicyAllow, Emails: r.opts.Config.OwnerEmails,
 	}
-	state, err := r.ensurePolicy(ctx, state, state.ServicePolicyID, service)
+	next, serviceChange, err := r.resolvePolicy(ctx, state, state.ServicePolicyID, service)
 	if err != nil {
 		return state, err
 	}
-	return r.ensurePolicy(ctx, state, state.OwnersPolicyID, owners)
+	next, ownersChange, err := r.resolvePolicy(ctx, next, state.OwnersPolicyID, owners)
+	if err != nil {
+		return state, err
+	}
+	changes := slices.DeleteFunc([]*policyChange{serviceChange, ownersChange}, func(c *policyChange) bool { return c == nil })
+	if len(changes) == 0 {
+		return next, nil
+	}
+	if slices.ContainsFunc(changes, func(c *policyChange) bool { return c.recorded != "" }) {
+		if err := r.reattachAccessApps(ctx, next); err != nil {
+			return state, err
+		}
+	}
+	saved, err := r.saveState(ctx, next, changes[0].action, changes[0].data)
+	if err != nil {
+		return state, err
+	}
+	for _, c := range changes[1:] {
+		if err := r.auditInstance(ctx, c.action, c.data); err != nil {
+			return saved, err
+		}
+	}
+	return saved, nil
 }
 
-// ensurePolicy returns the state with the ID of the policy spec describes.
-func (r *tunnelRun) ensurePolicy(ctx context.Context, state database.CloudflareState, recorded string, spec cloudflare.PolicySpec) (database.CloudflareState, error) {
+// resolvePolicy returns the state with the ID of the policy spec describes and,
+// when that ID is not the recorded one, the change to record. It audits
+// repairs that keep the ID.
+func (r *tunnelRun) resolvePolicy(ctx context.Context, state database.CloudflareState, recorded string, spec cloudflare.PolicySpec) (database.CloudflareState, *policyChange, error) {
 	listOnlyExistence := spec.Kind == cloudflare.PolicyServiceAuth && len(spec.ServiceTokenIDs) == 0
 	matches := func(p cloudflare.AccessPolicy) bool {
 		if listOnlyExistence {
@@ -233,41 +275,33 @@ func (r *tunnelRun) ensurePolicy(ctx context.Context, state database.CloudflareS
 		},
 	})
 	if err != nil {
-		return state, err
+		return state, nil, err
 	}
 	action := eventPolicyCreated
 	switch {
 	case how == foundRecorded && matches(policy):
-		return state, nil
+		return state, nil, nil
 	case how == foundRecorded:
 		if err := r.mayMutate(ctx); err != nil {
-			return state, err
+			return state, nil, err
 		}
 		if _, err := r.api.UpdateAccessPolicy(ctx, policy.ID, spec); err != nil {
-			return state, err
+			return state, nil, err
 		}
 		action = eventPolicyUpdated
 	case how == foundAdopted:
 		action = eventPolicyAdopted
 	}
+	data := map[string]any{"policy_id": policy.ID, "name": spec.Name}
 	if policy.ID == recorded {
-		return state, r.auditInstance(ctx, action, map[string]any{"policy_id": policy.ID, "name": spec.Name})
+		return state, nil, r.auditInstance(ctx, action, data)
 	}
-	next := state
 	if spec.Kind == cloudflare.PolicyServiceAuth {
-		next.ServicePolicyID = policy.ID
+		state.ServicePolicyID = policy.ID
 	} else {
-		next.OwnersPolicyID = policy.ID
+		state.OwnersPolicyID = policy.ID
 	}
-	if recorded != "" {
-		// The policy was recreated under a new ID: every application of the
-		// instance still refers to the dead one. Repair them before the new ID
-		// is recorded, so a crash in between repeats the repair.
-		if err := r.reattachAccessApps(ctx, next); err != nil {
-			return state, err
-		}
-	}
-	return r.saveState(ctx, next, action, map[string]any{"policy_id": policy.ID, "name": spec.Name})
+	return state, &policyChange{recorded: recorded, action: action, data: data}, nil
 }
 
 func decisionOf(kind cloudflare.PolicyKind) string {
