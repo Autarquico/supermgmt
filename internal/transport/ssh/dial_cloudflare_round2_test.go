@@ -108,6 +108,34 @@ func TestCloudflaredThatOthersCanReplaceIsNotTrusted(t *testing.T) {
 		_, err := resolveCloudflared(CloudflareConfig{Path: link})
 		requireTrust(t, err, "writable by group or others")
 	})
+	t.Run("a symlink in a directory others can write is not trusted", func(t *testing.T) { // SEC-5
+		target := write(t.TempDir(), 0o755)
+		linkDir := filepath.Join(t.TempDir(), "bin")
+		if err := os.Mkdir(linkDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(linkDir, "cloudflared")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(linkDir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		_, err := resolveCloudflared(CloudflareConfig{Path: link})
+		requireTrust(t, err, "writable by others")
+	})
+	t.Run("a binary swapped after construction is refused at the dial", func(t *testing.T) { // SEC-5
+		path := write(t.TempDir(), 0o755)
+		d := NewCloudflareDialer(CloudflareConfig{Path: path})
+		if d.pathErr != nil {
+			t.Fatal(d.pathErr)
+		}
+		if err := os.Chmod(path, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		_, err := d.DialContext(context.Background(), Target{Transport: domain.TransportCloudflare, TunnelHostname: testTunnelHost})
+		requireTrust(t, err, "writable by group or others")
+	})
 	t.Run("the search skips an untrusted candidate and names it when nothing else is found", func(t *testing.T) {
 		dir := t.TempDir()
 		write(dir, 0o775)
@@ -130,6 +158,23 @@ func requireTrust(t *testing.T, err error, reason string) {
 	}
 }
 
+func TestOnlyAnAbsentCloudflaredIsMissing(t *testing.T) {
+	_, err := resolveCloudflared(CloudflareConfig{SearchDirs: []string{t.TempDir()}})
+	if !CloudflaredMissing(err) {
+		t.Errorf("an empty search directory: %v is not reported as missing", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cloudflared"), []byte("#!/bin/sh\n"), 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "cloudflared"), 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveCloudflared(CloudflareConfig{SearchDirs: []string{dir}}); err == nil || CloudflaredMissing(err) {
+		t.Errorf("a refused binary: %v must not be reported as missing", err)
+	}
+}
+
 // Followup of the code review: the configured HOME is tightened to 0700.
 func TestAConfiguredHomeDirectoryIsTightenedToPrivate(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
@@ -147,9 +192,8 @@ func TestAConfiguredHomeDirectoryIsTightenedToPrivate(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewCloudflareDialer(CloudflareConfig{Path: exe(t), HomeDir: file}).homeDir(); err == nil {
-		t.Error("a file was accepted as the home directory")
-	}
+	_, err := NewCloudflareDialer(CloudflareConfig{Path: exe(t), HomeDir: file}).homeDir()
+	requireCode(t, err, smerr.CodeCapabilityUnavailable) // not an internal error: the operator can fix it
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(home, link); err != nil {
 		t.Fatal(err)

@@ -401,7 +401,7 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 
 const (
 	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] [tunnel] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
-	paletteShortcut = "ssh · logs · services · setup · probe · power · refresh · deploy · rollback   (? arguments)"
+	paletteShortcut = "ssh · logs · services · setup · tunnel-disable · probe · power · refresh · deploy · rollback   (? arguments)"
 )
 
 func (m *Model) openPalette() tea.Cmd {

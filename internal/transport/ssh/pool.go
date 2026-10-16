@@ -99,6 +99,7 @@ type Pool struct {
 	peers         map[connKey]*peer
 	retiring      map[*liveConn]struct{} // replaced or invalidated connections that still hold leases
 	closing       []*liveConn            // to close once mu is released; guarded by mu
+	closesRunning int                    // connections handed to closeConns and not yet closed; guarded by mu
 	janitorPeriod time.Duration
 }
 
@@ -208,10 +209,20 @@ func (p *Pool) closeLater(c *liveConn) { p.closing = append(p.closing, c) }
 func (p *Pool) unlock() {
 	conns := p.closing
 	p.closing = nil
+	p.closesRunning += len(conns)
 	p.mu.Unlock()
 	closeConns(conns)
+	if len(conns) > 0 {
+		p.mu.Lock()
+		p.closesRunning -= len(conns)
+		p.mu.Unlock()
+	}
 }
 
+// maxParallelCloses bounds the closes running at once. A connection that is
+// closing no longer counts toward max_connections, so a new dial is refused
+// while this many are still closing: the live carriers never exceed
+// max_connections + maxParallelCloses.
 const maxParallelCloses = 16
 
 func closeConns(conns []*liveConn) {
@@ -301,6 +312,10 @@ func (p *Pool) peerFor(t Target) *peer {
 // idle connection. When every connection is busy the caller gets an error
 // rather than an over-limit dial.
 func (p *Pool) makeRoomLocked() error {
+	if p.closesRunning >= maxParallelCloses {
+		return smerr.New(smerr.CodeNodeUnreachable, "",
+			"ssh connection limit reached: too many connections are still closing")
+	}
 	for p.countLocked() >= p.cfg.MaxConnections {
 		var victim *peer
 		for _, pe := range p.peers {

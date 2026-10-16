@@ -147,10 +147,7 @@ func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelO
 	if err := r.verifyDirect(ctx); err != nil {
 		return err
 	}
-	if err := r.abandonEnable(ctx, enable); err != nil {
-		return err
-	}
-	if err := r.createOperation(ctx, database.TunnelDisable); err != nil {
+	if err := r.replaceOperation(ctx, enable, database.TunnelDisable); err != nil {
 		return err
 	}
 	return r.findLastEnabled(ctx)

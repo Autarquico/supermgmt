@@ -98,7 +98,7 @@ func cloudflaredCheck(locate func() (string, error)) wire.DoctorCheck {
 	if err != nil {
 		return wire.DoctorCheck{
 			Name: checkCloudflared, Status: checkFail,
-			Detail: reasonOf(err) + "; " + cloudflaredInstallHint(runtime.GOOS) + " to dial tunnelled nodes",
+			Detail: cloudflaredFailure(err, runtime.GOOS),
 		}
 	}
 	return wire.DoctorCheck{Name: checkCloudflared, Status: checkOK, Detail: path}
@@ -273,6 +273,15 @@ func cloudflaredInstallHint(goos string) string {
 		return "install it with `brew install cloudflared`"
 	}
 	return "install it from Cloudflare's package repository (https://pkg.cloudflare.com)"
+}
+
+// cloudflaredFailure is the detail of a failed cloudflared check: the reason
+// and the install route, which a missing binary's reason would only repeat.
+func cloudflaredFailure(err error, goos string) string {
+	if ssh.CloudflaredMissing(err) {
+		return "cloudflared is not installed on the control plane; " + cloudflaredInstallHint(goos) + " to dial tunnelled nodes"
+	}
+	return reasonOf(err) + "; " + cloudflaredInstallHint(goos) + " to dial tunnelled nodes"
 }
 
 // reasonOf is the public message of err: not found, or refused as unsafe.

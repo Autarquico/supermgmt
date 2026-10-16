@@ -98,8 +98,14 @@ func NewCloudflareDialer(cfg CloudflareConfig) *CloudflareDialer {
 // CAPABILITY_UNAVAILABLE naming it.
 func LocateCloudflared() (string, error) { return resolveCloudflared(CloudflareConfig{}) }
 
+var errCloudflaredMissing = smerr.New(smerr.CodeCapabilityUnavailable, "", "cloudflared is not installed on the control plane: install it to use the cloudflare transport")
+
+// CloudflaredMissing reports whether err from LocateCloudflared means no
+// cloudflared was found, as opposed to one that was refused.
+func CloudflaredMissing(err error) bool { return err == errCloudflaredMissing } //nolint:errorlint // identity: errors.Is on an smerr.Error matches any error of the same code
+
 func resolveCloudflared(cfg CloudflareConfig) (string, error) {
-	missing := smerr.New(smerr.CodeCapabilityUnavailable, "", "cloudflared is not installed on the control plane: install it to use the cloudflare transport")
+	missing := errCloudflaredMissing
 	candidates := []string{cfg.Path}
 	if cfg.Path == "" {
 		dirs := cfg.SearchDirs
@@ -173,6 +179,11 @@ func (d *CloudflareDialer) DialContext(ctx context.Context, t Target) (net.Conn,
 	}
 	if d.pathErr != nil {
 		return nil, d.pathErr
+	}
+	// The binary may have been swapped since the daemon started; the token is
+	// not even read for one that is no longer trusted.
+	if err := requireTrustedExecutable(d.path); err != nil {
+		return nil, err
 	}
 	if d.tokens == nil {
 		return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", "no Cloudflare Access service token source is configured")

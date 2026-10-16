@@ -381,6 +381,69 @@ func TestRecreatingAVanishedInstancePolicyReattachesTheOwnedAccessApplications(t
 	}
 }
 
+func TestADisableThatCannotOpenItsRecordLeavesTheEnableUnabandoned(t *testing.T) { // CODE-13
+	ts := newTunnelSetting(t)
+	ts.inject("crash", 3)
+	ts.plan()
+	if err := ts.attempt(); err == nil {
+		t.Fatal("the enable should have crashed")
+	}
+	ts.chaos.k = 0
+	ts.abandonQueuedJob() // the node never completed setup: only the enable knows the objects
+	ts.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TRIGGER no_disable BEFORE INSERT ON tunnel_operations WHEN NEW.operation = 'disable'
+			BEGIN SELECT RAISE(ABORT, 'cannot open the disable'); END`)
+		return err
+	})
+	ts.planDisable()
+
+	if err := ts.attempt(); err == nil {
+		t.Fatal("the disable should have failed to open its record")
+	}
+
+	ops := ts.operations()
+	if len(ops) != 1 || ops[0].Phase.Finished() || len(ts.events("node.tunnel.enable_abandoned")) != 0 {
+		t.Fatalf("operations = %+v: the enable must stay unfinished when the disable cannot start", ops)
+	}
+	ts.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `DROP TRIGGER no_disable`)
+		return err
+	})
+	interruptAndRequeue(t, ts.fixture, ts.queued.ID)
+	mustf(t, ts.attempt(), "the retried disable")
+	if snap := ts.cf.Snapshot(); len(snap.Tunnels) != 0 || len(snap.Apps) != 0 {
+		t.Errorf("left in Cloudflare: %d tunnels, %d apps", len(snap.Tunnels), len(snap.Apps))
+	}
+}
+
+func TestSetupConvergesWhenInstancePoliciesWereRemovedOutOfBand(t *testing.T) { // CODE-12
+	for _, tc := range []struct {
+		name            string
+		service, owners bool
+	}{{"both", true, true}, {"service only", true, false}, {"owners only", false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newEnabledTunnel(t)
+			before := ts.state()
+			if tc.service && !ts.cf.RemovePolicy(before.ServicePolicyID) || tc.owners && !ts.cf.RemovePolicy(before.OwnersPolicyID) {
+				t.Fatal("a policy was not in Cloudflare")
+			}
+			ts.plan()
+
+			mustf(t, ts.attempt(), "setup")
+
+			after := ts.state()
+			if (after.ServicePolicyID != before.ServicePolicyID) != tc.service || (after.OwnersPolicyID != before.OwnersPolicyID) != tc.owners {
+				t.Errorf("policies %s/%s -> %s/%s", before.ServicePolicyID, before.OwnersPolicyID, after.ServicePolicyID, after.OwnersPolicyID)
+			}
+			apps := ts.cf.Snapshot().Apps
+			want := []string{after.ServicePolicyID, after.OwnersPolicyID}
+			if len(apps) != 1 || !slices.Equal(apps[0].PolicyIDs, want) {
+				t.Errorf("Access applications %+v, want one attached to %v", apps, want)
+			}
+		})
+	}
+}
+
 func TestADisablePlanGoesStaleWhenTheNodeChangesBeforeTheClaim(t *testing.T) { // SEC-6
 	ts := newEnabledTunnel(t)
 	job := ts.planDisable()
@@ -428,7 +491,7 @@ func TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval(t *test
 			} {
 				_, err := ts.plans.Create(context.Background(), ts.caller(ts.admin), req)
 				wantError(t, err, smerr.CodeInvalidArgument, "")
-				if err != nil && !strings.Contains(err.Error(), "rename the node") {
+				if err != nil && !strings.Contains(err.Error(), "sm nodes add --name") {
 					t.Errorf("%s: error %q does not say what to change", req.Action, err)
 				}
 			}
