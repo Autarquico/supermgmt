@@ -182,6 +182,24 @@ func TestAFallbackRefusesAHostKeyThatDoesNotMatchOnTheDirectRoute(t *testing.T) 
 	ts.wantStillThroughTheTunnel(before)
 }
 
+func TestAFallbackWhoseKeyTheDirectRouteRejectsSaysItCameFromDirectSSH(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	before := ts.currentNode()
+	rejected := smerr.Wrap(ssh.AuthRejected(errors.New("ssh: unable to authenticate")), smerr.CodeNodeUnreachable, "",
+		"ssh authentication failed for user alex: the node does not accept the offered keys")
+	ts.dialer.route(ts.node.ID, failingNode(t, rejected))
+
+	err := ts.rerunWithTunnelAdmin(brokenConnector())
+
+	if !ssh.IsAuthRejected(err) {
+		t.Fatalf("error %v lost the authentication refusal", err)
+	}
+	if !strings.Contains(err.Error(), "over direct SSH, after the tunnel could not carry the stream") || strings.Contains(err.Error(), "could not be reached") {
+		t.Errorf("error %q must say the refusal came from direct SSH and not claim both routes are unreachable", err)
+	}
+	ts.wantStillThroughTheTunnel(before)
+}
+
 func TestARepairedInstallThatFailsVerificationOverTheTunnelIsNotCommitted(t *testing.T) {
 	ts := newEnabledTunnel(t)
 	before := ts.currentNode()

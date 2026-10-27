@@ -120,6 +120,9 @@ func TestAStreamThatEndsAfterTheNodeSpokeIsNotACarrierFailure(t *testing.T) {
 		if IsCarrierFailure(err) {
 			t.Errorf("an authentication failure through the tunnel is a carrier failure: %v", err)
 		}
+		if !IsAuthRejected(err) {
+			t.Errorf("an authentication failure is not marked as a refusal of the offered keys: %v", err)
+		}
 	})
 }
 
