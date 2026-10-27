@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M4 — Apps, GitHub and deployments
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
-issue: null
+issue: 4
 prs: [15]
 related_issues: [4]
 depends_on: [m3-proxmox-installer]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-13
+updated: 2026-10-27
 ---
 
 # M4 — Apps, GitHub and deployments

@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M1 — Local daemon, SSH, TUI alpha
 type: epic
-status: active
+status: shipped
 priority: P0
 size: XL
-issue: null
+issue: 7
 prs: [9]
 related_issues: [7]
 depends_on: [m0-core]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-27
 ---
 
 # M1 — Local daemon, SSH, TUI alpha

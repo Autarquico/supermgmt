@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M6 — Hardening and release
 type: epic
-status: active
+status: shipped
 priority: P1
 size: L
-issue: null
+issue: 6
 prs: [17]
 related_issues: [6]
 depends_on: [m5-mcp]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-14
+updated: 2026-10-27
 ---
 
 # M6 — Hardening and release

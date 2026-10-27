@@ -2,17 +2,17 @@
 codename: supermgmt
 title: "Project site: landing and documentation"
 type: epic
-status: active
+status: shipped
 priority: P1
 size: L
-issue: null
+issue: 19
 prs: [20]
 related_issues: [19]
 depends_on: []
 supersedes: []
 related_specs: []
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-27
 ---
 
 # Project site: landing and documentation

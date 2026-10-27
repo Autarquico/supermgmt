@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M2 — Server/client/auth and release pipeline
 type: epic
-status: active
+status: shipped
 priority: P0
 size: XL
-issue: null
+issue: 2
 prs: [13]
 related_issues: [2]
 depends_on: [m1-local-ssh-tui]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-11
+updated: 2026-10-27
 ---
 
 # M2 — Server/client/auth and release pipeline

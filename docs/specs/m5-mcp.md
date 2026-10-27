@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M5 — MCP
 type: epic
-status: active
+status: shipped
 priority: P1
 size: L
-issue: null
+issue: 5
 prs: [16]
 related_issues: [5]
 depends_on: [m4-apps-deployments]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-13
+updated: 2026-10-27
 ---
 
 # M5 — MCP
