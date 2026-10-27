@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: XL
 issue: null
-prs: []
+prs: [36]
 related_issues: [31]
 depends_on: []
 supersedes: []
 related_specs: []
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-10-27
 ---
 
 # Reach SSH nodes through Cloudflare Tunnel
