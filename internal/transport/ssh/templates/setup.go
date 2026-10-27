@@ -30,8 +30,11 @@ const (
 	CloudflaredSourcePath = "/etc/apt/sources.list.d/cloudflared.list"
 	CloudflaredDir        = BrokerConfigDir + "/cloudflared"
 	CloudflaredTokenPath  = CloudflaredDir + "/token"
-	CloudflaredUnitName   = "supermgmt-cloudflared.service"
-	CloudflaredUnitPath   = "/etc/systemd/system/" + CloudflaredUnitName
+	// CloudflaredRestartPendingPath exists while a token or unit change may not
+	// have reached the running connector yet.
+	CloudflaredRestartPendingPath = CloudflaredDir + "/restart-pending"
+	CloudflaredUnitName           = "supermgmt-cloudflared.service"
+	CloudflaredUnitPath           = "/etc/systemd/system/" + CloudflaredUnitName
 )
 
 // DefaultDeployRoot is where deployments live unless the plan says otherwise
@@ -97,7 +100,7 @@ const rootPath = `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" `
 // ownDirectories and ownFiles are written as the dedicated user itself, so a
 // planted symlink can only redirect that user's own privileges.
 var (
-	tunnelFiles     = []string{CloudflareKeyringPath, CloudflaredSourcePath, CloudflaredTokenPath, CloudflaredUnitPath}
+	tunnelFiles     = []string{CloudflareKeyringPath, CloudflaredSourcePath, CloudflaredTokenPath, CloudflaredRestartPendingPath, CloudflaredUnitPath}
 	tunnelDirs      = []string{CloudflaredDir}
 	rootDirectories = append([]string{HomeDir, BrokerDir, BrokerConfigDir, AptKeyringDir}, tunnelDirs...)
 	rootFiles       = append([]string{SudoersPath, TmpfilesPath, BrokerPath, BrokerUnitsPath}, tunnelFiles...)

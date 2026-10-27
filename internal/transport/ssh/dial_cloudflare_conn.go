@@ -1,11 +1,13 @@
 package ssh
 
 import (
+	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -38,6 +40,10 @@ type childConn struct {
 	addr    childAddr
 	grace   time.Duration
 	secrets []string
+	// heard is set once the node's side sent a byte. A stream that ends
+	// before that never reached the node: the carrier failed. One that ends
+	// after is the node's own doing (it dropped the login, say).
+	heard atomic.Bool
 
 	exited     chan struct{} // closed after Wait returned
 	stderrDone chan struct{}
@@ -124,8 +130,27 @@ func (c *childConn) drainStderr() {
 	}
 }
 
-func (c *childConn) Read(p []byte) (int, error)  { return c.out.Read(p) }
-func (c *childConn) Write(p []byte) (int, error) { return c.in.Write(p) }
+func (c *childConn) Read(p []byte) (int, error) {
+	n, err := c.out.Read(p)
+	if n > 0 {
+		c.heard.Store(true)
+	}
+	return n, c.markCarrierFailure(err)
+}
+
+func (c *childConn) Write(p []byte) (int, error) {
+	n, err := c.in.Write(p)
+	return n, c.markCarrierFailure(err)
+}
+
+// markCarrierFailure tags the end of the stream before the node ever spoke.
+// Our own Close and an expired deadline are not the carrier failing.
+func (c *childConn) markCarrierFailure(err error) error {
+	if err == nil || c.heard.Load() || errors.Is(err, os.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return err
+	}
+	return CarrierFailure(err)
+}
 
 func (c *childConn) LocalAddr() net.Addr  { return c.addr }
 func (c *childConn) RemoteAddr() net.Addr { return c.addr }

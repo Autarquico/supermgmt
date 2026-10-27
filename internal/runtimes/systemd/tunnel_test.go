@@ -345,6 +345,115 @@ func TestChangedTokenRewritesOnlyTheTokenAndRestartsARunningUnit(t *testing.T) {
 	}
 }
 
+// interruptedRotation leaves a running connector whose token and unit are both
+// stale, then runs a setup with the new token that fails once at template
+// (and, when match is set, only at a line containing it).
+func interruptedRotation(t *testing.T, template, match string) *tunnelNode {
+	t.Helper()
+	pinTestKey(t)
+	node := newTunnelNode(t)
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
+		t.Fatal(err)
+	}
+	node.account, node.members = ownAccount, "supermgmt systemd-journal"
+	node.files[templates.CloudflaredUnitPath] = "stale unit\n"
+	rotated := tunnelParams()
+	rotated.Tunnel.Token = audit.Secret("ROTATED" + tunnelToken)
+	for _, suffix := range []string{"", templates.SudoVariantSuffix} {
+		name, inner := template+suffix, node.handlers[template+suffix]
+		failed := false
+		node.on(name, func(c templates.Command) transport.Result {
+			if !failed && strings.Contains(c.Line, match) {
+				failed = true
+				return transport.Result{ExitStatus: 1}
+			}
+			return inner(c)
+		})
+	}
+	if _, err := Setup(context.Background(), node, rotated); err == nil {
+		t.Fatalf("setup survived a failure at %s", template)
+	}
+	node.calls = nil
+	if _, err := Setup(context.Background(), node, rotated); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	return node
+}
+
+func TestARetryAfterAnInterruptedCredentialChangeRestartsTheConnector(t *testing.T) {
+	for name, fault := range map[string][2]string{
+		"after the token was written": {"setup.file_stage", templates.CloudflaredUnitPath},
+		"after the unit was written":  {"setup.daemon_reload", ""},
+		"at enable":                   {"setup.tunnel_enable", ""},
+		"before the restart":          {"setup.tunnel_restart", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			node := interruptedRotation(t, fault[0], fault[1])
+			if node.count("setup.tunnel_restart") != 1 {
+				t.Errorf("the retry restarted the connector %d times", node.count("setup.tunnel_restart"))
+			}
+			if _, left := node.files[templates.CloudflaredRestartPendingPath]; left {
+				t.Error("the restart marker outlived the restart")
+			}
+			if node.files[templates.CloudflaredTokenPath] != "ROTATED"+tunnelToken+"\n" {
+				t.Error("the node does not hold the new token")
+			}
+		})
+	}
+}
+
+func TestAnInterruptedChangeLeavesTheMarkerUntilTheRestartSucceeds(t *testing.T) {
+	pinTestKey(t)
+	node := newTunnelNode(t)
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
+		t.Fatal(err)
+	}
+	node.account, node.members = ownAccount, "supermgmt systemd-journal"
+	node.fail("setup.tunnel_restart", 1)
+	rotated := tunnelParams()
+	rotated.Tunnel.Token = audit.Secret("ROTATED" + tunnelToken)
+	if _, err := Setup(context.Background(), node, rotated); err == nil {
+		t.Fatal("setup survived a failed restart")
+	}
+	if _, held := node.files[templates.CloudflaredRestartPendingPath]; !held {
+		t.Error("no marker survived the failed restart")
+	}
+}
+
+func TestAMarkerRestartsAnUnchangedConnectorOnceAndIsCleared(t *testing.T) {
+	pinTestKey(t)
+	node := newTunnelNode(t)
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
+		t.Fatal(err)
+	}
+	node.account, node.members = ownAccount, "supermgmt systemd-journal"
+	node.files[templates.CloudflaredRestartPendingPath] = "restart pending\n" // the restart answer was lost
+	node.calls = nil
+	for run := 1; run <= 2; run++ {
+		if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+	}
+	if node.count("setup.tunnel_restart") != 1 {
+		t.Errorf("restarted %d times over two reruns", node.count("setup.tunnel_restart"))
+	}
+	if _, left := node.files[templates.CloudflaredRestartPendingPath]; left {
+		t.Error("the marker outlived the restart")
+	}
+}
+
+func TestAnInactiveUnitWithAMarkerStillConverges(t *testing.T) {
+	pinTestKey(t)
+	node := newTunnelNode(t)
+	node.files[templates.CloudflaredRestartPendingPath] = "restart pending\n"
+	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
+		t.Fatal(err)
+	}
+	if _, left := node.files[templates.CloudflaredRestartPendingPath]; left {
+		t.Error("the marker outlived the restart")
+	}
+}
+
 func TestTheTokenReachesTheNodeOnlyAsSensitiveStdinOfTheTokenStagingStep(t *testing.T) {
 	pinTestKey(t)
 	node := newTunnelNode(t)
@@ -555,7 +664,7 @@ func TestRemoveTunnelRemovesOnlyWhatSetupInstalled(t *testing.T) {
 	if _, err := Setup(context.Background(), node, tunnelParams()); err != nil {
 		t.Fatal(err)
 	}
-	owned := []string{templates.CloudflareKeyringPath, templates.CloudflaredSourcePath, templates.CloudflaredTokenPath, templates.CloudflaredUnitPath}
+	owned := []string{templates.CloudflareKeyringPath, templates.CloudflaredSourcePath, templates.CloudflaredTokenPath, templates.CloudflaredRestartPendingPath, templates.CloudflaredUnitPath}
 	kept := map[string]string{}
 	for path, content := range node.files {
 		if !slices.Contains(owned, path) {

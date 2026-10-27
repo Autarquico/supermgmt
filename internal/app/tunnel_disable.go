@@ -147,10 +147,163 @@ func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelO
 	if err := r.verifyDirect(ctx); err != nil {
 		return err
 	}
+	enable, err := r.recordUnrecordedCreate(ctx, enable)
+	if err != nil {
+		return err
+	}
 	if err := r.replaceOperation(ctx, enable, database.TunnelDisable); err != nil {
 		return err
 	}
 	return r.findLastEnabled(ctx)
+}
+
+// eventObjectLeft audits a same-name object the abandon found and left alone
+// because the enable could not have created it.
+const eventObjectLeft = "cloudflare.object.left_untouched"
+
+// recordUnrecordedCreate settles the one create-to-record window the enable
+// was left in, while the enable still carries the phase and phase start that
+// say which attempt could have created an object. The tunnel (phase
+// token_ready) and the Access application (phase ingress_set) are the objects
+// the teardown deletes only by recorded ID. Exactly one unrecorded object that
+// passes the adoption rule the enable applies is recorded on the enable,
+// fenced and before anything is deleted. Objects of that name that do not pass
+// it are foreign: they are audited and left alone, and the abandon goes on.
+// Foreign objects next to one that passes are ambiguous: an ownership conflict,
+// nothing touched. The DNS record needs no record: its removal already
+// recognises the ownership comment.
+func (r *disableRun) recordUnrecordedCreate(ctx context.Context, enable database.TunnelOperation) (database.TunnelOperation, error) {
+	phase := cmp.Or(enable.HaltedPhase, enable.Phase)
+	if phase != database.PhaseTokenReady && phase != database.PhaseIngressSet {
+		return enable, nil
+	}
+	r.op = enable
+	if err := r.findLastEnabled(ctx); err != nil {
+		return enable, err
+	}
+	found, err := r.unrecordedCreate(ctx, phase)
+	if err != nil {
+		return enable, r.step("reconciliation of the abandoned enable", err)
+	}
+	if found.left > 0 {
+		if err := r.step("audit of the foreign object left alone", r.auditLeft(ctx, found)); err != nil {
+			return enable, err
+		}
+	}
+	if found.action == "" {
+		return enable, nil
+	}
+	return enable, r.step("reconciliation of the abandoned enable", r.recordOnEnable(ctx, &enable, phase, found.objects, found.action, found.data))
+}
+
+// unrecordedFind is what the abandon found of the object the phase creates:
+// the ID to record (empty action: nothing to adopt) and how many same-name
+// objects it must leave alone.
+type unrecordedFind struct {
+	objects database.TunnelObjects
+	action  string
+	data    map[string]any
+	kind    string
+	name    string
+	left    int
+}
+
+// claim applies the enable's adoption rule to the objects of one name.
+func claim[T any](kind, name string, objects []T, adoptable func(T) bool) (T, unrecordedFind, error) {
+	var picked T
+	find := unrecordedFind{kind: kind, name: name}
+	var mine int
+	for _, o := range objects {
+		if adoptable(o) {
+			picked, mine = o, mine+1
+		}
+	}
+	switch {
+	case mine == 0:
+		find.left = len(objects)
+	case mine == 1 && len(objects) == 1:
+	default:
+		return picked, find, newOwnershipConflict(kind, name)
+	}
+	return picked, find, nil
+}
+
+// unrecordedCreate looks up the object the phase creates.
+func (r *disableRun) unrecordedCreate(ctx context.Context, phase database.TunnelPhase) (unrecordedFind, error) {
+	known := r.known()
+	if phase == database.PhaseTokenReady {
+		name := cloudflare.TunnelName(r.instanceID, r.node.ID.String())
+		tunnels, err := r.api.FindTunnels(ctx, name)
+		if err != nil || slices.ContainsFunc(tunnels, func(t cloudflare.Tunnel) bool { return t.ID == known.TunnelID }) {
+			return unrecordedFind{}, err // a recorded tunnel existing means nothing was created
+		}
+		tunnel, find, err := claim("tunnel", name, tunnels, func(t cloudflare.Tunnel) bool {
+			return r.createdSince(t.CreatedAt) && (t.ConfigSrc == "" || t.ConfigSrc == "cloudflare")
+		})
+		if err == nil && len(tunnels) == 1 && find.left == 0 {
+			find.objects, find.action = database.TunnelObjects{TunnelID: tunnel.ID}, eventTunnelAdopted
+			find.data = map[string]any{"tunnel_id": tunnel.ID, "name": name}
+		}
+		return find, err
+	}
+	name := cloudflare.AccessAppName(r.instanceID, r.node.ID.String())
+	apps, err := r.api.FindAccessApps(ctx, name)
+	if err != nil || slices.ContainsFunc(apps, func(a cloudflare.AccessApp) bool { return a.ID == known.AccessAppID }) {
+		return unrecordedFind{}, err
+	}
+	state, err := database.GetCloudflareState(ctx, r.cfg.DB.Reader())
+	if err != nil {
+		return unrecordedFind{}, err
+	}
+	app, find, err := claim("Access application", name, apps, func(a cloudflare.AccessApp) bool {
+		return r.createdSince(a.CreatedAt) && a.Domain == r.hostname &&
+			slices.Contains(a.PolicyIDs, state.ServicePolicyID) && slices.Contains(a.PolicyIDs, state.OwnersPolicyID)
+	})
+	if err == nil && len(apps) == 1 && find.left == 0 {
+		find.objects, find.action = database.TunnelObjects{AccessAppID: app.ID}, eventAccessAppAdopted
+		find.data = map[string]any{"access_app_id": app.ID, "name": name, "hostname": r.hostname}
+	}
+	return find, err
+}
+
+// auditLeft records, under the lease fence, that same-name objects the enable
+// could not have created were left alone.
+func (r *disableRun) auditLeft(ctx context.Context, found unrecordedFind) error {
+	if err := r.mayMutate(ctx); err != nil {
+		return err
+	}
+	return r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := r.lease.Fence(ctx, tx); err != nil {
+			return err
+		}
+		return r.emitFor(ctx, tx, eventObjectLeft, domain.ResultSucceeded,
+			map[string]any{"kind": found.kind, "name": found.name, "count": found.left})
+	})
+}
+
+// recordOnEnable stores the adopted ID on the unfinished enable under the lease
+// fence, with its audit event. A halted enable returns to the phase it held,
+// where the ID is recorded; the abandon that follows closes it from there.
+func (r *disableRun) recordOnEnable(ctx context.Context, enable *database.TunnelOperation, phase database.TunnelPhase, objects database.TunnelObjects, action string, data map[string]any) error {
+	if err := r.mayMutate(ctx); err != nil {
+		return err
+	}
+	var recorded database.TunnelOperation
+	err := r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := r.lease.Fence(ctx, tx); err != nil {
+			return err
+		}
+		var err error
+		recorded, err = database.AdvanceTunnelPhase(ctx, tx, enable.ID, enable.Generation, enable.Phase, phase, objects, r.cfg.Clock.Now())
+		if err != nil {
+			return err
+		}
+		return r.emitFor(ctx, tx, action, domain.ResultSucceeded, data)
+	})
+	if err == nil {
+		*enable = recorded
+	}
+	return err
 }
 
 // requireEnabledNode refuses to disable a node whose newest finished operation

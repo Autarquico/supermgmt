@@ -221,7 +221,7 @@ func (d *CloudflareDialer) checkAdmitted(ctx context.Context, hostname string, t
 		if ctx.Err() != nil {
 			return ctxError("cloudflare access preflight", ctx.Err())
 		}
-		return unreachable("cloudflare access preflight", sanitizedError{err, token})
+		return unreachable("cloudflare access preflight", CarrierFailure(sanitizedError{err, token}))
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))

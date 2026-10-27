@@ -132,7 +132,7 @@ func TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing(t *testing.T) { 
 			ts := newTunnelSetting(t)
 			instance, err := database.GetInstance(context.Background(), ts.db.Reader())
 			mustf(t, err, "GetInstance")
-			ts.cf.SeedTunnel("sm-" + instance.ID.String() + "-" + ts.node.ID.String())
+			ts.cf.SeedTunnel(cloudflare.TunnelName(instance.ID.String(), ts.node.ID.String()))
 			ts.clock.Advance(time.Hour)
 			ts.plan()
 			wantError(t, ts.attempt(), smerr.CodeConflict, "")
@@ -170,6 +170,9 @@ func TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing(t *testing.T) { 
 			}
 			if tc.foreign > 0 && slices.Contains(ts.committedOps(base), cffake.OpTunnelDelete) {
 				t.Error("the tunnel that is not ours was deleted")
+			}
+			if got := len(ts.events(eventObjectLeft)); got != tc.foreign {
+				t.Errorf("%d %s events, want %d", got, eventObjectLeft, tc.foreign)
 			}
 		})
 	}
@@ -514,5 +517,176 @@ func TestASetupWithoutTheTunnelOnATunnelledNodeIsRefused(t *testing.T) {
 	}
 	if got := len(ts.cf.Mutations()); got != before {
 		t.Errorf("%d Cloudflare mutations after the refusal", got-before)
+	}
+}
+
+// crashedAfterCreate leaves the enable dead right after Cloudflare created the
+// first object of op and before the ID was recorded, with the disable queued.
+func crashedAfterCreate(t *testing.T, op cffake.Op) *tunnelSetting {
+	t.Helper()
+	clean := newTunnelSetting(t)
+	clean.plan()
+	mustf(t, clean.attempt(), "clean run")
+	k := slices.IndexFunc(clean.cf.Mutations(), func(m cffake.Applied) bool { return m.Op == op }) + 1
+	if k == 0 {
+		t.Fatalf("a clean run never made a %s", op)
+	}
+
+	ts := newTunnelSetting(t)
+	ts.inject("crash", k)
+	ts.plan()
+	if err := ts.attempt(); err == nil {
+		t.Fatal("the enable should have crashed")
+	}
+	ts.chaos.k = 0
+	ts.abandonQueuedJob()
+	ts.grantSetup()
+	ts.planDisable()
+	return ts
+}
+
+func TestDisableTakesDownWhatTheAbandonedEnableCreatedButNeverRecorded(t *testing.T) { // EXT-3
+	tests := []struct {
+		name     string
+		op       cffake.Op
+		recorded func(database.TunnelObjects) string // what the abandoned enable must now hold
+		event    string
+	}{
+		{"tunnel", cffake.OpTunnelCreate, func(o database.TunnelObjects) string { return o.TunnelID }, eventTunnelAdopted},
+		{"Access application", cffake.OpAppCreate, func(o database.TunnelObjects) string { return o.AccessAppID }, eventAccessAppAdopted},
+		{"DNS record", cffake.OpDNSCreate, func(o database.TunnelObjects) string { return o.DNSRecordID }, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := crashedAfterCreate(t, tc.op)
+			if id := tc.recorded(ts.operations()[0].Objects); id != "" {
+				t.Fatalf("the crash left %s recorded (%s): not the window under test", tc.name, id)
+			}
+
+			mustf(t, ts.attempt(), "disable")
+
+			if snap := ts.cf.Snapshot(); len(snap.Tunnels) != 0 || len(snap.Apps) != 0 || len(snap.DNSRecords) != 0 {
+				t.Errorf("left in Cloudflare: %d tunnels, %d apps, %d dns records", len(snap.Tunnels), len(snap.Apps), len(snap.DNSRecords))
+			}
+			if tc.event != "" {
+				if got := len(ts.events(tc.event)); got != 1 {
+					t.Errorf("%d %s events, want 1", got, tc.event)
+				}
+				enable := ts.operations()[1]
+				if tc.recorded(enable.Objects) == "" {
+					t.Errorf("the abandoned enable still records no %s: %+v", tc.name, enable.Objects)
+				}
+			}
+
+			ts.current = nil
+			ts.plan()
+			mustf(t, ts.attempt(), "a fresh setup after the abandon")
+			ts.wantOneOfEach()
+		})
+	}
+}
+
+func TestDisableRecordsTheAdoptedTunnelBeforeItClosesTheRoute(t *testing.T) { // EXT-3
+	ts := crashedAfterCreate(t, cffake.OpTunnelCreate)
+	base := len(ts.cf.Mutations())
+
+	mustf(t, ts.attempt(), "disable")
+
+	ops := ts.committedOps(base)
+	put, del := slices.Index(ops, cffake.OpTunnelConfigPut), slices.Index(ops, cffake.OpTunnelDelete)
+	if put < 0 || del < put {
+		t.Errorf("committed operations %v: want the unrecorded tunnel's ingress closed before it is deleted", ops)
+	}
+}
+
+func TestDisableRefusesWhenForeignObjectsSitNextToTheOneTheAbandonedEnableCreated(t *testing.T) { // EXT-3
+	instance := func(t *testing.T, ts *tunnelSetting) string {
+		instance, err := database.GetInstance(context.Background(), ts.db.Reader())
+		mustf(t, err, "GetInstance")
+		return instance.ID.String()
+	}
+	tests := []struct {
+		name  string
+		stuck func(t *testing.T) (ts *tunnelSetting, remove func())
+	}{
+		{"two tunnels of the name after a crash", func(t *testing.T) (*tunnelSetting, func()) {
+			ts := crashedAfterCreate(t, cffake.OpTunnelCreate)
+			extra := ts.cf.SeedTunnel(cloudflare.TunnelName(instance(t, ts), ts.node.ID.String()))
+			return ts, func() {
+				mustf(t, ts.chaos.CloudflareAPI.DeleteTunnel(context.Background(), extra.ID), "remove the second tunnel")
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, remove := tc.stuck(t)
+			before, base := ts.cf.Snapshot(), len(ts.cf.Mutations())
+
+			wantError(t, ts.attempt(), smerr.CodeConflict, "")
+
+			after := ts.cf.Snapshot()
+			if len(after.Tunnels) != len(before.Tunnels) || len(after.Apps) != len(before.Apps) || len(after.DNSRecords) != len(before.DNSRecords) {
+				t.Errorf("Cloudflare changed: %d/%d/%d -> %d/%d/%d", len(before.Tunnels), len(before.Apps), len(before.DNSRecords),
+					len(after.Tunnels), len(after.Apps), len(after.DNSRecords))
+			}
+			for _, op := range ts.committedOps(base) {
+				t.Errorf("the refused disable committed %s", op)
+			}
+			if enable := ts.operations()[0]; enable.Kind != database.TunnelEnable || enable.Phase.Finished() {
+				t.Errorf("operations = %+v: the enable must stay unfinished when the abandon is refused", ts.operations())
+			}
+
+			remove()
+			interruptAndRequeue(t, ts.fixture, ts.queued.ID)
+			mustf(t, ts.attempt(), "the disable after the operator resolved the object")
+			if snap := ts.cf.Snapshot(); len(snap.Tunnels) != 0 || len(snap.Apps) != 0 || len(snap.DNSRecords) != 0 {
+				t.Errorf("left in Cloudflare: %d tunnels, %d apps, %d dns records", len(snap.Tunnels), len(snap.Apps), len(snap.DNSRecords))
+			}
+		})
+	}
+}
+
+func TestDisableLeavesAForeignDNSRecordOfTheHostnameAlone(t *testing.T) { // EXT-3
+	ts := newTunnelSetting(t)
+	foreign := ts.cf.SeedDNSRecord(ts.hostname(), "elsewhere.example.test", "not ours")
+	ts.clock.Advance(time.Hour)
+	ts.plan()
+	wantError(t, ts.attempt(), smerr.CodeConflict, "")
+	ts.abandonQueuedJob()
+	ts.grantSetup()
+	ts.planDisable()
+
+	mustf(t, ts.attempt(), "disable")
+
+	snap := ts.cf.Snapshot()
+	if len(snap.Tunnels) != 0 || len(snap.Apps) != 0 || len(snap.DNSRecords) != 1 || snap.DNSRecords[0].ID != foreign.ID {
+		t.Errorf("left in Cloudflare: %d tunnels, %d apps, dns %+v: only the foreign record must remain", len(snap.Tunnels), len(snap.Apps), snap.DNSRecords)
+	}
+}
+
+func TestDisableLeavesAForeignAccessApplicationOfTheNameAlone(t *testing.T) { // EXT-3
+	ts := newTunnelSetting(t)
+	instance, err := database.GetInstance(context.Background(), ts.db.Reader())
+	mustf(t, err, "GetInstance")
+	foreign := ts.cf.SeedApp(cloudflare.AccessAppName(instance.ID.String(), ts.node.ID.String()), ts.hostname())
+	ts.clock.Advance(time.Hour)
+	ts.plan()
+	wantError(t, ts.attempt(), smerr.CodeConflict, "")
+	ts.abandonQueuedJob()
+	ts.grantSetup()
+	ts.planDisable()
+	base := len(ts.cf.Mutations())
+
+	mustf(t, ts.attempt(), "disable")
+
+	snap := ts.cf.Snapshot()
+	if len(snap.Apps) != 1 || snap.Apps[0].ID != foreign.ID || len(snap.Tunnels) != 0 || len(snap.DNSRecords) != 0 {
+		t.Errorf("left in Cloudflare: %d tunnels, apps %+v, %d dns records: only the foreign application must remain", len(snap.Tunnels), snap.Apps, len(snap.DNSRecords))
+	}
+	if slices.Contains(ts.committedOps(base), cffake.OpAppDelete) {
+		t.Error("the application that is not ours was deleted")
+	}
+	if got := len(ts.events(eventObjectLeft)); got != 1 {
+		t.Errorf("%d %s events, want 1", got, eventObjectLeft)
 	}
 }

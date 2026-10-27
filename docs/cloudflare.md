@@ -84,7 +84,13 @@ The plan shows `transport: cloudflare (experimental)`. The hostname is checked w
 4. Verifies over a **fresh** connection through the tunnel, not a pooled one, with the pinned host key, and runs the same dedicated-account verification as setup (`TestTheTunnelPathIsVerifiedOverAFreshCloudflareConnectionWithThePinnedKey`).
 5. Only then commits `transport: cloudflare` and `tunnel_hostname` and retires the pooled direct connections (`TestTunnelSetupProvisionsEverythingProvesTheTunnelAndOnlyThenSwitches`).
 
-If any step fails, the job fails naming the step, the transport stays `direct`, and the operation is recorded so a rerun resumes it (`TestAFailedTunnelVerificationLeavesTheNodeDirectAndTheOperationResumable`, `TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`). Rerunning is idempotent and repairs an object that vanished from Cloudflare (`TestEnableRepairsAnObjectThatVanishedFromCloudflare`). Tunnel steps on the node run after the dedicated-account checks and before the key is authorised.
+If any step fails, the job fails naming the step, the transport stays `direct`, and the operation is recorded so a rerun resumes it (`TestAFailedTunnelVerificationLeavesTheNodeDirectAndTheOperationResumable`, `TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`). Rerunning is idempotent and repairs an object that vanished from Cloudflare (`TestEnableRepairsAnObjectThatVanishedFromCloudflare`). It also repairs a node whose connector is broken, as the next section describes. Tunnel steps on the node run after the dedicated-account checks and before the key is authorised.
+
+#### Repairing a node whose connector is broken
+
+On a node already reached through the tunnel, setup's first command (the admin session) would have to travel through the very connector it is repairing. So a `--tunnel` re-run of such a node runs that one admin session over direct SSH when, and only when, the tunnel cannot carry the stream at all: `cloudflared` died or closed before the node answered, or the control plane could not reach the Access endpoint. It uses the same admin account and the same pinned host key as any setup. It records the audit event `node.tunnel.setup_direct_fallback` (the node and the reason `carrier_failure`, never the carrier's output). It needs the direct route to be open, which a tunnel setup does not otherwise require; if it is not, the error names both routes.
+
+Nothing else falls back: not an Access refusal, an SSH authentication failure, a host-key mismatch (on either route), a cancelled or timed out attempt, and not a plain setup or a node whose transport is still `direct`. The stored transport does not change, and the dedicated account is verified over a fresh connection through the tunnel before anything is committed: if the repair did not work, the node stays as it was and the job fails (`TestARerunRepairsABrokenConnectorOverDirectSSHAndVerifiesOverTheTunnel`, `TestAnAccessDenialOrAnAuthenticationFailureOverTheTunnelDoesNotFallBack`, `TestAFallbackWithTheDirectRouteAlsoDownNamesBothPaths`, `TestAFallbackRefusesAHostKeyThatDoesNotMatchOnTheDirectRoute`, `TestARepairedInstallThatFailsVerificationOverTheTunnelIsNotCommitted`, `TestASetupOverAHealthyTunnelNeverFallsBackToDirect`). If the direct route is closed too, restore it first (the node's firewall, or the console) and re-run.
 
 #### When a setup does not finish
 
@@ -95,7 +101,7 @@ Two exits, both leaving the transport `direct`:
 
 If an object the setup recorded vanished from Cloudflare, or the DNS record now points at another tunnel, the setup ends as `failed` instead of retrying; the error names both exits. A new `--tunnel` setup then starts over and reuses the objects that still exist (`TestAVanishedRecordedObjectEndsTheEnableAsFailedAndANewSetupRepairsIt`).
 
-Limits of abandoning: the Access application and the tunnel are deleted only by the ID the setup recorded, never by name, so one that was created but whose answer was lost and never recorded stays in Cloudflare as an orphan (delete it in the dashboard). A foreign object that caused a conflict is never touched.
+Limits of abandoning: a tunnel or Access application the abandoned setup created but never recorded (its answer was lost) is found by the setup's own ownership rule, recorded and removed with the rest, and a foreign object of the same name is never touched. When more than one object could be the setup's, or one that is not, the abandon refuses with an ownership conflict instead of guessing; resolve it in the dashboard.
 
 ### What gets created
 

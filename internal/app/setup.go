@@ -120,7 +120,7 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 }
 
 func (h setupHandler) runDirect(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) error {
-	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, nil)
+	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (h setupHandler) runTunnel(ctx context.Context, lease jobs.Lease, job jobs.
 	if err := run.mayMutate(ctx); err != nil {
 		return err
 	}
-	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, &systemd.TunnelParams{Token: token})
+	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, &systemd.TunnelParams{Token: token}, run)
 	if err != nil {
 		return run.step("node install", err)
 	}
@@ -194,21 +194,19 @@ func deployRootOf(params map[string]any) (string, error) {
 }
 
 // provision runs the ensure steps as admin_user, bracketed by the audit events
-// of the privileged session.
-func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, tunnel *systemd.TunnelParams) (systemd.SetupOutcome, error) {
+// of the privileged session. run is the tunnel setup it belongs to, nil for a
+// plain one; it is what lets the session fall back to the direct route.
+func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, tunnel *systemd.TunnelParams, run *tunnelRun) (systemd.SetupOutcome, error) {
 	if isLocal(node) {
 		return systemd.SetupOutcome{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "the local provider cannot be set up")
-	}
-	admin, err := h.conn.Admin(node)
-	if err != nil {
-		return systemd.SetupOutcome{}, err
 	}
 	instance, err := database.GetInstance(ctx, h.cfg.DB.Reader())
 	if err != nil {
 		return systemd.SetupOutcome{}, err
 	}
 	asRoot := node.Endpoint.AdminUser == adminRoot
-	if err := requireBootstrap(ctx, admin, asRoot); err != nil {
+	admin, err := h.bootstrapAdmin(ctx, run, node, asRoot)
+	if err != nil {
 		return systemd.SetupOutcome{}, err
 	}
 	if err := requireJQ(ctx, admin); err != nil {

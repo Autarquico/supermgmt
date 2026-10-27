@@ -196,7 +196,7 @@ The daemon sent the service token to the node's tunnel hostname and Access answe
 
 ### A tunnel setup keeps failing and I want to undo it
 
-Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, halted, failed or interrupted, checks the direct path first, and removes the route, Access application and tunnel recorded for the node, even when the node never completed setup (`TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing`). The node stays on direct SSH. To try again instead, run `sm nodes setup <node> --tunnel`. An object that setup created but never recorded is not deleted by name; remove it in the dashboard. Details: [Cloudflare](cloudflare.md#when-a-setup-does-not-finish).
+Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, halted, failed or interrupted, checks the direct path first, and removes the route, Access application and tunnel recorded for the node, even when the node never completed setup (`TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing`). The node stays on direct SSH. To try again instead, run `sm nodes setup <node> --tunnel`. A tunnel or Access application that setup created but never recorded is found by the setup's ownership rule and removed too; a foreign object of that name is never touched, and an ambiguous set makes the abandon refuse. Details: [Cloudflare](cloudflare.md#when-a-setup-does-not-finish).
 
 ### The node name cannot be used with a tunnel
 
@@ -221,6 +221,10 @@ An object in Cloudflare has the name SuperMgmt expected for this node but the re
 ### A tunnel job is refused during the restore hold
 
 After a restore every write returns `CONFLICT` with `RESTORE_HOLD`, tunnel jobs included, so nothing in Cloudflare changes ([above](#every-write-returns-conflict-with-restore_hold)). After `sudo sm admin restore-complete` the daemon compares its records with Cloudflare and writes audit events for missing or recreated objects; rerun `sm nodes setup <node> --tunnel` to repair them.
+
+### A tunnel node cannot be reached and a re-run fails
+
+If the connector is down, its credential is invalid or the tunnel was deleted, run `sm nodes setup <node> --tunnel` again. When the tunnel cannot carry the stream, the admin session of that re-run runs over direct SSH (audit event `node.tunnel.setup_direct_fallback`), repairs the connector and verifies the dedicated account over the tunnel before anything is committed (`TestARerunRepairsABrokenConnectorOverDirectSSHAndVerifiesOverTheTunnel`). If the error names the tunnel and direct SSH, both routes are down: open the direct route again first. An Access refusal ([above](#cloudflare-access-did-not-admit-the-service-token)), an authentication failure or a host-key mismatch never falls back; fix them directly. Details: [Cloudflare](cloudflare.md#repairing-a-node-whose-connector-is-broken).
 
 ### A tunnel node fails verification after setup
 

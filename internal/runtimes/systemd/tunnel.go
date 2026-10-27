@@ -210,12 +210,17 @@ func (s stepper) ensureTunnelService(ctx context.Context, t TunnelParams) error 
 			return err
 		}
 	}
-	tokenChanged, err := s.sensitive().ensureFile(ctx, templates.CloudflaredTokenPath, "0600", tokenFile(t))
+	restart, err := s.markRestartPending(ctx, wasActive, map[string]string{
+		templates.CloudflaredTokenPath: tokenFile(t),
+		templates.CloudflaredUnitPath:  cloudflaredUnit(),
+	})
 	if err != nil {
 		return err
 	}
-	unitChanged, err := s.ensureFile(ctx, templates.CloudflaredUnitPath, "0644", cloudflaredUnit())
-	if err != nil {
+	if _, err := s.sensitive().ensureFile(ctx, templates.CloudflaredTokenPath, "0600", tokenFile(t)); err != nil {
+		return err
+	}
+	if _, err := s.ensureFile(ctx, templates.CloudflaredUnitPath, "0644", cloudflaredUnit()); err != nil {
 		return err
 	}
 	unit := map[string]string{"unit": templates.CloudflaredUnitName}
@@ -225,8 +230,11 @@ func (s stepper) ensureTunnelService(ctx context.Context, t TunnelParams) error 
 	if err := s.do(ctx, "setup.tunnel_enable", unit, nil); err != nil {
 		return err
 	}
-	if wasActive && (tokenChanged || unitChanged) {
+	if restart {
 		if err := s.do(ctx, "setup.tunnel_restart", unit, nil); err != nil {
+			return err
+		}
+		if err := s.do(ctx, "setup.file_remove", map[string]string{"path": templates.CloudflaredRestartPendingPath}, nil); err != nil {
 			return err
 		}
 	}
@@ -238,6 +246,34 @@ func (s stepper) ensureTunnelService(ctx context.Context, t TunnelParams) error 
 		return smerr.New(smerr.CodeCapabilityUnavailable, "", templates.CloudflaredUnitName+" is not active after it was started")
 	}
 	return nil
+}
+
+// markRestartPending reports whether the connector must be restarted and, before
+// any of want is written over a running connector, leaves a marker on the node.
+// File contents alone cannot tell a retry that the running process still holds
+// the old credential, so the marker outlives an interruption and is removed
+// only after a successful restart. A leftover marker restarts even a unit that
+// is not active, which is harmless.
+func (s stepper) markRestartPending(ctx context.Context, wasActive bool, want map[string]string) (bool, error) {
+	_, pending, err := s.fileHash(ctx, templates.CloudflaredRestartPendingPath)
+	if err != nil || pending {
+		return pending, err
+	}
+	if !wasActive {
+		return false, nil
+	}
+	for path, content := range want {
+		have, present, err := s.fileHash(ctx, path)
+		if err != nil {
+			return false, err
+		}
+		if present && have == sha256Hex(content) {
+			continue
+		}
+		_, err = s.ensureFile(ctx, templates.CloudflaredRestartPendingPath, "0600", "restart pending\n")
+		return err == nil, err
+	}
+	return false, nil
 }
 
 // tunnelActive reads the unit's state with the unprivileged systemd.show read.
@@ -360,13 +396,15 @@ func (s stepper) removeTunnelService(ctx context.Context) error {
 }
 
 func (s stepper) removeTunnelFiles(ctx context.Context) error {
-	for _, path := range []string{templates.CloudflaredTokenPath, templates.CloudflaredUnitPath} {
+	for _, path := range []string{templates.CloudflaredTokenPath, templates.CloudflaredRestartPendingPath, templates.CloudflaredUnitPath} {
 		if err := s.do(ctx, "setup.file_discard", map[string]string{"path": templates.StagingPath(path)}, nil); err != nil {
 			return err
 		}
 	}
-	if err := s.do(ctx, "setup.file_remove", map[string]string{"path": templates.CloudflaredTokenPath}, nil); err != nil {
-		return err
+	for _, path := range []string{templates.CloudflaredTokenPath, templates.CloudflaredRestartPendingPath} {
+		if err := s.do(ctx, "setup.file_remove", map[string]string{"path": path}, nil); err != nil {
+			return err
+		}
 	}
 	return s.do(ctx, "setup.dir_remove", map[string]string{"path": templates.CloudflaredDir}, nil)
 }
