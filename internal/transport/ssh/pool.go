@@ -312,7 +312,9 @@ func (p *Pool) peerFor(t Target) *peer {
 // idle connection. When every connection is busy the caller gets an error
 // rather than an over-limit dial.
 func (p *Pool) makeRoomLocked() error {
-	if p.closesRunning >= maxParallelCloses {
+	// Live plus closing carriers stay within max_connections + maxParallelCloses:
+	// closes alone never refuse a dial while the pool has room.
+	if p.countLocked()+p.closesRunning >= p.cfg.MaxConnections+maxParallelCloses {
 		return smerr.New(smerr.CodeNodeUnreachable, "",
 			"ssh connection limit reached: too many connections are still closing")
 	}
