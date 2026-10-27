@@ -169,6 +169,9 @@ func startDocker(t *testing.T) *fixture.Node {
 		bg := context.WithoutCancel(t.Context())
 		if t.Failed() {
 			t.Logf("fixture console:\n%s", n.Logs(bg))
+			if journal, err := n.Exec(bg, "journalctl", "--no-pager", "-b", "-n", "200"); err == nil {
+				t.Logf("node journal:\n%s", journal)
+			}
 		}
 		if err := n.Stop(bg); err != nil {
 			t.Errorf("stop the fixture: %v", err)
@@ -225,10 +228,12 @@ func installStubPackage(t *testing.T, n *fixture.Node) {
 	t.Helper()
 	b64 := base64.StdEncoding.EncodeToString([]byte(stubCloudflared))
 	// systemd 257 mounts a unit's LoadCredential directory from a helper
-	// namespace and relies on / propagating mounts, as it does on a host.
-	// Docker makes / private, so the service would find no credential.
+	// namespace and relies on the mount propagating back, as / does on a host.
+	// Docker makes / private, so /run/credentials alone is made shared.
 	script := `set -e
-mount --make-rshared /
+mkdir -p /run/credentials
+mount --bind /run/credentials /run/credentials
+mount --make-shared /run/credentials
 d=$(mktemp -d)
 mkdir -p "$d/DEBIAN" "$d/usr/bin"
 printf %s "$1" > "$d/DEBIAN/control"
