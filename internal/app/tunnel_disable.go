@@ -228,12 +228,31 @@ func claim[T any](kind, name string, objects []T, adoptable func(T) bool) (T, un
 	return picked, find, nil
 }
 
+// lookUpCreated lists the objects of one name. An empty listing for an object
+// with no recorded ID is looked at again after each of the enable's own
+// lookupBackoff waits: Cloudflare may list a created object a few seconds late,
+// and concluding nothing was created would leave it behind. A non-empty
+// listing, or one for a recorded ID, is taken as it is.
+func lookUpCreated[T any](ctx context.Context, r *disableRun, unrecorded bool, find func() ([]T, error)) ([]T, error) {
+	found, err := find()
+	for _, wait := range lookupBackoff {
+		if err != nil || len(found) > 0 || !unrecorded {
+			break
+		}
+		if err = r.opts.sleep(ctx, wait); err != nil {
+			return nil, err
+		}
+		found, err = find()
+	}
+	return found, err
+}
+
 // unrecordedCreate looks up the object the phase creates.
 func (r *disableRun) unrecordedCreate(ctx context.Context, phase database.TunnelPhase) (unrecordedFind, error) {
 	known := r.known()
 	if phase == database.PhaseTokenReady {
 		name := cloudflare.TunnelName(r.instanceID, r.node.ID.String())
-		tunnels, err := r.api.FindTunnels(ctx, name)
+		tunnels, err := lookUpCreated(ctx, r, known.TunnelID == "", func() ([]cloudflare.Tunnel, error) { return r.api.FindTunnels(ctx, name) })
 		if err != nil || slices.ContainsFunc(tunnels, func(t cloudflare.Tunnel) bool { return t.ID == known.TunnelID }) {
 			return unrecordedFind{}, err // a recorded tunnel existing means nothing was created
 		}
@@ -245,7 +264,7 @@ func (r *disableRun) unrecordedCreate(ctx context.Context, phase database.Tunnel
 		return find, err
 	}
 	name := cloudflare.AccessAppName(r.instanceID, r.node.ID.String())
-	apps, err := r.api.FindAccessApps(ctx, name)
+	apps, err := lookUpCreated(ctx, r, known.AccessAppID == "", func() ([]cloudflare.AccessApp, error) { return r.api.FindAccessApps(ctx, name) })
 	if err != nil || slices.ContainsFunc(apps, func(a cloudflare.AccessApp) bool { return a.ID == known.AccessAppID }) {
 		return unrecordedFind{}, err
 	}

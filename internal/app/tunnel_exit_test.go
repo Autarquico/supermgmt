@@ -522,7 +522,7 @@ func TestASetupWithoutTheTunnelOnATunnelledNodeIsRefused(t *testing.T) {
 
 // crashedAfterCreate leaves the enable dead right after Cloudflare created the
 // first object of op and before the ID was recorded, with the disable queued.
-func crashedAfterCreate(t *testing.T, op cffake.Op) *tunnelSetting {
+func crashedAfterCreate(t *testing.T, op cffake.Op, cfOptions ...cffake.Option) *tunnelSetting {
 	t.Helper()
 	clean := newTunnelSetting(t)
 	clean.plan()
@@ -532,7 +532,7 @@ func crashedAfterCreate(t *testing.T, op cffake.Op) *tunnelSetting {
 		t.Fatalf("a clean run never made a %s", op)
 	}
 
-	ts := newTunnelSetting(t)
+	ts := newTunnelSetting(t, cfOptions...)
 	ts.inject("crash", k)
 	ts.plan()
 	if err := ts.attempt(); err == nil {
@@ -582,6 +582,60 @@ func TestDisableTakesDownWhatTheAbandonedEnableCreatedButNeverRecorded(t *testin
 			ts.plan()
 			mustf(t, ts.attempt(), "a fresh setup after the abandon")
 			ts.wantOneOfEach()
+		})
+	}
+}
+
+func TestDisableLooksAgainBeforeConcludingTheAbandonedEnableCreatedNothing(t *testing.T) { // EXT-3
+	tests := []struct {
+		name string
+		op   cffake.Op
+	}{
+		{"tunnel", cffake.OpTunnelCreate},
+		{"Access application", cffake.OpAppCreate},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+" listed late", func(t *testing.T) {
+			ts := crashedAfterCreate(t, tc.op, cffake.WithPropagationDelay(3))
+
+			mustf(t, ts.attempt(), "disable")
+
+			if snap := ts.cf.Snapshot(); len(snap.Tunnels) != 0 || len(snap.Apps) != 0 || len(snap.DNSRecords) != 0 {
+				t.Errorf("left in Cloudflare: %d tunnels, %d apps, %d dns records", len(snap.Tunnels), len(snap.Apps), len(snap.DNSRecords))
+			}
+			if len(ts.slept) == 0 || ts.slept[0] != lookupBackoff[0] {
+				t.Errorf("waits = %v, want the lookup to back off before it concludes", ts.slept)
+			}
+		})
+	}
+}
+
+func TestDisableOfAnEnableThatCreatedNothingFinishesAfterTheBackoff(t *testing.T) { // EXT-3
+	for _, phase := range []cffake.Op{cffake.OpTunnelCreate, cffake.OpAppCreate} {
+		t.Run(string(phase), func(t *testing.T) {
+			ts := crashedAfterCreate(t, phase)
+			// The crash is right after the create: remove what it made, so the
+			// enable holds the phase with nothing in Cloudflare.
+			snap := ts.cf.Snapshot()
+			for _, a := range snap.Apps {
+				mustf(t, ts.chaos.CloudflareAPI.DeleteAccessApp(context.Background(), a.ID), "remove the app")
+			}
+			for _, tn := range snap.Tunnels {
+				mustf(t, ts.chaos.CloudflareAPI.DeleteTunnel(context.Background(), tn.ID), "remove the tunnel")
+			}
+			base := len(ts.cf.Mutations())
+			ts.slept = nil
+
+			mustf(t, ts.attempt(), "disable")
+
+			if !slices.Equal(ts.slept, lookupBackoff) {
+				t.Errorf("waits = %v, want the whole backoff %v", ts.slept, lookupBackoff)
+			}
+			for _, op := range ts.committedOps(base) {
+				if strings.Contains(string(op), "delete") {
+					t.Errorf("the disable committed %s though nothing was created", op)
+				}
+			}
 		})
 	}
 }
