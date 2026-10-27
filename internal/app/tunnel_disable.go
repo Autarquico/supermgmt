@@ -237,9 +237,7 @@ func (r *disableRun) unrecordedCreate(ctx context.Context, phase database.Tunnel
 		if err != nil || slices.ContainsFunc(tunnels, func(t cloudflare.Tunnel) bool { return t.ID == known.TunnelID }) {
 			return unrecordedFind{}, err // a recorded tunnel existing means nothing was created
 		}
-		tunnel, find, err := claim("tunnel", name, tunnels, func(t cloudflare.Tunnel) bool {
-			return r.createdSince(t.CreatedAt) && (t.ConfigSrc == "" || t.ConfigSrc == "cloudflare")
-		})
+		tunnel, find, err := claim("tunnel", name, tunnels, r.ownsTunnel)
 		if err == nil && len(tunnels) == 1 && find.left == 0 {
 			find.objects, find.action = database.TunnelObjects{TunnelID: tunnel.ID}, eventTunnelAdopted
 			find.data = map[string]any{"tunnel_id": tunnel.ID, "name": name}
@@ -255,10 +253,7 @@ func (r *disableRun) unrecordedCreate(ctx context.Context, phase database.Tunnel
 	if err != nil {
 		return unrecordedFind{}, err
 	}
-	app, find, err := claim("Access application", name, apps, func(a cloudflare.AccessApp) bool {
-		return r.createdSince(a.CreatedAt) && a.Domain == r.hostname &&
-			slices.Contains(a.PolicyIDs, state.ServicePolicyID) && slices.Contains(a.PolicyIDs, state.OwnersPolicyID)
-	})
+	app, find, err := claim("Access application", name, apps, func(a cloudflare.AccessApp) bool { return r.ownsAccessApp(state, a) })
 	if err == nil && len(apps) == 1 && find.left == 0 {
 		find.objects, find.action = database.TunnelObjects{AccessAppID: app.ID}, eventAccessAppAdopted
 		find.data = map[string]any{"access_app_id": app.ID, "name": name, "hostname": r.hostname}

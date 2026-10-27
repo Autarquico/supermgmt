@@ -54,9 +54,13 @@ func (h setupHandler) bootstrapDirect(ctx context.Context, run *tunnelRun, asRoo
 	if err == nil {
 		err = requireBootstrap(ctx, admin, asRoot)
 	}
-	if err != nil {
-		return nil, smerr.Wrap(err, smerr.CodeOf(err), "", fmt.Sprintf(
-			"the node could not be reached for setup through the tunnel (%v) nor over direct SSH", tunnelErr))
+	if err == nil {
+		return admin, nil
 	}
-	return admin, nil
+	if smerr.CodeOf(err) != smerr.CodeNodeUnreachable {
+		return nil, smerr.Wrap(err, smerr.CodeOf(err), "",
+			"the node answered over direct SSH, after the tunnel could not carry the stream, and the answer was refused")
+	}
+	return nil, smerr.Wrap(err, smerr.CodeNodeUnreachable, "", fmt.Sprintf(
+		"the node could not be reached for setup through the tunnel (%v) nor over direct SSH", tunnelErr))
 }

@@ -119,8 +119,6 @@ func TestAnAccessDenialOrAnAuthenticationFailureOverTheTunnelDoesNotFallBack(t *
 			"Cloudflare Access did not admit the service token for "+"ssh-web-1.example.test"+": check that the token is in the application's service policy"),
 		"authentication failed": smerr.Wrap(errors.New("unable to authenticate"), smerr.CodeNodeUnreachable, "",
 			"ssh authentication failed for user admin: the node does not accept the offered keys"),
-		"authentication failed after the carrier mark": smerr.Wrap(ssh.CarrierFailure(errors.New("unable to authenticate")), smerr.CodeNodeUnreachable, "",
-			"ssh authentication failed for user admin"),
 		"host key mismatch": smerr.Wrap(ssh.CarrierFailure(io.EOF), smerr.CodeSSHHostKeyMismatch, "", "ssh host key does not match the pinned key"),
 		"timeout":           smerr.Wrap(ssh.CarrierFailure(context.DeadlineExceeded), smerr.CodeNodeUnreachable, "", "ssh handshake timed out"),
 	}
@@ -174,6 +172,9 @@ func TestAFallbackRefusesAHostKeyThatDoesNotMatchOnTheDirectRoute(t *testing.T) 
 
 	if got := smerr.CodeOf(err); got != smerr.CodeSSHHostKeyMismatch {
 		t.Fatalf("error code = %s (%v), want %s", got, err, smerr.CodeSSHHostKeyMismatch)
+	}
+	if !strings.Contains(err.Error(), "over direct SSH, after the tunnel could not carry the stream") || strings.Contains(err.Error(), "could not be reached") {
+		t.Errorf("error %q must say the refusal came from direct SSH and not claim both routes are unreachable", err)
 	}
 	if n := len(direct.ran()); n != 1 {
 		t.Errorf("%d commands ran over the direct route after the refusal, want only the first", n)

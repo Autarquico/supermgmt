@@ -68,18 +68,28 @@ func (r *tunnelRun) ensureTunnel(ctx context.Context, _ database.CloudflareState
 	name := cloudflare.TunnelName(r.instanceID, r.node.ID.String())
 	tunnel, how, err := ensureNamed(ctx, r, namedObject[cloudflare.Tunnel]{
 		kind: "tunnel", name: name, known: r.known().TunnelID, recreate: r.op.Objects.TunnelID == "",
-		find:   func(ctx context.Context) ([]cloudflare.Tunnel, error) { return r.api.FindTunnels(ctx, name) },
-		create: func(ctx context.Context) (cloudflare.Tunnel, error) { return r.api.CreateTunnel(ctx, name) },
-		idOf:   func(t cloudflare.Tunnel) string { return t.ID },
-		adoptable: func(t cloudflare.Tunnel) bool {
-			return r.createdSince(t.CreatedAt) && (t.ConfigSrc == "" || t.ConfigSrc == "cloudflare")
-		},
+		find:      func(ctx context.Context) ([]cloudflare.Tunnel, error) { return r.api.FindTunnels(ctx, name) },
+		create:    func(ctx context.Context) (cloudflare.Tunnel, error) { return r.api.CreateTunnel(ctx, name) },
+		idOf:      func(t cloudflare.Tunnel) string { return t.ID },
+		adoptable: r.ownsTunnel,
 	})
 	if err != nil {
 		return err
 	}
 	return r.advance(ctx, database.PhaseTunnelCreated, database.TunnelObjects{TunnelID: tunnel.ID},
 		tunnelEvent(how, eventTunnelCreated, eventTunnelAdopted), map[string]any{"tunnel_id": tunnel.ID, "name": name})
+}
+
+// ownsTunnel is the one test of whether a same-name tunnel is the enable's own
+// work; both the enable's adoption and the abandon's deletion apply it.
+func (r *tunnelRun) ownsTunnel(t cloudflare.Tunnel) bool {
+	return r.createdSince(t.CreatedAt) && (t.ConfigSrc == "" || t.ConfigSrc == "cloudflare")
+}
+
+// ownsAccessApp is ownsTunnel's counterpart for the Access application.
+func (r *tunnelRun) ownsAccessApp(state database.CloudflareState, a cloudflare.AccessApp) bool {
+	return r.createdSince(a.CreatedAt) && a.Domain == r.hostname &&
+		slices.Contains(a.PolicyIDs, state.ServicePolicyID) && slices.Contains(a.PolicyIDs, state.OwnersPolicyID)
 }
 
 func (r *tunnelRun) ensureIngress(ctx context.Context, _ database.CloudflareState) error {
@@ -114,13 +124,10 @@ func (r *tunnelRun) ensureAccessApp(ctx context.Context, state database.Cloudfla
 	}
 	app, how, err := ensureNamed(ctx, r, namedObject[cloudflare.AccessApp]{
 		kind: "Access application", name: name, known: r.known().AccessAppID, recreate: r.op.Objects.AccessAppID == "",
-		find:   func(ctx context.Context) ([]cloudflare.AccessApp, error) { return r.api.FindAccessApps(ctx, name) },
-		create: func(ctx context.Context) (cloudflare.AccessApp, error) { return r.api.CreateAccessApp(ctx, spec) },
-		idOf:   func(a cloudflare.AccessApp) string { return a.ID },
-		adoptable: func(a cloudflare.AccessApp) bool {
-			return r.createdSince(a.CreatedAt) && a.Domain == r.hostname &&
-				slices.Contains(a.PolicyIDs, state.ServicePolicyID) && slices.Contains(a.PolicyIDs, state.OwnersPolicyID)
-		},
+		find:      func(ctx context.Context) ([]cloudflare.AccessApp, error) { return r.api.FindAccessApps(ctx, name) },
+		create:    func(ctx context.Context) (cloudflare.AccessApp, error) { return r.api.CreateAccessApp(ctx, spec) },
+		idOf:      func(a cloudflare.AccessApp) string { return a.ID },
+		adoptable: func(a cloudflare.AccessApp) bool { return r.ownsAccessApp(state, a) },
 	})
 	if err != nil {
 		return err

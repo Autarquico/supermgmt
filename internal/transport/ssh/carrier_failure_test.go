@@ -3,6 +3,8 @@ package ssh
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -82,7 +84,46 @@ func TestOtherTunnelFailuresAreNotCarrierFailures(t *testing.T) {
 	})
 }
 
-func TestClassificationNeedsTheMarkTheCodeAndNoAuthenticationFailure(t *testing.T) {
+// A node that spoke and then dropped the stream is the node's doing, not the
+// carrier's: the guard is the dialler's own record that the node was heard.
+func TestAStreamThatEndsAfterTheNodeSpokeIsNotACarrierFailure(t *testing.T) {
+	t.Run("the node says its banner and hangs up", func(t *testing.T) {
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = l.Close() })
+		go func() {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = io.WriteString(conn, "SSH-2.0-test\r\n")
+			_ = conn.Close()
+		}()
+		r := newTunnelRig(t, defaultConfig(), admitting())
+		setFake(t, r.home, fakeBehaviour{Forward: l.Addr().String()})
+		_, err = r.runTunnel(t, "x")
+		requireCode(t, err, smerr.CodeNodeUnreachable)
+		if IsCarrierFailure(err) {
+			t.Errorf("a node dropping the login after it spoke is a carrier failure: %v", err)
+		}
+	})
+	t.Run("the node refuses the key", func(t *testing.T) {
+		r := newTunnelRig(t, defaultConfig(), admitting())
+		r.pool.creds = &staticCreds{signer: newSigner(t)}
+		_, err := r.runTunnel(t, "x")
+		requireCode(t, err, smerr.CodeNodeUnreachable)
+		if !strings.Contains(err.Error(), "authentication failed for user supermgmt") {
+			t.Fatalf("err = %v, want an authentication failure", err)
+		}
+		if IsCarrierFailure(err) {
+			t.Errorf("an authentication failure through the tunnel is a carrier failure: %v", err)
+		}
+	})
+}
+
+func TestClassificationNeedsTheMarkAndTheCode(t *testing.T) {
 	cause := errors.New("EOF")
 	marked := CarrierFailure(cause)
 	tests := []struct {
@@ -95,7 +136,6 @@ func TestClassificationNeedsTheMarkTheCodeAndNoAuthenticationFailure(t *testing.
 		{"marked but another code", smerr.Wrap(marked, smerr.CodeSSHHostKeyMismatch, "", "ssh host key"), false},
 		{"marked but cancelled", smerr.Wrap(CarrierFailure(context.Canceled), smerr.CodeNodeUnreachable, "", "ssh handshake"), false},
 		{"marked but past its deadline", smerr.Wrap(CarrierFailure(context.DeadlineExceeded), smerr.CodeNodeUnreachable, "", "ssh handshake"), false},
-		{"marked with an authentication failure", smerr.Wrap(marked, smerr.CodeNodeUnreachable, "", "ssh authentication failed for user admin"), false},
 		{"nil", nil, false},
 	}
 	for _, tc := range tests {

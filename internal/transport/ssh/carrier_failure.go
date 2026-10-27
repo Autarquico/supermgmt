@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
@@ -36,6 +35,5 @@ func IsCarrierFailure(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded) {
 		return false
 	}
-	text := err.Error()
-	return !strings.Contains(text, "unable to authenticate") && !strings.Contains(text, "authentication failed")
+	return true
 }
