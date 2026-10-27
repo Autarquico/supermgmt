@@ -16,3 +16,6 @@ coverage.out
 /site/src/content/docs/
 /site/test-results/
 /site/playwright-report/
+
+# Trusted scratch directories of the cloudflared trust tests (removed by TestMain)
+/internal/transport/ssh/.trusted-*/

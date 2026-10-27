@@ -34,7 +34,79 @@ func TestMain(m *testing.M) {
 		runFakeCloudflared()
 		return
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if trustedRoot != "" {
+		_ = os.RemoveAll(trustedRoot)
+	}
+	os.Exit(code)
+}
+
+var (
+	trustedRoot string
+	fakePath    string
+	trustedErr  error
+	trustedOnce sync.Once
+)
+
+// trustedSetup makes, once per run, a private directory under the package and
+// a copy of the test binary in it. t.TempDir and go test's build directory
+// live under /tmp on Linux, which the trust check refuses, so a binary that
+// must be judged on its own merits cannot live there.
+func trustedSetup(t *testing.T) {
+	t.Helper()
+	trustedOnce.Do(func() {
+		var self, dir string
+		if self, trustedErr = os.Executable(); trustedErr != nil {
+			return
+		}
+		if dir, trustedErr = os.MkdirTemp(".", ".trusted-"); trustedErr != nil {
+			return
+		}
+		if trustedRoot, trustedErr = filepath.Abs(dir); trustedErr != nil {
+			return
+		}
+		fakePath = filepath.Join(trustedRoot, "cloudflared")
+		trustedErr = copyExecutable(self, fakePath)
+	})
+	if trustedErr != nil {
+		t.Fatal(trustedErr)
+	}
+}
+
+// exe is the fake cloudflared.
+func exe(t *testing.T) string {
+	t.Helper()
+	trustedSetup(t)
+	return fakePath
+}
+
+// trustedDir is a fresh private directory the trust check accepts.
+func trustedDir(t *testing.T) string {
+	t.Helper()
+	trustedSetup(t)
+	dir, err := os.MkdirTemp(trustedRoot, "t-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func copyExecutable(from, to string) error {
+	src, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		return err
+	}
+	return dst.Close()
 }
 
 type fakeBehaviour struct {
@@ -112,15 +184,6 @@ func admitting() *http.Client {
 	return &http.Client{Transport: handlerTransport{http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})}}
-}
-
-func exe(t *testing.T) string {
-	t.Helper()
-	path, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func setFake(t *testing.T, home string, b fakeBehaviour) {

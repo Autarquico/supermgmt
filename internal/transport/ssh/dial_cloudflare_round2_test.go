@@ -80,15 +80,15 @@ func TestCloudflaredThatOthersCanReplaceIsNotTrusted(t *testing.T) {
 		return path
 	}
 	t.Run("group writable binary", func(t *testing.T) {
-		_, err := resolveCloudflared(CloudflareConfig{Path: write(t.TempDir(), 0o775)})
+		_, err := resolveCloudflared(CloudflareConfig{Path: write(trustedDir(t), 0o775)})
 		requireTrust(t, err, "writable by group or others")
 	})
 	t.Run("world writable binary", func(t *testing.T) {
-		_, err := resolveCloudflared(CloudflareConfig{Path: write(t.TempDir(), 0o757)})
+		_, err := resolveCloudflared(CloudflareConfig{Path: write(trustedDir(t), 0o757)})
 		requireTrust(t, err, "writable by group or others")
 	})
 	t.Run("world writable directory", func(t *testing.T) {
-		dir := filepath.Join(t.TempDir(), "bin")
+		dir := filepath.Join(trustedDir(t), "bin")
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -100,8 +100,8 @@ func TestCloudflaredThatOthersCanReplaceIsNotTrusted(t *testing.T) {
 		requireTrust(t, err, "writable by others")
 	})
 	t.Run("a symlink is judged by its target", func(t *testing.T) {
-		bad := write(t.TempDir(), 0o775)
-		link := filepath.Join(t.TempDir(), "cloudflared")
+		bad := write(trustedDir(t), 0o775)
+		link := filepath.Join(trustedDir(t), "cloudflared")
 		if err := os.Symlink(bad, link); err != nil {
 			t.Fatal(err)
 		}
@@ -109,8 +109,8 @@ func TestCloudflaredThatOthersCanReplaceIsNotTrusted(t *testing.T) {
 		requireTrust(t, err, "writable by group or others")
 	})
 	t.Run("a symlink in a directory others can write is not trusted", func(t *testing.T) { // SEC-5
-		target := write(t.TempDir(), 0o755)
-		linkDir := filepath.Join(t.TempDir(), "bin")
+		target := write(trustedDir(t), 0o755)
+		linkDir := filepath.Join(trustedDir(t), "bin")
 		if err := os.Mkdir(linkDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestCloudflaredThatOthersCanReplaceIsNotTrusted(t *testing.T) {
 		requireTrust(t, err, "writable by others")
 	})
 	t.Run("a binary swapped after construction is refused at the dial", func(t *testing.T) { // SEC-5
-		path := write(t.TempDir(), 0o755)
+		path := write(trustedDir(t), 0o755)
 		d := NewCloudflareDialer(CloudflareConfig{Path: path})
 		if d.pathErr != nil {
 			t.Fatal(d.pathErr)
@@ -137,13 +137,13 @@ func TestCloudflaredThatOthersCanReplaceIsNotTrusted(t *testing.T) {
 		requireTrust(t, err, "writable by group or others")
 	})
 	t.Run("the search skips an untrusted candidate and names it when nothing else is found", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := trustedDir(t)
 		write(dir, 0o775)
 		_, err := resolveCloudflared(CloudflareConfig{SearchDirs: []string{dir}})
 		requireTrust(t, err, "writable by group or others")
 	})
 	t.Run("an owned, private binary is accepted", func(t *testing.T) {
-		path := write(t.TempDir(), 0o755)
+		path := write(trustedDir(t), 0o755)
 		if got, err := resolveCloudflared(CloudflareConfig{Path: path}); err != nil || got != path {
 			t.Errorf("got %q, %v", got, err)
 		}
@@ -159,11 +159,11 @@ func requireTrust(t *testing.T, err error, reason string) {
 }
 
 func TestOnlyAnAbsentCloudflaredIsMissing(t *testing.T) {
-	_, err := resolveCloudflared(CloudflareConfig{SearchDirs: []string{t.TempDir()}})
+	_, err := resolveCloudflared(CloudflareConfig{SearchDirs: []string{trustedDir(t)}})
 	if !CloudflaredMissing(err) {
 		t.Errorf("an empty search directory: %v is not reported as missing", err)
 	}
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "cloudflared"), []byte("#!/bin/sh\n"), 0o775); err != nil {
 		t.Fatal(err)
 	}

@@ -59,15 +59,10 @@ func requireSafeDirectories(path, start string) error {
 
 // directorySafe: not writable by others, and group-writable only when the
 // daemon's own user owns it (Homebrew's prefix is user-owned, admin-writable).
-// A sticky directory (/tmp, mode 1777) keeps others from replacing the
-// entries they do not own; its owner, root or the daemon, is checked by the
-// caller.
+// A sticky directory owned by root (/tmp) keeps others from replacing files.
 func directorySafe(info fs.FileInfo) bool {
-	if info.Mode()&fs.ModeSticky != 0 {
-		return true
-	}
 	perm := info.Mode().Perm()
-	if perm&0o002 != 0 {
+	if perm&0o002 != 0 && info.Mode()&fs.ModeSticky == 0 {
 		return false
 	}
 	return perm&0o020 == 0 || ownedBy(info, os.Getuid())
