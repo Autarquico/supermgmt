@@ -248,11 +248,26 @@ var (
 	carrierErr  error
 )
 
-// buildCarrier builds test/fixtures/cloudflared-fake once per test binary.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if carrierPath != "" {
+		_ = os.RemoveAll(filepath.Dir(carrierPath))
+	}
+	os.Exit(code)
+}
+
+// buildCarrier builds test/fixtures/cloudflared-fake once per test binary, into
+// a private directory under the package: the dialler refuses a cloudflared
+// under /tmp, where the temporary directories live on Linux.
 func buildCarrier(t *testing.T) string {
 	t.Helper()
 	carrierOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "smt-carrier")
+		rel, err := os.MkdirTemp(".", ".trusted-carrier-")
+		if err != nil {
+			carrierErr = err
+			return
+		}
+		dir, err := filepath.Abs(rel)
 		if err != nil {
 			carrierErr = err
 			return

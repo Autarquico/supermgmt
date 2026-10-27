@@ -19,3 +19,4 @@ coverage.out
 
 # Trusted scratch directories of the cloudflared trust tests (removed by TestMain)
 /internal/transport/ssh/.trusted-*/
+/test/integration/tunnel/.trusted-carrier-*/
