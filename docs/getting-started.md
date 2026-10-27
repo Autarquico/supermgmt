@@ -9,7 +9,7 @@ This page takes you from nothing to a Linux machine managed from your laptop: bu
 On your laptop:
 
 - macOS or Linux, amd64 or arm64.
-- Go 1.27.2 or newer, and `git`.
+- Go 1.27.3 or newer, and `git`.
 - An SSH key loaded in your SSH agent (`ssh-add -l` lists it). SuperMgmt uses your agent to log in as you; it never asks for a password.
 
 For the managed machine (optional; you can stop after [step 3](#3-register-this-machine)):
