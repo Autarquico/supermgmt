@@ -22,6 +22,10 @@ import (
 
 const tokenPath = "/etc/supermgmt/cloudflared/token"
 
+// credentialPath is the copy of the token systemd hands the running unit
+// (LoadCredential), readable by that unit alone.
+const credentialPath = "/run/credentials/" + tunnelSvc + "/token"
+
 // nodePlaces reads what the node itself remembers.
 func (f *tunnelFixture) nodePlaces() map[string][]byte {
 	f.t.Helper()
@@ -34,7 +38,7 @@ func (f *tunnelFixture) nodePlaces() map[string][]byte {
 	read("node unit status", "systemctl status --no-pager -l "+tunnelSvc+" 2>&1")
 	read("node journal", "journalctl --no-pager -a -o short 2>&1")
 	read("node process list", "ps -eo args 2>&1")
-	read("node stub record", "cat /run/cloudflared-stub/argv /run/cloudflared-stub/env 2>&1")
+	read("node stub record", stubRecords+" 2>&1")
 	return places
 }
 
@@ -140,7 +144,7 @@ func TestNoCredentialLeaksThroughEnableRotateAndDisableWithFaults(t *testing.T) 
 		files := f.filesHolding(value)
 		switch {
 		case value == tunnelToken:
-			if want := []string{tokenPath}; !slices.Equal(files, want) {
+			if want := []string{tokenPath, credentialPath}; !slices.Equal(files, want) {
 				t.Errorf("files on the node holding the tunnel token = %v, want only %v", files, want)
 			}
 		case len(files) != 0:

@@ -180,7 +180,7 @@ func TestDoctorCloudflaredIsFoundOrFailsWithHowToInstallIt(t *testing.T) {
 		wantDetail string
 	}{
 		{"found", func() (string, error) { return "/usr/local/bin/cloudflared", nil }, "ok", "/usr/local/bin/cloudflared"},
-		{"missing", func() (string, error) { return "", errors.New("absent") }, "fail", "install cloudflared"},
+		{"missing", func() (string, error) { return "", errors.New("absent") }, "fail", "install it"},
 	}
 	for _, online := range []bool{false, true} {
 		for _, tc := range tests {

@@ -108,25 +108,20 @@ func useAgent(t *testing.T, signers ...cryptossh.Signer) {
 // real). The fixture image is untouched: the test builds
 // and installs a one-file .deb with dpkg-deb. The binary is a Perl script
 // (perl-base is on every Debian) that notifies systemd, so the unit's
-// Type=notify holds, and records what it was started with under
-// /run/cloudflared-stub: its argv, its environment and the size of its token
-// file. It never writes the token anywhere.
+// Type=notify holds, and records what it was started with on its stdout,
+// which systemd sends to the journal: the unit's sandbox leaves it no
+// writable file system. One stubLine per record: its argv, its environment
+// and the size of its token file. It never prints the token.
 const stubCloudflared = `#!/usr/bin/perl
 use strict;
 use warnings;
 use Socket;
-mkdir "/run/cloudflared-stub";
-open(my $a, ">", "/run/cloudflared-stub/argv") or die "argv: $!";
-print $a join("\n", @ARGV), "\n";
-close $a;
-open(my $e, ">", "/run/cloudflared-stub/env") or die "env: $!";
-print $e "$_=$ENV{$_}\n" for sort keys %ENV;
-close $e;
+$| = 1;
+print "cloudflared-stub argv: ", join(" ", @ARGV), "\n";
+print "cloudflared-stub env: $_=$ENV{$_}\n" for sort keys %ENV;
 my ($i) = grep { $ARGV[$_] eq "--token-file" } 0 .. $#ARGV;
 my $size = (defined $i && -f $ARGV[$i + 1]) ? (-s $ARGV[$i + 1]) : -1;
-open(my $s, ">", "/run/cloudflared-stub/token-file-size") or die "size: $!";
-print $s "$size\n";
-close $s;
+print "cloudflared-stub token-file-size: $size\n";
 if ($ENV{NOTIFY_SOCKET}) {
 	my $path = $ENV{NOTIFY_SOCKET};
 	$path =~ s/^@/\0/;
@@ -197,11 +192,43 @@ func trySh(t *testing.T, n *fixture.Node, script string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// stubRecords is what the stand-in printed when it started, as the journal
+// holds it.
+const stubRecords = "journalctl --no-pager -a -o cat -u " + tunnelSvc + " | grep '^cloudflared-stub '"
+
+// stubRecord returns the last value the stand-in printed for key, waiting for
+// the journal to hold it.
+func stubRecord(t *testing.T, n *fixture.Node, key string) string {
+	t.Helper()
+	prefix := "cloudflared-stub " + key + ": "
+	deadline := time.Now().Add(10 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop
+	for {
+		out, _ := trySh(t, n, stubRecords)
+		value, found := "", false
+		for _, line := range strings.Split(out, "\n") {
+			if v, ok := strings.CutPrefix(line, prefix); ok {
+				value, found = v, true
+			}
+		}
+		if found {
+			return value
+		}
+		if time.Now().After(deadline) { //nolint:forbidigo // see above
+			t.Fatalf("the journal holds no %q record of the stand-in:\n%s", key, out)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // installStubPackage installs the cloudflared stand-in as a real dpkg package.
 func installStubPackage(t *testing.T, n *fixture.Node) {
 	t.Helper()
 	b64 := base64.StdEncoding.EncodeToString([]byte(stubCloudflared))
+	// systemd 257 mounts a unit's LoadCredential directory from a helper
+	// namespace and relies on / propagating mounts, as it does on a host.
+	// Docker makes / private, so the service would find no credential.
 	script := `set -e
+mount --make-rshared /
 d=$(mktemp -d)
 mkdir -p "$d/DEBIAN" "$d/usr/bin"
 printf %s "$1" > "$d/DEBIAN/control"
@@ -249,7 +276,7 @@ func (s *stack) carrierForwardsTo(n *fixture.Node) {
 // setup runs node.setup for the fixture node, with or without the tunnel.
 func (f *tunnelFixture) setup(tunnel bool) jobs.Job {
 	f.t.Helper()
-	grants := make([]string, 0, len(domain.AllServiceVerbs()))
+	grants := make([]any, 0, len(domain.AllServiceVerbs()))
 	for _, v := range domain.AllServiceVerbs() {
 		grants = append(grants, string(v)+" "+demoUnit)
 	}

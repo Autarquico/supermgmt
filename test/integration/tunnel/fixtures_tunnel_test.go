@@ -68,11 +68,11 @@ func TestTunnelLifecycleOnTheFixtureWithTheDirectRouteBlocked(t *testing.T) {
 		if got := sh(t, f.docker, "stat -c '%U:%G %a' /etc/supermgmt/cloudflared"); got != "root:root 700" {
 			t.Errorf("token directory = %q, want root:root 700", got)
 		}
-		argv := sh(t, f.docker, "cat /run/cloudflared-stub/argv")
-		if !strings.Contains(argv, "--token-file\n/etc/supermgmt/cloudflared/token") || strings.Contains(argv, "--token\n") {
-			t.Errorf("cloudflared argv = %q, want --token-file <path> and no --token", argv)
+		argv := stubRecord(t, f.docker, "argv")
+		if !strings.Contains(argv, "--token-file "+credentialPath) || strings.Contains(argv, "--token ") {
+			t.Errorf("cloudflared argv = %q, want --token-file <its credential> and no --token", argv)
 		}
-		if size := sh(t, f.docker, "cat /run/cloudflared-stub/token-file-size"); size == "-1" || size == "0" {
+		if size := stubRecord(t, f.docker, "token-file-size"); size == "-1" || size == "0" {
 			t.Errorf("the token file the service saw has size %s, want the token", size)
 		}
 		unit := sh(t, f.docker, "systemctl cat "+tunnelSvc)
