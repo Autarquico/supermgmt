@@ -118,8 +118,12 @@ func TestMilestoneTable_IsOrderedFullSHAsEndingAtTheLatestSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last := milestones[len(milestones)-1]; last.schema != len(ups) {
-		t.Errorf("%s: schema %d, but the tree has %d migrations", last.name, last.schema, len(ups))
+	last := milestones[len(milestones)-1]
+	switch {
+	case last.schema == len(ups):
+	case pendingSchema == len(ups) && last.schema == len(ups)-1:
+	default:
+		t.Errorf("%s: schema %d, but the tree has %d migrations (pending: %d)", last.name, last.schema, len(ups), pendingSchema)
 	}
 }
 

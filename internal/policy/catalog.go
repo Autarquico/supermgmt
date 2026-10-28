@@ -69,6 +69,8 @@ const (
 	ActionNodeSetup             = "node.setup"
 	ActionSudoersWrite          = "sudoers.write"
 	ActionLogBrokerInstall      = "log_broker.install"
+	ActionNodeTunnelDisable     = "node.tunnel.disable"
+	ActionCloudflareRotate      = "cloudflare.access_token.rotate"
 )
 
 // node.setup parameters (ADR-0009). docker_access has no default: the caller
@@ -79,6 +81,7 @@ const (
 	ParamLogsMode     = "logs_mode"
 	ParamGrants       = "grants"
 	ParamDeployRoot   = "deploy_root"
+	ParamTunnel       = "tunnel" // "true" reaches the node through a Cloudflare Tunnel (ADR-0037)
 )
 
 var catalogIndex = sync.OnceValue(func() map[string]ActionSpec {
@@ -231,6 +234,7 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamLogsMode, Type: ParamString, Values: []string{"journal-group", "broker"}},
 		{Name: ParamGrants, Type: ParamStringList},
 		{Name: ParamDeployRoot, Type: ParamString},
+		{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}},
 	}
 
 	return []ActionSpec{
@@ -266,6 +270,8 @@ func buildCatalog() []ActionSpec {
 		job("deployment.create", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
 		job("deployment.rollback", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
 		setup,
+		job(ActionNodeTunnelDisable, domain.ResourceNode, high, idem, "node.ssh", 3),
+		job(ActionCloudflareRotate, domain.ResourceInstance, high, idem, "", 3),
 		job(ActionSudoersWrite, domain.ResourceNode, high, noRun, "node.ssh", 1),
 		job(ActionLogBrokerInstall, domain.ResourceNode, high, noRun, "node.ssh", 1),
 		job("backup.create", domain.ResourceInstance, op, idem, "", 3),

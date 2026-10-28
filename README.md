@@ -36,7 +36,7 @@ The terminal UI has screens for the dashboard, resources, nodes, services, logs,
 
 ## Quick start
 
-You need macOS or Linux, Go 1.27.2 or newer, `git`, and an SSH key in your SSH agent. No server and no account.
+You need macOS or Linux, Go 1.27.3 or newer, `git`, and an SSH key in your SSH agent. No server and no account.
 
 ```bash
 git clone https://github.com/autarquico/supermgmt.git

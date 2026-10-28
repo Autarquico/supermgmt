@@ -44,6 +44,8 @@ node.backup_template.run   node        operational  sub-action  -              n
 deployment.create          app_target  operational  job         resumable      docker.compose.deploy    3
 deployment.rollback        app_target  operational  job         resumable      docker.compose.deploy    3
 node.setup                 node        high         job         idempotent     node.ssh                 3
+node.tunnel.disable        node        high         job         idempotent     node.ssh                 3
+cloudflare.access_token.rotate instance high        job         idempotent     -                        3
 sudoers.write              node        high         job         non_retryable  node.ssh                 1
 log_broker.install         node        high         job         non_retryable  node.ssh                 1
 backup.create              instance    operational  job         idempotent     -                        3

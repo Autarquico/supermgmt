@@ -182,6 +182,54 @@ The fixed rate limits were exceeded (`/auth/*` and `/enroll`: 10 per minute; wri
 - **`ROLLBACK_UNAVAILABLE`**: a secret version or snapshot the known-good deployment bound is gone; the rollback is refused before anything changes.
 - **Deployments from GitHub fail verification**: the GitHub path was only exercised against fakes; see the deferred list in [compatibility.md](compatibility.md#deployments).
 
+## Cloudflare tunnel nodes
+
+Experimental; see [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel). These entries come from the code and its tests, not from a run against a real Cloudflare account.
+
+### `Cloudflare Access did not admit the service token`
+
+The daemon sent the service token to the node's tunnel hostname and Access answered with its login page instead of letting it through, so nothing was started (`TestTunnelRefusesWithoutSpawningWhenAccessRedirectsToLogin`). Usual causes, none checked for you: the Access application or its Service Auth policy was changed or deleted in the dashboard; the service token expired or was deleted; the secret at `cloudflare.access_token_ref` is not the token Cloudflare knows. Run `sm doctor` (the `cloudflare_service_token` row), then `sm nodes setup <node> --tunnel` again to repair the objects, or `sm cloudflare rotate-access-token` for the token.
+
+### `cloudflared` not found
+
+`CAPABILITY_UNAVAILABLE` naming `cloudflared`, or `sm doctor` failing `cloudflare_cloudflared`: the daemon host has no executable `cloudflared` in `/usr/local/bin`, `/opt/homebrew/bin` or `/usr/bin` (`TestMissingCloudflaredIsCapabilityUnavailable`). The `PATH` is never searched. Install it from Cloudflare's package repository (Linux) or Homebrew (macOS); in local mode one install on your machine serves the daemon and `sm ssh`. `sm doctor` gives the reason and the install route of the daemon host's OS (Homebrew on macOS, `pkg.cloudflare.com` otherwise). `sm ssh` fails the same way, with a message to install it on your own machine, when the client has none. A binary that group or others can write, or that is not owned by root or the daemon's user, is refused too.
+
+### A tunnel setup keeps failing and I want to undo it
+
+Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, halted, failed or interrupted, checks the direct path first, and removes the route, Access application and tunnel recorded for the node, even when the node never completed setup (`TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing`). The node stays on direct SSH. To try again instead, run `sm nodes setup <node> --tunnel`. A tunnel or Access application that setup created but never recorded is found by the setup's ownership rule and removed too; a foreign object of that name is never touched (it is audited as `cloudflare.object.left_untouched` and the abandon finishes), and the abandon refuses only when one of ours sits next to a foreign one of the same name. Details: [Cloudflare](cloudflare.md#when-a-setup-does-not-finish).
+
+### The node name cannot be used with a tunnel
+
+`ssh-<node-name>.<zone>` must be a valid DNS name. The plan is refused before approval when the node name has dots, underscores or other characters outside letters, digits and hyphens, ends in a hyphen, or makes `ssh-<node-name>` longer than 63 characters (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`). No command renames a node: remove it (`sm nodes remove <node>`) and add it again under a DNS-safe name (`sm nodes add --name <new-name> ...`), then plan again.
+
+### The account has no one-time PIN login method
+
+With `access_identity_providers` empty, SuperMgmt allows exactly the account's One-time PIN provider. If there is none, setup stops before it creates the application with `CAPABILITY_UNAVAILABLE` (`TestAccess_NoOneTimePINFailsBeforeTheApplicationIsCreated`). Enable One-time PIN in Zero Trust (Settings, Authentication), or list the provider IDs you use in `access_identity_providers`, then run setup again.
+
+### `sm doctor` warns that the API token is not available
+
+`cloudflare_api_token` warns when the token is not in the store, or when Cloudflare rejects it while every tunnel is provisioned (`TestDoctorRevokedAPITokenIsOnlyAWarningOnceEveryTunnelIsProvisioned`). Dialling is unaffected. Setup, disable and rotation need a valid token: create one and run `sm secrets import --name cloudflare/api-token`. Before the first node is on the tunnel, or while an operation is unfinished, the same condition is a failure.
+
+### Doctor warns about a tunnel operation that did not finish
+
+`cloudflare_tunnel_operations` warns for any operation that is running, interrupted or halted, naming the phase it stopped at (`TestDoctorReportsTunnelOperationsThatDidNotFinish`). Run the same command again, `sm nodes setup <node> --tunnel` or `sm nodes tunnel disable <node>`: the operation resumes from its record. To give up on an unfinished setup, run `sm nodes tunnel disable <node>`; it abandons it. The warning stays while an operation is genuinely running.
+
+### A tunnel job stops with a conflict
+
+An object in Cloudflare has the name SuperMgmt expected for this node but the record does not show SuperMgmt created it (a leftover from another instance, a restored copy, or something made by hand). SuperMgmt never adopts it (`TestAnObjectWithTheExpectedNameButAnotherOwnerIsAConflictNeverAdopted`). Look at the object in the Cloudflare dashboard, delete or rename it if it is yours to remove, and run the command again. Do not run two SuperMgmt instances, or a restored copy and its original, against one account.
+
+### A tunnel job is refused during the restore hold
+
+After a restore every write returns `CONFLICT` with `RESTORE_HOLD`, tunnel jobs included, so nothing in Cloudflare changes ([above](#every-write-returns-conflict-with-restore_hold)). After `sudo sm admin restore-complete` the daemon compares its records with Cloudflare and writes audit events for missing or recreated objects; rerun `sm nodes setup <node> --tunnel` to repair them.
+
+### A tunnel node cannot be reached and a re-run fails
+
+If the connector is down, its credential is invalid or the tunnel was deleted, run `sm nodes setup <node> --tunnel` again. When the tunnel cannot carry the stream, the admin session of that re-run runs over direct SSH (audit event `node.tunnel.setup_direct_fallback`), repairs the connector and verifies the dedicated account over the tunnel before anything is committed (`TestARerunRepairsABrokenConnectorOverDirectSSHAndVerifiesOverTheTunnel`). If the error is `NODE_UNREACHABLE` and names the tunnel and direct SSH, both routes are down: open the direct route again first. If the error says it came from direct SSH, the direct route answered and setup failed there: for `SSH_HOST_KEY_MISMATCH` see [that entry](#ssh_host_key_mismatch), for a rejected key see [`ssh authentication failed for user ...`](#ssh-authentication-failed-for-user--the-node-does-not-accept-the-offered-keys); do not open anything. An Access refusal ([above](#cloudflare-access-did-not-admit-the-service-token)), an authentication failure or a host-key mismatch over the tunnel never falls back; fix them directly. Details: [Cloudflare](cloudflare.md#repairing-a-node-whose-connector-is-broken).
+
+### A tunnel node fails verification after setup
+
+The job names the step and leaves the transport `direct`. A different SSH host key over the tunnel is refused like any host-key mismatch ([`SSH_HOST_KEY_MISMATCH`](#ssh_host_key_mismatch)); it is never repinned for you. If the dedicated account fails over the tunnel, the transport also stays `direct` (`TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`).
+
 ## Still stuck
 
 Collect `sm version`, `sm doctor` output, the exit code and the message, and open an issue; follow [SECURITY.md](../SECURITY.md) instead when the problem looks like a vulnerability. Do not paste tokens, archives or key exports.

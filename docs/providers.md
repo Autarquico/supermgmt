@@ -46,8 +46,9 @@ A node can also be declared in the configuration file (`providers:` with `type: 
 Without setup a node is read-only. Starting, stopping and restarting services, restricted log modes, Docker container actions and deployments all need `node.setup`. Start it from the CLI:
 
 ```bash
-sm nodes setup web1                          # logs via the journal group, no Docker
+sm nodes setup web1                          # first setup: journal group, no Docker; a re-run keeps what the node has
 sm nodes setup web1 --docker-access          # also join the docker group (root-equivalent)
+sm nodes setup web1 --docker-access=false    # remove Docker access
 sm nodes setup web1 --logs-mode broker       # logs through the root-owned broker instead of the journal group
 sm nodes setup web1 --unit nginx.service     # allow start, stop and restart of nginx.service
 sm nodes setup web1 --unit app.service:restart   # allow only restart
@@ -57,16 +58,18 @@ sm nodes setup web1 --no-units               # remove every unit grant
 or from the TUI palette:
 
 ```text
-/ setup web1                  logs via the journal group, no Docker
+/ setup web1                  first setup: journal group, no Docker; a re-run keeps what the node has
 / setup web1 docker           also join the docker group (root-equivalent)
+/ setup web1 no-docker journal
+                              remove Docker access and go back to the journal group
 / setup web1 broker           logs through the root-owned broker instead of the journal group
 / setup web1 unit nginx.service unit app.service:restart
                               grant systemctl on those units
 ```
 
-`--unit` (or `unit` in the palette) takes `<unit>[:start,stop,restart]`; without verbs the unit gets all three. The units you pass replace the node's current grants, and the plan shows the old and new lists. Without any unit, re-running setup (after `sm ssh-key rotate`, say) keeps the grants the node has (`TestNodesSetupKeepsTheNodesGrantsUnlessToldOtherwise`). Each grant is one sudoers line, `systemctl <verb> <unit>`, and only units that pass the trust profile are granted.
+`--unit` (or `unit` in the palette) takes `<unit>[:start,stop,restart]`; without verbs the unit gets all three. The units you pass replace the node's current grants, and the plan shows the old and new lists. Without any unit, re-running setup (after `sm ssh-key rotate`, say) keeps the grants the node has (`TestNodesSetupKeepsTheNodesGrantsUnlessToldOtherwise`); Docker access, the logs mode and the tunnel are kept the same way unless a flag or word changes them (`TestNodesSetupRerunKeepsDockerLogsAndTunnelUnlessGiven`). Each grant is one sudoers line, `systemctl <verb> <unit>`, and only units that pass the trust profile are granted.
 
-Both show a plan that names the bootstrap identity and, with Docker access, the warning that the docker group is equivalent to root. Confirm it (`y` in the TUI). The setup job is approval-gated; approve it from the Approvals screen (`4`, then `A`) or with `sm jobs approve`. Docker access is never implied: without `--docker-access` (or `docker` in the palette) it is off. How approvals work is in [Policies and approvals](policies.md).
+Both show a plan that names the bootstrap identity and, with Docker access, the warning that the docker group is equivalent to root. Confirm it (`y` in the TUI). The setup job is approval-gated; approve it from the Approvals screen (`4`, then `A`) or with `sm jobs approve`. On a first setup Docker access is off unless you pass `--docker-access` (or `docker` in the palette); a re-run keeps the node's Docker access until `--docker-access=false` (`no-docker`) removes it. How approvals work is in [Policies and approvals](policies.md).
 
 Bootstrap privilege:
 
@@ -108,9 +111,18 @@ Current limits:
 
 Service actions are jobs. In an environment with `risk_level: production` they wait in `awaiting_approval`. The risks that come with these grants (whole-journal read, Docker as root, unit trust) are in [security.md](security.md#trust-boundaries-in-one-page).
 
+### Transport: direct or Cloudflare Tunnel
+
+A node's transport is `direct` (the default; a node without the field is direct) or `cloudflare`. With `direct`, SuperMgmt dials `host:port` itself. With `cloudflare` it runs `cloudflared access ssh` to the node's tunnel hostname and speaks SSH over its standard input and output; the pinned host key, the accounts and every command template are unchanged. Unknown transport values are rejected.
+
+- It is **experimental** and tested against fakes only: [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel) has the prerequisites, the steps and the limits.
+- Switch with `sm nodes setup <node> --tunnel` and back with `sm nodes tunnel disable <node>`, which also abandons an unfinished setup. Both are approval-gated jobs, and the hostname `ssh-<node-name>.<zone>` is validated when the plan is created. The transport is changed only by those jobs: reapplying the configuration file never changes it (`TestReconcileNeverWritesTheTunnelFields`).
+- `sm nodes get` shows the transport; `sm nodes list` adds a column once a node uses a tunnel.
+- The daemon host needs `cloudflared`. A missing one is reported as `CAPABILITY_UNAVAILABLE` naming it, and `sm doctor` flags it.
+
 ### Interactive tools
 
-`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. `lazydocker` is never installed for you; when it is missing, install it on the node yourself. SuperMgmt does not offer lazydocker on a local machine over an SSH Docker context.
+`s` in the TUI, `sm ssh <node>` and `sm docker <node>` hand your terminal to the system OpenSSH client as `admin_user` (override with `--user`), using your own credentials and the node's pinned key only. Your `ssh_config` is ignored. See [security.md](security.md#interactive-ssh-isolation) for the exact isolation. On a tunnel node the session goes through your own `cloudflared` and your own Access login instead of SuperMgmt's service token; `cloudflared` must be installed on your machine ([Cloudflare](cloudflare.md#using-a-tunnel-node)). `lazydocker` is never installed for you; when it is missing, install it on the node yourself. SuperMgmt does not offer lazydocker on a local machine over an SSH Docker context.
 
 ## Local provider
 

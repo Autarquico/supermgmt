@@ -1588,6 +1588,8 @@ components:
         admin_user: {type: string}
         host_public_key: {type: string}
         host_key_fingerprint_sha256: {type: string}
+        transport: {type: string, enum: [direct, cloudflare]}
+        tunnel_hostname: {type: string}
     Capability:
       type: object
       required: [name, available, checked_at]
@@ -1683,6 +1685,8 @@ components:
         user: {type: string}
         host_public_key: {type: string}
         host_key_alias: {type: string}
+        transport: {type: string, enum: [direct, cloudflare]}
+        tunnel_hostname: {type: string}
     OpenSessionRequest:
       type: object
       required: [tool]

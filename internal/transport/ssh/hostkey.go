@@ -40,6 +40,11 @@ func ScanHostKey(ctx context.Context, host string, port int) (HostKey, error) {
 	if err := validateEndpoint(host, port); err != nil {
 		return HostKey{}, err
 	}
+	return scanHostKey(ctx, directDialer{}, Target{Host: host, Port: port})
+}
+
+func scanHostKey(ctx context.Context, d Dialer, t Target) (HostKey, error) {
+	host, port := t.Host, t.Port
 	ctx, cancel := context.WithTimeout(ctx, scanTimeout)
 	defer cancel()
 
@@ -52,8 +57,11 @@ func ScanHostKey(ctx context.Context, host string, port int) (HostKey, error) {
 			return errScanDone
 		},
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	conn, err := d.DialContext(ctx, t)
 	if err != nil {
+		if smerr.CodeOf(err) != "" {
+			return HostKey{}, err
+		}
 		return HostKey{}, unreachable("scan host key", err)
 	}
 	defer conn.Close()

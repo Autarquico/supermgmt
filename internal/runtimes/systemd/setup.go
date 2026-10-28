@@ -22,8 +22,9 @@ type SetupParams struct {
 	SystemctlPath string // resolved on the node when empty
 	Grants        []runtimes.UnitGrant
 	LogsMode      runtimes.LogsMode
-	DockerAccess  bool // explicit: the docker group is root-equivalent (spec §17)
-	AdminIsRoot   bool // false: every privileged step runs as `sudo -n <argv>` (ADR-0009 c)
+	DockerAccess  bool          // explicit: the docker group is root-equivalent (spec §17)
+	AdminIsRoot   bool          // false: every privileged step runs as `sudo -n <argv>` (ADR-0009 c)
+	Tunnel        *TunnelParams // nil: no tunnel steps (ADR-0037)
 }
 
 // Validate checks every parameter before anything touches the node.
@@ -42,12 +43,19 @@ func (p SetupParams) Validate() error {
 			return invalid("systemctl path: " + err.Error())
 		}
 	}
+	if p.Tunnel != nil {
+		if err := p.Tunnel.Validate(); err != nil {
+			return err
+		}
+	}
 	_, err := SudoCommands("/usr/bin/systemctl", p.Grants, p.LogsMode)
 	return err
 }
 
 // SetupOutcome is what the job records in the node.setup capability metadata.
-type SetupOutcome struct{ SystemctlPath string }
+type SetupOutcome struct {
+	SystemctlPath string
+}
 
 // Setup runs the ensure steps of ADR-0009 (f) 1-7 through ex, which runs as
 // admin_user. Every step is idempotent and files are installed through a
@@ -86,6 +94,14 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 		{"sudoers", func(ctx context.Context) error {
 			return s.installFile(ctx, templates.SudoersPath, "0440", "root", "root", files.sudoers, s.checkSudoers)
 		}},
+		// Before the key: a tunnel that cannot be installed leaves the account
+		// unreachable, and the account stays unreachable until every step passed.
+		{"tunnel", func(ctx context.Context) error {
+			if p.Tunnel == nil {
+				return nil
+			}
+			return s.ensureTunnel(ctx, *p.Tunnel)
+		}},
 		// The key goes in last: only an account that passed every check above
 		// ever becomes reachable with the instance identity.
 		{"authorized_keys", func(ctx context.Context) error { return s.installOwnFile(ctx, p.User, files.authorizedKeys) }},
@@ -120,8 +136,9 @@ func renderFiles(p SetupParams, systemctl string) (renderedFiles, error) {
 
 // stepper runs setup templates, as is or through sudo.
 type stepper struct {
-	ex   transport.Executor
-	sudo bool
+	ex     transport.Executor
+	sudo   bool
+	secret bool // commands carry a secret: marked Sensitive, remote output never reaches an error
 }
 
 func (s stepper) name(base string) string {
@@ -131,18 +148,33 @@ func (s stepper) name(base string) string {
 	return base
 }
 
+// run renders and runs a setup step. A non-zero exit status is a Result for
+// the caller to judge.
+func (s stepper) run(ctx context.Context, base string, args map[string]string, stdin []byte) (transport.Result, error) {
+	c, err := templates.RenderSetup(s.name(base), args, stdin)
+	if err != nil {
+		return transport.Result{}, err
+	}
+	c.Sensitive = s.secret
+	res, err := s.ex.Run(ctx, c)
+	if err != nil {
+		return transport.Result{}, fmt.Errorf("%s: %w", base, err)
+	}
+	return res, nil
+}
+
 // do runs a privileged setup step and requires exit status 0.
 func (s stepper) do(ctx context.Context, base string, args map[string]string, stdin []byte) error {
-	c, err := templates.RenderSetup(s.name(base), args, stdin)
+	res, err := s.run(ctx, base, args, stdin)
 	if err != nil {
 		return err
 	}
-	res, err := s.ex.Run(ctx, c)
-	if err != nil {
-		return fmt.Errorf("%s: %w", base, err)
-	}
 	if res.ExitStatus != 0 {
-		return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("%s failed (exit %d): %s", base, res.ExitStatus, firstLine(res.Stderr)))
+		detail := "output withheld"
+		if !s.secret {
+			detail = firstLine(res.Stderr)
+		}
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("%s failed (exit %d): %s", base, res.ExitStatus, detail))
 	}
 	return nil
 }

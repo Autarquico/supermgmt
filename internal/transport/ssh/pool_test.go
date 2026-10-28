@@ -543,6 +543,52 @@ func TestMaxConnectionsWithEveryConnectionBusyRefusesInsteadOfExceeding(t *testi
 	close(release)
 }
 
+func TestClosingConnectionsAloneNeverRefuseADialWhileThePoolHasRoom(t *testing.T) { // CODE-16
+	r := newRig(t, defaultConfig(), nil)
+	r.pool.mu.Lock()
+	r.pool.closesRunning = maxParallelCloses // a burst of idle carriers closing at once
+	r.pool.mu.Unlock()
+
+	if _, err := r.run("x"); err != nil {
+		t.Fatalf("a dial to an empty pool was refused because of closes in flight: %v", err)
+	}
+}
+
+func TestDialsAreRefusedWhileTooManyConnectionsAreStillClosing(t *testing.T) { // CODE-15
+	cfg := defaultConfig()
+	cfg.MaxConnections = 1
+	r := newRig(t, cfg, nil)
+	if _, err := r.run("x"); err != nil { // the pool is full
+		t.Fatal(err)
+	}
+	r.pool.mu.Lock()
+	r.pool.closesRunning = maxParallelCloses
+	r.pool.mu.Unlock()
+
+	other := r.target()
+	other.NodeID = domain.ID("00000000-0001-7000-8000-0000000000cc")
+	_, err := r.pool.For(other).Run(context.Background(), templates.Command{Line: "x", MaxBytes: 10})
+	requireCode(t, err, smerr.CodeNodeUnreachable)
+	if n := r.server.connections.Load(); n != 1 {
+		t.Errorf("%d connections dialed while the closing bound was reached, want the first only", n)
+	}
+
+	r.pool.mu.Lock()
+	r.pool.closesRunning = 0
+	r.pool.mu.Unlock()
+	if _, err := r.run("x"); err != nil {
+		t.Fatalf("dial after the closes finished: %v", err)
+	}
+	target := r.target()
+	r.pool.Invalidate(target.NodeID, target.User)
+	r.pool.mu.Lock()
+	running := r.pool.closesRunning
+	r.pool.mu.Unlock()
+	if running != 0 {
+		t.Errorf("closesRunning = %d after the closes finished, want 0", running)
+	}
+}
+
 func TestChangedTargetReplacesTheConnection(t *testing.T) {
 	r := newRig(t, defaultConfig(), nil)
 	if _, err := r.run("x"); err != nil {

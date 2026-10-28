@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M0 — Repository and core
 type: epic
-status: active
+status: shipped
 priority: P0
 size: XL
-issue: null
+issue: 1
 prs: [8]
 related_issues: [1]
 depends_on: []
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-27
 ---
 
 # M0 — Repository and core

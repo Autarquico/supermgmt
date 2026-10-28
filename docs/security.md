@@ -144,7 +144,7 @@ Grant it only on nodes where handing SuperMgmt root is acceptable, and treat any
 
 - `-F /dev/null`: your `~/.ssh/config` and the system config are not read.
 - A temporary `known_hosts` containing only the node's pinned key under `HostKeyAlias=sm-<node id>`, with `UserKnownHostsFile` pointing at it, `GlobalKnownHostsFile=/dev/null`, `StrictHostKeyChecking=yes`, `UpdateHostKeys=no` and `CheckHostIP=no`. The file is removed when the session ends.
-- `ProxyCommand=none`, `ProxyJump=none`, `KnownHostsCommand=none`, `ControlMaster=no`, `ControlPath=none`, `PermitLocalCommand=no`.
+- `ProxyCommand=none` (on a [Cloudflare tunnel node](#cloudflare-tunnel-nodes) the client's own `cloudflared access ssh` for the validated hostname), `ProxyJump=none`, `KnownHostsCommand=none`, `ControlMaster=no`, `ControlPath=none`, `PermitLocalCommand=no`.
 - No shell is involved: the arguments are validated again on the client and passed as an argv. The remote command is a fixed literal (none for a shell, `lazydocker`, `btop` or `tmux`).
 
 The session is issued and ended through the API, so it is audited with the exit code. What stays yours: the credential `ssh` picks (your agent and OpenSSH's default identity handling), and everything you type in the remote shell. The shell is as privileged as `admin_user`, and SuperMgmt does not restrict or record it. SuperMgmt never installs `lazydocker`; when it is missing the TUI shows where to get it.
@@ -152,6 +152,43 @@ The session is issued and ended through the API, so it is audited with the exit 
 ### Node enrollment with join tokens
 
 A join token is limited to a number of node slots, lives at most 24 hours, can be limited to source networks, and is stored hashed. It lets a node pin its own host key and receive the instance public key; it grants no sudo, docker or journal access. A stolen token yields at most an unprivileged, read-only node entry pinned to the thief's key.
+
+## Cloudflare tunnel nodes
+
+**Experimental, tested against fakes only.** Setup and use are in [Cloudflare](cloudflare.md#reach-nodes-through-cloudflare-tunnel); this section is the security model.
+
+### Trust boundary
+
+Cloudflare routes the connection and carries the outer stream. It sees connection metadata (hostname, timing, volume) and can deny service. It cannot impersonate a node, because SuperMgmt enforces the pinned SSH host key over the tunnel: a tunnel that reaches a different key fails, and no step repins automatically (`TestTunnelEnforcesThePinnedHostKeyAndReapsTheChild`). The SSH session is encrypted between SuperMgmt and the node's `sshd`; Cloudflare does not hold those keys. Whoever controls the Cloudflare account can change Access policies and DNS for the node hostnames, so the account belongs to your trust base. Passing Access grants neither an SSH login (an authorised key is still required) nor any SuperMgmt privilege.
+
+### Three credentials, split by purpose
+
+| Credential | Lives | Read by | Can do |
+|---|---|---|---|
+| Cloudflare API token | The secret store, at `cloudflare.api_token_ref` (`secret://cloudflare/api-token` by default) | Tunnel jobs only: setup with `--tunnel`, disable, rotation | Create and delete tunnels, Access applications, policies and service tokens in the whole account, and edit DNS in the zone. Not read when dialling. The store cannot delete it: revoke it in the Cloudflare dashboard after provisioning, and `sm doctor` then warns instead of failing. Rotation and disable need a valid one again |
+| Access service token | The secret store, at `cloudflare.access_token_ref`, as `client_id:client_secret`; one per instance | The dialler, at dial time, and the rotation job | Passes the Access Service Auth policy of the instance's node hostnames. It is not an SSH credential |
+| Tunnel credential | On the node: `/etc/supermgmt/cloudflared/token`, root, mode 0600. Fetched from Cloudflare inside the setup job | `cloudflared` on the node | Lets that `cloudflared` serve that one tunnel |
+
+None of the three appears in plans, job payloads, events, logs, views, errors, child arguments, units or the node's journal by design. What the tests establish: the tunnel credential travels only as standard input of one sensitive staging command and in no error or formatted parameter (`TestTheTokenReachesTheNodeOnlyAsSensitiveStdinOfTheTokenStagingStep`, `TestTheTokenNeverReachesAnErrorOrAFormattedParameter`); `cloudflared`'s stderr is bounded and scrubbed before it reaches an error (`TestChildDyingDuringHandshakeIsReapedAndItsStderrIsScrubbed`, `TestSanitizeDiagnosticBoundsLengthAndMasksSecrets`); backup archives keep the records and never plaintext credentials (`TestArchiveKeepsTunnelRecordsAndNeverTheirPlaintextCredentials`). Not yet established: that `cloudflared` itself never logs the tunnel credential on the node (a manual check) and a scan of every artefact with a real account.
+
+### Two `cloudflared` hazards and how they are neutralised
+
+- **Debug logging dumps request headers, service token secret included.** This is read from `cloudflared`'s source, not observed. SuperMgmt never starts it with debug logging or a log file, and gives the child a minimal environment: exactly `TUNNEL_SERVICE_TOKEN_ID`, `TUNNEL_SERVICE_TOKEN_SECRET` and `HOME` (a private empty directory), so no ambient log, proxy or tunnel variable is inherited (`TestTunnelSpawnsCloudflaredWithExactArgvAndEnvironment`). The secret is in the child's environment, not its arguments.
+- **`cloudflared` opens a browser when Access answers with a login page, and has no flag to turn that off.** Two layers: the child has no `PATH` and is started by absolute path, so the browser command cannot be found; and before spawning, the daemon sends its own HTTPS request with the service-token headers to the tunnel hostname and refuses to dial when Access redirects to its login (`TestTunnelRefusesWithoutSpawningWhenAccessRedirectsToLogin`, `TestTunnelDoesNotRefuseOtherRedirects`). The preflight uses the same rule as `cloudflared` (a 302 whose `Location` path starts with `/cdn-cgi/access/login`) and also refuses 401 and 403 (`TestPreflightRefusesWhatCloudflaredWouldTurnIntoALoginFlow`). The error is "Cloudflare Access did not admit the service token". How Access really answers valid and invalid tokens is a manual check.
+
+The `cloudflared` path is never searched through `PATH`, on the daemon or on the client: fixed directories only. On the daemon host the binary is also refused when, after resolving symlinks, it is not a regular file, is writable by group or others, or is not owned by root or the daemon's user, and the same test applies to each directory above it (`TestCloudflaredThatOthersCanReplaceIsNotTrusted`); the child's `HOME` is a private 0700 directory owned by the daemon user (`TestAConfiguredHomeDirectoryIsTightenedToPrivate`). A missing binary is a clear error, not a fallback (`TestCloudflaredPathMustBeAbsoluteAndExecutable`).
+
+### Ownership and conflicts
+
+Every object SuperMgmt creates in Cloudflare carries its instance ID and the node ID in its name (and a comment on the DNS record). After a lost response it looks the object up by name and adopts it only when its own record shows that phase started and the object was created then; anything else with the expected name is a conflict that stops the job (`TestAnObjectWithTheExpectedNameButAnotherOwnerIsAConflictNeverAdopted`). The hostname is created last on setup and removed first on disable, so it is never routable without its Access application.
+
+### Interactive sessions
+
+`sm ssh` and the TUI's `s` on a tunnel node set `ProxyCommand` to the client's own `cloudflared access ssh` for the validated hostname, so the operator's own Access login applies and no SuperMgmt token is handed over. Every other isolation option stays; unknown transports and hostile hostnames or paths are refused before ssh starts (`TestInteractiveCommandCloudflareOnlyChangesTheProxyCommand`, `TestInteractiveCommandCloudflareRefusesHostileHostnamesAndUnknownTransports`).
+
+### Privileged steps on the node
+
+Tunnel setup, run as the admin account, adds an apt source, a keyring whose fingerprint is pinned in the build, the `cloudflared` package, a token file and its own systemd unit. The keyring file is SuperMgmt's own, `/etc/apt/keyrings/supermgmt-cloudflare.gpg`: a key that Cloudflare's guide placed elsewhere is never read, replaced or removed (`TestSetupNeverTouchesTheSharedCloudflareKeyring`), and a `cloudflared` installed from that guide is used and never removed by disable (`TestAnInstalledCloudflaredWithTheGuidesSourceIsUsedAndLeftAlone`). The unit is sandboxed: a dynamic user, an empty capability set, `NoNewPrivileges`, a read-only system (`ProtectSystem=strict`), a private `/tmp` and `/dev`, only IP and Unix sockets, and the tunnel credential delivered with `LoadCredential` so the process cannot read the root-only file (`TestTheTunnelUnitIsSandboxed`). That the unit starts under these directives on a real host is not verified. Setup aborts if the installed key differs from the pinned bytes. The paths are allowlisted in the command templates, and removal touches only what setup installed (`TestRemoveTunnelRemovesOnlyWhatSetupInstalled`). Whether the pinned key matches Cloudflare's key today is a manual check.
 
 ## The dedicated `supermgmt` user and how to remove it
 
@@ -386,6 +423,7 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Health check bounds (timeout 30s, interval 1m, 60 attempts) and the Compose CLI pin (5.5.1) are implementation choices, not specification text.
 - Old deployment directories are garbage-collected after a success (newest 5 kept, never the current one, a known-good or the rollback target); a GC failure only emits `deployment.gc_failed`.
 - MCP: redaction of remote text is pattern-based and unknown secrets are not detected; no real MCP client or authorization server has been tested; root-path OAuth metadata discovery deviates from RFC 9728 section 3.3; JWT access tokens must be `at+jwt` (otherwise use introspection); remote MCP does not support a path-prefixed reverse proxy.
+- Cloudflare tunnel nodes: the API token has account-wide tunnel and Access edit rights while it exists, and since rotation needs it, the one-year service token cannot be rotated without creating an account-wide token again; a node whose direct path is closed depends on Cloudflare's availability; the permission labels, the pinned package key and the absence of the tunnel credential from `cloudflared`'s own logs are unverified until the [real-account checklist](manual-checks/cloudflare-tunnel.md) passes.
 - No independent security audit has been performed.
 
 ## References
@@ -396,5 +434,6 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Server mode, keys, backup and releases: [ADR-0017](adr/0017-server-transport-credentials-sessions.md), [ADR-0018](adr/0018-oidc-adapter.md), [ADR-0019](adr/0019-release-pipeline-and-installer.md), [ADR-0020](adr/0020-backup-format-and-offline-restore.md), [ADR-0021](adr/0021-key-and-identity-management.md), [ADR-0022](adr/0022-join-enrollment.md).
 - Proxmox: [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md).
 - Deployments: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [ADR-0012](adr/0012-route-metadata.md), [ADR-0029](adr/0029-deployment-engine.md).
+- Cloudflare tunnel nodes: [ADR-0037](adr/0037-cloudflare-tunnel-transport.md).
 - MCP: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md).
-- Manual checklists for what CI cannot run: [interactive sessions](manual-checks/m1-handoff.md), [server mode](manual-checks/m2-handoff.md), [real Proxmox](manual-checks/m3-real-pve.md), [real GitHub](manual-checks/m4-real-github.md), [real MCP clients](manual-checks/m5-real-mcp-clients.md).
+- Manual checklists for what CI cannot run: [interactive sessions](manual-checks/m1-handoff.md), [server mode](manual-checks/m2-handoff.md), [real Proxmox](manual-checks/m3-real-pve.md), [real GitHub](manual-checks/m4-real-github.md), [real MCP clients](manual-checks/m5-real-mcp-clients.md), [Cloudflare Tunnel](manual-checks/cloudflare-tunnel.md).

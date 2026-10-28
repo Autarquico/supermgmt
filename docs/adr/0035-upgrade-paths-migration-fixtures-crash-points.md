@@ -73,3 +73,7 @@ plus the existing appliance and uninstall points (`S*`, `journal:*`, `rollback:*
 - The upgrader no longer depends on doctor's wording for binaries of M6 and later.
 - A downgrade leaves an audit trail even when the downgraded binary cannot write it, as soon as an M6 or later binary starts.
 - An upgrade interrupted at any point cannot be restarted by hand, by a dependency or by a reboot until `startService` lifts the hold.
+
+## Amendment (2026-10-15): a pending schema
+
+A migration's fixture can only be generated from a merge commit on `main`, so the first pull request that adds a migration after this ADR cannot list a milestone for it. Both milestone tables accept one **pending schema**, `pendingSchema` (`test/e2e/milestones_test.go`, `test/fixtures/migrations/gen/provenance.go`): the newest migration, one above the last milestone. After the merge, `make migration-fixtures` generates the next milestone from its merge commit, the tables gain that row, and `pendingSchema` returns to 0. First use: schema 7, `000007_cloudflare_tunnels` (ADR-0037).

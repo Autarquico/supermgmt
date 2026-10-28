@@ -62,3 +62,13 @@ paths = ['''^test/integration/mcp_secrets_test\.go$''']
 description = "sha256 of the fixture master keys in the migration fixtures provenance table; a hash, not a secret"
 targetRules = ["generic-api-key"]
 paths = ['''^test/fixtures/migrations/PROVENANCE\.md$''']
+
+[[allowlists]]
+description = "synthetic token the Cloudflare client's errors must never carry"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/providers/cloudflare/client_test\.go$''']
+
+[[allowlists]]
+description = "synthetic base64 tunnel token (secret-sentinel) the node install must write and never log"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/runtimes/systemd/tunnel_test\.go$''']

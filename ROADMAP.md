@@ -15,6 +15,7 @@ These cannot be completed by code alone. The [release checklist](docs/release-ch
 | Real-GitHub run: GHCR, real attestations in a public and a private repository, real Actions OIDC, redirect behaviour, the GitHub TUF anchor and refresh ([checklist](docs/manual-checks/m4-real-github.md)); fills the GitHub rows of [Compatibility](docs/compatibility.md) | Deployments acceptance, first version | Maintainer |
 | Real-Proxmox run on a supported Proxmox VE 9.x host ([checklist](docs/manual-checks/m3-real-pve.md)); fills the real-host column of [Compatibility](docs/compatibility.md) | Proxmox acceptance, first version | Maintainer |
 | Server-mode checks: macOS keychain, Linux `secret-tool`, a real OIDC provider, a real reverse proxy, a real VM install ([checklist](docs/manual-checks/m2-handoff.md)) | Server-mode sign-off | Maintainer |
+| Real-Cloudflare run for node tunnels: permission labels, the pinned package key, Access admission and denial, the sandboxed node unit, One-time PIN owner login, teardown and abandoning an unfinished setup, rotation, restore ([checklist](docs/manual-checks/cloudflare-tunnel.md)) | Taking node tunnels out of experimental | Maintainer |
 | Terminal emulators: the interactive handoff on real terminals ([checklist](docs/manual-checks/m1-handoff.md)) | TUI sign-off | Maintainer |
 | Decision on a separate public client for the OIDC device flow (Dex leaks the client secret) | Production use of the device flow | Maintainer |
 | Project name and trademark check (GitHub, registries, domain, trademark) | First public release | Maintainer |
@@ -33,6 +34,7 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 | Proxmox and the appliance installer | Proxmox discovery, power actions, restricted credentials, `sm install proxmox-lxc` with a rollback journal, upgrade and uninstall | **Implemented** against a simulated Proxmox host; the real-host run is open |
 | Apps, GitHub and deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Implemented** against a fake GitHub, a virtual Sigstore and a local registry; the real-GitHub run is open |
 | MCP | MCP client registration, stdio bridge, remote MCP as an OAuth protected resource, read tools, plan submission, optional write tools off by default | **Implemented** against the Go SDK client, raw JSON-RPC goldens and a fake authorization server; the real-client run is open |
+| Reach nodes from any network | A per-node transport: direct SSH, or a Cloudflare Tunnel with an Access service token, provisioned by SuperMgmt through the Cloudflare API (`sm nodes setup --tunnel`, `sm nodes tunnel disable`, `sm cloudflare rotate-access-token`), so the laptop running `sm` reaches its servers from any network without inbound ports. SSH stays end to end with the pinned host key, the dedicated user, policy and approvals unchanged. `cloudflared` runs on the node and on the machines that dial it (third-party, not SuperMgmt). See [Cloudflare](docs/cloudflare.md) | **Implemented**, experimental: tested against fakes only; the [real-account checklist](docs/manual-checks/cloudflare-tunnel.md) is open |
 | Hardening and release | Fuzz and race tests, security scans, compatibility matrix, migration tests, lifecycle tests across modes, the release gate | **Implemented**; the human rows of the release checklist are open |
 | Website and documentation | A static site built from `docs/`, a getting-started path, TUI and policy guides, a generated CLI reference, one status page | **Implemented** and published: content from the latest release tag, site tooling from `main`, so a website fix never needs a release |
 
@@ -122,12 +124,13 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 
 | Item | Scope | Status |
 |---|---|---|
-| Reach nodes from any network | A per-node transport: direct SSH (today), an SSH bastion (ProxyJump), or a Cloudflare Tunnel with an Access service token, so the laptop running `sm` reaches its servers from any network without opening inbound ports. SSH stays end to end, with the pinned host key, the dedicated user, policy and approvals unchanged. `cloudflared` would run on the node (third-party, not SuperMgmt). Until then, a Tailscale or WireGuard network already works with plain SSH nodes | **Planned**; spec not written |
+| ProxyJump or SSH bastion as a third node transport | A per-node transport that reaches a node through another host. Not started | **Planned**; spec not written |
+| Add a node that was never directly reachable | `sm nodes add` with a tunnel hostname, for a node whose first contact must already go through a tunnel (today a node must be set up and reachable directly before `sm nodes setup --tunnel`) | **Planned**; spec not written |
 
 ## Not built, after the first version
 
 - Proxmox `POST /providers`, promotion of discovered guests, snapshot, backup, console and task-history handlers.
-- A metrics endpoint, a TLS renewal command, a Cloudflare connector (`internal/providers/cloudflare`).
+- A metrics endpoint, a TLS renewal command.
 - Linux packages (`.deb`, `.rpm`): a package manager's upgrade would bypass the upgrade protocol.
 - MCP resources and prompts.
 - Several targets per environment, GitHub App tokens, Proxmox snapshot policy, `command-template` and `systemd-active` health for apps, other backup templates.
@@ -138,7 +141,7 @@ None of these is scheduled and any may be dropped:
 
 - Hetzner and OVH provider APIs; AWS, GCP and Azure connectors
 - Vercel API deployments and status (API-only resources)
-- Cloudflare DNS management (Tunnel transport for nodes is proposed above)
+- Cloudflare DNS management beyond the records node tunnels create (node tunnels are built, see above)
 - Podman; Kubernetes read-only context
 - Optional outbound node agent
 - Headscale, Tailscale and WireGuard onboarding helpers

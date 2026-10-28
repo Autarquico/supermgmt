@@ -40,6 +40,10 @@ type NodeEndpoint struct {
 	AdminUser          string
 	AdminCredentialRef string
 	HostPublicKey      string
+	// Transport and TunnelHostname are owned by the tunnel jobs; static
+	// configuration reconciliation never writes them (ADR-0037).
+	Transport      Transport
+	TunnelHostname string
 }
 
 // Node is a machine or guest. ManagementState is configured; Reachability is observed (spec §6.4).

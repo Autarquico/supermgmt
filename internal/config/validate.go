@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/mail"
 	"net/netip"
 	"net/url"
 	"path"
@@ -40,6 +41,7 @@ func (c *Config) Validate() error {
 	v.cidrs("health.allowed_private_cidrs", c.Health.AllowedPrivateCIDRs)
 	v.oidc()
 	v.mcp()
+	v.cloudflare()
 	v.environments()
 	v.providers()
 	if len(v.problems) == 0 {
@@ -464,4 +466,49 @@ func walkLeaves(v reflect.Value, prefix string, visit func(yamlPath string, f re
 		}
 		visit(joinPath(prefix, key), f)
 	}
+}
+
+var (
+	cloudflareAccountIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	identityProviderIDPattern  = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+)
+
+// cloudflare validates the optional block; absent means the feature is off.
+func (v *validator) cloudflare() {
+	cf := v.cfg.Cloudflare
+	if cf == nil {
+		return
+	}
+	if !cloudflareAccountIDPattern.MatchString(cf.AccountID) {
+		v.add("cloudflare.account_id", "must be 32 lowercase hexadecimal characters")
+	}
+	if err := domain.ValidateDNSName(cf.Zone); err != nil {
+		v.add("cloudflare.zone", "must be a DNS name such as example.com: %v", err)
+	}
+	v.secretRefOnly("cloudflare.api_token_ref", cf.APITokenRef)
+	v.secretRefOnly("cloudflare.access_token_ref", cf.AccessTokenRef)
+	if len(cf.OwnerEmails) == 0 {
+		v.add("cloudflare.owner_emails", "must be non-empty: Access admits only these identities")
+	}
+	for i, email := range cf.OwnerEmails {
+		if !plausibleEmail(email) {
+			v.add(fmt.Sprintf("cloudflare.owner_emails[%d]", i), "must be a single email address without wildcards, got %q", email)
+		}
+	}
+	for i, id := range cf.AccessIdentityProviders {
+		if !identityProviderIDPattern.MatchString(id) {
+			v.add(fmt.Sprintf("cloudflare.access_identity_providers[%d]", i), "must be an identity provider ID (letters, digits, hyphens), got %q", id)
+		}
+	}
+}
+
+// plausibleEmail accepts a bare addr-spec whose domain is a DNS name: no
+// display name, no comments, no wildcards, no whitespace.
+func plausibleEmail(s string) bool {
+	addr, err := mail.ParseAddress(s)
+	if err != nil || addr.Address != s || strings.ContainsAny(s, "*<>, \t") {
+		return false
+	}
+	local, domainPart, ok := strings.Cut(s, "@")
+	return ok && local != "" && domain.ValidateDNSName(strings.ToLower(domainPart)) == nil
 }

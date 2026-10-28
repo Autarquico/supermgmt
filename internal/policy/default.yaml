@@ -22,7 +22,8 @@ rules:
             "identity.write", "role_binding.write", "mcp_client.register",
             "mcp_client.issue_token", "mcp_client.delete",
             "token.create", "token.revoke", "enrollment.create", "secret.write",
-            "backup.create", "node.setup", "sudoers.write", "log_broker.install"]
+            "backup.create", "node.setup", "sudoers.write", "log_broker.install",
+            "node.tunnel.disable", "cloudflare.access_token.rotate"]
   - name: builtin-mcp-read
     subjects: ["type:mcp"]
     allow: ["*.read", "plan.create"]

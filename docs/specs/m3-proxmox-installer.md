@@ -2,17 +2,17 @@
 codename: supermgmt
 title: M3 — Proxmox provider and appliance installer
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
-issue: null
+issue: 3
 prs: [14]
 related_issues: [3]
 depends_on: [m2-server-auth-release]
 supersedes: []
 related_specs: []
 created: 2026-10-10
-updated: 2026-10-12
+updated: 2026-10-27
 ---
 
 # M3 — Proxmox provider and appliance installer

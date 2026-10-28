@@ -26,6 +26,14 @@ func onATrustedNode(n *fakeNode) *fakeNode {
 		reply("setup.user_groups", "supermgmt systemd-journal\n").reply("setup.verify_groups", "supermgmt systemd-journal\n")
 }
 
+// scriptDedicated makes n pass the verification of the dedicated account.
+func scriptDedicated(n *fakeNode) *fakeNode {
+	onATrustedNode(n)
+	n.reply("setup.verify_id", "supermgmt\n")
+	n.reply("setup.verify_markers", "writable\n")
+	return n.exit("setup.verify_sudo", 1) // sudo -n -l fails: no sudo rights at all
+}
+
 const passwdEntry = "supermgmt:x:998:998::/var/lib/supermgmt:/bin/sh\n"
 
 // setting is a node fixture ready for node.setup: an instance row, a scripted
@@ -38,9 +46,9 @@ type setting struct {
 	lease    jobs.Lease
 }
 
-func newSetting(t *testing.T) *setting {
+func newSetting(t *testing.T, tweak ...func(*Config)) *setting {
 	t.Helper()
-	s := &setting{nodeFixture: newNodeFixture(t)}
+	s := &setting{nodeFixture: newNodeFixture(t, tweak...)}
 	s.inTx(func(ctx context.Context, tx *database.Tx) error {
 		return database.CreateInstance(ctx, tx, database.Instance{ID: s.ids.NewID(), Name: "test", CreatedAt: s.clock.Now()})
 	})
@@ -62,11 +70,7 @@ func newSetting(t *testing.T) *setting {
 	admin.reply("setup.user_groups", "supermgmt systemd-journal\n")
 	onATrustedNode(admin)
 
-	dedicated := s.dialer.as("supermgmt")
-	onATrustedNode(dedicated)
-	dedicated.reply("setup.verify_id", "supermgmt\n")
-	dedicated.reply("setup.verify_markers", "writable\n")
-	dedicated.exit("setup.verify_sudo", 1) // sudo -n -l fails: no sudo rights at all
+	scriptDedicated(s.dialer.as("supermgmt"))
 
 	prober, err := NewProber(s.cfg, s.conn, fakeAdapters(newFakeAdapter(domain.RuntimeSystemd), newFakeAdapter(domain.RuntimeDocker)))
 	mustf(t, err, "NewProber")
@@ -133,7 +137,7 @@ func TestSetupProvisionsVerifiesAndOnlyThenRecordsTheCapability(t *testing.T) {
 		t.Fatal("node.setup capability not recorded")
 	}
 	want := runtimes.SetupMeta{
-		SetupVersion: 2, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup, DeployRoot: "/srv/supermgmt",
+		SetupVersion: runtimes.SetupVersion, SystemctlPath: "/usr/bin/systemctl", LogsMode: runtimes.LogsJournalGroup, DeployRoot: "/srv/supermgmt",
 		KeyRef: "secret://ssh/default", KeyVersion: 1, KeyFingerprint: "SHA256:identity",
 	}
 	if meta.SetupVersion != want.SetupVersion || meta.SystemctlPath != want.SystemctlPath || meta.LogsMode != want.LogsMode ||
@@ -219,8 +223,8 @@ func TestRerunningSetupUpgradesAVersion1Node(t *testing.T) {
 	mustf(t, s.run(), "setup")
 
 	meta, ok := s.setupCapability()
-	if !ok || meta.SetupVersion != 2 || meta.DeployRoot != "/srv/supermgmt" {
-		t.Errorf("metadata = %+v, want setup_version 2 with the default deploy_root", meta)
+	if !ok || meta.SetupVersion != runtimes.SetupVersion || meta.DeployRoot != "/srv/supermgmt" {
+		t.Errorf("metadata = %+v, want the current setup_version with the default deploy_root", meta)
 	}
 }
 

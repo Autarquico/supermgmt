@@ -57,3 +57,27 @@ func TestReadFramesRefusesAnOversizeLine(t *testing.T) {
 		t.Fatalf("error = %v, want bufio.ErrTooLong", err)
 	}
 }
+
+// FuzzCloudflareProxyCommand: an accepted ProxyCommand is the quoted absolute
+// path, the fixed subcommand and a DNS hostname, with every % doubled; nothing
+// else can reach the shell OpenSSH runs it through.
+func FuzzCloudflareProxyCommand(f *testing.F) {
+	f.Add("/usr/local/bin/cloudflared", "ssh-web1.example.com")
+	f.Add("/opt/my dir/cloudflared", "ssh-web1.example.com")
+	f.Add("/usr/bin/cloud'flared", "x.example.com")
+	f.Add("/usr/bin/cloudflared", "%h.example.com")
+	f.Add("relative/cloudflared", "a;b.example.com")
+	f.Fuzz(func(t *testing.T, path, hostname string) {
+		cmd, err := cloudflareProxyCommand(path, hostname)
+		if err != nil {
+			return
+		}
+		want := strings.ReplaceAll("'"+path+"' access ssh --hostname "+hostname, "%", "%%")
+		if cmd != want || strings.Count(path, "'") != 0 {
+			t.Fatalf("cloudflareProxyCommand(%q, %q) = %q", path, hostname, cmd)
+		}
+		if strings.ContainsAny(hostname, " ;|&$`'\"\\()<>%\n") {
+			t.Fatalf("hostname %q with shell or token syntax was accepted", hostname)
+		}
+	})
+}

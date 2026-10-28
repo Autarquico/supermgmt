@@ -91,7 +91,7 @@ func (c *Client) prepare(session *liveSession, info wire.ConnectInfo, tool wire.
 	if err := writeKnownHosts(path, info); err != nil {
 		return nil, err
 	}
-	argv, err := InteractiveCommand(info, tool, path)
+	argv, err := interactiveCommand(info, tool, path, findCloudflared)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,15 @@ func (s *liveSession) finish(exitCode int, launchErr error) {
 // HostKeyAlias, and every proxy, command and multiplexing option is off.
 // Host, port, user, alias, key and path are validated again here, since they
 // come from a server response.
+//
+// A cloudflare node replaces ProxyCommand=none with `cloudflared access ssh`,
+// run as the user: their own Access login applies and no SuperMgmt token is
+// involved. cloudflared is resolved from a fixed directory list, never PATH.
 func InteractiveCommand(info wire.ConnectInfo, tool wire.Tool, knownHostsPath string) ([]string, error) {
+	return interactiveCommand(info, tool, knownHostsPath, findCloudflared)
+}
+
+func interactiveCommand(info wire.ConnectInfo, tool wire.Tool, knownHostsPath string, cloudflared func() (string, error)) ([]string, error) {
 	remote, ok := toolCommand[tool]
 	if !ok {
 		return nil, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("unknown tool %q", tool))
@@ -143,6 +151,16 @@ func InteractiveCommand(info wire.ConnectInfo, tool wire.Tool, knownHostsPath st
 	if strings.ContainsAny(knownHostsPath, "%\"'\\ \t\r\n") || !filepath.IsAbs(knownHostsPath) {
 		return nil, smerr.New(smerr.CodeInvalidArgument, "", "known_hosts path must be absolute without spaces, quotes or %")
 	}
+	proxy := "none"
+	if info.Transport.Effective() == domain.TransportCloudflare {
+		path, err := cloudflared()
+		if err != nil {
+			return nil, err
+		}
+		if proxy, err = cloudflareProxyCommand(path, info.TunnelHostname); err != nil {
+			return nil, err
+		}
+	}
 	argv := []string{
 		sshProgram, "-F", "/dev/null",
 		"-o", "HostKeyAlias=" + info.HostKeyAlias,
@@ -151,7 +169,7 @@ func InteractiveCommand(info wire.ConnectInfo, tool wire.Tool, knownHostsPath st
 		"-o", "StrictHostKeyChecking=yes",
 		"-o", "UpdateHostKeys=no",
 		"-o", "CheckHostIP=no",
-		"-o", "ProxyCommand=none",
+		"-o", "ProxyCommand=" + proxy,
 		"-o", "ProxyJump=none",
 		"-o", "KnownHostsCommand=none",
 		"-o", "ControlMaster=no",
@@ -178,13 +196,48 @@ func validateConnectInfo(info wire.ConnectInfo) error {
 		return invalidConnectInfo("port")
 	case !userPattern.MatchString(info.User):
 		return invalidConnectInfo("user")
+	case !info.Transport.Valid():
+		return invalidConnectInfo("transport")
 	case info.HostKeyAlias != "sm-"+string(info.NodeID) || !isID(info.NodeID):
 		return invalidConnectInfo("host key alias")
 	}
 	if _, err := authorizedKeyFields(info.HostPublicKey); err != nil {
 		return invalidConnectInfo("host key")
 	}
+	if info.Transport.Effective() == domain.TransportCloudflare && domain.ValidateDNSName(info.TunnelHostname) != nil {
+		return invalidConnectInfo("tunnel hostname")
+	}
 	return nil
+}
+
+// cloudflaredDirs is the fixed list searched for the client's own cloudflared,
+// the same as the daemon's dialler; PATH is never consulted.
+var cloudflaredDirs = domain.CloudflaredSearchDirs()
+
+func findCloudflared() (string, error) {
+	for _, dir := range cloudflaredDirs {
+		path := filepath.Join(dir, "cloudflared")
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			return path, nil
+		}
+	}
+	return "", smerr.New(smerr.CodeCapabilityUnavailable, "",
+		"cloudflared is not installed on this machine: install it (it carries your own Cloudflare Access login) to open a session on a tunnel node")
+}
+
+// cloudflareProxyCommand renders the ProxyCommand value. OpenSSH runs it
+// through the shell, so the path is single-quoted (and refused when it holds
+// anything quoting cannot carry), and expands %-tokens in it, so every % is
+// doubled. The hostname must be a strict DNS name.
+func cloudflareProxyCommand(path, hostname string) (string, error) {
+	if !filepath.IsAbs(path) || strings.ContainsFunc(path, func(r rune) bool { return r == '\'' || r < 0x20 || r == 0x7f }) {
+		return "", smerr.New(smerr.CodeInvalidArgument, "", "cloudflared path must be absolute without quotes or control characters")
+	}
+	if err := domain.ValidateDNSName(hostname); err != nil {
+		return "", invalidConnectInfo("tunnel hostname")
+	}
+	command := "'" + path + "' access ssh --hostname " + hostname
+	return strings.ReplaceAll(command, "%", "%%"), nil
 }
 
 func isID(id domain.ID) bool {

@@ -22,6 +22,21 @@ const (
 	BrokerUnitsPath    = BrokerConfigDir + "/allowed-units"
 )
 
+// Paths the Cloudflare Tunnel transport installs (ADR-0037). Removal may touch
+// only these: tunnelFiles and tunnelDirs bound the remove steps below.
+const (
+	AptKeyringDir         = "/etc/apt/keyrings"
+	CloudflareKeyringPath = AptKeyringDir + "/supermgmt-cloudflare.gpg"
+	CloudflaredSourcePath = "/etc/apt/sources.list.d/cloudflared.list"
+	CloudflaredDir        = BrokerConfigDir + "/cloudflared"
+	CloudflaredTokenPath  = CloudflaredDir + "/token"
+	// CloudflaredRestartPendingPath exists while a token or unit change may not
+	// have reached the running connector yet.
+	CloudflaredRestartPendingPath = CloudflaredDir + "/restart-pending"
+	CloudflaredUnitName           = "supermgmt-cloudflared.service"
+	CloudflaredUnitPath           = "/etc/systemd/system/" + CloudflaredUnitName
+)
+
 // DefaultDeployRoot is where deployments live unless the plan says otherwise
 // (ADR-0030).
 const DefaultDeployRoot = "/srv/supermgmt"
@@ -85,8 +100,10 @@ const rootPath = `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" `
 // ownDirectories and ownFiles are written as the dedicated user itself, so a
 // planted symlink can only redirect that user's own privileges.
 var (
-	rootDirectories = []string{HomeDir, BrokerDir, BrokerConfigDir}
-	rootFiles       = []string{SudoersPath, TmpfilesPath, BrokerPath, BrokerUnitsPath}
+	tunnelFiles     = []string{CloudflareKeyringPath, CloudflaredSourcePath, CloudflaredTokenPath, CloudflaredRestartPendingPath, CloudflaredUnitPath}
+	tunnelDirs      = []string{CloudflaredDir}
+	rootDirectories = append([]string{HomeDir, BrokerDir, BrokerConfigDir, AptKeyringDir}, tunnelDirs...)
+	rootFiles       = append([]string{SudoersPath, TmpfilesPath, BrokerPath, BrokerUnitsPath}, tunnelFiles...)
 	ownDirectories  = []string{MarkerDir, SSHDir, BackupDir}
 	ownFiles        = []string{AuthorizedKeysPath}
 	setupGroups     = []string{"systemd-journal", "adm", "docker"}
@@ -114,21 +131,31 @@ func staged(files []string) []string {
 }
 
 var (
-	paramUser      = Param{Name: "user", Validate: ValidateSystemUser}
-	paramOwner     = Param{Name: "owner", Validate: ValidateSystemUser}
-	paramOwnGroup  = Param{Name: "group", Validate: ValidateSystemUser}
-	paramMode      = Param{Name: "mode", Validate: Matching(modeRE)}
-	paramDir       = Param{Name: "path", Validate: oneOf("directory", rootDirectories)}
-	paramOwnDir    = Param{Name: "path", Validate: oneOf("directory", ownDirectories)}
-	paramStaged    = Param{Name: "path", Validate: oneOf("staging file", staged(rootFiles))}
-	paramFrom      = Param{Name: "from", Validate: oneOf("staging file", staged(rootFiles))}
-	paramTo        = Param{Name: "to", Validate: oneOf("destination", rootFiles)}
-	paramOwnStaged = Param{Name: "path", Validate: oneOf("staging file", staged(ownFiles))}
-	paramOwnFrom   = Param{Name: "from", Validate: oneOf("staging file", staged(ownFiles))}
-	paramOwnTo     = Param{Name: "to", Validate: oneOf("destination", ownFiles)}
-	paramDeployDir = Param{Name: "path", Validate: ValidateDeployRoot}
-	paramPlatGroup = Param{Name: "group", Validate: oneOf("group", setupGroups)}
+	paramUser       = Param{Name: "user", Validate: ValidateSystemUser}
+	paramOwner      = Param{Name: "owner", Validate: ValidateSystemUser}
+	paramOwnGroup   = Param{Name: "group", Validate: ValidateSystemUser}
+	paramMode       = Param{Name: "mode", Validate: Matching(modeRE)}
+	paramDir        = Param{Name: "path", Validate: oneOf("directory", rootDirectories)}
+	paramOwnDir     = Param{Name: "path", Validate: oneOf("directory", ownDirectories)}
+	paramStaged     = Param{Name: "path", Validate: oneOf("staging file", staged(rootFiles))}
+	paramFrom       = Param{Name: "from", Validate: oneOf("staging file", staged(rootFiles))}
+	paramTo         = Param{Name: "to", Validate: oneOf("destination", rootFiles)}
+	paramOwnStaged  = Param{Name: "path", Validate: oneOf("staging file", staged(ownFiles))}
+	paramOwnFrom    = Param{Name: "from", Validate: oneOf("staging file", staged(ownFiles))}
+	paramOwnTo      = Param{Name: "to", Validate: oneOf("destination", ownFiles)}
+	paramDeployDir  = Param{Name: "path", Validate: ValidateDeployRoot}
+	paramPlatGroup  = Param{Name: "group", Validate: oneOf("group", setupGroups)}
+	paramTunnelFile = Param{Name: "path", Validate: oneOf("tunnel file", tunnelFiles)}
+	paramTunnelDir  = Param{Name: "path", Validate: oneOf("tunnel directory", tunnelDirs)}
+	paramTunnelUnit = Param{Name: "unit", Validate: oneOf("tunnel unit", []string{CloudflaredUnitName})}
 )
+
+// aptEnv keeps apt-get from prompting; env(1) carries it through sudo, which
+// refuses VAR=value words it was not told to allow.
+const aptEnv = "env DEBIAN_FRONTEND=noninteractive "
+
+// aptLockWait lets a step wait for a running unattended upgrade instead of failing.
+const aptLockWait = " -o DPkg::Lock::Timeout=60"
 
 // privilegedStep is one node.setup command. It is registered twice: as is for
 // admin_user = root, and as a `sudo -n` variant otherwise. In a body, @ROOT@
@@ -185,6 +212,40 @@ var privilegedSteps = []privilegedStep{
 	{"setup.group_add", "@ROOT@usermod -aG {{group}} {{user}}", []Param{paramPlatGroup, paramUser}},
 	{"setup.group_remove", "@ROOT@gpasswd -d {{user}} {{group}}", []Param{paramUser, paramPlatGroup}},
 	{"setup.tmpfiles_apply", "@ROOT@systemd-tmpfiles --create " + TmpfilesPath, nil},
+
+	// Cloudflare Tunnel transport (ADR-0037). Only the paths in tunnelFiles.
+	{
+		// Prints the sha256 of the file (never its content); exit 3 when absent.
+		// Root reads it: the token directory is root-only.
+		"setup.file_sha256",
+		`@ROOT@sh -c 'if [ -e "$1" ]; then sha256sum < "$1"; else exit 3; fi' sh {{path}}`,
+		[]Param{paramTunnelFile},
+	},
+	{"setup.file_remove", "@ROOT@rm -f {{path}}", []Param{paramTunnelFile}},
+	{
+		// Empty directories only (rmdir), so foreign content is never deleted.
+		"setup.dir_remove",
+		`@ROOT@sh -c 'test ! -e "$1" || rmdir "$1"' sh {{path}}`,
+		[]Param{paramTunnelDir},
+	},
+	{
+		// Refreshes the Cloudflare source only.
+		"setup.apt_update_cloudflared",
+		"@ROOT@apt-get update -o Dir::Etc::sourcelist=sources.list.d/cloudflared.list " +
+			"-o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0" + aptLockWait,
+		nil,
+	},
+	{"setup.apt_install_cloudflared", "@ROOT@" + aptEnv + "apt-get install -y --no-install-recommends" + aptLockWait + " cloudflared", nil},
+	{"setup.apt_remove_cloudflared", "@ROOT@" + aptEnv + "apt-get remove -y" + aptLockWait + " cloudflared", nil},
+	{"setup.daemon_reload", "@ROOT@systemctl daemon-reload", nil},
+	{"setup.tunnel_enable", "@ROOT@systemctl enable --now {{unit}}", []Param{paramTunnelUnit}},
+	{"setup.tunnel_restart", "@ROOT@systemctl restart {{unit}}", []Param{paramTunnelUnit}},
+	{
+		// Stops and disables the unit when it exists; absent is success.
+		"setup.tunnel_disable",
+		`@ROOT@sh -c 'systemctl cat "$1" >/dev/null 2>&1 || exit 0; systemctl disable --now "$1"' sh {{unit}}`,
+		[]Param{paramTunnelUnit},
+	},
 }
 
 // setupReads are the unprivileged reads node.setup decides on and verifies
@@ -203,6 +264,14 @@ var setupReads = []Template{
 		Body: "[ -d " + MarkerDir + " ] && [ -w " + MarkerDir + " ] && echo writable",
 	},
 	{Name: "setup.verify_sudo", Body: "sudo -n -l", MaxBytes: 256 << 10, MaxLines: 5000},
+	{
+		Name: "setup.os_release", MaxBytes: 1 << 10, MaxLines: 2,
+		Body: `sh -c '. /etc/os-release && printf "%s %s\n" "$ID" "$VERSION_CODENAME"'`,
+	},
+	{
+		Name: "setup.cloudflared_package", MaxBytes: 1 << 10, MaxLines: 2,
+		Body: `dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' cloudflared`,
+	},
 }
 
 var setupTemplates = buildSetupTemplates()

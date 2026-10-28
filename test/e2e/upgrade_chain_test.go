@@ -55,6 +55,9 @@ func TestM6_UpgradeChainOldestToLatestInOneJump(t *testing.T) {
 
 	t.Run("the doctor reports the latest schema", func(t *testing.T) {
 		want := milestones[len(milestones)-1].schema
+		if pendingSchema != 0 {
+			want = pendingSchema
+		}
 		if want != latestSchema(t) {
 			t.Fatalf("the milestone table says schema %d, the build says %d", want, latestSchema(t))
 		}

@@ -225,6 +225,34 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+### sm cloudflare
+
+Manage the instance's Cloudflare Tunnel integration (experimental)
+
+```text
+sm cloudflare
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm cloudflare rotate-access-token
+
+Rotate the Cloudflare Access service token the control plane dials tunnel nodes with (experimental; a job)
+
+Run cloudflare.access_token.rotate: create a new Access service token, admit it, switch the control plane
+to it and only then revoke the old one, so tunnel nodes stay reachable throughout. It needs the API token in
+the secret store. Cloudflare Tunnel support is experimental.
+
+```text
+sm cloudflare rotate-access-token [flags]
+```
+
+Flags:
+
+- `--yes` (bool): do not ask for confirmation
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 ### sm completion
 
 Generate a shell completion script
@@ -963,7 +991,12 @@ a fresh session as that account. Re-run it after `sm ssh-key rotate` to authoriz
 nginx.service:restart only restart. Repeat it per unit; the list replaces the node's current grants.
 Without --unit a re-run keeps the grants the node has; --no-units removes them all.
 
-Docker access is explicit: it is off unless you pass --docker-access, and it is root-equivalent on the node.
+--tunnel also installs cloudflared on the node and moves its SSH reachability behind a Cloudflare Tunnel; undo it
+with `sm nodes tunnel disable`.
+
+A re-run keeps the node's docker access, logs mode and tunnel unless you pass --docker-access, --logs-mode or
+--tunnel; --docker-access=false removes docker access. On a first setup docker access is off unless you pass
+--docker-access, and it is root-equivalent on the node.
 
 ```text
 sm nodes setup <node> [flags]
@@ -974,7 +1007,38 @@ Flags:
 - `--docker-access` (bool): also give the account docker access (root-equivalent on the node)
 - `--logs-mode` (string, default `journal-group`): how logs are read: journal-group or broker
 - `--no-units` (bool): remove every unit grant
+- `--tunnel` (bool): reach the node through a Cloudflare Tunnel (experimental; needs the cloudflare: block)
 - `--unit` (stringArray): grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)
+- `--yes` (bool): do not ask for confirmation
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm nodes tunnel
+
+Manage a node's Cloudflare Tunnel (experimental; enable it with `sm nodes setup --tunnel`)
+
+```text
+sm nodes tunnel
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+##### sm nodes tunnel disable
+
+Return a node to direct SSH and remove its tunnel (experimental; a job; may wait for approval)
+
+Run node.tunnel.disable: switch the node back to the direct transport, stop and remove cloudflared on it,
+and delete the Cloudflare objects SuperMgmt created for it. Make sure the node's SSH port is reachable
+directly first: the node is dialled directly from then on. It also abandons a tunnel setup that is
+unfinished, halted or keeps failing, and takes down the Cloudflare objects that setup recorded.
+Cloudflare Tunnel support is experimental.
+
+```text
+sm nodes tunnel disable <node> [flags]
+```
+
+Flags:
+
 - `--yes` (bool): do not ask for confirmation
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.

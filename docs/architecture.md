@@ -48,7 +48,7 @@ Repository ─► Application ─► Deployment ───┘
                   └──── Environment / Target
 ```
 
-The database holds providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations, events and secrets, plus repositories, applications, app targets and deployments. Embedded migrations `000001_initial` to `000006_m5` build the schema.
+The database holds providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations, events and secrets, plus repositories, applications, app targets and deployments. Embedded migrations `000001_initial` to `000007_cloudflare_tunnels` build the schema. The last one adds `tunnel_operations` (per node and generation: account, zone, phase and every Cloudflare object ID the tunnel jobs created) and `cloudflare_state` (the instance's Access service token and policy IDs).
 
 Configured state and observed state are kept apart. Configured resources carry one `spec_revision`, which increments only when desired state changes and is used for optimistic concurrency. Observations (reachability, metrics, versions) live in separate records and never bump it. Consequence: periodic discovery does not invalidate approvals.
 
@@ -102,7 +102,11 @@ How a service restart reaches a node:
 4. If the daemon dies mid-job, the job becomes `interrupted` and keeps its locks. After the node is quiet, the reconciler judges completion from evidence read over SSH (the marker, `systemctl` job list and `InvocationID`, or Docker state plus `.done`). Evidence is accepted only when two samples at least `SampleGap` apart agree; anything else holds the job for `sm jobs resolve`.
 5. Reads (discovery, logs) never need setup, but a node without `node.setup` is read as `admin_user` and advertises no mutating capability.
 
-Nodes are never given a SuperMgmt binary. What `node.setup` creates on them is listed in [providers.md](providers.md).
+Nodes are never given a SuperMgmt binary (a Cloudflare tunnel node also gets Cloudflare's `cloudflared`, installed by setup). What `node.setup` creates on them is listed in [providers.md](providers.md).
+
+### The dial seam
+
+The SSH pool does not open TCP connections itself: it asks a `Dialer` chosen by the target's transport (`direct` or `cloudflare`), and `ScanHostKey` goes through the same seam. Host-key pinning, credentials, handshake classification and every command template sit above it and do not change. The pool keeps one connection set per node, user and transport, so a candidate transport can be verified while the old one still serves; a transport change retires the old connections. The `cloudflare` dialer runs `cloudflared access ssh` as a subprocess whose standard input and output are the connection; its lifetime, deadlines and clean-up rules are in [Security](security.md#cloudflare-tunnel-nodes) and the decision record. The transport lives in the node endpoint and is changed only by the tunnel jobs. Cloudflare-side objects are created and removed by those jobs through a single API client (`internal/providers/cloudflare`, with `cffake` as its test fake).
 
 ## Applications and deployments
 
@@ -167,6 +171,7 @@ Dependencies point inward: adapters (CLI, API, TUI, MCP) call application servic
 | `internal/netguard` | outbound request filter |
 | `internal/join` | node enrollment (`sm join`) |
 | `internal/providers/proxmox` | Proxmox VE API client, UPID parsing, task correlation; `pvefake` is its test fake |
+| `internal/providers/cloudflare` | Cloudflare API client for tunnels, Access and DNS, ownership names, read-only token probe; `cffake` is its test fake |
 | `internal/providers/github` | GitHub connector: REST client, origin-pinned redirects, CI checks, contents, Actions OIDC verification, Sigstore attestation verification, webhook HMAC; `ghfake` is its test fake |
 | `internal/deployments`, `internal/deployments/compose`, `internal/deployments/manifest` | the deployment state table, step catalog and rollback rules; the closed Compose pipeline (raw and model schema passes, freeze, canonicalisation, env-file encoding, resolved-environment hash); the app manifest |
 | `internal/health` | health-check validation (manifest versus control-plane origin rules) and node-side checks |
@@ -202,4 +207,5 @@ These are checked by `depguard` in [`.golangci.yml`](../.golangci.yml):
 - Jobs: [ADR-0013](adr/0013-generic-job-state-machine.md).
 - Remote execution: [ADR-0009](adr/0009-node-provisioning.md), [ADR-0015](adr/0015-ssh-transport-and-command-templates.md).
 - Deployments: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [ADR-0007](adr/0007-execution-snapshots.md), [ADR-0008](adr/0008-secret-versions.md), [ADR-0010](adr/0010-secret-env-file-encoding.md), [ADR-0011](adr/0011-provisional-deployment-api.md), [ADR-0028](adr/0028-github-connector.md), [ADR-0029](adr/0029-deployment-engine.md), [ADR-0030](adr/0030-node-setup-v2.md).
+- Cloudflare tunnel nodes: [ADR-0037](adr/0037-cloudflare-tunnel-transport.md).
 - MCP: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md).

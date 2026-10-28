@@ -35,6 +35,11 @@ var milestones = []milestone{
 	{"m5", "658078b15d68846ed67b80d4e2f463c114be27cf", "v0.5.0", 6},
 }
 
+// pendingSchema is a migration merged after the last milestone and not yet released: its fixture
+// can only be generated from a merge commit on main (ADR-0035), so it is listed here until a
+// milestone with that schema is added, then set back to 0. 7: 000007_cloudflare_tunnels.
+const pendingSchema = 7
+
 var (
 	fullCommit     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	syntheticMinor = regexp.MustCompile(`^v0\.([1-9][0-9]*)\.0$`)
@@ -66,8 +71,12 @@ func TestMilestones_AreOrderedAndEndAtTheLatestSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last := milestones[len(milestones)-1]; last.schema != len(ups) {
-		t.Errorf("%s: schema %d, but the tree has %d migrations", last.name, last.schema, len(ups))
+	last := milestones[len(milestones)-1]
+	switch {
+	case last.schema == len(ups):
+	case pendingSchema == len(ups) && last.schema == len(ups)-1:
+	default:
+		t.Errorf("%s: schema %d, but the tree has %d migrations (pending: %d)", last.name, last.schema, len(ups), pendingSchema)
 	}
 }
 

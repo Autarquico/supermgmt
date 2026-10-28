@@ -236,48 +236,74 @@ func (m *Model) setupNode(n wire.Node, words []string) tea.Cmd {
 		m.notice = notice{text: "setup: " + err.Error(), isErr: true}
 		return nil
 	}
-	mode := logsModeDefault
-	if w.broker {
-		mode = logsModeBroker
-	}
+	docker, mode, tunnel := wire.SetupAccess(n, w.docker, w.logs, w.tunnel)
 	var warnings []string
-	if w.docker {
+	if docker {
 		warnings = append(warnings, dockerRootWarning)
+	}
+	params := wire.SetupParameters(docker, mode, grants)
+	details := []string{textsafe.Line(wire.UnitsChange(n.Setup, grants, kept))}
+	if tunnel {
+		params["tunnel"] = "true"
+		details = append([]string{textsafe.Line(transportPreview(n.Endpoint.TunnelHostname))}, details...)
 	}
 	cmd := m.planFor("Set up "+textsafe.Line(n.Name), warnings, wire.CreatePlanRequest{
 		Action:     "node.setup",
 		Targets:    []wire.ResourceRef{{Type: domain.ResourceNode, ID: n.ID}},
-		Parameters: wire.SetupParameters(w.docker, mode, grants),
+		Parameters: params,
 	})
-	m.confirm.details = []string{textsafe.Line(wire.UnitsChange(n.Setup, grants, kept))}
+	m.confirm.details = details
+	return cmd
+}
+
+func transportPreview(hostname string) string {
+	if hostname == "" {
+		return "transport: cloudflare (experimental)"
+	}
+	return "transport: cloudflare (experimental) via " + hostname
+}
+
+// disableTunnel plans node.tunnel.disable: the node goes back to direct SSH.
+func (m *Model) disableTunnel(n wire.Node) tea.Cmd {
+	cmd := m.planFor("Disable the tunnel on "+textsafe.Line(n.Name), nil, wire.CreatePlanRequest{
+		Action:  "node.tunnel.disable",
+		Targets: []wire.ResourceRef{{Type: domain.ResourceNode, ID: n.ID}},
+	})
+	m.confirm.details = []string{textsafe.Line("transport: " + string(n.Endpoint.Transport.Effective()) + " -> direct (Cloudflare Tunnel support is experimental)")}
 	return cmd
 }
 
 type setupWords struct {
-	docker, broker, noUnits bool
-	units                   []string
+	docker, tunnel wire.SetupChoice[bool]
+	logs           wire.SetupChoice[string]
+	noUnits        bool
+	units          []string
 }
 
-// parseSetupWords reads "docker", "broker", "no-units" and "unit <spec>"
+// parseSetupWords reads "docker", "broker", "tunnel", "no-units" and "unit <spec>"
 // (repeatable) in one pass; the word after "unit" is always a unit.
 func parseSetupWords(words []string) (setupWords, error) {
 	var w setupWords
-	for i := 0; i < len(words); i++ {
-		switch words[i] {
-		case "docker":
-			w.docker = true
-		case "broker":
-			w.broker = true
+	for len(words) > 0 {
+		word := words[0]
+		words = words[1:]
+		switch word {
+		case "docker", "no-docker":
+			w.docker = wire.SetupChoice[bool]{Value: word == "docker", Set: true}
+		case "broker", "journal":
+			w.logs = wire.SetupChoice[string]{Value: map[string]string{"broker": logsModeBroker, "journal": logsModeDefault}[word], Set: true}
+		case "tunnel":
+			w.tunnel = wire.SetupChoice[bool]{Value: true, Set: true}
 		case "no-units":
 			w.noUnits = true
 		case "unit":
-			if i+1 == len(words) {
+			if len(words) == 0 {
 				return setupWords{}, fmt.Errorf("unit needs a unit name, as in unit nginx.service")
 			}
-			i++
-			w.units = append(w.units, words[i])
+			w.units = append(w.units, words[0])
+			words = words[1:]
 		default:
-			return setupWords{}, fmt.Errorf("unknown word %q (docker, broker, unit <unit>[:verbs], no-units)", words[i])
+			return setupWords{}, fmt.Errorf("unknown word %q (docker, no-docker, broker, journal, tunnel, unit <unit>[:verbs], no-units)", word)
 		}
 	}
 	return w, nil
@@ -373,8 +399,8 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker] [broker] [unit <unit>[:verbs]]… [no-units] · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
-	paletteShortcut = "ssh · logs · services · setup · probe · power · refresh · deploy · rollback   (? arguments)"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker|no-docker] [broker|journal] [tunnel] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
+	paletteShortcut = "ssh · logs · services · setup · tunnel-disable · probe · power · refresh · deploy · rollback   (? arguments)"
 )
 
 func (m *Model) openPalette() tea.Cmd {
@@ -396,7 +422,7 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.commandLogs(args)
 	case wizardDeploy, wizardRollback:
 		return m.commandDeploy(cmd, args)
-	case "ssh", "services", "setup", "probe":
+	case "ssh", "services", "setup", "tunnel-disable", "probe":
 		return m.commandOnNode(cmd, args)
 	}
 	m.notice = notice{text: fmt.Sprintf("unknown command %q: %s", cmd, paletteHint), isErr: true}
@@ -546,6 +572,8 @@ func (m *Model) commandOnNode(cmd string, args []string) tea.Cmd {
 		return m.probeNode(n)
 	case "setup":
 		return m.setupNode(n, rest)
+	case "tunnel-disable":
+		return m.disableTunnel(n)
 	}
 	tool := wire.ToolShell
 	if len(rest) > 0 {
