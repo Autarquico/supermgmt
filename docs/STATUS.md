@@ -9,7 +9,7 @@
 ## Done esta semana
 
 <!-- pm-sync:done-this-week -->
-_(nada)_
+- #31 Reach SSH nodes through Cloudflare Tunnel
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -17,7 +17,7 @@ _(nada)_
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #31 Reach SSH nodes through Cloudflare Tunnel
+_(nada)_
 <!-- /pm-sync:in-progress -->
 
 ---
