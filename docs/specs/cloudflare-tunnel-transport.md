@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Reach SSH nodes through Cloudflare Tunnel
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
 issue: 31
@@ -12,7 +12,7 @@ depends_on: []
 supersedes: []
 related_specs: []
 created: 2026-10-15
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # Reach SSH nodes through Cloudflare Tunnel
