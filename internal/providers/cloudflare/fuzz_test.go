@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/autarquico/supermgmt/internal/audit"
 )
 
 const (
@@ -165,7 +167,7 @@ func FuzzDecodeServiceToken(f *testing.F) {
 	addSeeds(f, tokenDoc, verifyDoc)
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if tok, err := decodeServiceToken(raw); err == nil {
-			if !validID(tok.ID) || !validID(tok.ClientID) || strings.Contains(tok.ClientSecret.String(), tok.ClientSecret.Reveal()) && tok.ClientSecret.Reveal() != "" {
+			if !validID(tok.ID) || !validID(tok.ClientID) || tok.ClientSecret.String() != audit.Redacted {
 				t.Fatalf("malformed token accepted: %+v", tok.ServiceToken)
 			}
 		}
