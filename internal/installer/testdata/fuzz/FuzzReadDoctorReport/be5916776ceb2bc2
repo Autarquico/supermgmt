@@ -1,0 +1,2 @@
+go test fuzz v1
+string("{\"ok\":true,\"format_version\":1,\"database_sChemA_version\":0,\"000000\":[]}")

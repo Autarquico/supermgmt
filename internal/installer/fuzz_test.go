@@ -153,7 +153,7 @@ func FuzzReadDoctorReport(f *testing.F) {
 		fuzzSkipOversize(t, len(report))
 		u := &upgrader{d: Deps{Runner: doctorStub(report)}, t: upgradeTarget{l: applianceLayout()}}
 		version, err := u.schemaVersion(context.Background(), applianceLayout().Binary)
-		if err == nil && !strings.Contains(report, "schema") {
+		if err == nil && !strings.Contains(strings.ToLower(report), "schema") { // JSON keys match case-insensitively
 			t.Fatalf("schema %d read from a report that never mentions one", version)
 		}
 	})

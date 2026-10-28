@@ -415,7 +415,7 @@ type wireIdentityProvider struct {
 }
 
 func (w wireIdentityProvider) provider() (IdentityProvider, error) {
-	if !validID(w.ID) || !cleanText(w.Type) || !cleanText(w.Name) {
+	if !validID(w.ID) || w.Type == "" || !cleanText(w.Type) || !cleanText(w.Name) {
 		return IdentityProvider{}, errUnreadable
 	}
 	return IdentityProvider(w), nil
