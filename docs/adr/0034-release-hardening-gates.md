@@ -16,7 +16,7 @@
 - **Reachability.** `scripts/fuzz.sh reach` runs every target over its seeds with `-coverpkg` and fails when a mapped function has zero coverage.
 - Seeds are `f.Add` calls built from existing fixtures and fakes, so every `go test` runs them. Crasher regression inputs live in `testdata/fuzz/<Target>/`.
 - **Pull requests** run the seeds (inside `make test`) and the `fuzz-inventory` job (discovery and reachability). No mutation on pull requests.
-- **Nightly** runs every target for `-fuzztime=5m`, in 6 shards (`scripts/fuzz.sh shard <i> 6`, inventory order) of at most 60 minutes. A crasher fails its shard and is uploaded as an artifact.
+- **Nightly** runs every target for `-fuzztime=5m`, in 8 shards (`scripts/fuzz.sh shard <i> 8`, inventory order) of at most 60 minutes. A crasher fails its shard and is uploaded as an artifact.
 - `scripts/fuzz.sh count` is the authoritative target count. M6 plans 45 new targets on top of the 10 that exist at its start.
 
 ### Race and stress

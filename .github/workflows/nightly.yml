@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,7 +32,7 @@ jobs:
       - name: fuzz this shard, 5 minutes per target (FuzzReadArchive weighs double, see scripts/fuzz.sh)
         env:
           SHARD: ${{ matrix.shard }}
-        run: make fuzz FUZZTIME=5m FUZZ_SHARD="$SHARD" FUZZ_SHARDS=6
+        run: make fuzz FUZZTIME=5m FUZZ_SHARD="$SHARD" FUZZ_SHARDS=8
       - name: crashers
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

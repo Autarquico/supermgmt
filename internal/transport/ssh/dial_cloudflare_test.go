@@ -477,7 +477,7 @@ func TestChildDyingDuringHandshakeIsReapedAndItsStderrIsScrubbed(t *testing.T) {
 
 func TestHandshakeTimeoutKillsASilentChild(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.ConnectTimeout = 300 * time.Millisecond
+	cfg.ConnectTimeout = 2 * time.Second
 	r := newTunnelRig(t, cfg, admitting())
 	setFake(t, r.home, fakeBehaviour{Mode: "silent"})
 	_, err := r.runTunnel(t, "x")
