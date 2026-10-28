@@ -3,11 +3,16 @@ import { routeFor } from '../../../scripts/sync-docs.mjs';
 import { siteVersion } from '../../lib/claims';
 
 const version = siteVersion();
-const release = version
-	? `Built from pre-release ${version}. The installer has not been verified on a clean machine yet — build from source.`
-	: 'No release yet — build from source.';
+const script = 'curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh';
+const channel = version?.includes('-') ? 'SUPERMGMT_CHANNEL=beta ' : '';
 
-const commands = `git clone https://github.com/autarquico/supermgmt.git
+const platforms = [
+	{ name: 'Your laptop, macOS or Linux', command: `${script} | ${channel}bash -s -- local --resident` },
+	{ name: 'A Linux server with systemd', command: `${script} | sudo env ${channel}bash -s -- server --public-url https://mgmt.example.com` },
+	{ name: 'A Proxmox VE 9 host, as root', command: `${script} | ${channel}bash -s -- proxmox-lxc` },
+];
+
+const fromSource = `git clone https://github.com/autarquico/supermgmt.git
 cd supermgmt
 make build
 export PATH="$PWD/dist:$PATH"
@@ -15,12 +20,30 @@ sm version`;
 ---
 
 <section aria-labelledby="install-title">
-	<h2 id="install-title">Try it from source</h2>
-	<p class="intro">
-		{release} You need Go 1.27.3 or newer and <code>git</code>.
-	</p>
+	<h2 id="install-title">Install</h2>
+	{version ? (
+		<>
+			<p class="intro">
+				{channel ? <>Pre-release <code>{version}</code>, from the <code>beta</code> channel.</> : <>Release <code>{version}</code>.</>}{' '}
+				The script checks the release signature before it runs anything.
+			</p>
+			{platforms.map(({ name, command }) => (
+				<>
+					<h3>{name}</h3>
+					<div class="scroll" role="region" aria-label={`Install on ${name}`} tabindex="0">
+						<pre><code>{command}</code></pre>
+					</div>
+				</>
+			))}
+			<p class="more"><a href={routeFor('installation')}>Installation: modes, flags and the review-first path</a></p>
+			<h3>Or build from source</h3>
+		</>
+	) : (
+		<p class="intro">No release yet — build from source.</p>
+	)}
+	<p class="intro">You need Go 1.27.3 or newer and <code>git</code>.</p>
 	<div class="scroll" role="region" aria-label="Build commands" tabindex="0">
-		<pre><code>{commands}</code></pre>
+		<pre><code>{fromSource}</code></pre>
 	</div>
 	<p class="more"><a href={routeFor('getting-started')}>Getting started: manage your first machine</a></p>
 </section>
@@ -36,6 +59,11 @@ sm version`;
 		max-width: 40rem;
 		margin: 0 0 var(--sm-space-5);
 		line-height: 1.5;
+	}
+	h3 {
+		margin: var(--sm-space-5) 0 var(--sm-space-3);
+		font-size: var(--sl-text-lg);
+		color: var(--sm-text-strong);
 	}
 	code {
 		font-family: var(--sm-font-mono);

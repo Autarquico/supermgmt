@@ -22,9 +22,20 @@ The rest of this page describes `install.sh` and every mode in detail.
 
 ### `curl | bash`
 
+One line per platform. Only pre-releases exist, so each line asks for the `beta` channel; once a stable release exists, drop `SUPERMGMT_CHANNEL=beta`.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | bash -s -- server --public-url https://mgmt.example.com
+# your laptop, macOS or Linux: sm in ~/.local/bin, the daemon running at login
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | SUPERMGMT_CHANNEL=beta bash -s -- local --resident
+
+# a Linux server with systemd
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | sudo env SUPERMGMT_CHANNEL=beta bash -s -- server --public-url https://mgmt.example.com
+
+# a Proxmox VE 9 host, in its shell as root: the server in a new unprivileged LXC
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | SUPERMGMT_CHANNEL=beta bash -s -- proxmox-lxc
 ```
+
+The script reads its questions from the terminal even though its standard input is the pipe (`install.sh`, `exec … </dev/tty`). The modes and their flags are in [Modes](#modes).
 
 The organisation in the URL is the one `install.sh` uses for downloads (`DEFAULT_BASE_URL`); that the repository is public at that address is not verified.
 

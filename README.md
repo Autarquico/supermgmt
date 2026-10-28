@@ -34,6 +34,21 @@ The website, **https://autarquico.github.io/supermgmt/**, is built from release 
 
 The terminal UI has screens for the dashboard, resources, nodes, services, logs, jobs, approvals, events, applications and deployments, plus read-only Providers and Settings screens; see [Using the TUI](docs/tui.md).
 
+## Install
+
+Pre-releases only, from the `beta` channel. The script verifies the release signature before it runs anything; the other ways in are in [Installation](docs/installation.md).
+
+```bash
+# your laptop, macOS or Linux
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | SUPERMGMT_CHANNEL=beta bash -s -- local --resident
+
+# a Linux server with systemd
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | sudo env SUPERMGMT_CHANNEL=beta bash -s -- server --public-url https://mgmt.example.com
+
+# a Proxmox VE 9 host, as root
+curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh | SUPERMGMT_CHANNEL=beta bash -s -- proxmox-lxc
+```
+
 ## Quick start
 
 You need macOS or Linux, Go 1.27.3 or newer, `git`, and an SSH key in your SSH agent. No server and no account.
