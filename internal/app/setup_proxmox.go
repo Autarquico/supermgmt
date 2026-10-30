@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
@@ -213,59 +214,48 @@ func (h setupHandler) proveAPI(ctx context.Context, dial func(context.Context) (
 	return nil
 }
 
-// discoverTLSServerName handshakes over a relay, requires the certificate to
-// chain to caPEM and picks the name the client will verify (tlsServerNameOf).
-// The handshake carries no credential.
+// discoverTLSServerName picks the first candidate name the API certificate
+// verifies for, chain and name both checked against caPEM, one handshake per
+// candidate over its own relay. A certificate that does not chain stops at the
+// first; one that names none is CAPABILITY_UNAVAILABLE listing the names it has.
+// The handshakes carry no credential.
 func discoverTLSServerName(ctx context.Context, dial func(context.Context) (net.Conn, error), caPEM, hostname string) (string, error) {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM([]byte(caPEM)) {
 		return "", smerr.New(smerr.CodeInternal, "", "the recorded CA is not PEM")
 	}
+	var wrongName x509.HostnameError
+	for _, candidate := range []string{"localhost", "127.0.0.1", hostname} {
+		err := handshake(ctx, dial, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: candidate})
+		if err == nil {
+			return candidate, nil
+		}
+		if !errors.As(err, &wrongName) {
+			return "", err
+		}
+	}
+	return "", smerr.New(smerr.CodeCapabilityUnavailable, "",
+		fmt.Sprintf("the Proxmox API certificate names none of localhost, 127.0.0.1 or %s; it names: %s",
+			textsafe.Line(hostname), namesOf(wrongName.Certificate)))
+}
+
+// handshake runs one TLS handshake over a fresh relay and closes it.
+func handshake(ctx context.Context, dial func(context.Context) (net.Conn, error), config *tls.Config) error {
 	conn, err := dial(ctx)
 	if err != nil {
-		return "", fmt.Errorf("open the Proxmox relay: %w", err)
+		return fmt.Errorf("open the Proxmox relay: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	var leaf *x509.Certificate
-	config := &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		// The chain is verified in VerifyConnection, without a name: the name is
-		// what this handshake is for.
-		InsecureSkipVerify: true, //nolint:gosec // VerifyConnection checks the chain against the CA
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 {
-				return fmt.Errorf("no certificate")
-			}
-			intermediates := x509.NewCertPool()
-			for _, c := range cs.PeerCertificates[1:] {
-				intermediates.AddCert(c)
-			}
-			leaf = cs.PeerCertificates[0]
-			_, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates})
-			return err
-		},
+	err = tls.Client(conn, config).HandshakeContext(ctx)
+	var wrongName x509.HostnameError
+	if err == nil || errors.As(err, &wrongName) {
+		return err
 	}
-	if err := tls.Client(conn, config).HandshakeContext(ctx); err != nil {
-		return "", smerr.New(smerr.CodeCapabilityUnavailable, "",
-			"the TLS handshake with the Proxmox API failed or its certificate does not chain to the host's root CA: "+textsafe.Line(err.Error()))
-	}
-	return tlsServerNameOf(leaf, hostname)
-}
-
-// tlsServerNameOf is the first of localhost, 127.0.0.1 and the node's hostname
-// that the leaf certificate names. None is CAPABILITY_UNAVAILABLE listing the
-// names it has.
-func tlsServerNameOf(leaf *x509.Certificate, hostname string) (string, error) {
-	for _, candidate := range []string{"localhost", "127.0.0.1", hostname} {
-		if leaf.VerifyHostname(candidate) == nil {
-			return candidate, nil
-		}
-	}
-	return "", smerr.New(smerr.CodeCapabilityUnavailable, "",
-		fmt.Sprintf("the Proxmox API certificate names none of localhost, 127.0.0.1 or %s; it names: %s", textsafe.Line(hostname), namesOf(leaf)))
+	return smerr.New(smerr.CodeCapabilityUnavailable, "",
+		"the TLS handshake with the Proxmox API failed or its certificate does not chain to the host's root CA: "+textsafe.Line(err.Error()))
 }
 
 // namesOf lists a certificate's subject alternative names for a message.

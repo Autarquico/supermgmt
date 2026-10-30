@@ -72,12 +72,6 @@ func (ca pveCA) issue(t *testing.T, dns []string, ips ...string) tls.Certificate
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-func leafOf(t *testing.T, c tls.Certificate) *x509.Certificate {
-	leaf, err := x509.ParseCertificate(c.Certificate[0])
-	mustf(t, err, "parse leaf")
-	return leaf
-}
-
 func TestTLSServerNameIsTheFirstOfLocalhostLoopbackAndHostnameTheLeafNames(t *testing.T) {
 	ca := newPVECA(t)
 	layouts := []struct {
@@ -96,7 +90,7 @@ func TestTLSServerNameIsTheFirstOfLocalhostLoopbackAndHostnameTheLeafNames(t *te
 		{"no names at all", nil, nil, ""},
 	}
 	for _, l := range layouts {
-		got, err := tlsServerNameOf(leafOf(t, ca.issue(t, l.dns, l.ips...)), "pve1")
+		got, err := discoverTLSServerName(t.Context(), presenting(t, ca.issue(t, l.dns, l.ips...)), ca.pem, "pve1")
 		if l.want == "" {
 			if smerr.CodeOf(err) != smerr.CodeCapabilityUnavailable {
 				t.Errorf("%s: got %q, err %v; want CAPABILITY_UNAVAILABLE", l.name, got, err)
@@ -112,6 +106,30 @@ func TestTLSServerNameIsTheFirstOfLocalhostLoopbackAndHostnameTheLeafNames(t *te
 		if err != nil || got != l.want {
 			t.Errorf("%s: got %q, err %v; want %q", l.name, got, err, l.want)
 		}
+	}
+}
+
+// presenting is a relay whose far end presents cert in a TLS handshake. A
+// loopback socket stands for it: the kernel buffers it, as the SSH channel does.
+func presenting(t *testing.T, cert tls.Certificate) func(context.Context) (net.Conn, error) {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	mustf(t, err, "listen")
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_ = tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}).HandshakeContext(t.Context())
+			}()
+		}
+	}()
+	return func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
 	}
 }
 
