@@ -1,18 +1,18 @@
 ---
 codename: supermgmt
-title: "Reach the Proxmox API through the host's SSH connection"
+title: Reach the Proxmox API through the host's SSH connection
 type: epic
-status: draft
+status: active
 priority: P1
 size: L
 issue: null
 prs: []
-related_issues: []
+related_issues: [45]
 depends_on: []
 supersedes: []
 related_specs: [cloudflare-tunnel-transport]
 created: 2026-10-29
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # Reach the Proxmox API through the host's SSH connection
