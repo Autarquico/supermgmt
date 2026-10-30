@@ -5,7 +5,7 @@ type: epic
 status: active
 priority: P1
 size: L
-issue: null
+issue: 45
 prs: [46]
 related_issues: [45]
 depends_on: []
