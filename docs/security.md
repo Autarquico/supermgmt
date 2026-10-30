@@ -320,6 +320,12 @@ Verified against fakes only; the real-host checks are in the [Proxmox manual che
 - **Power actions** are jobs that are never retried; `stop` is high risk and needs approval. A power request that may have reached Proxmox is settled from the task it created, never by sending it again ([providers.md](providers.md#interrupted-power-jobs-and-task-correlation)).
 - **Upgrade and uninstall** keep the previous binary and never delete data without a separate typed confirmation; the pre-upgrade archive is unencrypted like every backup.
 
+- **Proxmox through a node** (`via_node`):
+  - **No forwarding.** The dedicated key stays `restrict`. The API is reached by one argument-free command (`socat STDIO TCP:127.0.0.1:8006`, with the `socat` path limited to the system binary directories), so no API, configuration or plan can point it at another destination.
+  - **Trust.** The PVE CA is read through the connection whose host key is pinned, and every handshake verifies that CA and the recorded name before the token is sent.
+  - **The token.** It is created by a setup command whose output is secret. The executor, the setup stepper and every error drop that output. A lost token is deleted and created again, never read back. Audit records only its ID.
+  - **The relay command.** It is the one command the dedicated account gains. It reaches only the API, whose authority is already the token's.
+
 Not verified on a real Proxmox host: the privilege model, the permission propagation rules, the task API shapes and the installer's host commands.
 
 ## Apps, GitHub and deployments

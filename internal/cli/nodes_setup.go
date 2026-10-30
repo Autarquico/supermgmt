@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	paramProxmox = "proxmox"
+
 	logsModeJournalGroup = "journal-group"
 	logsModeBroker       = "broker"
 	policyAllow          = "allow"
@@ -19,7 +21,7 @@ const (
 )
 
 func newNodesSetupCmd(env []string) *cobra.Command {
-	var dockerAccess, assumeYes, noUnits, tunnel bool
+	var dockerAccess, assumeYes, noUnits, tunnel, proxmox bool
 	var logsMode string
 	var units []string
 	cmd := &cobra.Command{
@@ -33,6 +35,9 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			"Without --unit a re-run keeps the grants the node has; --no-units removes them all.\n\n" +
 			"--tunnel also installs cloudflared on the node and moves its SSH reachability behind a Cloudflare Tunnel; undo it\n" +
 			"with `sm nodes tunnel disable`.\n\n" +
+			"--proxmox sets a Proxmox VE 9 host up for the Proxmox provider through this node (`via_node`): it creates the\n" +
+			"SuperMgmt user, roles and an API token on the host, installs socat when absent and stores the token as\n" +
+			"secret://proxmox/<node>. Passing it again repairs a lost token; a setup without it keeps the Proxmox state.\n\n" +
 			"A re-run keeps the node's docker access, logs mode and tunnel unless you pass --docker-access, --logs-mode or\n" +
 			"--tunnel; --docker-access=false removes docker access. On a first setup docker access is off unless you pass\n" +
 			"--docker-access, and it is root-equivalent on the node.",
@@ -65,11 +70,16 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			if dockerAccess {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", dockerAccessWarning)
 			}
+			proxmox = wire.SetupProxmox(node, wire.SetupChoice[bool]{Value: proxmox, Set: flags.Changed("proxmox")})
 			parameters := wire.SetupParameters(dockerAccess, logsMode, grants)
 			details := []string{wire.UnitsChange(node.Setup, grants, kept)}
 			if tunnel {
 				parameters[paramTunnel] = "true"
 				details = append([]string{transportPreview(node.Endpoint.TunnelHostname)}, details...)
+			}
+			if proxmox {
+				parameters[paramProxmox] = "true"
+				details = append(details, wire.ProxmoxPreview(node.Name))
 			}
 			req := wire.CreatePlanRequest{
 				Action:     actionNodeSetup,
@@ -84,6 +94,7 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 	cmd.Flags().StringArrayVar(&units, "unit", nil, "grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)")
 	cmd.Flags().BoolVar(&noUnits, "no-units", false, "remove every unit grant")
 	cmd.Flags().BoolVar(&tunnel, "tunnel", false, "reach the node through a Cloudflare Tunnel (experimental; needs the cloudflare: block)")
+	cmd.Flags().BoolVar(&proxmox, "proxmox", false, "set the node up as a Proxmox VE 9 host for the Proxmox provider (experimental)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "do not ask for confirmation")
 	return cmd
 }

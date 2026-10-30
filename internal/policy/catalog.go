@@ -81,7 +81,8 @@ const (
 	ParamLogsMode     = "logs_mode"
 	ParamGrants       = "grants"
 	ParamDeployRoot   = "deploy_root"
-	ParamTunnel       = "tunnel" // "true" reaches the node through a Cloudflare Tunnel (ADR-0037)
+	ParamTunnel       = "tunnel"  // "true" reaches the node through a Cloudflare Tunnel (ADR-0037)
+	ParamProxmox      = "proxmox" // "true" also sets the node up as a Proxmox VE host: identity, token, relay (spec proxmox-via-node)
 )
 
 var catalogIndex = sync.OnceValue(func() map[string]ActionSpec {
@@ -235,6 +236,7 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamGrants, Type: ParamStringList},
 		{Name: ParamDeployRoot, Type: ParamString},
 		{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}},
+		{Name: ParamProxmox, Type: ParamString, Values: []string{"true", "false"}},
 	}
 
 	return []ActionSpec{

@@ -136,7 +136,7 @@ A node's transport is `direct` (the default; a node without the field is direct)
 
 > **Status: tested against fakes. No real Proxmox VE host was used.** Discovery and power actions run against a fake Proxmox API (`internal/providers/proxmox/pvefake`) written from the Proxmox documentation and, end to end, against a simulated host in CI (`TestM3_Appliance*`, job `e2e-appliance`). Each assumption is a row in [compatibility.md](compatibility.md) and an item in the [real Proxmox checklist](manual-checks/m3-real-pve.md). Supported: Proxmox VE 9.x only. See [Project status](project-status.md).
 
-The Proxmox provider reads a cluster through its HTTPS API with an API token and shows nodes, VMs and containers next to your SSH nodes. Today it can start, shut down, reboot and stop guests. Snapshots, backups, console, task history, creating providers through the API and promoting a discovered guest to a managed node are not built.
+The Proxmox provider reads a cluster through its HTTPS API with an API token, over the network or [through the host's SSH connection](#through-a-node-a-proxmox-host-anywhere), and shows nodes, VMs and containers next to your SSH nodes. Today it can start, shut down, reboot and stop guests. Snapshots, backups, console, task history, creating providers through the API and promoting a discovered guest to a managed node are not built.
 
 ### Configure
 
@@ -161,6 +161,38 @@ providers:
   ```
 
 - `sm providers check --offline pve` (service stopped) connects with the stored token and reports the version and the number of nodes, guests and storages; `sm providers check --offline --tls-only --endpoint URL --ca-file FILE` only verifies the certificate the endpoint serves. Both exit 8 on failure.
+
+### Through a node: a Proxmox host anywhere
+
+> **Status: experimental, tested against fakes.** Nothing ran against a real Proxmox VE host; see the [checklist](manual-checks/proxmox-via-node.md).
+
+A Proxmox VE 9 host is a Debian machine with `sshd`, so it can be an [SSH node](#ssh-nodes-agentless), reached directly or through [Cloudflare Tunnel](cloudflare.md). A provider can then reach the API through that node's SSH connection instead of a network endpoint: the host needs no open port 8006, and SuperMgmt reaches it from any network the node is reachable from.
+
+```bash
+sm nodes add --name pve1 --host 192.0.2.10 --admin-user root
+sm nodes setup pve1 --proxmox            # add --tunnel to reach it through Cloudflare
+sm approvals                             # setup waits for approval
+```
+
+Setup checks the host and changes nothing when a check fails:
+- It requires Proxmox VE 9 (`pveversion`).
+- It installs `socat` from the host's own Debian repositories when it is missing.
+- It creates or verifies the instance-owned PVE user and roles, the same ones the [appliance installer](#identities-and-privileges) creates, and a privilege-separated API token, which it stores at `secret://proxmox/pve1`.
+- It reads the PVE CA through the pinned connection, picks the TLS name the host certificate carries (`localhost`, `127.0.0.1` or the hostname), and proves it with an authenticated `GET /version`.
+
+When it finishes, it prints the provider block:
+
+```yaml
+providers:
+  - type: proxmox
+    name: pve1
+    via_node: pve1
+```
+
+- `via_node` replaces `endpoint`: exactly one of the two is set. `credential_ref`, `ca_file` and `tls_server_name` are optional and override what setup recorded. `verify_tls` must still be `true`.
+- The API is reached through an SSH session that runs one fixed command, `socat STDIO TCP:127.0.0.1:8006`, as the dedicated account. No SSH forwarding is enabled: the dedicated key stays `restrict`.
+- A provider whose node is missing, is not an SSH node, or was not set up with `--proxmox` is unavailable, and its error names the command that fixes it. A repin, a transport switch or a new setup takes effect at the next sync.
+- `sm providers check --offline` needs a network endpoint. For a `via_node` provider, run `sm providers check <name>` without `--offline`: the running service discovers it now and the command shows its status and last error (exit 8 when it failed).
 
 ### Identities and privileges
 

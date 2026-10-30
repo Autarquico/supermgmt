@@ -251,7 +251,7 @@ func setupView(m runtimes.SetupMeta) *wire.Setup {
 	}
 	return &wire.Setup{
 		SetupVersion: m.SetupVersion, LogsMode: string(m.LogsMode), DockerAccess: m.DockerAccess,
-		Units: units, KeyFingerprint: m.KeyFingerprint,
+		Units: units, KeyFingerprint: m.KeyFingerprint, Proxmox: m.ProxmoxState() != nil,
 	}
 }
 

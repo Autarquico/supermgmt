@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"net/netip"
 
-	"github.com/autarquico/supermgmt/internal/audit"
+	"github.com/autarquico/supermgmt/internal/pveid"
 )
 
 // GuestNetwork is the container's single interface on Bridge.
@@ -62,12 +62,7 @@ type PVEStorage struct {
 }
 
 // ACL is one access-control entry; exactly one of User and Token is set.
-type ACL struct {
-	Path  string
-	Role  string
-	User  string
-	Token string // user@realm!tokenid
-}
+type ACL = pveid.ACL
 
 // PVE is the Proxmox host tooling the appliance installer uses (pct, pveam,
 // pvesh, pveum, pveversion), always by absolute path with a clean environment
@@ -99,18 +94,11 @@ type PVE interface {
 	// Push copies a host file into the container with owner and mode.
 	Push(ctx context.Context, vmid int, src, dst string, owner Owner, mode fs.FileMode) error
 
-	UserExists(ctx context.Context, user string) (bool, error)
-	CreateUser(ctx context.Context, user, comment string) error
+	pveid.Host
+	// The removals and the ACL listing are the installer's alone: node setup
+	// never deletes a user, a role or an ACL.
 	RemoveUser(ctx context.Context, user string) error
-	RoleExists(ctx context.Context, role string) (bool, error)
-	CreateRole(ctx context.Context, role string, privileges []string) error
 	RemoveRole(ctx context.Context, role string) error
 	ACLs(ctx context.Context) ([]ACL, error)
-	AddACL(ctx context.Context, acl ACL) error
 	RemoveACL(ctx context.Context, acl ACL) error
-	TokenExists(ctx context.Context, user, id string) (bool, error)
-	// AddToken creates a privilege-separated token and returns its secret,
-	// read from the command's captured output only.
-	AddToken(ctx context.Context, user, id string) (audit.Secret, error)
-	RemoveToken(ctx context.Context, user, id string) error
 }

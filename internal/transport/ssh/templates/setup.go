@@ -278,7 +278,8 @@ var setupTemplates = buildSetupTemplates()
 
 func buildSetupTemplates() []Template {
 	all := slices.Clone(setupReads)
-	for _, s := range privilegedSteps {
+	all = append(all, proxmoxSetupReads...)
+	for _, s := range slices.Concat(privilegedSteps, proxmoxSteps) {
 		all = append(all,
 			setupTemplate(s.name, s, rootPath, rootPath+"runuser -u {{user}} -- "),
 			setupTemplate(s.name+SudoVariantSuffix, s, "sudo -n ", "sudo -n runuser -u {{user}} -- "),
@@ -289,5 +290,8 @@ func buildSetupTemplates() []Template {
 
 func setupTemplate(name string, s privilegedStep, root, as string) Template {
 	body := strings.ReplaceAll(strings.ReplaceAll(s.body, "@ROOT@", root), "@AS@", as)
-	return Template{Name: name, Body: body, Params: s.params, Setup: true, MaxBytes: 64 << 10, MaxLines: 500}
+	return Template{
+		Name: name, Body: body, Params: s.params, Setup: true, SecretOutput: secretOutputSteps[s.name],
+		MaxBytes: 64 << 10, MaxLines: 500,
+	}
 }

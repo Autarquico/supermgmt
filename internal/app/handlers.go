@@ -32,6 +32,10 @@ type HandlersOptions struct {
 	// GitHub provider writes; without it those jobs fail loudly.
 	Apps *Apps
 
+	// Secrets is the secret store node.setup --proxmox keeps the PVE token in;
+	// without it that option is refused.
+	Secrets TunnelSecrets
+
 	// Tunnel enables node.setup with tunnel=true; nil (no cloudflare: block)
 	// refuses it.
 	Tunnel *TunnelOptions
@@ -79,7 +83,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	}
 	h := &Handlers{
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
-		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober, tunnel: tunnel},
+		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober, tunnel: tunnel, secrets: o.Secrets},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
 		apply:  applyHandler{inv: o.Inventory, apps: o.Apps},
 	}

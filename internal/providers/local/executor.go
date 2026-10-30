@@ -72,10 +72,10 @@ func (e Executor) Run(ctx context.Context, c templates.Command) (transport.Resul
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
-		return res, nil
+		return transport.Withhold(c, res), nil
 	case errors.As(err, &exit) && ctx.Err() == nil:
 		res.ExitStatus = exit.ExitCode()
-		return res, nil
+		return transport.Withhold(c, res), nil
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return transport.Result{}, smerr.Wrap(err, smerr.CodeTimeout, "", "local command exceeded its deadline")
 	case ctx.Err() != nil:

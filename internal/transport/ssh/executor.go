@@ -136,5 +136,5 @@ func execute(s *cryptossh.Session, c templates.Command) sessionOutcome {
 	default:
 		return sessionOutcome{err: unreachable("ssh command did not complete", err)}
 	}
-	return sessionOutcome{res: res}
+	return sessionOutcome{res: transport.Withhold(c, res)}
 }

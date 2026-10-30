@@ -371,7 +371,8 @@ func (b *builder) coreServices() error {
 		return err
 	}
 	b.proxmox, err = app.NewProxmoxSync(b.app, app.ProxmoxSyncOptions{
-		Token: app.SecretToken(b.kit.store),
+		Token:     app.SecretToken(b.kit.store),
+		Connector: b.conn,
 		OnError: func(provider domain.ID, err error) {
 			b.o.Log.Warn("proxmox sync", slog.String("provider", provider.String()), slog.Any("error", err))
 		},
@@ -481,7 +482,7 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
 		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health},
-		Tunnel: b.tunnelOptions(),
+		Tunnel: b.tunnelOptions(), Secrets: b.kit.store,
 	})
 	if err != nil {
 		return nil, err

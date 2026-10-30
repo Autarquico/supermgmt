@@ -7,6 +7,7 @@ import (
 	"time"
 
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
@@ -93,5 +94,24 @@ func TestTheProbeTemplateRunsLocally(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(res.Stdout), "@@probe 1") {
 		t.Errorf("probe output starts %q", string(res.Stdout)[:min(20, len(res.Stdout))])
+	}
+}
+
+func TestASecretOutputCommandReturnsItsStdoutOnSuccessAndNothingOnFailure(t *testing.T) {
+	run := func(line string) transport.Result {
+		t.Helper()
+		res, err := Executor{}.Run(context.Background(), templates.Command{Line: line, MaxBytes: 1 << 10, SecretOutput: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	ok := run("echo SECRET; echo NOISE >&2")
+	if string(ok.Stdout) != "SECRET\n" || len(ok.Stderr) != 0 {
+		t.Errorf("success: stdout %q stderr %q", ok.Stdout, ok.Stderr)
+	}
+	failed := run("echo SECRET; echo NOISE >&2; exit 3")
+	if failed.ExitStatus != 3 || len(failed.Stdout) != 0 || len(failed.Stderr) != 0 {
+		t.Errorf("failure: %+v", failed)
 	}
 }

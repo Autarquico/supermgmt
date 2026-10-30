@@ -283,6 +283,16 @@ github.com/autarquico/supermgmt/internal/providers/proxmox.parseEndpoint  exempt
 github.com/autarquico/supermgmt/internal/providers/proxmox.parsePVEError  FuzzParsePVEError
 github.com/autarquico/supermgmt/internal/providers/proxmox.parseUPIDAnswer  FuzzParseUPIDAnswer
 github.com/autarquico/supermgmt/internal/providers/ssh.ParseHostKey  FuzzParseHostKey
+github.com/autarquico/supermgmt/internal/pveid.ParseACLs  FuzzParsePVEList
+github.com/autarquico/supermgmt/internal/pveid.ParseCAPEM  FuzzParseCAPEM
+github.com/autarquico/supermgmt/internal/pveid.ParseListed  FuzzParsePVEList
+github.com/autarquico/supermgmt/internal/pveid.ParseManagerVersion  FuzzParseManagerVersion
+github.com/autarquico/supermgmt/internal/pveid.ParseOwnedToken  FuzzParsePVEList
+github.com/autarquico/supermgmt/internal/pveid.ParseOwnedUser  FuzzParsePVEList
+github.com/autarquico/supermgmt/internal/pveid.ParseRolePrivileges  FuzzParsePVEList
+github.com/autarquico/supermgmt/internal/pveid.ParseTokenAdd  FuzzParseTokenAdd
+github.com/autarquico/supermgmt/internal/pveid.rowOf  FuzzParsePVEList
+github.com/autarquico/supermgmt/internal/pveid.unmarshalRows  FuzzParsePVEList
 github.com/autarquico/supermgmt/internal/runtimes/docker.decodeInspect  FuzzDecodeInspect
 github.com/autarquico/supermgmt/internal/runtimes/docker.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/docker.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
@@ -297,6 +307,8 @@ github.com/autarquico/supermgmt/internal/runtimes/systemd.parseUnits  FuzzParseU
 github.com/autarquico/supermgmt/internal/runtimes/systemd.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/systemd.readUnitState  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/systemd.readVersion  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/systemd.stepper.readHostname  exempt: runs a read-only node command and checks one DNS-label pattern
+github.com/autarquico/supermgmt/internal/runtimes/systemd.stepper.readRootCA  exempt: runs a node command and delegates to the fuzzed pveid.ParseCAPEM
 github.com/autarquico/supermgmt/internal/secrets.DecodeKeyExport  FuzzDecodeKeyExport
 github.com/autarquico/supermgmt/internal/secrets.KeyAdmin.Loaded  exempt: key and check records the daemon wrote; raw key bytes have no grammar
 github.com/autarquico/supermgmt/internal/secrets.activeKEK  exempt: key and check records the daemon wrote; raw key bytes have no grammar

@@ -235,6 +235,29 @@ func TestValidateProviders(t *testing.T) {
 		{"proxmox endpoint with userinfo", func(c *Config) { c.Providers[0].Proxmox.Endpoint = "https://root@pve:8006" }, "providers[0].endpoint"},
 		{"proxmox without TLS verification", func(c *Config) { c.Providers[0].Proxmox.VerifyTLS = false }, "providers[0].verify_tls"},
 		{"proxmox relative ca_file", func(c *Config) { c.Providers[0].Proxmox.CAFile = "pve-ca.pem" }, "providers[0].ca_file"},
+		{"proxmox via_node alone", func(c *Config) {
+			px := c.Providers[0].Proxmox
+			px.Endpoint, px.CredentialRef, px.ViaNode = "", "", "pve1"
+		}, ""},
+		{"proxmox via_node with credential and ca_file", func(c *Config) {
+			px := c.Providers[0].Proxmox
+			px.Endpoint, px.ViaNode, px.CAFile, px.TLSServerName = "", "pve1", "/etc/pve-ca.pem", "pve.lan"
+		}, ""},
+		{"proxmox endpoint and via_node", func(c *Config) { c.Providers[0].Proxmox.ViaNode = "pve1" }, "providers[0].via_node"},
+		{"proxmox neither endpoint nor via_node", func(c *Config) { c.Providers[0].Proxmox.Endpoint = "" }, "providers[0].endpoint"},
+		{"proxmox malformed via_node", func(c *Config) { px := c.Providers[0].Proxmox; px.Endpoint, px.ViaNode = "", "pve1/../x" }, "providers[0].via_node"},
+		{"proxmox via_node credential still a secret ref", func(c *Config) {
+			px := c.Providers[0].Proxmox
+			px.Endpoint, px.ViaNode, px.CredentialRef = "", "pve1", "file:///tok"
+		}, "providers[0].credential_ref"},
+		{"proxmox via_node without TLS verification", func(c *Config) {
+			px := c.Providers[0].Proxmox
+			px.Endpoint, px.ViaNode, px.VerifyTLS = "", "pve1", false
+		}, "providers[0].verify_tls"},
+		{"proxmox tls_server_name IP literal", func(c *Config) { c.Providers[0].Proxmox.TLSServerName = "10.0.0.5" }, ""},
+		{"proxmox tls_server_name localhost", func(c *Config) { c.Providers[0].Proxmox.TLSServerName = "localhost" }, ""},
+		{"proxmox tls_server_name uppercase", func(c *Config) { c.Providers[0].Proxmox.TLSServerName = "PVE" }, "providers[0].tls_server_name"},
+		{"proxmox malformed tls_server_name", func(c *Config) { c.Providers[0].Proxmox.TLSServerName = "pve.lan:8006" }, "providers[0].tls_server_name"},
 		{"proxmox absolute ca_file", func(c *Config) { c.Providers[0].Proxmox.CAFile = "/etc/supermgmt/pve-ca.pem" }, ""},
 		{"ssh without host", func(c *Config) { c.Providers[1].SSH.Endpoint.Host = "" }, "providers[1].endpoint.host"},
 		{"ssh without user", func(c *Config) { c.Providers[1].SSH.Endpoint.User = "" }, "providers[1].endpoint.user"},

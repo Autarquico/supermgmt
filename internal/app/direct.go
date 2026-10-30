@@ -480,6 +480,7 @@ type setupRequest struct {
 	LogsMode     runtimes.LogsMode
 	Grants       []runtimes.UnitGrant
 	Tunnel       bool
+	Proxmox      bool
 }
 
 func parseSetupRequest(params map[string]any) (setupRequest, error) {
@@ -496,19 +497,25 @@ func parseSetupRequest(params map[string]any) (setupRequest, error) {
 	if err != nil {
 		return setupRequest{}, err
 	}
-	return setupRequest{DockerAccess: docker == "true", LogsMode: runtimes.LogsMode(mode), Grants: grants, Tunnel: tunnel}, nil
+	proxmox, err := optionRequested(policy.ParamProxmox, params[policy.ParamProxmox])
+	if err != nil {
+		return setupRequest{}, err
+	}
+	return setupRequest{DockerAccess: docker == "true", LogsMode: runtimes.LogsMode(mode), Grants: grants, Tunnel: tunnel, Proxmox: proxmox}, nil
 }
 
 // tunnelRequested reads the tunnel parameter: absent and "false" mean no
 // tunnel, "true" asks for one; anything else is refused.
-func tunnelRequested(raw any) (bool, error) {
+func tunnelRequested(raw any) (bool, error) { return optionRequested(policy.ParamTunnel, raw) }
+
+func optionRequested(param string, raw any) (bool, error) {
 	switch raw {
 	case nil, "false":
 		return false, nil
 	case "true":
 		return true, nil
 	}
-	return false, smerr.New(smerr.CodeInvalidArgument, "", policy.ParamTunnel+" must be \"true\" or \"false\"")
+	return false, smerr.New(smerr.CodeInvalidArgument, "", param+" must be \"true\" or \"false\"")
 }
 
 // parseGrants reads the grants parameter ("<verb> <unit>" per entry) into one

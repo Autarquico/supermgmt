@@ -22,9 +22,10 @@ type SetupParams struct {
 	SystemctlPath string // resolved on the node when empty
 	Grants        []runtimes.UnitGrant
 	LogsMode      runtimes.LogsMode
-	DockerAccess  bool          // explicit: the docker group is root-equivalent (spec §17)
-	AdminIsRoot   bool          // false: every privileged step runs as `sudo -n <argv>` (ADR-0009 c)
-	Tunnel        *TunnelParams // nil: no tunnel steps (ADR-0037)
+	DockerAccess  bool           // explicit: the docker group is root-equivalent (spec §17)
+	AdminIsRoot   bool           // false: every privileged step runs as `sudo -n <argv>` (ADR-0009 c)
+	Tunnel        *TunnelParams  // nil: no tunnel steps (ADR-0037)
+	Proxmox       *ProxmoxParams // nil: no Proxmox step (spec proxmox-via-node)
 }
 
 // Validate checks every parameter before anything touches the node.
@@ -48,6 +49,11 @@ func (p SetupParams) Validate() error {
 			return err
 		}
 	}
+	if p.Proxmox != nil {
+		if err := p.Proxmox.Validate(); err != nil {
+			return err
+		}
+	}
 	_, err := SudoCommands("/usr/bin/systemctl", p.Grants, p.LogsMode)
 	return err
 }
@@ -55,6 +61,7 @@ func (p SetupParams) Validate() error {
 // SetupOutcome is what the job records in the node.setup capability metadata.
 type SetupOutcome struct {
 	SystemctlPath string
+	Proxmox       *ProxmoxOutcome // nil without --proxmox
 }
 
 // Setup runs the ensure steps of ADR-0009 (f) 1-7 through ex, which runs as
@@ -82,6 +89,13 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 	if err != nil {
 		return SetupOutcome{}, err
 	}
+	// Before the first change: a node that is not Proxmox VE 9 is refused untouched.
+	if p.Proxmox != nil {
+		if err := s.requirePVE(ctx); err != nil {
+			return SetupOutcome{}, err
+		}
+	}
+	var proxmox *ProxmoxOutcome
 	steps := []struct {
 		name string
 		run  func(context.Context) error
@@ -102,6 +116,15 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 			}
 			return s.ensureTunnel(ctx, *p.Tunnel)
 		}},
+		// After the tunnel, before the key: the identities and token exist before the
+		// account is reachable, and a host that cannot give them leaves it unreachable.
+		{"proxmox", func(ctx context.Context) (err error) {
+			if p.Proxmox == nil {
+				return nil
+			}
+			proxmox, err = s.ensureProxmox(ctx, *p.Proxmox)
+			return err
+		}},
 		// The key goes in last: only an account that passed every check above
 		// ever becomes reachable with the instance identity.
 		{"authorized_keys", func(ctx context.Context) error { return s.installOwnFile(ctx, p.User, files.authorizedKeys) }},
@@ -111,7 +134,7 @@ func Setup(ctx context.Context, ex transport.Executor, p SetupParams) (SetupOutc
 			return SetupOutcome{}, fmt.Errorf("node.setup step %s: %w", step.name, err)
 		}
 	}
-	return SetupOutcome{SystemctlPath: systemctl}, nil
+	return SetupOutcome{SystemctlPath: systemctl, Proxmox: proxmox}, nil
 }
 
 type renderedFiles struct{ authorizedKeys, sudoers, tmpfiles, allowedUnits string }
@@ -151,27 +174,33 @@ func (s stepper) name(base string) string {
 // run renders and runs a setup step. A non-zero exit status is a Result for
 // the caller to judge.
 func (s stepper) run(ctx context.Context, base string, args map[string]string, stdin []byte) (transport.Result, error) {
-	c, err := templates.RenderSetup(s.name(base), args, stdin)
-	if err != nil {
-		return transport.Result{}, err
-	}
-	c.Sensitive = s.secret
-	res, err := s.ex.Run(ctx, c)
-	if err != nil {
-		return transport.Result{}, fmt.Errorf("%s: %w", base, err)
-	}
-	return res, nil
+	_, res, err := s.execute(ctx, base, args, stdin)
+	return res, err
 }
 
-// do runs a privileged setup step and requires exit status 0.
+func (s stepper) execute(ctx context.Context, base string, args map[string]string, stdin []byte) (templates.Command, transport.Result, error) {
+	c, err := templates.RenderSetup(s.name(base), args, stdin)
+	if err != nil {
+		return c, transport.Result{}, err
+	}
+	c.Sensitive = c.Sensitive || s.secret
+	res, err := s.ex.Run(ctx, c)
+	if err != nil {
+		return c, transport.Result{}, fmt.Errorf("%s: %w", base, err)
+	}
+	return c, res, nil
+}
+
+// do runs a privileged setup step and requires exit status 0. A step that is
+// secret, or whose output is, reports no output in its error.
 func (s stepper) do(ctx context.Context, base string, args map[string]string, stdin []byte) error {
-	res, err := s.run(ctx, base, args, stdin)
+	c, res, err := s.execute(ctx, base, args, stdin)
 	if err != nil {
 		return err
 	}
 	if res.ExitStatus != 0 {
 		detail := "output withheld"
-		if !s.secret {
+		if !s.secret && !c.SecretOutput {
 			detail = firstLine(res.Stderr)
 		}
 		return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("%s failed (exit %d): %s", base, res.ExitStatus, detail))

@@ -45,7 +45,7 @@ func TestSetupMetaWireFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"setup_version":3,"systemctl_path":"/usr/bin/systemctl","units":[{"unit":"nginx.service","verbs":["restart"]}],` +
+	want := `{"setup_version":4,"systemctl_path":"/usr/bin/systemctl","units":[{"unit":"nginx.service","verbs":["restart"]}],` +
 		`"logs_mode":"broker","docker_access":true,"deploy_root":"/srv/supermgmt","key_ref":"secret://ssh/default","key_version":1,"key_fingerprint":"SHA256:abc"}`
 	if string(got) != want {
 		t.Errorf("got  %s\nwant %s", got, want)
@@ -95,6 +95,35 @@ func TestComposeSupportedPinsTheShortVersionFormat(t *testing.T) {
 	for _, tt := range tests {
 		if got := ComposeSupported(tt.output); got != tt.want {
 			t.Errorf("ComposeSupported(%q) = %v, want %v", tt.output, got, tt.want)
+		}
+	}
+}
+
+func TestSetupMetaProxmoxStateRoundTripsAndOlderVersionsReadAsNone(t *testing.T) {
+	at := time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)
+	meta := SetupMeta{SetupVersion: SetupVersion, Proxmox: &ProxmoxMeta{
+		CAPEM: "ca", TokenRef: "secret://proxmox/pve1", TokenID: "sm-x@pve!sm", TLSServerName: "localhost", RelayPath: "/usr/bin/socat", InstalledAt: at,
+	}}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back SetupMeta
+	if err := json.Unmarshal(raw, &back); err != nil || back.ProxmoxState() == nil || *back.ProxmoxState() != *meta.Proxmox {
+		t.Fatalf("round trip: %+v, %v", back, err)
+	}
+	if got, _ := json.Marshal(SetupMeta{SetupVersion: SetupVersion}); strings.Contains(string(got), "proxmox") {
+		t.Errorf("an absent Proxmox state is written: %s", got)
+	}
+	for v := 1; v <= 3; v++ {
+		old := `{"setup_version":` + string(rune('0'+v)) + `,"systemctl_path":"/usr/bin/systemctl","units":[],"logs_mode":"journal-group","docker_access":false,"key_ref":"secret://ssh/default","key_version":1,"key_fingerprint":"f"}`
+		var m SetupMeta
+		if err := json.Unmarshal([]byte(old), &m); err != nil || m.ProxmoxState() != nil || m.SetupVersion != v {
+			t.Errorf("version %d: %+v, %v", v, m, err)
+		}
+		m.Proxmox = meta.Proxmox // a stray field on an old version is still "no Proxmox"
+		if m.ProxmoxState() != nil {
+			t.Errorf("version %d reads a Proxmox state", v)
 		}
 	}
 }

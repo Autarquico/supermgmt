@@ -315,10 +315,17 @@ func providerRef(id domain.ID) domain.ResourceRef {
 }
 
 // proxmoxProviderConfig is what discovery needs besides the endpoint and the
-// credential reference: the CA that signed the PVE certificate and how often
-// to sync.
+// credential reference: the CA that signed the PVE certificate, how often to
+// sync and, for a provider reached through a node, which node and TLS name.
 func proxmoxProviderConfig(p config.ProxmoxProvider) map[string]any {
-	return map[string]any{providerConfigCAFile: p.CAFile, providerConfigSyncInterval: p.SyncInterval.String()}
+	conf := map[string]any{providerConfigCAFile: p.CAFile, providerConfigSyncInterval: p.SyncInterval.String()}
+	if p.ViaNode != "" {
+		conf[providerConfigViaNode] = p.ViaNode
+	}
+	if p.TLSServerName != "" {
+		conf[providerConfigTLSServerName] = p.TLSServerName
+	}
+	return conf
 }
 
 // proxmoxProvider creates the provider of a configured Proxmox cluster or

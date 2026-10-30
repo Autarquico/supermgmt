@@ -122,28 +122,32 @@ func newProvidersRefreshCmd(env []string) *cobra.Command {
 		Long: "Run a discovery of the provider now and show how it ended. Nothing is changed on the cluster: only what\n" +
 			"SuperMgmt knows about it. Exit status: 0 when the sync worked, 8 when the cluster could not be read.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			api, err := newClient(cmd, env)
-			if err != nil {
-				return err
-			}
-			provider, err := resolveProvider(cmd.Context(), api, args[0])
-			if err != nil {
-				return err
-			}
-			refreshed, err := api.RefreshProvider(cmd.Context(), provider.ID)
-			if err != nil {
-				return err
-			}
-			if err := emit(cmd, refreshed, func(w io.Writer) error { return writeProvider(w, refreshed) }); err != nil {
-				return err
-			}
-			if refreshed.Status != "ok" {
-				return &childExitError{code: installer.ExitConnectivity}
-			}
-			return nil
-		},
+		RunE: func(cmd *cobra.Command, args []string) error { return refreshAndReport(cmd, env, args[0]) },
 	}
+}
+
+// refreshAndReport runs a discovery through the daemon and shows how it ended;
+// anything but a working sync is exit status 8.
+func refreshAndReport(cmd *cobra.Command, env []string, ref string) error {
+	api, err := newClient(cmd, env)
+	if err != nil {
+		return err
+	}
+	provider, err := resolveProvider(cmd.Context(), api, ref)
+	if err != nil {
+		return err
+	}
+	refreshed, err := api.RefreshProvider(cmd.Context(), provider.ID)
+	if err != nil {
+		return err
+	}
+	if err := emit(cmd, refreshed, func(w io.Writer) error { return writeProvider(w, refreshed) }); err != nil {
+		return err
+	}
+	if refreshed.Status != "ok" {
+		return &childExitError{code: installer.ExitConnectivity}
+	}
+	return nil
 }
 
 // resolveProvider accepts a provider id or an exact provider name.
@@ -182,10 +186,13 @@ type checkFlags struct {
 func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option, guard []netguard.Option) *cobra.Command {
 	var f checkFlags
 	cmd := &cobra.Command{
-		Use:   "check --offline (<name> | --tls-only --endpoint URL --ca-file FILE)",
-		Short: "Check a Proxmox provider with the service stopped",
-		Long: "With a provider name, read the provider from the configuration file and its API token from the secret\n" +
-			"store, then connect to the cluster and read its nodes, guests and storages. The service must be stopped.\n\n" +
+		Use:   "check (<via-node-name> | --offline (<name> | --tls-only --endpoint URL --ca-file FILE))",
+		Short: "Check a Proxmox provider",
+		Long: "With a provider that reaches PVE through a node (via_node), ask the running service to discover it now and\n" +
+			"show its status, last sync and last error. Same as `sm providers refresh`.\n\n" +
+			"With --offline and a provider name, read the provider from the configuration file and its API token from the secret\n" +
+			"store, then connect to the cluster and read its nodes, guests and storages. The service must be stopped.\n" +
+			"A provider with an endpoint needs --offline; a via_node provider does not accept it.\n\n" +
 			"With --tls-only, connect to the endpoint and verify the certificate it serves against the CA file for the\n" +
 			"endpoint's host name. The connection goes through the same outbound filter as the provider client. The installer runs it before any token exists.\n\n" +
 			"Exit status: 0 when the check passes, 8 when it fails.",
@@ -193,6 +200,9 @@ func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option, guard []
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := f.validate(args); err != nil {
 				return err
+			}
+			if !f.offline {
+				return checkThroughDaemon(cmd, env, args[0])
 			}
 			var report providerCheck
 			if f.tlsOnly {
@@ -206,7 +216,7 @@ func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option, guard []
 			return finishCheck(cmd, report)
 		},
 	}
-	cmd.Flags().BoolVar(&f.offline, "offline", false, "check with the service stopped (required)")
+	cmd.Flags().BoolVar(&f.offline, "offline", false, "check with the service stopped (required for a provider with an endpoint)")
 	cmd.Flags().BoolVar(&f.tlsOnly, "tls-only", false, "only verify the certificate the endpoint serves")
 	cmd.Flags().StringVar(&f.endpoint, "endpoint", "", "with --tls-only: the endpoint to verify, https://host[:port]")
 	cmd.Flags().StringVar(&f.caFile, "ca-file", "", "with --tls-only: the CA that must have signed the certificate")
@@ -215,8 +225,8 @@ func newProvidersCheckCmd(env []string, clientOptions []proxmox.Option, guard []
 
 func (f checkFlags) validate(args []string) error {
 	switch {
-	case !f.offline:
-		return usageErrorf("only --offline is supported: stop the service, then run it with --offline")
+	case !f.offline && (f.tlsOnly || len(args) != 1 || f.endpoint != "" || f.caFile != ""):
+		return usageErrorf("--offline is required here: stop the service, then run it with --offline (only a via_node provider is checked without it)")
 	case f.tlsOnly && len(args) > 0:
 		return usageErrorf("--tls-only checks an endpoint, not a provider: drop the name %q", args[0])
 	case f.tlsOnly && (f.endpoint == "" || f.caFile == ""):
@@ -227,6 +237,30 @@ func (f checkFlags) validate(args []string) error {
 		return usageErrorf("--endpoint and --ca-file belong to --tls-only: a named provider brings its own")
 	}
 	return nil
+}
+
+// checkThroughDaemon checks a via_node provider by refreshing it in the running
+// service, the only process that can open the node's connection. A provider
+// with an endpoint is checked offline instead.
+func checkThroughDaemon(cmd *cobra.Command, env []string, name string) error {
+	cfg, err := configNamedBy(cmd, env)
+	if err != nil {
+		return err
+	}
+	if p, ok := proxmoxProviderIn(cfg, name); !ok || p.ViaNode == "" {
+		return usageErrorf("%q is not a via_node Proxmox provider of the configuration file: stop the service and run `sm providers check --offline %s`", name, name)
+	}
+	return refreshAndReport(cmd, env, name)
+}
+
+func configNamedBy(cmd *cobra.Command, env []string) (*config.Config, error) {
+	configFlag, _ := cmd.Flags().GetString("config")
+	file := configPath(configFlag, env)
+	result, err := config.Load(file, env)
+	if err != nil {
+		return nil, usageErrorf("configuration %s is invalid: %s", file, joinProblems(configProblems(err)))
+	}
+	return result.Config, nil
 }
 
 // finishCheck prints the report and turns a failed check into exit status 8.
@@ -275,6 +309,9 @@ func checkProviderOffline(cmd *cobra.Command, env []string, name string, clientO
 	p, ok := proxmoxProviderIn(session.cfg, name)
 	if !ok {
 		return providerCheck{}, usageErrorf("the configuration file has no Proxmox provider named %q", name)
+	}
+	if p.ViaNode != "" {
+		return providerCheck{}, usageErrorf("provider %q reaches PVE through node %q, which only the running service can open: run `sm providers check %s` without --offline", name, p.ViaNode, name)
 	}
 	report := providerCheck{Provider: name, Endpoint: p.Endpoint}
 	token, err := tokenOf(cmd.Context(), session, p.CredentialRef)

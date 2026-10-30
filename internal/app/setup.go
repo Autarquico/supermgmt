@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/discovery"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -76,6 +77,7 @@ type setupHandler struct {
 	identity SSHIdentity
 	prober   *Prober
 	tunnel   *tunnelEngine // nil: no cloudflare: block, tunnel=true is refused
+	secrets  TunnelSecrets // nil: proxmox=true is refused
 }
 
 func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
@@ -127,7 +129,11 @@ func (h setupHandler) runDirect(ctx context.Context, lease jobs.Lease, job jobs.
 	if err := h.verify(ctx, node, req, id, outcome); err != nil {
 		return err
 	}
-	return h.record(ctx, lease, job, node, req, deployRoot, id, outcome)
+	px, err := h.proxmoxMeta(ctx, node, req, id, outcome)
+	if err != nil {
+		return err
+	}
+	return h.record(ctx, lease, job, node, req, deployRoot, id, outcome, px)
 }
 
 // runTunnel is node.setup with tunnel=true (ADR-0037): the Cloudflare objects
@@ -162,7 +168,11 @@ func (h setupHandler) runTunnel(ctx context.Context, lease jobs.Lease, job jobs.
 	if err := h.verifyTunnelPath(ctx, run, req, id, outcome); err != nil {
 		return err
 	}
-	return h.commitTunnel(ctx, run, req, deployRoot, id, outcome)
+	px, err := h.proxmoxMeta(ctx, run.candidate(), req, id, outcome)
+	if err != nil {
+		return run.step("proof of the Proxmox API", err)
+	}
+	return h.commitTunnel(ctx, run, req, deployRoot, id, outcome, px)
 }
 
 func setupParamsOf(job jobs.Job) (map[string]any, error) {
@@ -204,6 +214,12 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	if err != nil {
 		return systemd.SetupOutcome{}, err
 	}
+	var proxmox *systemd.ProxmoxParams
+	if req.Proxmox {
+		if proxmox, err = h.proxmoxParams(ctx, lease, job, node, instance.ID.String()); err != nil {
+			return systemd.SetupOutcome{}, err
+		}
+	}
 	asRoot := node.Endpoint.AdminUser == adminRoot
 	admin, err := h.bootstrapAdmin(ctx, run, node, asRoot)
 	if err != nil {
@@ -215,7 +231,7 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	h.sessionEvent(ctx, lease, job, node, "start", asRoot, nil)
 	outcome, err := systemd.Setup(ctx, admin, systemd.SetupParams{
 		User: node.Endpoint.User, InstanceID: instance.ID.String(), AuthorizedKey: id.AuthorizedKey,
-		Grants: req.Grants, LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, AdminIsRoot: asRoot, Tunnel: tunnel,
+		Grants: req.Grants, LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, AdminIsRoot: asRoot, Tunnel: tunnel, Proxmox: proxmox,
 	})
 	if err == nil {
 		err = ensureDeployRoot(ctx, admin, node.Endpoint.User, deployRoot, asRoot)
@@ -370,18 +386,19 @@ func pinnedIdentityRef(id secrets.Identity) string {
 
 func identityRef(id secrets.Identity) string { return "secret://" + id.Ref.Name }
 
-func (h setupHandler) setupMeta(req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) runtimes.SetupMeta {
+func (h setupHandler) setupMeta(req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome, px *runtimes.ProxmoxMeta) runtimes.SetupMeta {
 	return runtimes.SetupMeta{
 		SetupVersion: runtimes.SetupVersion, SystemctlPath: outcome.SystemctlPath, Units: req.Grants,
 		LogsMode: req.LogsMode, DockerAccess: req.DockerAccess, DeployRoot: deployRoot,
 		KeyRef: identityRef(id), KeyVersion: id.Ref.Version, KeyFingerprint: id.FingerprintSHA256,
+		Proxmox: px,
 	}
 }
 
 // record writes the node.setup capability, fenced: a worker that lost its
 // lease writes nothing.
-func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) error {
-	capability, err := setupCapability(h.setupMeta(req, deployRoot, id, outcome), h.cfg.Clock.Now())
+func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome, px *runtimes.ProxmoxMeta) error {
+	capability, err := setupCapability(h.setupMeta(req, deployRoot, id, outcome, px), h.cfg.Clock.Now())
 	if err != nil {
 		return err
 	}
@@ -392,17 +409,24 @@ func (h setupHandler) record(ctx context.Context, lease jobs.Lease, job jobs.Job
 		if err := database.SetNodeCapability(ctx, tx, node.ID, capability); err != nil {
 			return err
 		}
-		return h.emitSetupCompleted(ctx, tx, job, node, req, deployRoot, id)
+		return h.emitSetupCompleted(ctx, tx, job, node, req, deployRoot, id, px)
 	})
 }
 
-func (h setupHandler) emitSetupCompleted(ctx context.Context, tx *database.Tx, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity) error {
+func (h setupHandler) emitSetupCompleted(ctx context.Context, tx *database.Tx, job jobs.Job, node domain.Node, req setupRequest, deployRoot string, id secrets.Identity, px *runtimes.ProxmoxMeta) error {
 	actor, err := loadActor(ctx, tx, job.ActorID, credentialOf(job))
 	if err != nil {
 		return err
 	}
-	return h.emit(ctx, tx, actor, eventSetupCompleted, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
+	data := map[string]any{
 		"key_fingerprint": id.FingerprintSHA256, "docker_access": req.DockerAccess,
 		"logs_mode": string(req.LogsMode), "units": len(req.Grants), "deploy_root": deployRoot,
-	})
+	}
+	if req.Proxmox && px != nil {
+		data["proxmox"] = map[string]any{
+			"pve_id": px.TokenID, "credential_ref": px.TokenRef, "tls_server_name": px.TLSServerName,
+			"provider": wire.ProviderBlock(node.Name),
+		}
+	}
+	return h.emit(ctx, tx, actor, eventSetupCompleted, nodeRef(node.ID), domain.ResultSucceeded, data)
 }

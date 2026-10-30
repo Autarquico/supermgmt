@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/database"
@@ -14,6 +15,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
+	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
 // capabilitySetup is the observed capability node.setup writes on success
@@ -75,6 +77,23 @@ func (c Connector) Invalidate(n domain.Node, user string) {
 	if !isLocal(n) && c.Remote != nil {
 		c.Remote.Invalidate(n.ID, user)
 	}
+}
+
+// relayOpener is implemented by pools that can open a Proxmox API relay
+// session (*ssh.Pool does).
+type relayOpener interface {
+	OpenRelay(ctx context.Context, t ssh.Target, r templates.Relay) (net.Conn, error)
+}
+
+// OpenRelay opens the Proxmox API relay of n as the dedicated user with
+// credentialRef: the session's stdio is the returned connection (spec
+// proxmox-via-node). socatPath is the one setup recorded.
+func (c Connector) OpenRelay(ctx context.Context, n domain.Node, credentialRef, socatPath string) (net.Conn, error) {
+	pool, ok := c.Remote.(relayOpener)
+	if isLocal(n) || !ok {
+		return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", "this node cannot carry a Proxmox relay")
+	}
+	return pool.OpenRelay(ctx, sshnode.DedicatedTarget(n, credentialRef), templates.Relay{SocatPath: socatPath})
 }
 
 // InvalidateNode retires every pooled connection of the node, whatever the

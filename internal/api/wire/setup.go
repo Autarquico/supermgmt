@@ -165,3 +165,27 @@ func SetupAccess(node Node, docker SetupChoice[bool], logsMode SetupChoice[strin
 	}
 	return d, mode, t
 }
+
+// SetupProxmox decides whether a node.setup run also sets the node up as a
+// Proxmox VE host: what the user gave, else what the node already has.
+func SetupProxmox(node Node, proxmox SetupChoice[bool]) bool {
+	if proxmox.Set {
+		return proxmox.Value
+	}
+	return node.Setup != nil && node.Setup.Proxmox
+}
+
+// ProxmoxPreview is the line a node.setup plan shows when it sets Proxmox up.
+func ProxmoxPreview(node string) string {
+	return "proxmox: creates the SuperMgmt user, roles and API token on the host, installs socat if it is missing, keeps the token as " +
+		ProxmoxTokenRef(node) + "; then add the provider {" + strings.ReplaceAll(ProviderBlock(node), "\n", ", ") + "}"
+}
+
+// ProviderBlock is the three-line provider the user adds to the configuration
+// once a node is set up for Proxmox.
+func ProviderBlock(node string) string {
+	return "type: proxmox\nname: " + node + "\nvia_node: " + node
+}
+
+// ProxmoxTokenRef is where setup stores a node's PVE API token.
+func ProxmoxTokenRef(node string) string { return "secret://proxmox/" + node }
