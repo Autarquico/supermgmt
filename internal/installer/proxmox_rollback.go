@@ -301,7 +301,7 @@ func recordPath(vmid int) string { return path.Join(appliancesDir, strconv.Itoa(
 func (p *provision) commitInstall() error {
 	roles := make([]string, 0, 2)
 	for _, g := range p.grants() {
-		roles = append(roles, g.role)
+		roles = append(roles, g.Role)
 	}
 	data, err := json.MarshalIndent(applianceRecord{
 		InstallID: p.id, VMID: p.plan.VMID, Hostname: p.plan.Hostname, User: userIDFor(p.id),

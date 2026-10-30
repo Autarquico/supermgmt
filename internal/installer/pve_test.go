@@ -295,11 +295,11 @@ func TestPVE_TokenIsOursOnlyWithTheInstallComment(t *testing.T) {
 		listing string
 		want    bool
 	}{
-		"our comment":     {`[{"tokenid":"sm","comment":"supermgmt install abc123"}]`, true},
+		"our comment":     {`[{"tokenid":"sm","comment":"supermgmt install abc123","privsep":1}]`, true},
 		"no comment":      {`[{"tokenid":"sm"}]`, false},
 		"foreign comment": {`[{"tokenid":"sm","comment":"made by hand"}]`, false},
 		"another install": {`[{"tokenid":"sm","comment":"supermgmt install zzz"}]`, false},
-		"other token id":  {`[{"tokenid":"other","comment":"supermgmt install abc123"}]`, false},
+		"other token id":  {`[{"tokenid":"other","comment":"supermgmt install abc123","privsep":1}]`, false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

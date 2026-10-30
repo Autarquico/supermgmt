@@ -142,6 +142,8 @@ type ProxmoxSyncOptions struct {
 	Token TokenSource // required
 	// ReadFile reads ca_file; default os.ReadFile.
 	ReadFile func(string) ([]byte, error)
+	// Connector opens the relay of a via_node provider; without it such a provider is unavailable.
+	Connector Connector
 	// Client are passed to proxmox.New; tests use them to reach a fake.
 	Client []proxmox.Option
 	// Tick is how often due providers are looked for; default 1s.
@@ -180,6 +182,13 @@ type cachedClient struct {
 	client proxmox.Client
 }
 
+// closeIdle ends the relays a replaced or dropped client still holds.
+func (c cachedClient) closeIdle() {
+	if closer, ok := c.client.(proxmox.IdleCloser); ok {
+		closer.CloseIdle()
+	}
+}
+
 // NewProxmoxSync validates cfg and the options.
 func NewProxmoxSync(cfg Config, o ProxmoxSyncOptions) (*ProxmoxSync, error) {
 	c, err := newCore(cfg)
@@ -213,6 +222,7 @@ func orDefaultDuration(d, fallback time.Duration) time.Duration {
 // Run starts the syncs that are due every tick until ctx ends, then waits for
 // the ones in flight (they are cancelled with ctx).
 func (s *ProxmoxSync) Run(ctx context.Context) error {
+	defer s.closeClients()
 	defer s.Wait()
 	ticker := time.NewTicker(s.opts.Tick)
 	defer ticker.Stop()
@@ -444,39 +454,75 @@ func readAccess(ctx context.Context, client proxmox.Client, paths []string) (map
 	return access, nil
 }
 
-// clientFor builds the provider's client, reusing the last one while the
-// endpoint, the CA and the token are unchanged.
+// clientFor builds the provider's client, reusing the last one while what it
+// is built from is unchanged. A client that is replaced, or whose provider can
+// no longer be resolved, has its idle relays closed.
 func (s *ProxmoxSync) clientFor(ctx context.Context, p domain.Provider) (proxmox.Client, error) {
-	token, err := s.opts.Token(ctx, p.CredentialRef)
+	target, err := s.resolveTarget(ctx, p)
+	if err != nil {
+		s.dropClient(p.ID)
+		return nil, err
+	}
+	token, err := s.opts.Token(ctx, target.tokenRef)
 	if err != nil {
 		return nil, fmt.Errorf("the API token is unavailable: %w", err)
 	}
-	var ca []byte
-	if path, _ := p.Config[providerConfigCAFile].(string); path != "" {
-		if ca, err = s.opts.ReadFile(path); err != nil {
-			return nil, fmt.Errorf("read ca_file: %w", err)
-		}
-	}
-	key := clientKey(p.Endpoint, ca, token)
+	key := clientKey(target, token)
 	s.mu.Lock()
 	cached, ok := s.clients[p.ID]
 	s.mu.Unlock()
 	if ok && cached.key == key {
 		return cached.client, nil
 	}
-	client, err := proxmox.New(p.Endpoint, ca, token, s.opts.Client...)
+	client, err := s.newClient(target, token)
 	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
+	previous, replaced := s.clients[p.ID]
 	s.clients[p.ID] = cachedClient{key: key, client: client}
 	s.mu.Unlock()
+	if replaced {
+		previous.closeIdle()
+	}
 	return client, nil
 }
 
-func clientKey(endpoint string, ca []byte, token audit.Secret) string {
+func (s *ProxmoxSync) newClient(t proxmoxTarget, token audit.Secret) (proxmox.Client, error) {
+	if t.relay == nil {
+		return proxmox.New(t.endpoint, t.ca, token, s.opts.Client...)
+	}
+	opts := append([]proxmox.Option{proxmox.WithDialer(t.relay.dialer(s.opts.Connector)), proxmox.WithServerName(t.serverName)}, s.opts.Client...)
+	return proxmox.New("", t.ca, token, opts...)
+}
+
+func (s *ProxmoxSync) dropClient(id domain.ID) {
+	s.mu.Lock()
+	cached, ok := s.clients[id]
+	delete(s.clients, id)
+	s.mu.Unlock()
+	if ok {
+		cached.closeIdle()
+	}
+}
+
+func (s *ProxmoxSync) closeClients() {
+	s.mu.Lock()
+	cached := s.clients
+	s.clients = map[domain.ID]cachedClient{}
+	s.mu.Unlock()
+	for _, c := range cached {
+		c.closeIdle()
+	}
+}
+
+func clientKey(t proxmoxTarget, token audit.Secret) string {
+	parts := [][]byte{[]byte(t.endpoint), t.ca, []byte(token.Reveal()), []byte(t.serverName)}
+	if t.relay != nil {
+		parts = append(parts, []byte(t.relay.identity), []byte(t.relay.credentialRef), []byte(t.relay.path))
+	}
 	h := sha256.New()
-	for _, part := range [][]byte{[]byte(endpoint), ca, []byte(token.Reveal())} {
+	for _, part := range parts {
 		h.Write(strconv.AppendInt(nil, int64(len(part)), 10))
 		h.Write([]byte{0})
 		h.Write(part)

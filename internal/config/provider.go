@@ -46,10 +46,16 @@ type Provider struct {
 	SSH     *SSHProvider
 }
 
+// ProxmoxProvider reaches Proxmox VE either directly (Endpoint) or through
+// the SSH connection of a managed node (ViaNode); exactly one is set. With
+// ViaNode, CredentialRef and CAFile default to what node setup recorded, and
+// TLSServerName overrides the name the certificate is verified against.
 type ProxmoxProvider struct {
 	Type          string        `yaml:"type"`
 	Name          string        `yaml:"name"`
 	Endpoint      string        `yaml:"endpoint"`
+	ViaNode       string        `yaml:"via_node"`
+	TLSServerName string        `yaml:"tls_server_name"`
 	CredentialRef string        `yaml:"credential_ref"`
 	VerifyTLS     bool          `yaml:"verify_tls"`
 	CAFile        string        `yaml:"ca_file"`

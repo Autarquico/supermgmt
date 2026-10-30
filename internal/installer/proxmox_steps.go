@@ -18,6 +18,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/autarquico/supermgmt/internal/config"
+	"github.com/autarquico/supermgmt/internal/pveid"
 )
 
 func applianceLayout() layout { return Options{Mode: ModeServer}.serverLayout() }
@@ -362,46 +363,29 @@ func (p *provision) writeContainerFile(ctx context.Context, file, mode string, d
 
 // ---- S12 ----
 
-var (
-	auditPrivileges = []string{"VM.Audit", "Sys.Audit", "Datastore.Audit", "Pool.Audit"}
-	// VM.Audit is repeated because PVE replaces inherited permissions at a deeper path (ADR-0023).
-	powerPrivileges = []string{"VM.Audit", "VM.PowerMgmt"}
-)
+func (p *provision) grants() []pveid.Grant { return pveid.Grants(p.id, p.plan.Power) }
 
-type roleGrant struct {
-	role       string
-	privileges []string
-	path       string
+// CreateNew and Create journal each identity creation (pveid.Recorder).
+func (p *provision) CreateNew(step, resource, name string, exists func() (bool, error), build func() error) error {
+	return p.createNew(step, resource, name, exists, build)
 }
 
-func (p *provision) grants() []roleGrant {
-	grants := []roleGrant{{auditRoleFor(p.id), auditPrivileges, "/"}}
-	if p.plan.Power {
-		grants = append(grants, roleGrant{powerRoleFor(p.id), powerPrivileges, "/vms"})
+func (p *provision) Create(step, resource, name string, build func() error) error {
+	_, err := p.create(step, resource, name, build)
+	return err
+}
+
+// identityError maps a pveid failure to the installer's exit code.
+func identityError(err error) error {
+	var f *pveid.Failure
+	if errors.As(err, &f) {
+		return stepError(ExitCreation, f.What, f.Err)
 	}
-	return grants
+	return err
 }
 
 func (p *provision) createIdentities(ctx context.Context) error {
-	user := userIDFor(p.id)
-	if err := p.createNew("S12a", resUser, user,
-		func() (bool, error) { return p.pve.UserExists(ctx, user) },
-		func() error { return p.pve.CreateUser(ctx, user, ownershipMark(p.id)) }); err != nil {
-		return stepError(ExitCreation, "create the Proxmox user", err)
-	}
-	for _, g := range p.grants() {
-		if err := p.createNew("S12b", resRole, g.role,
-			func() (bool, error) { return p.pve.RoleExists(ctx, g.role) },
-			func() error { return p.pve.CreateRole(ctx, g.role, g.privileges) }); err != nil {
-			return stepError(ExitCreation, "create the Proxmox role", err)
-		}
-	}
-	for _, g := range p.grants() {
-		if err := p.grantACL(ctx, "S12c", ACL{Path: g.path, Role: g.role, User: user}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return identityError(pveid.CreateIdentities(ctx, p.pve, p.id, p.plan.Power, p))
 }
 
 func refuseAdopt(kind, name string, err error) error {
@@ -411,17 +395,7 @@ func refuseAdopt(kind, name string, err error) error {
 	return fail(ExitCreation, "Proxmox %s %s already exists and was not created by this install; it is left untouched", kind, name)
 }
 
-func (p *provision) grantACL(ctx context.Context, step string, acl ACL) error {
-	_, err := p.create(step, resACL, aclName(acl), func() error { return p.pve.AddACL(ctx, acl) })
-	return stepError(ExitCreation, "grant the Proxmox role", err)
-}
-
-func aclName(a ACL) string {
-	if a.User != "" {
-		return a.Path + "|" + a.Role + "|u:" + a.User
-	}
-	return a.Path + "|" + a.Role + "|t:" + a.Token
-}
+func aclName(a ACL) string { return pveid.ACLName(a) }
 
 func parseACLName(name string) (ACL, bool) {
 	parts := strings.SplitN(name, "|", 3)
@@ -443,21 +417,14 @@ func parseACLName(name string) (ACL, bool) {
 // transferToken is S12d-S13: create the token, hand it to the container's
 // tmpfs through a short-lived host file, import it offline, and leave no copy.
 func (p *provision) transferToken(ctx context.Context) error {
-	user := userIDFor(p.id)
 	defer func() { p.tokenSecret = "" }()
-	if err := p.createNew("S12d", resToken, user+"!"+pveTokenID,
-		func() (bool, error) { return p.pve.TokenExists(ctx, user, pveTokenID) },
-		func() error {
-			secret, err := p.pve.AddToken(ctx, user, pveTokenID)
-			p.tokenSecret = user + "!" + pveTokenID + "=" + secret.Reveal()
-			return err
-		}); err != nil {
-		return stepError(ExitCreation, "create the Proxmox token", err)
+	secret, err := pveid.CreateToken(ctx, p.pve, p.id, p)
+	if err == nil {
+		err = pveid.GrantToken(ctx, p.pve, p.id, p.plan.Power, p)
 	}
-	for _, g := range p.grants() {
-		if err := p.grantACL(ctx, "S12d", ACL{Path: g.path, Role: g.role, Token: user + "!" + pveTokenID}); err != nil {
-			return err
-		}
+	p.tokenSecret = pveid.Token(p.id) + "=" + secret.Reveal()
+	if err != nil {
+		return identityError(err)
 	}
 	stage, err := p.stageTokenFile(ctx)
 	if err != nil {

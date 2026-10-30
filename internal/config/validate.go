@@ -342,14 +342,46 @@ func (v *validator) providers() {
 	}
 }
 
-// proxmox checks a Proxmox provider (spec §8.3, ADR-0024): an https origin,
-// verified TLS (a private CA goes in ca_file), a secret:// token reference.
+// nodeNamePattern is a hostname-shaped node name (letters, digits, inner
+// hyphens), the same shape the Proxmox client accepts in API paths.
+var nodeNamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+var hostLabelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// tlsServerName accepts an IP literal or a lowercase host name of one or more
+// labels: a certificate behind a relay names localhost or the bare hostname.
+func tlsServerName(name string) bool {
+	if net.ParseIP(name) != nil {
+		return true
+	}
+	if len(name) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if !hostLabelPattern.MatchString(label) {
+			return false
+		}
+	}
+	return true
+}
+
+// proxmox checks a Proxmox provider (spec §8.3, ADR-0024): exactly one of an
+// https origin or a via_node, verified TLS (a private CA goes in ca_file), a
+// secret:// token reference (optional with via_node, where node setup records
+// it). Whether via_node names an existing node is resolved at sync time.
 func (v *validator) proxmox(p ProxmoxProvider, at func(string) string) {
 	switch {
-	case p.Endpoint == "":
-		v.add(at("endpoint"), "required")
-	case !httpsOrigin(p.Endpoint):
+	case p.Endpoint != "" && p.ViaNode != "":
+		v.add(at("via_node"), "exactly one of endpoint and via_node may be set")
+	case p.Endpoint == "" && p.ViaNode == "":
+		v.add(at("endpoint"), "required unless via_node is set")
+	case p.ViaNode != "" && !nodeNamePattern.MatchString(p.ViaNode):
+		v.add(at("via_node"), "must be a node name (letters, digits and inner hyphens), got %q", p.ViaNode)
+	case p.Endpoint != "" && !httpsOrigin(p.Endpoint):
 		v.add(at("endpoint"), "must be an https URL with only a host and port, e.g. https://pve.lan:8006, got %q", p.Endpoint)
+	}
+	if p.TLSServerName != "" && !tlsServerName(p.TLSServerName) {
+		v.add(at("tls_server_name"), "must be a lowercase host name or an IP address, got %q", p.TLSServerName)
 	}
 	if !p.VerifyTLS {
 		v.add(at("verify_tls"), "must be true; trust a private CA with ca_file instead")
@@ -357,10 +389,10 @@ func (v *validator) proxmox(p ProxmoxProvider, at func(string) string) {
 	if p.CAFile != "" && !path.IsAbs(p.CAFile) {
 		v.add(at("ca_file"), "must be an absolute path, got %q", p.CAFile)
 	}
-	if p.CredentialRef == "" {
-		v.add(at("credential_ref"), "required")
-	} else {
+	if p.CredentialRef != "" {
 		v.secretRefOnly(at("credential_ref"), p.CredentialRef)
+	} else if p.ViaNode == "" {
+		v.add(at("credential_ref"), "required")
 	}
 	if p.SyncInterval <= 0 {
 		v.add(at("sync_interval"), "must be a positive duration, got %s", p.SyncInterval)

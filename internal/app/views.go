@@ -216,9 +216,12 @@ func limitText(s string, n int) string {
 }
 
 func capabilityViews(caps []database.NodeCapability) []wire.Capability {
-	out := make([]wire.Capability, len(caps))
-	for i, c := range caps {
-		out[i] = wire.Capability{Name: c.Capability, Available: c.Available, CheckedAt: c.CheckedAt}
+	out := make([]wire.Capability, 0, len(caps))
+	for _, c := range caps {
+		if c.Capability == capabilityProxmoxRoles {
+			continue
+		}
+		out = append(out, wire.Capability{Name: c.Capability, Available: c.Available, CheckedAt: c.CheckedAt})
 	}
 	return out
 }
@@ -251,7 +254,7 @@ func setupView(m runtimes.SetupMeta) *wire.Setup {
 	}
 	return &wire.Setup{
 		SetupVersion: m.SetupVersion, LogsMode: string(m.LogsMode), DockerAccess: m.DockerAccess,
-		Units: units, KeyFingerprint: m.KeyFingerprint,
+		Units: units, KeyFingerprint: m.KeyFingerprint, Proxmox: m.ProxmoxState() != nil,
 	}
 }
 

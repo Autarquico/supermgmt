@@ -204,7 +204,11 @@ func (e *ProxmoxEvidence) correlate(ctx context.Context, client proxmox.Client, 
 // tokenUserOf is the user a task started with the provider's token carries in
 // its UPID: the part of "<user>@<realm>!<tokenid>=<secret>" before the "=".
 func (s *ProxmoxSync) tokenUserOf(ctx context.Context, p domain.Provider) (string, error) {
-	token, err := s.opts.Token(ctx, p.CredentialRef)
+	target, err := s.resolveTarget(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	token, err := s.opts.Token(ctx, target.tokenRef)
 	if err != nil {
 		return "", fmt.Errorf("the API token is unavailable: %w", err)
 	}

@@ -339,6 +339,11 @@ linters:
         linters:
           - forbidigo
         text: fmt\.Print
+      # Setup step names such as setup.pve_token_add are not credentials.
+      - path: internal/transport/ssh/templates/proxmox\.go
+        linters:
+          - gosec
+        text: G101
       # The API writes JSON envelopes as application/json over the owner-only
       # Unix socket; G705's HTML-XSS taint analysis does not apply and is flaky here.
       - path: internal/api/respond\.go

@@ -6,7 +6,7 @@
 // The catalog is assembled from one slice per file: probe.go and marker.go
 // (reads), systemd.go and docker.go (runtime actions), setup.go (node.setup
 // steps, ADR-0009 f), and the deployment groups of M4 (ADR-0029):
-// compose_stage.go, compose_run.go and health.go.
+// compose_stage.go, compose_run.go and health.go, and proxmox.go (the API relay).
 package templates
 
 import (
@@ -47,6 +47,8 @@ type Param struct {
 //     RenderSetup and are the only mutating commands without a marker.
 //   - Sensitive templates (mutating) read secret content from stdin; they
 //     render only through RenderMutatingInput with non-empty stdin.
+//   - SecretOutput templates (setup) print a secret on stdout; executors hand
+//     back that stdout on success only and never the stderr (see Command).
 //   - Locked templates (mutating) run under the node-side project flock; they
 //     render only through RenderMutatingInput with the project name.
 //
@@ -59,27 +61,31 @@ type Template struct {
 	Sudo     bool
 	Setup    bool
 	// Sensitive and Locked are described above.
-	Sensitive bool
-	Locked    bool
-	Deadline  time.Duration
-	MaxBytes  int
-	MaxLines  int
+	Sensitive    bool
+	Locked       bool
+	SecretOutput bool
+	Deadline     time.Duration
+	MaxBytes     int
+	MaxLines     int
 }
 
 // Command is a rendered, ready-to-run command. Line goes to the remote login
 // shell as is; Stdin carries content (setup files, secrets) that must never
 // appear on the command line. Sensitive marks a command whose stdin and
-// stdout must never be logged or persisted. A zero Deadline means the
-// transport's command timeout.
+// stdout must never be logged or persisted. SecretOutput marks a command whose
+// stdout is the secret: its caller consumes it, and neither it nor the stderr
+// may reach a log, a record or an error. A zero Deadline means the transport's
+// command timeout.
 type Command struct {
-	Template  string
-	Line      string
-	Stdin     []byte
-	Sensitive bool
-	Mutating  bool
-	Deadline  time.Duration
-	MaxBytes  int
-	MaxLines  int
+	Template     string
+	Line         string
+	Stdin        []byte
+	Sensitive    bool
+	SecretOutput bool
+	Mutating     bool
+	Deadline     time.Duration
+	MaxBytes     int
+	MaxLines     int
 }
 
 // Matching returns a validator that accepts exactly the strings re matches.
@@ -152,7 +158,7 @@ func Templates() ([]Template, error) {
 var catalog = sync.OnceValues(func() (registry, error) {
 	return newRegistry(
 		probeTemplates, markerTemplates, systemdTemplates, dockerTemplates, setupTemplates,
-		composeStageTemplates, composeRunTemplates, healthTemplates,
+		composeStageTemplates, composeRunTemplates, healthTemplates, proxmoxTemplates,
 	)
 })
 
@@ -189,6 +195,8 @@ func (t Template) check() error {
 		problem = "a template is either mutating or setup"
 	case (t.Sensitive || t.Locked) && !t.Mutating:
 		problem = "only a mutating template can be sensitive or locked"
+	case t.SecretOutput && !t.Setup:
+		problem = "only a setup template can have secret output"
 	case t.Mutating && t.Deadline <= 0:
 		problem = "mutating template needs a deadline"
 	case t.Sudo && (!strings.HasPrefix(t.Body, "sudo -n ") || strings.Contains(t.Body, " -- ")):
@@ -333,7 +341,7 @@ func (t Template) bind(args map[string]string) (Command, error) {
 		return quoted[placeholderPattern.FindStringSubmatch(ph)[1]]
 	})
 	return Command{
-		Template: t.Name, Line: line, Mutating: t.Mutating,
+		Template: t.Name, Line: line, Mutating: t.Mutating, SecretOutput: t.SecretOutput,
 		Deadline: t.Deadline, MaxBytes: t.MaxBytes, MaxLines: t.MaxLines,
 	}, nil
 }

@@ -278,7 +278,7 @@ providers:
     environment: production
 ```
 
-An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`) is applied the same way and then synced; its keys, `verify_tls: true` (required) and `ca_file` are described in [providers.md](providers.md#proxmox).
+An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`) is applied the same way and then synced; its keys, `verify_tls: true` (required), `ca_file`, and `via_node` with `tls_server_name` for a host reached through its SSH node, are described in [providers.md](providers.md#proxmox).
 
 ## GitHub
 

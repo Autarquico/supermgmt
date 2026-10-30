@@ -17,7 +17,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-_(nada)_
+- #45 Reach the Proxmox API through the host's SSH connection
 <!-- /pm-sync:in-progress -->
 
 ---

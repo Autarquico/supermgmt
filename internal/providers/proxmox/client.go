@@ -2,11 +2,13 @@ package proxmox
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -31,6 +33,9 @@ const (
 	maxTaskPages     = 1000
 	shutdownTimeoutS = 240 // below DeadlineShutdown and DeadlineReboot
 	maxMessageBytes  = 300
+	relayPort        = "8006"
+	relayIdleConns   = 2
+	relayIdleTimeout = 30 * time.Second
 )
 
 var aclPathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./-]*$`)
@@ -42,6 +47,8 @@ type settings struct {
 	timeout time.Duration
 	maxBody int64
 	guard   []netguard.Option
+	dial    func(ctx context.Context) (net.Conn, error)
+	name    string
 }
 
 // WithHTTPTimeout bounds each request (default 30s). Correlation windows
@@ -53,6 +60,19 @@ func WithHTTPTimeout(d time.Duration) Option { return func(s *settings) { s.time
 func WithNetguardOptions(opts ...netguard.Option) Option {
 	return func(s *settings) { s.guard = append(s.guard, opts...) }
 }
+
+// WithDialer makes the client reach PVE through dial instead of the network:
+// every connection it opens is one dial returns, whatever address the request
+// names. The caller owns what dial does (a relay session on the node, say), so
+// netguard does not apply; New then requires a CA and a server name, and
+// ignores its endpoint argument.
+func WithDialer(dial func(ctx context.Context) (net.Conn, error)) Option {
+	return func(s *settings) { s.dial = dial }
+}
+
+// WithServerName is the name the certificate must carry (a DNS name or an IP
+// literal) when the client has a dialer. Requests go to https://<name>:8006.
+func WithServerName(name string) Option { return func(s *settings) { s.name = name } }
 
 // APIError is a non-2xx answer from PVE.
 type APIError struct {
@@ -77,22 +97,32 @@ type client struct {
 	http  *http.Client
 }
 
+// IdleCloser is implemented by clients that hold connections between requests.
+type IdleCloser interface{ CloseIdle() }
+
+// CloseIdle drops the connections the client keeps open. A client replaced by
+// the daemon is closed through it, which ends the relays it still holds.
+func (c *client) CloseIdle() { c.http.CloseIdleConnections() }
+
 // New returns a client for the PVE API at endpoint (https://host:8006). caPEM
 // is the CA that signed the server certificate; empty means the system roots.
 // token is "<user>@<realm>!<tokenid>=<secret>" and is only ever sent in the
 // Authorization header.
 func New(endpoint string, caPEM []byte, token audit.Secret, opts ...Option) (Client, error) {
-	base, err := parseEndpoint(endpoint)
-	if err != nil {
-		return nil, err
+	s := settings{timeout: DefaultTimeout, maxBody: defaultMaxBody}
+	for _, opt := range opts {
+		opt(&s)
 	}
 	value := token.Reveal()
 	if !strings.Contains(value, "!") || !strings.Contains(value, "=") {
 		return nil, errors.New("proxmox: token must look like user@realm!tokenid=secret")
 	}
-	s := settings{timeout: DefaultTimeout, maxBody: defaultMaxBody}
-	for _, opt := range opts {
-		opt(&s)
+	if s.dial != nil {
+		return newRelayed(caPEM, value, s)
+	}
+	base, err := parseEndpoint(endpoint)
+	if err != nil {
+		return nil, err
 	}
 	guard := s.guard
 	if len(caPEM) > 0 {
@@ -108,6 +138,42 @@ func New(endpoint string, caPEM []byte, token audit.Secret, opts ...Option) (Cli
 		auth:  "PVEAPIToken=" + value,
 		token: value,
 		http:  netguard.NewClient(allow, nil, s.timeout, s.maxBody, guard...),
+	}, nil
+}
+
+// newRelayed builds the client of a dialer: TLS is verified against caPEM and
+// name, and the base URL comes from the name alone, never from an answer.
+func newRelayed(caPEM []byte, token string, s settings) (Client, error) {
+	if s.name == "" || strings.ContainsAny(s.name, "/@?#[] ") {
+		return nil, errors.New("proxmox: a dialer needs a valid server name")
+	}
+	roots := x509.NewCertPool()
+	if len(caPEM) == 0 || !roots.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("proxmox: a dialer needs a PEM CA certificate")
+	}
+	dial := s.dial
+	transport := &http.Transport{
+		Proxy:                  nil,
+		DialContext:            func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) },
+		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: s.name},
+		TLSHandshakeTimeout:    s.timeout,
+		ResponseHeaderTimeout:  s.timeout,
+		MaxResponseHeaderBytes: 64 << 10,
+		MaxIdleConns:           relayIdleConns,
+		MaxIdleConnsPerHost:    relayIdleConns,
+		IdleConnTimeout:        relayIdleTimeout,
+	}
+	return &client{
+		base:  "https://" + net.JoinHostPort(s.name, relayPort),
+		auth:  "PVEAPIToken=" + token,
+		token: token,
+		http: &http.Client{
+			Transport: netguard.Guard(transport, s.maxBody),
+			Timeout:   s.timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return errors.New("proxmox: redirects are not followed")
+			},
+		},
 	}, nil
 }
 

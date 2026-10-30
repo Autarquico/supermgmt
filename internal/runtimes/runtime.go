@@ -91,9 +91,10 @@ type UnitGrant struct {
 }
 
 // SetupVersion is the setup_version this build writes (ADR-0009 f). Version 3
-// adds the optional tunnel state (ADR-0037); versions 1 and 2 stay readable and
-// read as "no tunnel", and every check that asks for version 2 accepts 3.
-const SetupVersion = 3
+// adds the optional tunnel state (ADR-0037) and version 4 the optional Proxmox
+// state; older versions stay readable and read as "no tunnel" and "no Proxmox",
+// and every check that asks for version 2 accepts 4.
+const SetupVersion = 4
 
 // SupportedComposeVersion is the only Compose CLI release deployments run on
 // (ADR-0006). On the node fixture `docker compose version --short` prints it
@@ -111,16 +112,39 @@ func ComposeSupported(short string) bool {
 // written by the setup job in the same fenced transaction as the capability.
 // The executor signs automated sessions with exactly KeyRef@KeyVersion.
 type SetupMeta struct {
-	SetupVersion   int         `json:"setup_version"`
-	SystemctlPath  string      `json:"systemctl_path"`
-	Units          []UnitGrant `json:"units"`
-	LogsMode       LogsMode    `json:"logs_mode"`
-	DockerAccess   bool        `json:"docker_access"`
-	DeployRoot     string      `json:"deploy_root,omitempty"`
-	KeyRef         string      `json:"key_ref"`
-	KeyVersion     int         `json:"key_version"`
-	KeyFingerprint string      `json:"key_fingerprint"`
-	Tunnel         *TunnelMeta `json:"tunnel,omitempty"`
+	SetupVersion   int          `json:"setup_version"`
+	SystemctlPath  string       `json:"systemctl_path"`
+	Units          []UnitGrant  `json:"units"`
+	LogsMode       LogsMode     `json:"logs_mode"`
+	DockerAccess   bool         `json:"docker_access"`
+	DeployRoot     string       `json:"deploy_root,omitempty"`
+	KeyRef         string       `json:"key_ref"`
+	KeyVersion     int          `json:"key_version"`
+	KeyFingerprint string       `json:"key_fingerprint"`
+	Tunnel         *TunnelMeta  `json:"tunnel,omitempty"`
+	Proxmox        *ProxmoxMeta `json:"proxmox,omitempty"`
+}
+
+// ProxmoxMeta records what `node.setup --proxmox` proved on a Proxmox VE host
+// (spec proxmox-via-node). Everything in it is public: the CA is pinned through
+// the node's SSH host key, the token id names the token and its secret lives
+// only in the secret store under TokenRef.
+type ProxmoxMeta struct {
+	CAPEM         string    `json:"ca_pem"`
+	TokenRef      string    `json:"token_ref"`
+	TokenID       string    `json:"token_id"`
+	TLSServerName string    `json:"tls_server_name"`
+	RelayPath     string    `json:"relay_path"` // where socat lives for the relay template
+	InstalledAt   time.Time `json:"installed_at"`
+}
+
+// ProxmoxState is the node's Proxmox state, nil for a node set up without
+// --proxmox and for any setup older than version 4.
+func (m SetupMeta) ProxmoxState() *ProxmoxMeta {
+	if m.SetupVersion < 4 {
+		return nil
+	}
+	return m.Proxmox
 }
 
 // TunnelMeta records that setup installed the Cloudflare tunnel connector on

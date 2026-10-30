@@ -247,9 +247,9 @@ func (h setupHandler) verifyTunnelPath(ctx context.Context, r *tunnelRun, req se
 // capability (with the tunnel state), moves the endpoint to the cloudflare
 // transport against the revision the job started from, and finishes the
 // operation. The pooled connections of the old transport are retired after.
-func (h setupHandler) commitTunnel(ctx context.Context, r *tunnelRun, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome) error {
+func (h setupHandler) commitTunnel(ctx context.Context, r *tunnelRun, req setupRequest, deployRoot string, id secrets.Identity, outcome systemd.SetupOutcome, px *runtimes.ProxmoxMeta) error {
 	now := h.cfg.Clock.Now()
-	meta := h.setupMeta(req, deployRoot, id, outcome)
+	meta := h.setupMeta(req, deployRoot, id, outcome, px)
 	meta.Tunnel = &runtimes.TunnelMeta{Hostname: r.hostname, InstalledAt: now}
 	capability, err := setupCapability(meta, now)
 	if err != nil {
@@ -279,7 +279,7 @@ func (h setupHandler) commitTunnel(ctx context.Context, r *tunnelRun, req setupR
 		}); err != nil {
 			return err
 		}
-		return h.emitSetupCompleted(ctx, tx, r.job, r.node, req, deployRoot, id)
+		return h.emitSetupCompleted(ctx, tx, r.job, r.node, req, deployRoot, id, px)
 	})
 	if err != nil {
 		return err

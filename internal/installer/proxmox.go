@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/autarquico/supermgmt/internal/pveid"
 )
 
 // Fixed names of the appliance (spec §3.5, ADR-0023, ADR-0026).
@@ -29,13 +31,13 @@ const (
 	providerName        = "pve"
 	providerSecretName  = "providers/" + providerName + "/token"
 	providerSecretRef   = "secret://" + providerSecretName
-	pveTokenID          = "sm"
+	pveTokenID          = pveid.TokenID
 	pveCAInContainer    = "/etc/supermgmt/pve-root-ca.pem"
 	defaultPVECAFile    = "/etc/pve/pve-root-ca.pem"
 	applianceTag        = "supermgmt"
 	defaultHostname     = "supermgmt"
 	defaultVMIDFrom     = 900
-	supportedPVEMajor   = 9
+	supportedPVEMajor   = pveid.SupportedMajor
 	templatePrefix      = "debian-13-standard_"
 	templateSuffix      = "_amd64.tar.zst"
 	pveAPIPort          = "8006"
@@ -507,8 +509,8 @@ func newInstallID() (string, error) {
 
 // ownershipMark is what the container description carries: the proof that a
 // guest was created by this install.
-func ownershipMark(id string) string { return "supermgmt install " + id }
+func ownershipMark(id string) string { return pveid.Mark(id) }
 
-func userIDFor(id string) string    { return "sm-" + id + "@pve" }
-func auditRoleFor(id string) string { return "SMAudit-" + id }
-func powerRoleFor(id string) string { return "SMPower-" + id }
+func userIDFor(id string) string    { return pveid.User(id) }
+func auditRoleFor(id string) string { return pveid.AuditRole(id) }
+func powerRoleFor(id string) string { return pveid.PowerRole(id) }

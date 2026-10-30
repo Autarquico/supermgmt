@@ -163,6 +163,7 @@ type Setup struct {
 	DockerAccess   bool        `json:"docker_access"`
 	Units          []UnitGrant `json:"units"`
 	KeyFingerprint string      `json:"key_fingerprint"`
+	Proxmox        bool        `json:"proxmox"` // the node was set up with --proxmox
 }
 
 type UnitGrant struct {

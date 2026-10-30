@@ -1625,13 +1625,14 @@ components:
         uptime_seconds: {type: integer, format: int64}
     Setup:
       type: object
-      required: [setup_version, logs_mode, docker_access, units, key_fingerprint]
+      required: [setup_version, logs_mode, docker_access, units, key_fingerprint, proxmox]
       properties:
         setup_version: {type: integer}
         logs_mode: {type: string}
         docker_access: {type: boolean}
         units: {type: array, items: {$ref: '#/components/schemas/UnitGrant'}}
         key_fingerprint: {type: string}
+        proxmox: {type: boolean}
     UnitGrant:
       type: object
       required: [unit, verbs]

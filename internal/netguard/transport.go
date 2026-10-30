@@ -32,6 +32,21 @@ func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
+// CloseIdleConnections lets http.Client.CloseIdleConnections reach the
+// transport underneath.
+func (t *guardedTransport) CloseIdleConnections() {
+	if c, ok := t.next.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
+// Guard applies the request rules and the body cap of §21.1 to a transport
+// that does not dial through netguard, such as one whose connections are
+// already bound to a single, fixed destination.
+func Guard(next http.RoundTripper, maxBody int64) http.RoundTripper {
+	return &guardedTransport{next: next, maxBody: maxBody}
+}
+
 func (t *guardedTransport) checkRequest(req *http.Request) error {
 	u := req.URL
 	switch {

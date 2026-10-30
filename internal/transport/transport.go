@@ -26,3 +26,18 @@ type Result struct {
 type Executor interface {
 	Run(ctx context.Context, c templates.Command) (Result, error)
 }
+
+// Withhold drops from r what the caller of a command with secret output must
+// never receive: the stderr always, and the stdout unless the command
+// succeeded. Executors apply it before returning, so no caller can log or wrap
+// what it never got.
+func Withhold(c templates.Command, r Result) Result {
+	if !c.SecretOutput {
+		return r
+	}
+	r.Stderr = nil
+	if r.ExitStatus != 0 {
+		r.Stdout = nil
+	}
+	return r
+}

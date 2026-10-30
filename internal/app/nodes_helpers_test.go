@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -173,6 +174,20 @@ type fakeDialer struct {
 	dialed []ssh.Target
 	// invalidated lists "<node>/<user>" of every dropped connection, in order.
 	invalidated []string
+	// relay answers OpenRelay; nil refuses it.
+	relay func(context.Context, ssh.Target, templates.Relay) (net.Conn, error)
+}
+
+// OpenRelay is the Proxmox API relay of the pool.
+func (d *fakeDialer) OpenRelay(ctx context.Context, t ssh.Target, r templates.Relay) (net.Conn, error) {
+	d.mu.Lock()
+	d.dialed = append(d.dialed, t)
+	relay := d.relay
+	d.mu.Unlock()
+	if relay == nil {
+		return nil, errors.New("no relay")
+	}
+	return relay(ctx, t, r)
 }
 
 func newFakeDialer(t *testing.T) *fakeDialer {

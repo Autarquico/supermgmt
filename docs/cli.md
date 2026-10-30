@@ -994,6 +994,10 @@ Without --unit a re-run keeps the grants the node has; --no-units removes them a
 --tunnel also installs cloudflared on the node and moves its SSH reachability behind a Cloudflare Tunnel; undo it
 with `sm nodes tunnel disable`.
 
+--proxmox sets a Proxmox VE 9 host up for the Proxmox provider through this node (`via_node`): it creates the
+SuperMgmt user, roles and an API token on the host, installs socat when absent and stores the token as
+secret://proxmox/<node>. Passing it again repairs a lost token; a setup without it keeps the Proxmox state.
+
 A re-run keeps the node's docker access, logs mode and tunnel unless you pass --docker-access, --logs-mode or
 --tunnel; --docker-access=false removes docker access. On a first setup docker access is off unless you pass
 --docker-access, and it is root-equivalent on the node.
@@ -1007,6 +1011,7 @@ Flags:
 - `--docker-access` (bool): also give the account docker access (root-equivalent on the node)
 - `--logs-mode` (string, default `journal-group`): how logs are read: journal-group or broker
 - `--no-units` (bool): remove every unit grant
+- `--proxmox` (bool): set the node up as a Proxmox VE 9 host for the Proxmox provider (experimental)
 - `--tunnel` (bool): reach the node through a Cloudflare Tunnel (experimental; needs the cloudflare: block)
 - `--unit` (stringArray): grant systemctl on a unit: <unit>[:start,stop,restart] (repeatable)
 - `--yes` (bool): do not ask for confirmation
@@ -1116,10 +1121,14 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 #### sm providers check
 
-Check a Proxmox provider with the service stopped
+Check a Proxmox provider
 
-With a provider name, read the provider from the configuration file and its API token from the secret
+With a provider that reaches PVE through a node (via_node), ask the running service to discover it now and
+show its status, last sync and last error. Same as `sm providers refresh`.
+
+With --offline and a provider name, read the provider from the configuration file and its API token from the secret
 store, then connect to the cluster and read its nodes, guests and storages. The service must be stopped.
+A provider with an endpoint needs --offline; a via_node provider does not accept it.
 
 With --tls-only, connect to the endpoint and verify the certificate it serves against the CA file for the
 endpoint's host name. The connection goes through the same outbound filter as the provider client. The installer runs it before any token exists.
@@ -1127,14 +1136,14 @@ endpoint's host name. The connection goes through the same outbound filter as th
 Exit status: 0 when the check passes, 8 when it fails.
 
 ```text
-sm providers check --offline (<name> | --tls-only --endpoint URL --ca-file FILE) [flags]
+sm providers check (<via-node-name> | --offline (<name> | --tls-only --endpoint URL --ca-file FILE)) [flags]
 ```
 
 Flags:
 
 - `--ca-file` (string): with --tls-only: the CA that must have signed the certificate
 - `--endpoint` (string): with --tls-only: the endpoint to verify, `https://host[:port]`
-- `--offline` (bool): check with the service stopped (required)
+- `--offline` (bool): check with the service stopped (required for a provider with an endpoint)
 - `--tls-only` (bool): only verify the certificate the endpoint serves
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.

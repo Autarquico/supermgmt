@@ -22,8 +22,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	"github.com/autarquico/supermgmt/internal/installer"
 	"github.com/autarquico/supermgmt/internal/netguard"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox/pvefake"
@@ -402,6 +404,83 @@ func TestProvidersCheckIsAUsageErrorForAProviderTheFileDoesNotDeclare(t *testing
 
 	if r.code != exitUsage || !strings.Contains(r.stderr, "no Proxmox provider named") || !strings.Contains(r.stderr, "ghost") {
 		t.Errorf("exit %d, stderr %q", r.code, r.stderr)
+	}
+}
+
+func TestProvidersCheckOfflineSendsAViaNodeProviderToTheRunningService(t *testing.T) {
+	b := newPVEBox(t)
+	base, err := os.ReadFile(b.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.writeConfig(t, string(base)+"  - type: proxmox\n    name: behind\n    via_node: pve1\n")
+
+	r := b.check("behind")
+
+	if r.code != exitUsage || !strings.Contains(r.stderr, "sm providers check behind") || !strings.Contains(r.stderr, "without --offline") || !strings.Contains(r.stderr, "pve1") {
+		t.Errorf("exit %d, stderr %q", r.code, r.stderr)
+	}
+}
+
+// viaNodeAPI serves one via_node provider whose refresh leaves the given state.
+func viaNodeAPI(t *testing.T, name string, left wire.Provider) *fakeAPI {
+	t.Helper()
+	left.Name = name
+	left.ID = newTestID()
+	f := newFakeAPI(t, router(map[string]http.HandlerFunc{
+		"GET " + wire.PathProviders: func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Page[wire.Provider]{Items: []wire.Provider{left}})
+		},
+		"POST " + wire.Path(wire.PathProviderRefresh, string(left.ID)): func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, left) },
+	}))
+	configFile := f.Args[1]
+	base, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, configFile, string(base)+"providers:\n  - type: proxmox\n    name: "+name+"\n    via_node: pve1\n")
+	return f
+}
+
+func TestProvidersCheckWithoutOfflineRefreshesAViaNodeProviderAndReportsIt(t *testing.T) {
+	tests := []struct {
+		name     string
+		left     wire.Provider
+		wantCode int
+		wantOut  string
+	}{
+		{"working", wire.Provider{Type: "proxmox", Status: "ok"}, 0, "ok"},
+		{"failed", wire.Provider{Type: "proxmox", Status: "error", LastError: "node pve1 is unreachable"}, installer.ExitConnectivity, "node pve1 is unreachable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := viaNodeAPI(t, "behind", tt.left)
+
+			r := f.run("providers", "check", "behind")
+
+			if r.code != tt.wantCode || !strings.Contains(r.stdout, tt.wantOut) {
+				t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+			}
+			if m := f.Mutations(); len(m) != 1 || !strings.HasSuffix(m[0].Path, "/refresh") {
+				t.Errorf("mutations = %+v", m)
+			}
+		})
+	}
+}
+
+func TestProvidersCheckWithoutOfflineRefusesAProviderWithAnEndpoint(t *testing.T) {
+	f := viaNodeAPI(t, "behind", wire.Provider{Type: "proxmox", Status: "ok"})
+	configFile := f.Args[1]
+	base, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, configFile, string(base)+"  - type: proxmox\n    name: direct\n    endpoint: https://pve.lan:8006\n    credential_ref: secret://t\n")
+
+	r := f.run("providers", "check", "direct")
+
+	if r.code != exitUsage || !strings.Contains(r.stderr, "sm providers check --offline direct") || len(f.Mutations()) != 0 {
+		t.Errorf("exit %d, stderr %q, mutations %+v", r.code, r.stderr, f.Mutations())
 	}
 }
 

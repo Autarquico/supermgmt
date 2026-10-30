@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autarquico/supermgmt/internal/audit"
+	"github.com/autarquico/supermgmt/internal/pveid"
 )
 
 // The Proxmox tools are run by absolute path with an empty environment plus
@@ -33,23 +34,18 @@ const (
 	maxNextIDs  = 100
 )
 
-var errInvalidArgument = errors.New("invalid argument")
+var errInvalidArgument = pveid.ErrInvalidArgument
 
 func invalidf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", errInvalidArgument, fmt.Sprintf(format, args...))
 }
 
 var (
-	reName       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
-	reUserID     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,31}$`)
-	rePrivilege  = regexp.MustCompile(`^[A-Z][A-Za-z.]{1,63}$`)
-	reTemplate   = regexp.MustCompile(`^[a-z0-9][a-z0-9._+-]{0,127}$`)
-	reVolumeID   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}:vztmpl/[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}$`)
-	reHostLabel  = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
-	rePathChars  = regexp.MustCompile(`^[A-Za-z0-9_./+@-]+$`)
-	reACLPath    = regexp.MustCompile(`^/[A-Za-z0-9_./-]*$`)
-	reMgrVersion = regexp.MustCompile(`pve-manager/(\d+(?:\.\d+){0,2})`)
-	reMountKey   = regexp.MustCompile(`^mp\d+$`)
+	reTemplate  = regexp.MustCompile(`^[a-z0-9][a-z0-9._+-]{0,127}$`)
+	reVolumeID  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}:vztmpl/[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}$`)
+	reHostLabel = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+	rePathChars = regexp.MustCompile(`^[A-Za-z0-9_./+@-]+$`)
+	reMountKey  = regexp.MustCompile(`^mp\d+$`)
 )
 
 func validVMID(vmid int) error {
@@ -59,19 +55,14 @@ func validVMID(vmid int) error {
 	return nil
 }
 
-func validName(kind, v string) error {
-	if !reName.MatchString(v) {
-		return invalidf("%s %q is not a plain name", kind, v)
-	}
-	return nil
-}
-
-func validUserID(v string) error {
-	if !reUserID.MatchString(v) {
-		return invalidf("user %q is not user@realm", v)
-	}
-	return nil
-}
+// The PVE identity validators live in pveid, shared with node setup.
+var (
+	validName   = pveid.ValidName
+	validUserID = pveid.ValidUserID
+	validText   = pveid.ValidText
+	validACL    = pveid.ValidACL
+	validToken  = pveid.ValidToken
+)
 
 func validHostname(v string) error {
 	if len(v) > 253 || v == "" {
@@ -92,41 +83,6 @@ func validPath(p string) error {
 		return invalidf("path %q must be absolute, clean and plain", p)
 	}
 	return nil
-}
-
-func validText(kind, v string) error {
-	if v == "" || len(v) > 255 || strings.HasPrefix(v, "-") {
-		return invalidf("%s %q is empty, too long or starts with a dash", kind, v)
-	}
-	for _, r := range v {
-		if r < 0x20 || r > 0x7e {
-			return invalidf("%s contains a control or non-ASCII character", kind)
-		}
-	}
-	return nil
-}
-
-func validACL(a ACL) error {
-	if !reACLPath.MatchString(a.Path) || strings.Contains(a.Path, "..") {
-		return invalidf("ACL path %q", a.Path)
-	}
-	if err := validName("role", a.Role); err != nil {
-		return err
-	}
-	if (a.User == "") == (a.Token == "") {
-		return invalidf("an ACL names exactly one of user and token")
-	}
-	if a.User != "" {
-		return validUserID(a.User)
-	}
-	user, id, ok := strings.Cut(a.Token, "!")
-	if !ok {
-		return invalidf("token %q is not user@realm!id", a.Token)
-	}
-	if err := validUserID(user); err != nil {
-		return err
-	}
-	return validName("token id", id)
 }
 
 func validTemplateVolume(v string) error {
@@ -172,11 +128,11 @@ func (p execPVE) Version(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m := reMgrVersion.FindStringSubmatch(out)
-	if m == nil {
+	version, ok := pveid.ParseManagerVersion(out)
+	if !ok {
 		return "", errors.New("pveversion: no pve-manager version in output")
 	}
-	return m[1], nil
+	return version, nil
 }
 
 // NextID returns the first VMID at or above from that the cluster reports free.
@@ -512,17 +468,23 @@ func (p execPVE) Push(ctx context.Context, vmid int, src, dst string, owner Owne
 	return p.do(ctx, pctTool, args...)
 }
 
+// jsonOut runs a pveum list command and returns its JSON answer.
+func (p execPVE) jsonOut(ctx context.Context, tool string, args ...string) ([]byte, error) {
+	return p.run(ctx, false, nil, tool, append(args, "--output-format", "json")...)
+}
+
+func unreadable(tool string, err error) error { return fmt.Errorf("%s: %w", path.Base(tool), err) }
+
 func (p execPVE) listed(ctx context.Context, field, want string, tool string, args ...string) (bool, error) {
-	var rows []map[string]any
-	if err := p.json(ctx, &rows, tool, args...); err != nil {
+	out, err := p.jsonOut(ctx, tool, args...)
+	if err != nil {
 		return false, err
 	}
-	for _, r := range rows {
-		if v, _ := r[field].(string); v == want {
-			return true, nil
-		}
+	found, err := pveid.ParseListed(out, field, want)
+	if err != nil {
+		return false, unreadable(tool, err)
 	}
-	return false, nil
+	return found, nil
 }
 
 func (p execPVE) UserExists(ctx context.Context, user string) (bool, error) {
@@ -560,13 +522,8 @@ func (p execPVE) CreateRole(ctx context.Context, role string, privileges []strin
 	if err := validName("role", role); err != nil {
 		return err
 	}
-	if len(privileges) == 0 {
-		return invalidf("a role needs privileges")
-	}
-	for _, priv := range privileges {
-		if !rePrivilege.MatchString(priv) {
-			return invalidf("privilege %q", priv)
-		}
+	if err := pveid.ValidPrivileges(privileges); err != nil {
+		return err
 	}
 	return p.do(ctx, pveumTool, "role", "add", role, "--privs", strings.Join(privileges, ","))
 }
@@ -579,23 +536,13 @@ func (p execPVE) RemoveRole(ctx context.Context, role string) error {
 }
 
 func (p execPVE) ACLs(ctx context.Context) ([]ACL, error) {
-	var rows []struct {
-		Path   string `json:"path"`
-		RoleID string `json:"roleid"`
-		Type   string `json:"type"`
-		UGID   string `json:"ugid"`
-	}
-	if err := p.json(ctx, &rows, pveumTool, "acl", "list"); err != nil {
+	out, err := p.jsonOut(ctx, pveumTool, "acl", "list")
+	if err != nil {
 		return nil, err
 	}
-	var acls []ACL
-	for _, r := range rows {
-		switch r.Type {
-		case "user":
-			acls = append(acls, ACL{Path: r.Path, Role: r.RoleID, User: r.UGID})
-		case "token":
-			acls = append(acls, ACL{Path: r.Path, Role: r.RoleID, Token: r.UGID})
-		}
+	acls, err := pveid.ParseACLs(out)
+	if err != nil {
+		return nil, unreadable(pveumTool, err)
 	}
 	return acls, nil
 }
@@ -627,13 +574,6 @@ func (p execPVE) RemoveACL(ctx context.Context, a ACL) error {
 	return p.do(ctx, pveumTool, args...)
 }
 
-func validToken(user, id string) error {
-	if err := validUserID(user); err != nil {
-		return err
-	}
-	return validName("token id", id)
-}
-
 func (p execPVE) TokenExists(ctx context.Context, user, id string) (bool, error) {
 	if err := validToken(user, id); err != nil {
 		return false, err
@@ -641,28 +581,19 @@ func (p execPVE) TokenExists(ctx context.Context, user, id string) (bool, error)
 	return p.ownedToken(ctx, user, id)
 }
 
-// tokenComment is the ownership mark of a token: the install id its user was
-// derived from. A token without it was not created by that install.
-func tokenComment(user string) string {
-	return ownershipMark(strings.TrimSuffix(strings.TrimPrefix(user, "sm-"), "@pve"))
-}
-
 // ownedToken reports whether the token exists and carries this install's
 // comment; a same-named token without it counts as absent, so it is never
 // revoked.
 func (p execPVE) ownedToken(ctx context.Context, user, id string) (bool, error) {
-	var rows []map[string]any
-	if err := p.json(ctx, &rows, pveumTool, "user", "token", "list", user); err != nil {
+	out, err := p.jsonOut(ctx, pveumTool, "user", "token", "list", user)
+	if err != nil {
 		return false, err
 	}
-	for _, r := range rows {
-		tokenID, _ := r["tokenid"].(string)
-		comment, _ := r["comment"].(string)
-		if tokenID == id && comment == tokenComment(user) {
-			return true, nil
-		}
+	owned, _, err := pveid.ParseOwnedToken(out, user, id)
+	if err != nil {
+		return false, unreadable(pveumTool, err)
 	}
-	return false, nil
+	return owned, nil
 }
 
 // AddToken reads the secret from the captured output only; a failure or an
@@ -671,7 +602,7 @@ func (p execPVE) AddToken(ctx context.Context, user, id string) (audit.Secret, e
 	if err := validToken(user, id); err != nil {
 		return "", err
 	}
-	out, err := p.run(ctx, true, nil, pveumTool, "user", "token", "add", user, id, "--privsep", "1", "--comment", tokenComment(user), "--output-format", "json")
+	out, err := p.run(ctx, true, nil, pveumTool, "user", "token", "add", user, id, "--privsep", "1", "--comment", pveid.TokenComment(user), "--output-format", "json")
 	if err != nil {
 		return "", errors.New("pveum could not create the API token")
 	}
