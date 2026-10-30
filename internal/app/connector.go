@@ -22,6 +22,11 @@ import (
 // (ADR-0009 f). Its metadata is the node's runtimes.SetupMeta.
 const capabilitySetup = "node.setup"
 
+// capabilityProxmoxRoles journals the Proxmox roles setup created on the node,
+// before it creates them (metadata {"roles": [...]}). It is bookkeeping, not
+// something the node can do, so the views leave it out.
+const capabilityProxmoxRoles = "proxmox.roles"
+
 // Dialer is the SSH connection pool as the app sees it. *ssh.Pool is the
 // production implementation; tests substitute fakes.
 type Dialer interface {

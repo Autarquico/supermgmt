@@ -99,26 +99,29 @@ func CreateIdentities(ctx context.Context, h Host, id string, power bool, rec Re
 	return nil
 }
 
-// CreateToken creates the privilege-separated token and grants it the same
-// roles as the user. The secret is returned even when a later grant fails, so
-// the caller can still dispose of it.
-func CreateToken(ctx context.Context, h Host, id string, power bool, rec Recorder) (audit.Secret, error) {
+// CreateToken creates the privilege-separated token and returns its secret.
+// Nothing else is done to the host, so the caller can keep the secret before
+// GrantToken changes anything more.
+func CreateToken(ctx context.Context, h Host, id string, rec Recorder) (audit.Secret, error) {
 	user := User(id)
 	var secret audit.Secret
-	if err := rec.CreateNew(StepToken, ResToken, Token(id),
+	err := rec.CreateNew(StepToken, ResToken, Token(id),
 		func() (bool, error) { return h.TokenExists(ctx, user, TokenID) },
 		func() (err error) {
 			secret, err = h.AddToken(ctx, user, TokenID)
 			return err
-		}); err != nil {
-		return secret, failed("create the Proxmox token", err)
-	}
+		})
+	return secret, failed("create the Proxmox token", err)
+}
+
+// GrantToken grants the token the same roles as the user.
+func GrantToken(ctx context.Context, h Host, id string, power bool, rec Recorder) error {
 	for _, g := range Grants(id, power) {
 		if err := grantACL(ctx, h, rec, StepToken, ACL{Path: g.Path, Role: g.Role, Token: Token(id)}); err != nil {
-			return secret, err
+			return err
 		}
 	}
-	return secret, nil
+	return nil
 }
 
 func grantACL(ctx context.Context, h Host, rec Recorder, step string, acl ACL) error {

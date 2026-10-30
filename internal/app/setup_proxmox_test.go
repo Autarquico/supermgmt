@@ -19,7 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/database"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/pveid"
 	"github.com/autarquico/supermgmt/internal/secrets"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
@@ -202,7 +204,13 @@ func scriptPVEHost(admin *fakeNode, caPEM string) *pveHostScript {
 	admin.reply(templates.PVERootCAStep+sudo, caPEM)
 	admin.on(templates.PVEUserListStep+sudo, locked(func(templates.Command) string { return rowsOf(h.users, "userid", "comment") }))
 	admin.on(templates.PVERoleListStep+sudo, locked(func(templates.Command) string { return rowsOf(h.roles, "roleid", "privs") }))
-	admin.on(templates.PVETokenListStep+sudo, locked(func(templates.Command) string { return rowsOf(h.tokens, "tokenid", "comment") }))
+	admin.on(templates.PVETokenListStep+sudo, locked(func(templates.Command) string {
+		var rows []string
+		for id, comment := range h.tokens {
+			rows = append(rows, fmt.Sprintf(`{"tokenid":%q,"comment":%q,"privsep":1}`, id, comment))
+		}
+		return "[" + strings.Join(rows, ",") + "]"
+	}))
 	admin.on(templates.PVEUserAddStep+sudo, locked(func(c templates.Command) string {
 		a := quotedArgs(c.Line)
 		h.users[a[0]] = a[1]
@@ -379,6 +387,23 @@ func TestProxmoxSetupFailsWhenTheAPIRejectsTheToken(t *testing.T) {
 	}
 }
 
+func TestProxmoxSetupRefusesARoleItDidNotRecordEvenWithOurPrivileges(t *testing.T) {
+	ps := newProxmoxSetting(t, []string{"localhost"})
+	instance, err := database.GetInstance(context.Background(), ps.db.Reader())
+	mustf(t, err, "instance")
+	ps.host.roles[pveid.AuditRole(instance.ID.String())] = "VM.Audit,Sys.Audit,Datastore.Audit,Pool.Audit"
+
+	err = ps.setupProxmox()
+
+	wantError(t, err, smerr.CodeConflict, "")
+	if ps.host.acls != 0 {
+		t.Errorf("the foreign role was granted: %d ACLs", ps.host.acls)
+	}
+	if _, ok := ps.setupCapability(); ok {
+		t.Error("capability recorded")
+	}
+}
+
 func TestProxmoxSetupRepairsALostTokenAndKeepsTheStateOtherwise(t *testing.T) {
 	ps := newProxmoxSetting(t, []string{"localhost"})
 	mustf(t, ps.setupProxmox(), "first setup")
@@ -462,4 +487,58 @@ func (f *fakeNode) callsCopy() []templates.Command {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]templates.Command(nil), f.calls...)
+}
+
+func (ps *proxmoxSetting) roleJournal() []string {
+	ps.t.Helper()
+	roles, err := roleJournal(context.Background(), ps.db.Reader(), ps.node.ID)
+	mustf(ps.t, err, "role journal")
+	return roles
+}
+
+func TestProxmoxSetupRerunReusesTheRolesAFailedRunCreated(t *testing.T) {
+	ps := newProxmoxSetting(t, []string{"localhost"})
+	good := ps.api
+	ps.api = newPVEAPI(t, good.cert, func() string { return "another token" })
+	ps.dialer.relay = ps.api.relay
+	err := ps.setupProxmox()
+	wantError(t, err, smerr.CodeCapabilityUnavailable, "")
+	mustf(t, ps.store.FailTerminal(context.Background(), ps.lease, err), "FailTerminal")
+	if _, ok := ps.setupCapability(); ok {
+		t.Fatal("the failed run recorded the setup")
+	}
+	if got := ps.roleJournal(); len(got) != 2 || len(ps.host.roles) != 2 {
+		t.Fatalf("journal %v, roles on the host %v", got, ps.host.roles)
+	}
+
+	ps.api = good
+	ps.dialer.relay = good.relay
+
+	mustf(t, ps.setupProxmox(), "rerun after the failed run")
+	if _, ok := ps.setupCapability(); !ok {
+		t.Error("the rerun did not record the setup")
+	}
+	if got := ps.roleJournal(); len(got) != 2 {
+		t.Errorf("journal after the rerun = %v", got)
+	}
+}
+
+func TestProxmoxSetupJournalsRolesWithoutShowingThemAsCapabilities(t *testing.T) {
+	ps := newProxmoxSetting(t, []string{"localhost"})
+	mustf(t, ps.setupProxmox(), "setup --proxmox")
+
+	caps, err := database.ListNodeCapabilities(context.Background(), ps.db.Reader(), ps.node.ID)
+	mustf(t, err, "capabilities")
+	var listed bool
+	for _, c := range caps {
+		listed = listed || c.Capability == capabilityProxmoxRoles
+	}
+	if !listed || len(capabilityViews(caps)) != len(caps)-1 {
+		t.Errorf("journal row listed %v, views %d of %d", listed, len(capabilityViews(caps)), len(caps))
+	}
+	for _, v := range capabilityViews(caps) {
+		if v.Name == capabilityProxmoxRoles {
+			t.Error("the journal shows as a node capability")
+		}
+	}
 }

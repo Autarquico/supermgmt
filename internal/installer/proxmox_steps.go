@@ -418,7 +418,10 @@ func parseACLName(name string) (ACL, bool) {
 // tmpfs through a short-lived host file, import it offline, and leave no copy.
 func (p *provision) transferToken(ctx context.Context) error {
 	defer func() { p.tokenSecret = "" }()
-	secret, err := pveid.CreateToken(ctx, p.pve, p.id, p.plan.Power, p)
+	secret, err := pveid.CreateToken(ctx, p.pve, p.id, p)
+	if err == nil {
+		err = pveid.GrantToken(ctx, p.pve, p.id, p.plan.Power, p)
+	}
 	p.tokenSecret = pveid.Token(p.id) + "=" + secret.Reveal()
 	if err != nil {
 		return identityError(err)

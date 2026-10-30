@@ -97,11 +97,17 @@ func TestCreateIdentitiesOrderAndPower(t *testing.T) {
 	}
 }
 
-func TestCreateTokenGrantsTheTokenAndReturnsItsSecret(t *testing.T) {
+func TestCreateTokenReturnsTheSecretBeforeAnyGrant(t *testing.T) {
 	h := newFakeHost()
-	secret, err := CreateToken(bg, h, "ab12", true, Unjournaled{})
+	secret, err := CreateToken(bg, h, "ab12", Unjournaled{})
 	if err != nil || secret.Reveal() != "0123456789abcdef" {
 		t.Fatalf("secret %v err %v", secret, err)
+	}
+	if want := []string{"token sm-ab12@pve sm"}; !slices.Equal(h.log, want) {
+		t.Errorf("log = %q", h.log)
+	}
+	if err := GrantToken(bg, h, "ab12", true, Unjournaled{}); err != nil {
+		t.Fatal(err)
 	}
 	want := []string{
 		"token sm-ab12@pve sm",
@@ -124,7 +130,7 @@ func TestAnExistingObjectIsRefusedAndNothingElseIsDone(t *testing.T) {
 		var err error
 		if kind == "token" {
 			h.tokens["sm-ab12@pve!sm"] = true
-			_, err = CreateToken(bg, h, "ab12", false, Unjournaled{})
+			_, err = CreateToken(bg, h, "ab12", Unjournaled{})
 		} else {
 			setup(h)
 			err = CreateIdentities(bg, h, "ab12", false, Unjournaled{})
@@ -145,7 +151,7 @@ func TestAnExistingObjectIsRefusedAndNothingElseIsDone(t *testing.T) {
 func TestAFailedTokenCreationIsReportedWithoutItsOutput(t *testing.T) {
 	h := newFakeHost()
 	h.failToken = errors.New("pveum could not create the API token")
-	_, err := CreateToken(bg, h, "ab12", false, Unjournaled{})
+	_, err := CreateToken(bg, h, "ab12", Unjournaled{})
 	var failure *Failure
 	if !errors.As(err, &failure) || failure.What != "create the Proxmox token" {
 		t.Errorf("err = %v", err)

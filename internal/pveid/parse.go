@@ -64,22 +64,24 @@ func ParseACLs(out []byte) ([]ACL, error) {
 	return acls, nil
 }
 
-// ParseOwnedToken reports whether `pveum user token list <user>` holds token id
-// carrying this identity's comment; a same-named token without it counts as
-// absent, so it is never revoked.
-func ParseOwnedToken(out []byte, user, id string) (bool, error) {
+// ParseOwnedToken reads `pveum user token list <user>`: owned says it holds
+// token id carrying this identity's comment (a same-named token without it
+// counts as absent, so it is never revoked), separated that the owned token has
+// privilege separation on, which is the only state setup accepts.
+func ParseOwnedToken(out []byte, user, id string) (owned, separated bool, err error) {
 	rows, err := unmarshalRows(out)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	for _, r := range rows {
 		tokenID, _ := r["tokenid"].(string)
 		comment, _ := r["comment"].(string)
 		if tokenID == id && comment == TokenComment(user) {
-			return true, nil
+			privsep, _ := r["privsep"].(float64)
+			return true, privsep == 1, nil
 		}
 	}
-	return false, nil
+	return false, false, nil
 }
 
 // tokenSecretPattern is a token value as one safe word: it can be joined to
@@ -88,15 +90,16 @@ var tokenSecretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
 // ParseTokenAdd reads the answer of `pveum user token add <user> <id>
 // --output-format json`: exactly one object with full-tokenid (the token that
-// was asked for), value (its secret) and the info object pveum adds. Any other
-// shape is refused with ErrUnreadable and nothing of the input.
+// was asked for), value (its secret) and the info object pveum adds; when info
+// states privsep it must be 1 (the JSON number or the string). Any other shape
+// is refused with ErrUnreadable and nothing of the input.
 func ParseTokenAdd(out []byte, user, id string) (audit.Secret, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.DisallowUnknownFields()
 	var reply struct {
-		FullTokenID string          `json:"full-tokenid"`
-		Info        json.RawMessage `json:"info"`
-		Value       string          `json:"value"`
+		FullTokenID string         `json:"full-tokenid"`
+		Info        map[string]any `json:"info"`
+		Value       string         `json:"value"`
 	}
 	if dec.Decode(&reply) != nil {
 		return "", ErrUnreadable
@@ -104,7 +107,10 @@ func ParseTokenAdd(out []byte, user, id string) (audit.Secret, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return "", ErrUnreadable
 	}
-	if reply.FullTokenID != user+"!"+id || !tokenSecretPattern.MatchString(reply.Value) {
+	if reply.FullTokenID != user+"!"+id || !tokenSecretPattern.MatchString(reply.Value) || reply.Info == nil {
+		return "", ErrUnreadable
+	}
+	if privsep, stated := reply.Info["privsep"]; stated && privsep != 1.0 && privsep != "1" {
 		return "", ErrUnreadable
 	}
 	return audit.Secret(reply.Value), nil

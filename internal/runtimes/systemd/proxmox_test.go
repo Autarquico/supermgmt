@@ -3,6 +3,7 @@ package systemd
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,6 +32,7 @@ type pveNode struct {
 	users  map[string]string // userid -> comment
 	roles  map[string]string // role -> privs
 	tokens map[string]string // tokenid -> comment
+	loose  map[string]bool   // tokenid -> privilege separation switched off
 	acls   []string
 }
 
@@ -38,7 +40,7 @@ func newPVENode(t *testing.T) *pveNode {
 	n := &pveNode{
 		setupNode: newSetupNode(t), version: "pve-manager/9.0.3/abcdef (running kernel: 6.14.8-2-pve)\n",
 		ca: testCAPEM(t), hostname: "pve1\n",
-		users: map[string]string{}, roles: map[string]string{}, tokens: map[string]string{},
+		users: map[string]string{}, roles: map[string]string{}, tokens: map[string]string{}, loose: map[string]bool{},
 	}
 	n.on(templates.PVEVersionStep, func(templates.Command) transport.Result {
 		if n.version == "" {
@@ -51,7 +53,11 @@ func newPVENode(t *testing.T) *pveNode {
 	})
 	n.on(templates.PVERoleListStep, func(templates.Command) transport.Result { return n.rows(n.roles, "roleid", "privs") })
 	n.on(templates.PVETokenListStep, func(templates.Command) transport.Result {
-		return n.rows(n.tokens, "tokenid", "comment")
+		var rows []string
+		for id, comment := range n.tokens {
+			rows = append(rows, fmt.Sprintf(`{"tokenid":%q,"comment":%q,"privsep":%d}`, id, comment, map[bool]int{false: 1, true: 0}[n.loose[id]]))
+		}
+		return transport.Result{Stdout: []byte("[" + strings.Join(rows, ",") + "]")}
 	})
 	n.on(templates.PVEUserAddStep, func(c templates.Command) transport.Result {
 		n.users[argument(c.Line, 0)] = argument(c.Line, 1)
@@ -72,6 +78,7 @@ func newPVENode(t *testing.T) *pveNode {
 	n.on(templates.PVETokenAddStep, func(c templates.Command) transport.Result {
 		user, id := argument(c.Line, 0), argument(c.Line, 1)
 		n.tokens[id] = argument(c.Line, 2)
+		delete(n.loose, id)
 		return transport.Result{Stdout: []byte(fmt.Sprintf(`{"full-tokenid":%q,"info":{"privsep":1},"value":%q}`, user+"!"+id, pveSecret))}
 	})
 	n.on(templates.PVETokenRemoveStep, func(c templates.Command) transport.Result {
@@ -119,16 +126,33 @@ type proxmoxRecorder struct {
 	stored  []string
 	secrets []audit.Secret
 	removed []string
+	owned   []string // the role journal, as the caller keeps it between runs
+	// roleAddsAtJournal is how many role-add commands had run at each journal call.
+	roleAddsAtJournal []int
+	journalErr        error
+	node              *pveNode
 }
 
 func (r *proxmoxRecorder) params(tokenStored bool) *ProxmoxParams {
 	return &ProxmoxParams{
-		InstanceID: pveInstance, TokenStored: tokenStored,
+		InstanceID: pveInstance, TokenStored: tokenStored, OwnedRoles: r.owned,
 		StoreToken: func(_ context.Context, id string, s audit.Secret) error {
 			r.stored, r.secrets = append(r.stored, id), append(r.secrets, s)
 			return nil
 		},
 		TokenRemoved: func(_ context.Context, id string) error { r.removed = append(r.removed, id); return nil },
+		RoleOwned: func(_ context.Context, role string) error {
+			if r.node != nil {
+				r.roleAddsAtJournal = append(r.roleAddsAtJournal, r.node.count(templates.PVERoleAddStep))
+			}
+			if r.journalErr != nil {
+				return r.journalErr
+			}
+			if !slices.Contains(r.owned, role) {
+				r.owned = append(r.owned, role)
+			}
+			return nil
+		},
 	}
 }
 
@@ -218,8 +242,11 @@ func TestProxmoxStepInstallsSocatWhenAbsent(t *testing.T) {
 func TestProxmoxStepRefusesForeignObjectsAndAdoptsNone(t *testing.T) {
 	user := pveid.User(pveInstance)
 	cases := map[string]func(*pveNode){
-		"user":  func(n *pveNode) { n.users[user] = "somebody else's" },
-		"role":  func(n *pveNode) { n.roles[pveid.AuditRole(pveInstance)] = "Sys.Modify" },
+		"user": func(n *pveNode) { n.users[user] = "somebody else's" },
+		"role": func(n *pveNode) { n.roles[pveid.AuditRole(pveInstance)] = "Sys.Modify" },
+		"role with our privileges": func(n *pveNode) {
+			n.roles[pveid.AuditRole(pveInstance)] = "Datastore.Audit,Pool.Audit,Sys.Audit,VM.Audit"
+		},
 		"token": func(n *pveNode) { n.users[user] = pveid.Mark(pveInstance); n.tokens["sm"] = "mine, honest" },
 	}
 	for name, setup := range cases {
@@ -232,6 +259,9 @@ func TestProxmoxStepRefusesForeignObjectsAndAdoptsNone(t *testing.T) {
 		if len(r.stored) != 0 || len(r.removed) != 0 || n.count(templates.PVETokenRemoveStep) != 0 {
 			t.Errorf("%s: touched a foreign object: %v", name, n.ran())
 		}
+		if n.count(templates.PVEACLAddTokenStep) != 0 || strings.HasPrefix(name, "role") && len(n.acls) != 0 {
+			t.Errorf("%s: granted something after the refusal: %v", name, n.acls)
+		}
 		if name == "token" && n.tokens["sm"] != "mine, honest" {
 			t.Error("the foreign token was replaced")
 		}
@@ -243,7 +273,7 @@ func TestProxmoxStepRecreatesAnOwnedTokenWhoseSecretIsLost(t *testing.T) {
 	if _, err := setupWithProxmox(t, n, r, false); err != nil {
 		t.Fatal(err)
 	}
-	r2 := &proxmoxRecorder{}
+	r2 := &proxmoxRecorder{owned: r.owned}
 	if _, err := setupWithProxmox(t, n, r2, false); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +290,7 @@ func TestProxmoxStepRerunWithTheSecretStoredCreatesNothing(t *testing.T) {
 	if _, err := setupWithProxmox(t, n, r, false); err != nil {
 		t.Fatal(err)
 	}
-	r2 := &proxmoxRecorder{}
+	r2 := &proxmoxRecorder{owned: r.owned}
 	out, err := setupWithProxmox(t, n, r2, true)
 	if err != nil || len(r2.stored) != 0 || len(r2.removed) != 0 || out.Proxmox.TokenID != pveid.Token(pveInstance) {
 		t.Fatalf("stored %v removed %v err %v", r2.stored, r2.removed, err)
@@ -313,12 +343,125 @@ func TestProxmoxStoreFailureStopsSetupBeforeTheKey(t *testing.T) {
 func TestProxmoxParamsAreValidated(t *testing.T) {
 	r := &proxmoxRecorder{}
 	for name, p := range map[string]ProxmoxParams{
-		"bad id":       {InstanceID: "a b", StoreToken: r.params(false).StoreToken, TokenRemoved: r.params(false).TokenRemoved},
-		"no store":     {InstanceID: pveInstance, TokenRemoved: r.params(false).TokenRemoved},
-		"no remove cb": {InstanceID: pveInstance, StoreToken: r.params(false).StoreToken},
+		"bad id":       {InstanceID: "a b", StoreToken: r.params(false).StoreToken, TokenRemoved: r.params(false).TokenRemoved, RoleOwned: r.params(false).RoleOwned},
+		"no store":     {InstanceID: pveInstance, TokenRemoved: r.params(false).TokenRemoved, RoleOwned: r.params(false).RoleOwned},
+		"no remove cb": {InstanceID: pveInstance, StoreToken: r.params(false).StoreToken, RoleOwned: r.params(false).RoleOwned},
+		"no journal":   {InstanceID: pveInstance, StoreToken: r.params(false).StoreToken, TokenRemoved: r.params(false).TokenRemoved},
 	} {
 		if smerr.CodeOf(p.Validate()) != smerr.CodeInvalidArgument {
 			t.Errorf("%s: %v", name, p.Validate())
 		}
+	}
+}
+
+func TestProxmoxStepReusesRolesTheLastRunRecordedAndRefusesOthers(t *testing.T) {
+	n := newPVENode(t)
+	n.roles[pveid.AuditRole(pveInstance)] = "Datastore.Audit,Pool.Audit,Sys.Audit,VM.Audit"
+	r := &proxmoxRecorder{owned: []string{pveid.AuditRole(pveInstance)}}
+	if _, err := setupWithProxmox(t, n, r, false); err != nil {
+		t.Fatal(err)
+	}
+	if n.count(templates.PVERoleAddStep) != 1 || !slices.Contains(r.owned, pveid.PowerRole(pveInstance)) {
+		t.Errorf("the journaled role was not reused: ran %v, journal %v", n.ran(), r.owned)
+	}
+	n2 := newPVENode(t)
+	n2.roles[pveid.AuditRole(pveInstance)] = "Sys.Modify"
+	r2 := &proxmoxRecorder{owned: []string{pveid.AuditRole(pveInstance)}}
+	if _, err := setupWithProxmox(t, n2, r2, false); smerr.CodeOf(err) != smerr.CodeConflict {
+		t.Errorf("a recorded role whose privileges changed: err = %v", err)
+	}
+}
+
+func TestProxmoxStepStoresTheSecretBeforeTheFirstTokenGrant(t *testing.T) {
+	n, r := newPVENode(t), &proxmoxRecorder{}
+	p := setupParams()
+	p.InstanceID = pveInstance
+	p.Proxmox = r.params(false)
+	grantsAtStore := -1
+	p.Proxmox.StoreToken = func(context.Context, string, audit.Secret) error {
+		grantsAtStore = n.count(templates.PVEACLAddTokenStep)
+		return nil
+	}
+	if _, err := Setup(context.Background(), n, p); err != nil {
+		t.Fatal(err)
+	}
+	if grantsAtStore != 0 || n.count(templates.PVEACLAddTokenStep) != 2 {
+		t.Errorf("token grants at store time %d, in total %d", grantsAtStore, n.count(templates.PVEACLAddTokenStep))
+	}
+}
+
+func TestProxmoxStepGrantsNothingToATokenWhoseSecretCouldNotBeStored(t *testing.T) {
+	n, r := newPVENode(t), &proxmoxRecorder{}
+	p := setupParams()
+	p.InstanceID = pveInstance
+	p.Proxmox = r.params(false)
+	p.Proxmox.StoreToken = func(context.Context, string, audit.Secret) error { return fmt.Errorf("disk full") }
+	if _, err := Setup(context.Background(), n, p); err == nil {
+		t.Fatal("setup went on")
+	}
+	if n.count(templates.PVEACLAddTokenStep) != 0 {
+		t.Errorf("token grants after a failed store: %v", n.acls)
+	}
+}
+
+func TestProxmoxStepRecreatesAnOwnedTokenThatIsNotPrivilegeSeparated(t *testing.T) {
+	n, r := newPVENode(t), &proxmoxRecorder{}
+	if _, err := setupWithProxmox(t, n, r, false); err != nil {
+		t.Fatal(err)
+	}
+	n.loose["sm"] = true
+	r2 := &proxmoxRecorder{owned: r.owned}
+	if _, err := setupWithProxmox(t, n, r2, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(r2.removed) != 1 || len(r2.stored) != 1 || r2.secrets[0].Reveal() != pveSecret || n.loose["sm"] {
+		t.Errorf("removed %v stored %v loose %v", r2.removed, r2.stored, n.loose)
+	}
+	if n.count(templates.PVETokenRemoveStep) != 1 || n.count(templates.PVETokenAddStep) != 2 {
+		t.Errorf("ran %v", n.ran())
+	}
+}
+
+func TestProxmoxStepRerunReusesTheRolesAFailedRunCreated(t *testing.T) {
+	n, r := newPVENode(t), &proxmoxRecorder{}
+	n.on(templates.PVETokenAddStep, func(templates.Command) transport.Result {
+		return transport.Result{ExitStatus: 1, Stderr: []byte("boom")}
+	})
+	if _, err := setupWithProxmox(t, n, r, false); err == nil {
+		t.Fatal("the first run went on")
+	}
+	if len(n.roles) != 2 || len(r.owned) != 2 {
+		t.Fatalf("roles %v journal %v", n.roles, r.owned)
+	}
+	healthy := newPVENode(t)
+	healthy.users, healthy.roles = n.users, n.roles
+	r2 := &proxmoxRecorder{owned: r.owned}
+	if _, err := setupWithProxmox(t, healthy, r2, false); err != nil {
+		t.Fatalf("the rerun refused its own roles: %v", err)
+	}
+	if healthy.count(templates.PVERoleAddStep) != 0 || len(healthy.tokens) != 1 {
+		t.Errorf("ran %v", healthy.ran())
+	}
+}
+
+func TestProxmoxStepJournalsEachRoleBeforeCreatingIt(t *testing.T) {
+	n, r := newPVENode(t), &proxmoxRecorder{}
+	r.node = n
+	if _, err := setupWithProxmox(t, n, r, false); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(r.roleAddsAtJournal, []int{0, 1}) {
+		t.Errorf("role-add commands already run at each journal call: %v", r.roleAddsAtJournal)
+	}
+}
+
+func TestProxmoxStepCreatesNoRoleWhenTheJournalFails(t *testing.T) {
+	n, r := newPVENode(t), &proxmoxRecorder{journalErr: fmt.Errorf("lease lost")}
+	_, err := setupWithProxmox(t, n, r, false)
+	if err == nil || !strings.Contains(err.Error(), "lease lost") {
+		t.Fatalf("err = %v", err)
+	}
+	if n.count(templates.PVERoleAddStep) != 0 || len(n.roles) != 0 {
+		t.Errorf("a role was created without a journal: %v", n.ran())
 	}
 }

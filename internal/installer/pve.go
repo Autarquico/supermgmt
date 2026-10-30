@@ -589,7 +589,7 @@ func (p execPVE) ownedToken(ctx context.Context, user, id string) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	owned, err := pveid.ParseOwnedToken(out, user, id)
+	owned, _, err := pveid.ParseOwnedToken(out, user, id)
 	if err != nil {
 		return false, unreadable(pveumTool, err)
 	}

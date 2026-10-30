@@ -27,6 +27,13 @@ type ProxmoxParams struct {
 	// InstanceID derives every identity name; the same id on every run is what
 	// makes the objects found on the host ours.
 	InstanceID string
+	// OwnedRoles are the roles an earlier run journaled as created by this
+	// instance. Proxmox roles carry no comment, so a listed role is ours only if
+	// it is named here; any other is refused.
+	OwnedRoles []string
+	// RoleOwned journals a role durably; it runs right before the role is
+	// created, and the role is not created if it fails.
+	RoleOwned func(ctx context.Context, role string) error
 	// TokenStored says the secret store holds the token's secret. An owned
 	// token on the host without it is deleted and created again.
 	TokenStored bool
@@ -42,8 +49,8 @@ func (p ProxmoxParams) Validate() error {
 	if err := pveid.ValidToken(pveid.User(p.InstanceID), pveid.TokenID); err != nil {
 		return invalid("instance id: " + err.Error())
 	}
-	if p.StoreToken == nil || p.TokenRemoved == nil {
-		return invalid("proxmox: StoreToken and TokenRemoved are required")
+	if p.StoreToken == nil || p.TokenRemoved == nil || p.RoleOwned == nil {
+		return invalid("proxmox: StoreToken, TokenRemoved and RoleOwned are required")
 	}
 	return nil
 }
@@ -84,8 +91,15 @@ func (s stepper) ensureProxmox(ctx context.Context, p ProxmoxParams) (*ProxmoxOu
 	if err != nil {
 		return nil, err
 	}
-	h := newPVEHost(s, p.InstanceID)
-	if err := pveid.CreateIdentities(ctx, h, p.InstanceID, proxmoxPower, ownedRecorder{}); err != nil {
+	h := newPVEHost(s, p.InstanceID, p.OwnedRoles)
+	rec := ownedRecorder{roleOwned: func(role string) error {
+		if err := p.RoleOwned(ctx, role); err != nil {
+			return fmt.Errorf("journal the Proxmox role %s: %w", role, err)
+		}
+		h.owned[role] = true
+		return nil
+	}}
+	if err := pveid.CreateIdentities(ctx, h, p.InstanceID, proxmoxPower, rec); err != nil {
 		return nil, proxmoxError(err)
 	}
 	if err := s.ensureToken(ctx, h, p); err != nil {
@@ -133,15 +147,16 @@ func (s stepper) socatPath(ctx context.Context) (string, error) {
 }
 
 // ensureToken leaves an owned, privilege-separated token on the host and its
-// secret in the store: an existing one stays when the store has its secret,
-// otherwise it is deleted and created again.
+// secret in the store: an existing one stays when the store has its secret and
+// it is separated, otherwise it is deleted and created again. The secret is
+// stored before the token is granted anything.
 func (s stepper) ensureToken(ctx context.Context, h pveHost, p ProxmoxParams) error {
 	user, tokenID := pveid.User(p.InstanceID), pveid.Token(p.InstanceID)
-	owned, err := h.TokenExists(ctx, user, pveid.TokenID)
+	owned, separated, err := h.ownedToken(ctx, user, pveid.TokenID)
 	if err != nil {
 		return proxmoxError(err)
 	}
-	if owned && !p.TokenStored {
+	if owned && (!p.TokenStored || !separated) {
 		if err := h.RemoveToken(ctx, user, pveid.TokenID); err != nil {
 			return fmt.Errorf("remove the Proxmox token: %w", err)
 		}
@@ -149,13 +164,16 @@ func (s stepper) ensureToken(ctx context.Context, h pveHost, p ProxmoxParams) er
 			return fmt.Errorf("record the Proxmox token deletion: %w", err)
 		}
 	}
-	secret, err := pveid.CreateToken(ctx, h, p.InstanceID, proxmoxPower, ownedRecorder{})
+	secret, err := pveid.CreateToken(ctx, h, p.InstanceID, ownedRecorder{})
+	if err != nil {
+		return proxmoxError(err)
+	}
 	if secret != "" {
-		if storeErr := p.StoreToken(ctx, tokenID, secret); storeErr != nil {
-			return fmt.Errorf("store the Proxmox token: %w", storeErr)
+		if err := p.StoreToken(ctx, tokenID, secret); err != nil {
+			return fmt.Errorf("store the Proxmox token: %w", err)
 		}
 	}
-	return proxmoxError(err)
+	return proxmoxError(pveid.GrantToken(ctx, h, p.InstanceID, proxmoxPower, ownedRecorder{}))
 }
 
 func (s stepper) readRootCA(ctx context.Context) (string, error) {
@@ -197,15 +215,20 @@ func proxmoxError(err error) error {
 	return err
 }
 
-// ownedRecorder is the pveid.Recorder of node setup: it keeps no journal, and
-// an object its host reports as present is ours (pveHost refuses the others),
-// so creating it again is skipped.
-type ownedRecorder struct{}
+// ownedRecorder is the pveid.Recorder of node setup: an object its host
+// reports as present is ours (pveHost refuses the others), so creating it again
+// is skipped. A role is journaled through roleOwned before it is created.
+type ownedRecorder struct{ roleOwned func(role string) error }
 
-func (ownedRecorder) CreateNew(_, _, _ string, exists func() (bool, error), build func() error) error {
+func (r ownedRecorder) CreateNew(_, resource, name string, exists func() (bool, error), build func() error) error {
 	present, err := exists()
 	if err != nil || present {
 		return err
+	}
+	if resource == pveid.ResRole {
+		if err := r.roleOwned(name); err != nil {
+			return err
+		}
 	}
 	return build()
 }
@@ -217,16 +240,18 @@ func (ownedRecorder) Create(_, _, _ string, build func() error) error { return b
 type pveHost struct {
 	s     stepper
 	roles map[string][]string // role -> its privileges, sorted
+	owned map[string]bool     // roles journaled as this instance's
 }
 
 var _ pveid.Host = pveHost{}
 
-func newPVEHost(s stepper, id string) pveHost {
-	roles := map[string][]string{}
+func newPVEHost(s stepper, id string, ownedRoles []string) pveHost {
+	roles, owned := map[string][]string{}, map[string]bool{}
 	for _, g := range pveid.Grants(id, proxmoxPower) {
 		roles[g.Role] = slices.Sorted(slices.Values(g.Privileges))
+		owned[g.Role] = slices.Contains(ownedRoles, g.Role)
 	}
-	return pveHost{s: s, roles: roles}
+	return pveHost{s: s, roles: roles, owned: owned}
 }
 
 // list runs a pveum list step and returns its JSON.
@@ -260,8 +285,9 @@ func (h pveHost) CreateUser(ctx context.Context, user, comment string) error {
 	return h.s.do(ctx, templates.PVEUserAddStep, map[string]string{"user": user, "comment": comment}, nil)
 }
 
-// RoleExists is true for a role with exactly the privileges setup grants it; a
-// same-named role with others is somebody else's.
+// RoleExists is true for a listed role that a run journaled as ours and that
+// still has exactly the privileges setup grants it. A listed role not
+// journaled, or changed since, is refused: roles carry no mark of their own.
 func (h pveHost) RoleExists(ctx context.Context, role string) (bool, error) {
 	out, err := h.list(ctx, templates.PVERoleListStep, nil)
 	if err != nil {
@@ -271,7 +297,7 @@ func (h pveHost) RoleExists(ctx context.Context, role string) (bool, error) {
 	if err != nil || !present {
 		return false, err
 	}
-	if !slices.Equal(privileges, h.roles[role]) {
+	if !h.owned[role] || !slices.Equal(privileges, h.roles[role]) {
 		return false, &pveid.ForeignError{Kind: pveid.ResRole, Name: role}
 	}
 	return true, nil
@@ -300,9 +326,15 @@ func (h pveHost) aclStep(ctx context.Context, a pveid.ACL) error {
 
 // TokenExists is true for a token carrying this identity's mark only.
 func (h pveHost) TokenExists(ctx context.Context, user, id string) (bool, error) {
+	owned, _, err := h.ownedToken(ctx, user, id)
+	return owned, err
+}
+
+// ownedToken is TokenExists plus whether the token is privilege-separated.
+func (h pveHost) ownedToken(ctx context.Context, user, id string) (owned, separated bool, err error) {
 	out, err := h.list(ctx, templates.PVETokenListStep, map[string]string{"user": user})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	return pveid.ParseOwnedToken(out, user, id)
 }

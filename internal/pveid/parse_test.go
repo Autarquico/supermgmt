@@ -13,7 +13,7 @@ func TestParseTokenAddAcceptsPveumsAnswer(t *testing.T) {
 	if err != nil || secret.Reveal() != "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9" {
 		t.Fatalf("secret %v err %v", secret, err)
 	}
-	if _, err := ParseTokenAdd([]byte(`{"full-tokenid":"sm-ab12@pve!sm","value":"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}`), "sm-ab12@pve", "sm"); err != nil {
+	if _, err := ParseTokenAdd([]byte(`{"full-tokenid":"sm-ab12@pve!sm","info":{"privsep":1},"value":"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}`), "sm-ab12@pve", "sm"); err != nil {
 		t.Errorf("an answer without info was refused: %v", err)
 	}
 }
@@ -32,6 +32,12 @@ func TestParseTokenAddRefusesEveryOtherShapeWithoutEchoingIt(t *testing.T) {
 		"short value":      `{"full-tokenid":"sm-ab12@pve!sm","value":"abc"}`,
 		"value with space": `{"full-tokenid":"sm-ab12@pve!sm","value":"` + value + ` x"}`,
 		"value not string": `{"full-tokenid":"sm-ab12@pve!sm","value":12345678901234567890}`,
+		"no info":          `{"full-tokenid":"sm-ab12@pve!sm","value":"` + value + `"}`,
+		"null info":        `{"full-tokenid":"sm-ab12@pve!sm","info":null,"value":"` + value + `"}`,
+		"scalar info":      `{"full-tokenid":"sm-ab12@pve!sm","info":"1","value":"` + value + `"}`,
+		"list info":        `{"full-tokenid":"sm-ab12@pve!sm","info":[],"value":"` + value + `"}`,
+		"privsep off":      `{"full-tokenid":"sm-ab12@pve!sm","info":{"privsep":0},"value":"` + value + `"}`,
+		"privsep off text": `{"full-tokenid":"sm-ab12@pve!sm","info":{"privsep":"0"},"value":"` + value + `"}`,
 		"unknown field":    `{"full-tokenid":"sm-ab12@pve!sm","value":"` + value + `","extra":1}`,
 		"trailing object":  goodTokenAnswer + goodTokenAnswer,
 		"trailing brace":   goodTokenAnswer + `}`,
@@ -72,12 +78,26 @@ func TestParseACLsKeepsUserAndTokenEntries(t *testing.T) {
 
 func TestParseOwnedTokenNeedsTheIdentitysComment(t *testing.T) {
 	user := User("ab12")
-	mine := `[{"tokenid":"sm","comment":"supermgmt install ab12"}]`
-	foreign := `[{"tokenid":"sm","comment":"made by hand"},{"tokenid":"sm"}]`
-	if ok, err := ParseOwnedToken([]byte(mine), user, "sm"); !ok || err != nil {
-		t.Errorf("own token: %v %v", ok, err)
+	mine := `[{"tokenid":"sm","comment":"supermgmt install ab12","privsep":1}]`
+	foreign := `[{"tokenid":"sm","comment":"made by hand","privsep":1},{"tokenid":"sm"}]`
+	if owned, separated, err := ParseOwnedToken([]byte(mine), user, "sm"); !owned || !separated || err != nil {
+		t.Errorf("own token: %v %v %v", owned, separated, err)
 	}
-	if ok, _ := ParseOwnedToken([]byte(foreign), user, "sm"); ok {
+	if owned, _, _ := ParseOwnedToken([]byte(foreign), user, "sm"); owned {
 		t.Error("a foreign token counted as ours")
+	}
+}
+
+func TestParseOwnedTokenReportsWhetherItIsPrivilegeSeparated(t *testing.T) {
+	user := User("ab12")
+	for name, row := range map[string]string{
+		"off":     `{"tokenid":"sm","comment":"supermgmt install ab12","privsep":0}`,
+		"missing": `{"tokenid":"sm","comment":"supermgmt install ab12"}`,
+		"text":    `{"tokenid":"sm","comment":"supermgmt install ab12","privsep":"1"}`,
+	} {
+		owned, separated, err := ParseOwnedToken([]byte("["+row+"]"), user, "sm")
+		if !owned || separated || err != nil {
+			t.Errorf("%s: owned %v separated %v err %v", name, owned, separated, err)
+		}
 	}
 }

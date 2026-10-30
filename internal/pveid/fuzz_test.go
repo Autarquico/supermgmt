@@ -12,6 +12,8 @@ const fuzzInputLimit = 1 << 20
 func FuzzParseTokenAdd(f *testing.F) {
 	f.Add([]byte(goodTokenAnswer))
 	f.Add([]byte(`{"full-tokenid":"sm-ab12@pve!sm","value":"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}`))
+	f.Add([]byte(`{"full-tokenid":"sm-ab12@pve!sm","info":null,"value":"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}`))
+	f.Add([]byte(`{"full-tokenid":"sm-ab12@pve!sm","info":{"privsep":0},"value":"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}`))
 	f.Add([]byte(`{"full-tokenid":"sm-ab12@pve!sm","value":"x"}{"value":"y"}`))
 	f.Add([]byte(`{"value":null,"full-tokenid":""}`))
 	f.Add([]byte(``))
@@ -35,7 +37,7 @@ func FuzzParseTokenAdd(f *testing.F) {
 func FuzzParsePVEList(f *testing.F) {
 	f.Add([]byte(`[{"userid":"sm-ab12@pve"}]`), "userid", "sm-ab12@pve")
 	f.Add([]byte(`[{"path":"/","roleid":"R","type":"user","ugid":"u@pve"}]`), "roleid", "R")
-	f.Add([]byte(`[{"tokenid":"sm","comment":"supermgmt install ab12"}]`), "tokenid", "sm")
+	f.Add([]byte(`[{"tokenid":"sm","comment":"supermgmt install ab12","privsep":1}]`), "tokenid", "sm")
 	f.Add([]byte(`{`), "", "")
 	f.Fuzz(func(t *testing.T, in []byte, field, want string) {
 		if len(in) > fuzzInputLimit {
@@ -53,7 +55,7 @@ func FuzzParsePVEList(f *testing.F) {
 				t.Fatalf("an ACL names both or neither: %+v", a)
 			}
 		}
-		if _, err := ParseOwnedToken(in, "sm-ab12@pve", "sm"); err != nil && !errors.Is(err, ErrUnreadable) {
+		if _, _, err := ParseOwnedToken(in, "sm-ab12@pve", "sm"); err != nil && !errors.Is(err, ErrUnreadable) {
 			t.Fatalf("ParseOwnedToken: %v", err)
 		}
 		if _, owned, err := ParseOwnedUser(in, "sm-ab12@pve"); err != nil && (!errors.Is(err, ErrUnreadable) || owned) {

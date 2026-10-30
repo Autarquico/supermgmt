@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,8 +62,12 @@ func (h setupHandler) proxmoxParams(ctx context.Context, lease jobs.Lease, job j
 	if err != nil {
 		return nil, err
 	}
+	ownedRoles, err := roleJournal(ctx, h.cfg.DB.Reader(), node.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &systemd.ProxmoxParams{
-		InstanceID: instanceID, TokenStored: stored,
+		InstanceID: instanceID, TokenStored: stored, OwnedRoles: ownedRoles,
 		StoreToken: func(ctx context.Context, tokenID string, secret audit.Secret) error {
 			value := audit.Secret(tokenID + "=" + secret.Reveal())
 			if _, err := h.secrets.Put(ctx, name, value, map[string]any{"node": node.Name, "pve_id": tokenID}); err != nil {
@@ -73,7 +78,51 @@ func (h setupHandler) proxmoxParams(ctx context.Context, lease jobs.Lease, job j
 		TokenRemoved: func(ctx context.Context, tokenID string) error {
 			return h.tokenEvent(ctx, lease, job, node, eventProxmoxTokenDeleted, tokenID)
 		},
+		RoleOwned: func(ctx context.Context, role string) error {
+			return h.journalRole(ctx, lease, node, role)
+		},
 	}, nil
+}
+
+// roleJournal is the roles setup journaled as created on the node; none when
+// no row exists.
+func roleJournal(ctx context.Context, q database.Querier, node domain.ID) ([]string, error) {
+	c, err := database.GetNodeCapability(ctx, q, node, capabilityProxmoxRoles)
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := c.Metadata["roles"].([]any)
+	roles := make([]string, 0, len(raw))
+	for _, r := range raw {
+		name, ok := r.(string)
+		if !ok {
+			return nil, smerr.New(smerr.CodeInternal, "", "the Proxmox role journal is malformed")
+		}
+		roles = append(roles, name)
+	}
+	return roles, nil
+}
+
+// journalRole adds role to the node's journal, fenced by the job's lease. It
+// runs before the role is created, so a run that fails afterwards still owns it.
+func (h setupHandler) journalRole(ctx context.Context, lease jobs.Lease, node domain.Node, role string) error {
+	return h.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if err := lease.Fence(ctx, tx); err != nil {
+			return err
+		}
+		roles, err := roleJournal(ctx, tx, node.ID)
+		if err != nil {
+			return err
+		}
+		roles = slices.Compact(slices.Sorted(slices.Values(append(roles, role))))
+		return database.SetNodeCapability(ctx, tx, node.ID, database.NodeCapability{
+			Capability: capabilityProxmoxRoles, Available: true,
+			Metadata: map[string]any{"roles": roles}, CheckedAt: h.cfg.Clock.Now(),
+		})
+	})
 }
 
 func (h setupHandler) tokenStored(ctx context.Context, name string) (bool, error) {
