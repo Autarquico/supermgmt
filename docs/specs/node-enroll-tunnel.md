@@ -2,12 +2,12 @@
 codename: supermgmt
 title: Add a node that is reachable only through Cloudflare Tunnel
 type: epic
-status: draft
+status: active
 priority: P1
 size: XL
-issue: null
+issue: 48
 prs: []
-related_issues: []
+related_issues: [48]
 depends_on: []
 supersedes: []
 related_specs: [cloudflare-tunnel-transport, proxmox-via-node]
