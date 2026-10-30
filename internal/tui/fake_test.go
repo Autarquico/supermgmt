@@ -50,6 +50,7 @@ type fakeAPI struct {
 	planRequests       []wire.CreatePlanRequest
 	cancelled          []string
 	refreshed          []domain.ID
+	enrollments        []wire.StartTunnelEnrollmentRequest
 	refreshOutcome     map[domain.ID]wire.Provider // what a refresh answers; default: the provider, status ok
 }
 
@@ -129,6 +130,14 @@ func (f *fakeAPI) GetNode(ctx context.Context, id domain.ID, _ bool) (wire.Node,
 func (f *fakeAPI) ProbeNode(ctx context.Context, _ domain.ID) (wire.Submission, error) {
 	err := f.enter(ctx, "ProbeNode")
 	return wire.Submission{Job: wire.Job{ID: idJob, State: domain.JobQueued}}, err
+}
+
+func (f *fakeAPI) StartTunnelEnrollment(ctx context.Context, r wire.StartTunnelEnrollmentRequest) (wire.Direct[wire.TunnelEnrollment], error) {
+	err := f.enter(ctx, "StartTunnelEnrollment")
+	f.mu.Lock()
+	f.enrollments = append(f.enrollments, r)
+	f.mu.Unlock()
+	return wire.Direct[wire.TunnelEnrollment]{Applied: &wire.TunnelEnrollment{Name: r.Name, Phase: "started"}}, err
 }
 
 func (f *fakeAPI) ListServices(ctx context.Context, node domain.ID, _ wire.PageQuery) (wire.Page[wire.Service], error) {

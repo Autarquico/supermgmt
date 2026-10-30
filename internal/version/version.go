@@ -4,6 +4,7 @@ package version
 import (
 	"runtime"
 	"runtime/debug"
+	"strings"
 )
 
 // Set via -ldflags "-X github.com/autarquico/supermgmt/internal/version.Version=...".
@@ -56,4 +57,17 @@ func setting(bi *debug.BuildInfo, key, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// Channel is the release channel the running binary was published on, as the join line names it:
+// "beta" for a pre-release version such as 0.1.0-rc.3, "" (stable) for a release or an unversioned build.
+func Channel() string { return channelOf(Version) }
+
+func channelOf(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	core, _, _ := strings.Cut(v, "+")
+	if core == "" || core[0] < '0' || core[0] > '9' || !strings.Contains(core, "-") {
+		return ""
+	}
+	return "beta"
 }

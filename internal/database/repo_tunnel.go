@@ -116,6 +116,26 @@ func CreateTunnelOperation(ctx context.Context, q Querier, op TunnelOperation) (
 	return GetTunnelOperation(ctx, q, op.ID)
 }
 
+// ImportCommittedTunnelOperation records an enable that already finished elsewhere: a row in phase
+// committed, carrying op.Objects, for the node an enrollment has just created. It runs in the commit
+// transaction of the enrollment, after the node row. Only ID, NodeID, AccountID, Zone, InstanceID,
+// Hostname, Objects and CreatedAt of op are used; the kind is enable and the generation is assigned as in
+// CreateTunnelOperation. A committed row never holds the node, so nothing else conflicts.
+func ImportCommittedTunnelOperation(ctx context.Context, q Querier, op TunnelOperation) (TunnelOperation, error) {
+	_, err := q.ExecContext(ctx, `
+		INSERT INTO tunnel_operations (id, node_id, generation, operation, phase, phase_started_at,
+			account_id, zone, instance_id, hostname, tunnel_id, dns_record_id, access_app_id, created_at, updated_at)
+		VALUES (?, ?, (SELECT COALESCE(MAX(generation), 0) + 1 FROM tunnel_operations WHERE node_id = ?),
+			'enable', 'committed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		op.ID, op.NodeID, op.NodeID, millis(op.CreatedAt),
+		op.AccountID, op.Zone, op.InstanceID, op.Hostname,
+		op.Objects.TunnelID, op.Objects.DNSRecordID, op.Objects.AccessAppID, millis(op.CreatedAt), millis(op.CreatedAt))
+	if err != nil {
+		return TunnelOperation{}, conflictIfDuplicate(err, "tunnel operation")
+	}
+	return GetTunnelOperation(ctx, q, op.ID)
+}
+
 // GetTunnelOperation returns the record, or NOT_FOUND.
 func GetTunnelOperation(ctx context.Context, q Querier, id domain.ID) (TunnelOperation, error) {
 	op, err := scanTunnelOperation(q.QueryRowContext(ctx,

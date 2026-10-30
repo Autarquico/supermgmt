@@ -43,6 +43,10 @@ type HandlersOptions struct {
 	// Deploy enables deployment.create and deployment.rollback; without it the
 	// types have no handler.
 	Deploy *DeployOptions
+
+	// Enrollments runs the node.add jobs of a tunnel enrollment (ADR-0039); nil
+	// leaves such a job to fail loudly.
+	Enrollments *TunnelEnrollments
 }
 
 // Handlers are the executors of the job types M1 adds.
@@ -85,7 +89,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
 		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober, tunnel: tunnel, secrets: o.Secrets},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
-		apply:  applyHandler{inv: o.Inventory, apps: o.Apps},
+		apply:  applyHandler{inv: o.Inventory, apps: o.Apps, enrollments: o.Enrollments},
 	}
 	if tunnel != nil {
 		h.disable = &tunnelDisableHandler{core: c, store: o.Store, conn: o.Connector, prober: o.Prober, tunnel: tunnel}

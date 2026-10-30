@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/app"
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -30,6 +32,8 @@ type harness struct {
 	http   *http.Client
 	caller domain.ID
 	ids    domain.IDGenerator
+	// tunnelSecrets is the secret store of the tunnel enrollment service the server is built with.
+	tunnelSecrets *memorySecrets
 }
 
 type harnessOptions struct {
@@ -141,6 +145,21 @@ func (h *harness) build(cfg app.Config, o harnessOptions) *Server {
 		return secrets.Identity{Ref: secrets.Ref{Name: "ssh/default", Version: 1}, AuthorizedKey: "ssh-ed25519 AAAA", FingerprintSHA256: "SHA256:x"}, nil
 	})
 	must(h.t, err)
+	h.tunnelSecrets = &memorySecrets{values: map[string]audit.Secret{}}
+	tunnelEnrollments, err := app.NewTunnelEnrollments(cfg, plans, store, app.TunnelEnrollmentOptions{
+		Tunnel: &app.TunnelOptions{
+			Config: config.Cloudflare{
+				AccountID: "acct", Zone: "example.com", APITokenRef: config.DefaultCloudflareAPITokenRef,
+				AccessTokenRef: config.DefaultCloudflareAccessTokenRef,
+			},
+			Secrets: h.tunnelSecrets,
+		},
+		Identity: func(context.Context) (secrets.Identity, error) {
+			return secrets.Identity{Ref: secrets.Ref{Name: "ssh/default", Version: 1}, AuthorizedKey: "ssh-ed25519 AAAA", FingerprintSHA256: "SHA256:x"}, nil
+		},
+		Scan: noScan,
+	})
+	must(h.t, err)
 	var discovery *app.ProxmoxSync
 	if o.proxmox != nil {
 		discovery = o.proxmox(cfg)
@@ -148,12 +167,19 @@ func (h *harness) build(cfg app.Config, o harnessOptions) *Server {
 	server, err := New(Options{
 		Services: Services{
 			Plans: plans, Approvals: approvals, Governance: governance, Services: actions,
-			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys, Keys: o.keys, Proxmox: discovery,
+			Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys, Keys: o.keys, Proxmox: discovery, TunnelEnrollments: tunnelEnrollments,
 		},
 		IDs: cfg.IDs, Identity: h.caller, Residency: o.cached,
 	})
 	must(h.t, err)
 	return server
+}
+
+// noScan is the host key scanner of a server that never reaches a node; generic so this package names no
+// transport type.
+func noScan[T, R any](context.Context, T) (R, error) {
+	var none R
+	return none, errors.New("no network in this test")
 }
 
 func must(t *testing.T, err error) {

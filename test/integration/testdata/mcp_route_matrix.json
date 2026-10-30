@@ -1182,6 +1182,110 @@
     "reason": "DESTRUCTIVE_GATE"
    },
    "note": "A destructive action needs more than a wildcard grant: DESTRUCTIVE_GATE with writes on."
+  },
+  {
+   "route": "GET /api/v1/nodes/ssh/tunnel-enrollments",
+   "class": "query",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/ssh/tunnel-enrollments/{name}",
+   "class": "query",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   },
+   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+  },
+  {
+   "route": "GET /api/v1/nodes/ssh/tunnel-enrollments/{name}/token",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1/token",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   },
+   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+  },
+  {
+   "route": "POST /api/v1/nodes/ssh/tunnel-enrollments",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments",
+   "body": "{\"name\":\"vps1\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 400
+   },
+   "on": {
+    "status": 400
+   },
+   "note": "The rig has no cloudflare: block, so the start is refused as invalid before policy, touching nothing."
+  },
+  {
+   "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/confirm",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1/confirm",
+   "body": "{\"host_public_key\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   },
+   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+  },
+  {
+   "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/refuse",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1/refuse",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   },
+   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+  },
+  {
+   "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/cancel",
+   "class": "write",
+   "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1/cancel",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   },
+   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
   }
  ]
 }

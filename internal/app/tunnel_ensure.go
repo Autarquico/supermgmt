@@ -155,5 +155,5 @@ func pickAdoption[T any](objects []T, adoptable func(T) bool) (T, adoption) {
 // createdSince reports whether an object stamped created belongs to an attempt
 // of the current phase.
 func (r *tunnelRun) createdSince(created time.Time) bool {
-	return !created.Before(r.op.PhaseStartedAt.Add(-clockSkewAllowance))
+	return !created.Before(r.record().PhaseStartedAt().Add(-clockSkewAllowance))
 }

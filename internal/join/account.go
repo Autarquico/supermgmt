@@ -81,12 +81,9 @@ func Provision(ctx context.Context, host Host, e wire.Enrolled) error {
 // is set on every run, so a run interrupted between creation and that step
 // converges.
 func ensureAccount(ctx context.Context, host Host, user string) error {
-	account, found, err := host.LookupAccount(user)
+	found, err := checkAccount(host, user)
 	if err != nil {
-		return fmt.Errorf("look up %s: %w", user, err)
-	}
-	if found && !isOurs(account, user) {
-		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("account %s already exists and is not the SuperMgmt service account", user))
+		return err
 	}
 	if !found {
 		if err := host.AddAccount(ctx, user); err != nil {
@@ -97,6 +94,19 @@ func ensureAccount(ctx context.Context, host Host, user string) error {
 		return fmt.Errorf("set the password field of %s: %w", user, err)
 	}
 	return nil
+}
+
+// checkAccount reports whether the account exists, and refuses one that is not
+// exactly ours. It changes nothing.
+func checkAccount(host Host, user string) (found bool, err error) {
+	account, found, err := host.LookupAccount(user)
+	if err != nil {
+		return false, fmt.Errorf("look up %s: %w", user, err)
+	}
+	if found && !isOurs(account, user) {
+		return false, smerr.New(smerr.CodeConflict, "", fmt.Sprintf("account %s already exists and is not the SuperMgmt service account", user))
+	}
+	return found, nil
 }
 
 func isOurs(a Account, user string) bool {

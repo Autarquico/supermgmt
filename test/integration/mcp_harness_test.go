@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -372,6 +373,13 @@ func (rig *mcpRig) startServer(ctx context.Context, cfg app.Config) *api.Server 
 	svc.Enrollments, err = app.NewEnrollments(cfg, auth.Minter{}, app.SSHIdentityOf(secretStore))
 	mcpRigMust(t, err)
 	svc.MCPClients, err = app.NewMCPClients(cfg, store, app.MCPClientsOptions{Tokens: auth.Minter{}})
+	mcpRigMust(t, err)
+	svc.TunnelEnrollments, err = app.NewTunnelEnrollments(cfg, svc.Plans, store, app.TunnelEnrollmentOptions{
+		Identity: app.SSHIdentityOf(secretStore),
+		Scan: func(context.Context, ssh.Target) (ssh.HostKey, error) {
+			return ssh.HostKey{}, errors.New("no route here reaches a node through a tunnel")
+		},
+	})
 	mcpRigMust(t, err)
 
 	server, err := api.New(api.Options{

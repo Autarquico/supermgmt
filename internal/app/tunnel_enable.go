@@ -93,6 +93,8 @@ type tunnelRun struct {
 	zoneID     string
 	hostname   string
 	op         database.TunnelOperation
+	// rec is what provisionCloudflare reads and advances; the node's operation (op) when nil.
+	rec tunnelRecord
 	// lastEnabled merges the objects the node's finished enables (committed or
 	// abandoned) left behind since its newest finished disable, newest ID
 	// first: a rerun or a disable uses them instead of treating them as
@@ -361,21 +363,16 @@ func (r *tunnelRun) fail(ctx context.Context, err error) error {
 	default:
 		return err
 	}
-	if r.op.Phase.Halted() {
+	if r.record().Phase().Halted() {
 		return err
 	}
 	message := textsafe.Line(audit.ScrubString(err.Error()))
 	if utf8.RuneCountInString(message) > maxRecordedErrorLength {
 		message = string([]rune(message)[:maxRecordedErrorLength])
 	}
-	_ = r.write(context.WithoutCancel(ctx), func(ctx context.Context, tx *database.Tx) error {
-		if err := r.lease.Fence(ctx, tx); err != nil {
-			return err
-		}
-		if _, err := database.HaltTunnelOperation(ctx, tx, r.op.ID, r.op.Generation, r.op.Phase, halt, message, r.cfg.Clock.Now()); err != nil {
-			return err
-		}
-		return r.emitFor(ctx, tx, event, domain.ResultFailed, map[string]any{"phase": string(r.op.Phase)})
+	phase := r.record().Phase()
+	_ = r.record().Halt(context.WithoutCancel(ctx), halt, message, func(ctx context.Context, tx *database.Tx) error {
+		return r.emitFor(ctx, tx, event, domain.ResultFailed, map[string]any{"phase": string(phase)})
 	})
 	return err
 }
@@ -404,7 +401,7 @@ func (r *tunnelRun) emitFor(ctx context.Context, tx *database.Tx, action string,
 	if err != nil {
 		return err
 	}
-	data["job_id"], data["operation_id"], data["node_id"] = r.job.ID.String(), r.op.ID.String(), r.node.ID.String()
+	data["job_id"], data["operation_id"], data["node_id"] = r.job.ID.String(), r.record().ID().String(), r.node.ID.String()
 	return r.emit(ctx, tx, actor, action, nodeRef(r.node.ID), result, data)
 }
 
@@ -418,28 +415,15 @@ func (r *tunnelRun) advance(ctx context.Context, next database.TunnelPhase, obje
 // advanceWith is advance plus a change that must commit with the phase: the
 // switch of the endpoint, the capability.
 func (r *tunnelRun) advanceWith(ctx context.Context, next database.TunnelPhase, objects database.TunnelObjects, action string, data map[string]any, with func(context.Context, *database.Tx) error) error {
-	if phaseIndex(r.op.Phase) >= phaseIndex(next) {
+	rec := r.record()
+	if phaseIndex(rec.Phase()) >= phaseIndex(next) {
 		return nil
 	}
-	var advanced database.TunnelOperation
-	err := r.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		if err := r.lease.Fence(ctx, tx); err != nil {
-			return err
+	hooks := recordHooks{Before: with}
+	if action != "" {
+		hooks.After = func(ctx context.Context, tx *database.Tx) error {
+			return r.emitFor(ctx, tx, action, domain.ResultSucceeded, data)
 		}
-		if with != nil {
-			if err := with(ctx, tx); err != nil {
-				return err
-			}
-		}
-		var err error
-		advanced, err = database.AdvanceTunnelPhase(ctx, tx, r.op.ID, r.op.Generation, r.op.Phase, next, objects, r.cfg.Clock.Now())
-		if err != nil || action == "" {
-			return err
-		}
-		return r.emitFor(ctx, tx, action, domain.ResultSucceeded, data)
-	})
-	if err == nil {
-		r.op = advanced
 	}
-	return err
+	return rec.Advance(ctx, next, objects, hooks)
 }

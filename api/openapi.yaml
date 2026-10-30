@@ -457,6 +457,137 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/tunnel-enrollments:
+    get:
+      operationId: listTunnelEnrollments
+      summary: The open enrollments of nodes reached only through Cloudflare Tunnel.
+      description: Enrollments that have not finished, oldest first, with the node line and the expiry. The connector token is never in them.
+      tags: [nodes]
+      x-supermgmt-route: action:node.read
+      responses:
+        '200':
+          description: The open enrollments.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfTunnelEnrollment'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: startTunnelEnrollment
+      summary: Start adding a node that is reachable only through Cloudflare Tunnel (experimental).
+      description: >-
+        Policy evaluates node.add with tunnel=true before any Cloudflare call. Applied, the enrollment exists and the
+        Cloudflare objects are being built; the node is written only at the commit, after the operator confirmed the
+        host key the instance scanned over the tunnel. Refused before Cloudflare is touched when Cloudflare is not
+        configured, the name is taken by a node or an enrollment, or the name does not yield a valid hostname.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StartTunnelEnrollmentRequest'}
+      responses:
+        '201':
+          description: The enrollment started.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfTunnelEnrollment'}}}]}
+        '202':
+          description: Awaiting approval; a control_plane.apply job was created and no enrollment exists yet.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfTunnelEnrollment'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/tunnel-enrollments/{name}:
+    get:
+      operationId: getTunnelEnrollment
+      summary: The newest enrollment of a name, finished ones included.
+      tags: [nodes]
+      x-supermgmt-route: action:node.read
+      parameters:
+        - $ref: '#/components/parameters/TunnelEnrollmentName'
+      responses:
+        '200':
+          description: The enrollment.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/TunnelEnrollment'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/tunnel-enrollments/{name}/token:
+    get:
+      operationId: getTunnelEnrollmentToken
+      summary: The connector token of an open enrollment.
+      description: >-
+        The one response that carries the token; no view, list, job, audit event or log does. Allowed while the
+        enrollment waits for its node. The token is retired when the node is proven, at the commit, at expiry and at
+        cancellation. Each read is audited without the value. Rejects a request carrying `Idempotency-Key`.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      parameters:
+        - $ref: '#/components/parameters/TunnelEnrollmentName'
+      responses:
+        '200':
+          description: The token.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/TunnelEnrollmentToken'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/tunnel-enrollments/{name}/confirm:
+    post:
+      operationId: confirmTunnelEnrollment
+      summary: Confirm the host key the enrollment scanned.
+      description: >-
+        A compare-and-swap on the scanned key: it holds only while the enrollment is scanned and its scanned key is
+        the one sent. A different key ends the enrollment with SSH_HOST_KEY_MISMATCH and its Cloudflare objects are
+        removed. A cancelled, expired or not yet scanned enrollment is a CONFLICT.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      parameters:
+        - $ref: '#/components/parameters/TunnelEnrollmentName'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConfirmTunnelEnrollmentRequest'}
+      responses:
+        '200':
+          description: Confirmed; the commit follows.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/TunnelEnrollment'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/tunnel-enrollments/{name}/refuse:
+    post:
+      operationId: refuseTunnelEnrollment
+      summary: Refuse the host key the enrollment scanned.
+      description: Ends the enrollment with SSH_HOST_KEY_MISMATCH (always answered as that error) and removes its Cloudflare objects.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      parameters:
+        - $ref: '#/components/parameters/TunnelEnrollmentName'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/ssh/tunnel-enrollments/{name}/cancel:
+    post:
+      operationId: cancelTunnelEnrollment
+      summary: Cancel an enrollment and remove its Cloudflare objects.
+      description: A marker the next job acts on; cancelling an enrollment that is ending or ended changes nothing, a committed one is a CONFLICT.
+      tags: [nodes]
+      x-supermgmt-route: action:node.add
+      parameters:
+        - $ref: '#/components/parameters/TunnelEnrollmentName'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The enrollment.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/TunnelEnrollment'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}:
     get:
       operationId: getNode
@@ -1378,6 +1509,12 @@ components:
       required: true
       description: Resource id.
       schema: {$ref: '#/components/schemas/ID'}
+    TunnelEnrollmentName:
+      name: name
+      in: path
+      required: true
+      description: Name of the node being enrolled.
+      schema: {type: string, minLength: 1}
     Sid:
       name: sid
       in: path
@@ -1666,6 +1803,54 @@ components:
         admin_credential_ref: {type: string}
         environment: {type: string}
         tags: {type: array, items: {type: string}}
+    StartTunnelEnrollmentRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        environment: {type: string}
+        tags: {type: array, items: {type: string}}
+        expires_in: {type: string, description: 'A Go duration such as 90m; empty is 1h, the maximum is 24h.'}
+    TunnelEnrollment:
+      type: object
+      description: An enrollment before its node exists. It never carries the connector token.
+      required: [id, node_id, name, tags, hostname, phase, expires_at, join_line]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        node_id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        environment: {type: string}
+        tags: {type: array, items: {type: string}}
+        hostname: {type: string, description: The Cloudflare hostname the node will be reached at.}
+        phase: {type: string, description: 'started, token_ready, tunnel_created, ingress_set, access_ready, dns_created (waiting for the node), scanned, confirmed, committed; removing, expired, cancelled, mismatch; failed and conflict when halted.'}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        join_line: {type: string, description: The one line to run on the node. It carries no secret.}
+        host_public_key: {type: string, description: The key scanned over the tunnel; set once scanned.}
+        host_key_fingerprint: {type: string, description: Its SHA256 fingerprint; the operator compares it with the one the node printed.}
+        error: {type: string, description: Why a halted or ended enrollment is not moving, or what the node is still waited for.}
+    ConfirmTunnelEnrollmentRequest:
+      type: object
+      required: [host_public_key]
+      properties:
+        host_public_key: {type: string, description: The scanned key the operator was shown.}
+    TunnelEnrollmentToken:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string, description: The Cloudflare connector token; paste it at the node's prompt.}
+    PageOfTunnelEnrollment:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TunnelEnrollment'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    DirectOfTunnelEnrollment:
+      type: object
+      description: Exactly one of applied and pending is non-null.
+      required: [applied, pending]
+      properties:
+        applied: {oneOf: [{$ref: '#/components/schemas/TunnelEnrollment'}, {type: 'null'}]}
+        pending: {oneOf: [{$ref: '#/components/schemas/Submission'}, {type: 'null'}]}
     NodePatch:
       type: object
       description: Absent fields are unchanged.

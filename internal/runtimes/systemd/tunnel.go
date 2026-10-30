@@ -32,11 +32,20 @@ const (
 // Validate checks the token shape and that this build pins Cloudflare's key,
 // before anything touches the node.
 func (t TunnelParams) Validate() error {
-	if token := t.Token.Reveal(); len(token) < minTokenLength || len(token) > maxTokenLength || !tokenRE.MatchString(token) {
-		return invalid("tunnel token is not a valid tunnel token")
+	if err := ValidateConnectorToken(t.Token.Reveal()); err != nil {
+		return err
 	}
 	_, err := cloudflarePin.keyring()
 	return err
+}
+
+// ValidateConnectorToken checks the alphabet and length of a connector token.
+// It is a shape check, not authentication, and its error never carries the token.
+func ValidateConnectorToken(token string) error {
+	if len(token) < minTokenLength || len(token) > maxTokenLength || !tokenRE.MatchString(token) {
+		return invalid("tunnel token is not a valid tunnel token")
+	}
+	return nil
 }
 
 // supportedDistributions maps /etc/os-release ID to the VERSION_CODENAME of the
@@ -77,7 +86,6 @@ func sha256Hex(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// cloudflareSource is the apt source line of the one repository setup adds.
 // cloudflareSource is the apt source line of Cloudflare's install guide, whose
 // suite is "any" for every Debian and Ubuntu release.
 func cloudflareSource() string {
@@ -131,36 +139,82 @@ WantedBy=multi-user.target
 
 func tokenFile(t TunnelParams) string { return t.Token.Reveal() + "\n" }
 
+// CloudflareKeyring returns the pinned keyring, proven against its pinned fingerprint.
+func CloudflareKeyring() ([]byte, error) { return cloudflarePin.keyring() }
+
+// CloudflareSource is the apt source file content node setup and sm join write.
+func CloudflareSource() string { return cloudflareSource() }
+
+// CloudflaredUnit is the unit file content node setup and sm join write.
+func CloudflaredUnit() string { return cloudflaredUnit() }
+
+// ConnectorTokenFile is the content of the root-only token file for token.
+func ConnectorTokenFile(token string) string {
+	return tokenFile(TunnelParams{Token: audit.Secret(token)})
+}
+
+// InstallTunnel runs the install of ensureTunnel as root on the machine ex
+// reaches, with the shared checks: nothing is written when CheckTunnelInstallable
+// would refuse. A re-run changes nothing; a different token replaces the old
+// one and restarts the connector.
+func InstallTunnel(ctx context.Context, ex transport.Executor, t TunnelParams) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	return stepper{ex: ex}.ensureTunnel(ctx, t)
+}
+
+// CheckTunnelInstallable runs the read-only part of the install: the pinned
+// key, a supported distribution, and a Cloudflare apt source that does not
+// block the install. It changes nothing.
+func CheckTunnelInstallable(ctx context.Context, ex transport.Executor) error {
+	_, err := stepper{ex: ex}.checkTunnelInstall(ctx)
+	return err
+}
+
+// tunnelInstall is what the read-only checks found.
+type tunnelInstall struct {
+	keyring   []byte
+	installed bool // the cloudflared package is installed
+	managed   bool // the repository and the package are ours to install
+}
+
+func (s stepper) checkTunnelInstall(ctx context.Context) (tunnelInstall, error) {
+	keyring, err := cloudflarePin.keyring()
+	if err != nil {
+		return tunnelInstall{}, err
+	}
+	if err := s.requireSupportedDistribution(ctx); err != nil {
+		return tunnelInstall{}, err
+	}
+	installed, err := s.cloudflaredInstalled(ctx)
+	if err != nil {
+		return tunnelInstall{}, err
+	}
+	owned, foreign, err := s.sourceOwnership(ctx, cloudflareSource())
+	if err != nil {
+		return tunnelInstall{}, err
+	}
+	if !installed && foreign {
+		return tunnelInstall{}, smerr.New(smerr.CodeConflict, "", templates.CloudflaredSourcePath+" already exists with other content and cloudflared is not installed")
+	}
+	return tunnelInstall{keyring: keyring, installed: installed, managed: !installed || owned}, nil
+}
+
 // ensureTunnel installs cloudflared from Cloudflare's signed repository (the
 // pinned key, nothing fetched), the token file and the SuperMgmt unit, and
 // starts it. Every file is rewritten only when its hash differs, so a re-run
 // changes nothing and a changed token is the only reason to restart.
 func (s stepper) ensureTunnel(ctx context.Context, t TunnelParams) error {
-	keyring, err := cloudflarePin.keyring()
+	plan, err := s.checkTunnelInstall(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.requireSupportedDistribution(ctx); err != nil {
-		return err
-	}
-	source := cloudflareSource()
-	installed, err := s.cloudflaredInstalled(ctx)
-	if err != nil {
-		return err
-	}
-	owned, foreign, err := s.sourceOwnership(ctx, source)
-	if err != nil {
-		return err
-	}
-	if !installed && foreign {
-		return smerr.New(smerr.CodeConflict, "", templates.CloudflaredSourcePath+" already exists with other content and cloudflared is not installed")
-	}
-	managed := !installed || owned
-	if managed {
-		if err := s.ensureRepository(ctx, string(keyring), source); err != nil {
+	if plan.managed {
+		if err := s.ensureRepository(ctx, string(plan.keyring), cloudflareSource()); err != nil {
 			return err
 		}
-		if !installed {
+		if !plan.installed {
 			if err := s.installCloudflared(ctx); err != nil {
 				return err
 			}

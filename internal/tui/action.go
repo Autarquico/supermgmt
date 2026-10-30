@@ -405,8 +405,8 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · setup <node> [docker|no-docker] [broker|journal] [tunnel] [proxmox] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
-	paletteShortcut = "ssh · logs · services · setup · tunnel-disable · probe · power · refresh · deploy · rollback   (? arguments)"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · add node <name> tunnel · setup <node> [docker|no-docker] [broker|journal] [tunnel] [proxmox] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env>"
+	paletteShortcut = "ssh · logs · services · add node · setup · tunnel-disable · probe · power · refresh · deploy · rollback   (? arguments)"
 )
 
 func (m *Model) openPalette() tea.Cmd {
@@ -430,9 +430,37 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.commandDeploy(cmd, args)
 	case "ssh", "services", "setup", "tunnel-disable", "probe":
 		return m.commandOnNode(cmd, args)
+	case "add":
+		return m.commandAdd(args)
 	}
 	m.notice = notice{text: fmt.Sprintf("unknown command %q: %s", cmd, paletteHint), isErr: true}
 	return nil
+}
+
+// commandAdd is `add node <name> tunnel`: it starts the enrollment of a node reachable only through
+// Cloudflare Tunnel. The line to run on the node, the connector token and the host key confirmation need a
+// prompt that outlives the screen, so `sm nodes add --tunnel` carries on from here.
+func (m *Model) commandAdd(args []string) tea.Cmd {
+	if len(args) != 3 || args[0] != "node" || args[2] != "tunnel" {
+		m.notice = notice{text: "usage: add node <name> tunnel", isErr: true}
+		return nil
+	}
+	api, ok := m.api.(TunnelEnrollmentAPI)
+	if !ok {
+		m.notice = notice{text: "this daemon does not serve tunnel enrollment", isErr: true}
+		return nil
+	}
+	name := args[1]
+	return m.act(func(ctx context.Context) (string, error) {
+		res, err := api.StartTunnelEnrollment(ctx, wire.StartTunnelEnrollmentRequest{Name: name})
+		if err != nil {
+			return "", err
+		}
+		if res.Pending != nil {
+			return "adding " + textsafe.Line(name) + " through a tunnel: " + submissionNotice(*res.Pending) + "; then run: sm nodes add --tunnel --name " + textsafe.Line(name), nil
+		}
+		return "enrollment of " + textsafe.Line(name) + " started; continue in a terminal: sm nodes add --tunnel --name " + textsafe.Line(name), nil
+	})
 }
 
 // commandDeploy starts the creation wizard or the rollback review of an

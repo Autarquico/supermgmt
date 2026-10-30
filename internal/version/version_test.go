@@ -46,3 +46,14 @@ func TestInfoReportsRuntime(t *testing.T) {
 		t.Error("Version empty")
 	}
 }
+
+func TestChannelOf(t *testing.T) {
+	for v, want := range map[string]string{
+		"0.1.0-rc.3": "beta", "v0.1.0-rc.3": "beta", "1.2.3-beta.1+abc": "beta",
+		"0.1.0": "", "v1.2.3": "", "1.2.3+build-5": "", "dev": "", "": "", "dev-abc": "",
+	} {
+		if got := channelOf(v); got != want {
+			t.Errorf("channelOf(%q) = %q, want %q", v, got, want)
+		}
+	}
+}

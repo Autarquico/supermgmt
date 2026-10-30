@@ -30,6 +30,10 @@ func nodeRef(id domain.ID) domain.ResourceRef {
 }
 
 func (i *Inventory) applyNodeAdd(ctx context.Context, q database.Querier, actor domain.Actor, p nodeAddParams) (domain.Node, error) {
+	if p.Tunnel {
+		// An enrollment is advanced by its own job; this path would insert a node with no host.
+		return domain.Node{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "tunnel enrollment is not available: the instance has no cloudflare: block")
+	}
 	existing, err := database.GetNode(ctx, q, p.NodeID)
 	if err == nil {
 		return existing, nil

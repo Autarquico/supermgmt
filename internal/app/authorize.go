@@ -11,10 +11,11 @@ import (
 	"github.com/autarquico/supermgmt/internal/policy"
 )
 
-// systemJobActions are the job-mode actions the system actor may run (spec
-// §11.1: scheduled backup.create). It holds no roles and policy is never
+// systemJobActions are the actions the system actor may run (spec §11.1:
+// scheduled backup.create; node.add for the steps the scheduler submits for a
+// tunnel enrollment a person already started, ADR-0039). It holds no roles and policy is never
 // evaluated for it, so anything not listed here is denied.
-var systemJobActions = []string{"backup.create"}
+var systemJobActions = []string{"backup.create", actionNodeAdd}
 
 // authorize evaluates req. The system actor gets the fixed allowlist above and
 // never needs approval; every other actor goes through policy.

@@ -17,6 +17,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/config"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
@@ -27,6 +28,8 @@ const (
 	// sbinPath is appended to PATH: useradd and usermod live in directories a
 	// minimal environment (sudo, cron) often lacks.
 	sbinPath = ":/usr/local/sbin:/usr/sbin:/sbin"
+	// systemdRunDir exists while systemd is the running init (sd_booted(3)).
+	systemdRunDir = "/run/systemd/system"
 )
 
 // System is the Host backed by the machine it runs on. Root prefixes every
@@ -40,7 +43,10 @@ type System struct {
 	AsUser func(ctx context.Context, user string, stdin []byte, script string, args ...string) error
 }
 
-var _ Host = System{}
+var (
+	_ Host       = System{}
+	_ TunnelHost = System{}
+)
 
 func (s System) path(p string) string { return filepath.Join(s.Root, p) }
 
@@ -57,6 +63,24 @@ func (s System) Preflight() error {
 	}
 	return nil
 }
+
+// PreflightTunnel adds to Preflight what `sm join --tunnel` installs with:
+// systemd and apt-get.
+func (s System) PreflightTunnel() error {
+	if err := s.Preflight(); err != nil {
+		return err
+	}
+	if info, err := os.Stat(s.path(systemdRunDir)); err != nil || !info.IsDir() {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "systemd is not the init system of this node: sm join --tunnel needs it")
+	}
+	if _, err := lookPathWithSbin("apt-get"); err != nil {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "apt-get was not found: sm join --tunnel supports Debian and Ubuntu")
+	}
+	return nil
+}
+
+// Executor runs the cloudflared install steps as this root process.
+func (s System) Executor() transport.Executor { return rootExecutor{} }
 
 func lookPathWithSbin(name string) (string, error) {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH") + sbinPath) {

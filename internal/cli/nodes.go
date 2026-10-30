@@ -63,7 +63,16 @@ func newNodesListCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emit(cmd, page, func(w io.Writer) error { return writeNodes(w, page) })
+			enrollments := openEnrollments(cmd, api)
+			if len(enrollments) == 0 {
+				return emit(cmd, page, func(w io.Writer) error { return writeNodes(w, page) })
+			}
+			return emit(cmd, nodesWithEnrollments{Page: page, TunnelEnrollments: enrollments}, func(w io.Writer) error {
+				if err := writeNodes(w, page); err != nil {
+					return err
+				}
+				return writeEnrollments(w, enrollments)
+			})
 		},
 	}
 	cmd.Flags().IntVar(&q.Limit, "limit", 0, "maximum items per page (default 50, max 500)")
@@ -185,6 +194,7 @@ type addNodeFlags struct {
 	fingerprint string
 	port        int
 	request     wire.AddSSHNodeRequest
+	tunnel      tunnelFlags
 }
 
 func newNodesAddCmd(env []string) *cobra.Command {
@@ -194,12 +204,24 @@ func newNodesAddCmd(env []string) *cobra.Command {
 		Short: "Add an SSH node (or this machine with --local)",
 		Long: "Add an SSH node. The host key is scanned and its SHA256 fingerprint shown; nothing is\n" +
 			"trusted until you confirm it: pass --fingerprint SHA256:... (verified out of band) or type\n" +
-			"'yes' at the prompt. The confirmed key is pinned for every later connection.",
+			"'yes' at the prompt. The confirmed key is pinned for every later connection.\n\n" +
+			"With --tunnel the node needs no inbound port: it is reached through Cloudflare Tunnel (experimental).\n" +
+			"The command prints one line to run on the node and, separately, the connector token to paste at the\n" +
+			"node's prompt; then it waits for the node, shows the host key fingerprint the instance scanned over the\n" +
+			"tunnel and asks you to compare it with the one the node printed (or pass --fingerprint). Ctrl-C leaves the\n" +
+			"enrollment running; run the command again to reattach. --show-token prints the token again, --cancel\n" +
+			"removes the enrollment and its Cloudflare objects.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := f.tunnel.check(cmd, f.request.Name, f.fingerprint); err != nil {
+				return err
+			}
 			api, where, err := connect(cmd, env)
 			if err != nil {
 				return err
+			}
+			if f.tunnel.enabled {
+				return addTunnel(cmd, api, f)
 			}
 			if f.local {
 				return addLocal(cmd, api, f)
@@ -228,6 +250,7 @@ func newNodesAddCmd(env []string) *cobra.Command {
 	cmd.Flags().StringVar(&r.AdminCredentialRef, "admin-credential-ref", "", "your credential for admin-user (default ssh-agent://default)")
 	cmd.Flags().StringVar(&r.Environment, "environment", "", "environment name")
 	cmd.Flags().StringSliceVar(&r.Tags, "tag", nil, "tag (repeatable)")
+	f.tunnel.bind(cmd)
 	return cmd
 }
 

@@ -88,6 +88,9 @@ type Services struct {
 	Backups     app.Backups
 	Hold        app.Hold
 	Enrollments app.Enrollments
+	// TunnelEnrollments adds nodes reached only through Cloudflare Tunnel (ADR-0039); without it its routes
+	// answer CAPABILITY_UNAVAILABLE.
+	TunnelEnrollments *app.TunnelEnrollments
 }
 
 func (s Services) complete() error {

@@ -29,6 +29,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/secrets"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
+	"github.com/autarquico/supermgmt/internal/version"
 )
 
 const (
@@ -48,8 +49,10 @@ type background struct {
 	proxmox   *app.ProxmoxSync
 	sweeper   *app.Sweeper
 	backups   *backupSchedule // nil when no schedule is configured
-	authSweep *authSweep
-	ci        app.CIWatcher
+	// enrollments re-arms the jobs of the tunnel enrollments; nil without a cloudflare: block.
+	enrollments *backupSchedule
+	authSweep   *authSweep
+	ci          app.CIWatcher
 }
 
 // system is the assembled daemon: every service wired to one database, ready
@@ -222,6 +225,8 @@ type builder struct {
 	repos      *app.Repositories
 	finalizer  *app.DeploymentFinalizer // the deployments service of the API and the Finalizer of the CI watcher
 	ci         app.CIWatcher
+
+	enrollments *app.TunnelEnrollments // the nodes reached only through Cloudflare Tunnel (ADR-0039)
 }
 
 // useCloudflareTransport registers the cloudflare dialler on the pool, only
@@ -479,10 +484,16 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	if b.enrollments, err = app.NewTunnelEnrollments(b.app, b.plans, b.jobs, app.TunnelEnrollmentOptions{
+		Tunnel: b.tunnelOptions(), Identity: app.SSHIdentityOf(b.kit.store), Connector: b.conn,
+		Scan: b.pool.ScanHostKey, Prober: b.prober, Channel: version.Channel(),
+	}); err != nil {
+		return nil, err
+	}
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
 		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health},
-		Tunnel: b.tunnelOptions(), Secrets: b.kit.store,
+		Tunnel: b.tunnelOptions(), Secrets: b.kit.store, Enrollments: b.enrollments,
 	})
 	if err != nil {
 		return nil, err
@@ -564,7 +575,10 @@ func (b *builder) background(handlers map[string]jobs.Handler) (background, erro
 	if err != nil {
 		return background{}, err
 	}
-	return background{engine: engine, refresher: refresher, proxmox: b.proxmox, sweeper: sweeper, backups: schedule, authSweep: b.authSweep(), ci: b.ci}, nil
+	return background{
+		engine: engine, refresher: refresher, proxmox: b.proxmox, sweeper: sweeper, backups: schedule,
+		enrollments: b.enrollmentSchedule(), authSweep: b.authSweep(), ci: b.ci,
+	}, nil
 }
 
 func (b *builder) apiServices() (api.Services, error) {
@@ -597,7 +611,7 @@ func (b *builder) apiServices() (api.Services, error) {
 		Plans:      b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
 		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer,
-		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments,
+		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments, TunnelEnrollments: b.enrollments,
 	}, nil
 }
 
@@ -699,5 +713,24 @@ func loggedBusy(activity *app.Activity, log *slog.Logger) func(context.Context) 
 			log.Warn("cannot tell whether jobs are active; staying alive", slog.Any("error", err))
 		}
 		return busy, err
+	}
+}
+
+// defaultEnrollmentCheck is how often the open tunnel enrollments are looked at: a person is waiting on the
+// scan and on the commit.
+const defaultEnrollmentCheck = 5 * time.Second
+
+// enrollmentSchedule re-arms the jobs of the open tunnel enrollments (ADR-0039): the scan that waits for the
+// node with backoff until the expiry, the commit, the cleanup. It follows the restore hold like the backup
+// schedule does, and is nil without a cloudflare: block.
+func (b *builder) enrollmentSchedule() *backupSchedule {
+	if b.cfg.Cloudflare == nil {
+		return nil
+	}
+	return &backupSchedule{
+		fire:   b.enrollments.Scheduler(SystemIdentityID).Tick,
+		held:   func(ctx context.Context) (bool, error) { return database.GetRestoreHold(ctx, b.db.Reader()) },
+		every:  orDefault(b.o.ScheduleCheck, defaultEnrollmentCheck),
+		report: func(err error) { b.o.Log.Error("tunnel enrollments", slog.Any("error", err)) },
 	}
 }

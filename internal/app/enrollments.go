@@ -373,8 +373,13 @@ func (e *EnrollmentService) nodeName(ctx context.Context, q database.Querier, in
 	if err != nil {
 		return "", err
 	}
+	open, err := database.ListOpenTunnelEnrollments(ctx, q)
+	if err != nil {
+		return "", err
+	}
 	taken := func(name string) bool {
-		return slices.ContainsFunc(providers, func(p domain.Provider) bool { return p.Name == name })
+		return slices.ContainsFunc(providers, func(p domain.Provider) bool { return p.Name == name }) ||
+			slices.ContainsFunc(open, func(t database.TunnelEnrollment) bool { return t.Name == name })
 	}
 	if !taken(in.hostname) {
 		return in.hostname, nil

@@ -211,6 +211,9 @@ func (w background) start(ctx context.Context, work *sync.WaitGroup) {
 	if w.backups != nil {
 		work.Go(func() { w.backups.run(ctx) })
 	}
+	if w.enrollments != nil {
+		work.Go(func() { w.enrollments.run(ctx) })
+	}
 	if w.ci != nil {
 		work.Go(func() { _ = w.ci.Run(ctx) })
 	}

@@ -74,16 +74,26 @@ func (j Joiner) Run(ctx context.Context, r Request) (wire.Enrolled, error) {
 // hostKey returns the node's host public key as one "type base64" line, the
 // form the server pins and digests.
 func (j Joiner) hostKey() (string, error) {
+	key, err := readHostKey(j.Host)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key))), nil
+}
+
+// readHostKey returns the first of the node's host keys that exists, in the
+// order of hostKeyFiles.
+func readHostKey(host Host) (cryptossh.PublicKey, error) {
 	for _, path := range hostKeyFiles {
-		raw, err := j.Host.ReadFile(path)
+		raw, err := host.ReadFile(path)
 		if err != nil {
 			continue
 		}
 		key, _, _, _, err := cryptossh.ParseAuthorizedKey(raw)
 		if err != nil {
-			return "", smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("%s is not an OpenSSH public key", path))
+			return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf("%s is not an OpenSSH public key", path))
 		}
-		return strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key))), nil
+		return key, nil
 	}
-	return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "no SSH host key found in /etc/ssh (is sshd installed and has it run once?)")
+	return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", "no SSH host key found in /etc/ssh (is sshd installed and has it run once?)")
 }
