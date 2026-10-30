@@ -72,3 +72,8 @@ paths = ['''^internal/providers/cloudflare/client_test\.go$''']
 description = "synthetic base64 tunnel token (secret-sentinel) the node install must write and never log"
 targetRules = ["generic-api-key"]
 paths = ['''^internal/runtimes/systemd/tunnel_test\.go$''']
+
+[[allowlists]]
+description = "synthetic Proxmox token secret the node setup must store and never log"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/app/setup_proxmox_test\.go$''', '''^internal/runtimes/systemd/proxmox_test\.go$''']

@@ -4,6 +4,12 @@
 version: 2
 project_name: sm
 
+# The channels workflow keeps its signed pointers on a release tagged "channels"; it is not a
+# version, so it must never become the current or previous tag of a build.
+git:
+  ignore_tags:
+    - channels
+
 builds:
   - id: sm
     main: ./cmd/sm
