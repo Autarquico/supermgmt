@@ -1248,7 +1248,7 @@
    "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/confirm",
    "class": "write",
    "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1/confirm",
-   "body": "{\"host_public_key\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\"}",
+   "body": "{\"enrollment_id\":\"{tunnel_enrollment}\",\"host_public_key\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\"}",
    "headers": null,
    "stream": false,
    "off": {
@@ -1265,7 +1265,7 @@
    "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/refuse",
    "class": "write",
    "path": "/api/v1/nodes/ssh/tunnel-enrollments/vps1/refuse",
-   "body": "",
+   "body": "{\"enrollment_id\":\"{tunnel_enrollment}\",\"host_public_key\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\"}",
    "headers": null,
    "stream": false,
    "off": {

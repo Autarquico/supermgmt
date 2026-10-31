@@ -320,25 +320,27 @@ func (s *TunnelEnrollments) List(ctx context.Context, by Caller) ([]TunnelEnroll
 // Get returns the newest enrollment of the name, finished ones included, so a client that waited for the
 // commit sees it.
 func (s *TunnelEnrollments) Get(ctx context.Context, by Caller, name string) (TunnelEnrollmentView, error) {
-	row, _, err := s.authorized(ctx, by, name, "node.read")
+	row, _, err := s.authorized(ctx, by, name, "", "node.read")
 	if err != nil {
 		return TunnelEnrollmentView{}, err
 	}
 	return s.view(ctx, s.cfg.DB.Reader(), row)
 }
 
-// authorized checks the caller may do action on the enrollment of the name, then returns the newest one.
+// authorized checks the caller may do action on the enrollment of the name, then returns it: the one with
+// the ID the client saw, or the newest when id is empty (a request for an ID that is not an enrollment of
+// that name is answered as no enrollment).
 // A name with no enrollment has no target to evaluate policy on (a rule scoped to an environment or a tag
 // cannot match it), so only the MCP gate runs and the answer is NOT_FOUND: a caller scoped to staging can
 // then start an enrollment there. An existing enrollment gets the full policy check on its real target, and
 // a refusal is audited.
-func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name, action string) (database.TunnelEnrollment, domain.Actor, error) {
+func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name string, id domain.ID, action string) (database.TunnelEnrollment, domain.Actor, error) {
 	q := s.cfg.DB.Reader()
 	actor, err := s.beginRequest(ctx, q, by)
 	if err != nil {
 		return database.TunnelEnrollment{}, domain.Actor{}, err
 	}
-	row, err := database.GetLatestTunnelEnrollmentByName(ctx, q, name)
+	row, err := enrollmentOfName(ctx, q, name, id)
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
 		if res, gated := s.mcpGate(actor, action); gated {
 			ref := nodeRef(row.ID)
@@ -357,6 +359,17 @@ func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name, act
 		return database.TunnelEnrollment{}, actor, s.refuse(ctx, actor, action, target.Ref, res, true)
 	}
 	return row, actor, nil
+}
+
+func enrollmentOfName(ctx context.Context, q database.Querier, name string, id domain.ID) (database.TunnelEnrollment, error) {
+	if id == "" {
+		return database.GetLatestTunnelEnrollmentByName(ctx, q, name)
+	}
+	row, err := database.GetTunnelEnrollment(ctx, q, id)
+	if err == nil && row.Name != name {
+		return database.TunnelEnrollment{}, smerr.New(smerr.CodeNotFound, "", "tunnel enrollment not found")
+	}
+	return row, err
 }
 
 // requireStarter limits the steps that decide what the node will be (reading the connector token, confirming
@@ -469,7 +482,7 @@ func (s *TunnelEnrollments) joinLine(instance domain.ID, authorizedKey string) s
 // is stored in the secret store, shown here and nowhere else, and deleted when the node is proven, the
 // enrollment ends or is cancelled.
 func (s *TunnelEnrollments) Token(ctx context.Context, by Caller, name string) (audit.Secret, error) {
-	row, actor, err := s.authorized(ctx, by, name, actionNodeAdd)
+	row, actor, err := s.authorized(ctx, by, name, "", actionNodeAdd)
 	if err != nil {
 		return "", err
 	}
@@ -518,19 +531,17 @@ func (s *TunnelEnrollments) tokenAvailability(row database.TunnelEnrollment) err
 
 // ---- confirm, refuse, cancel ---------------------------------------------------------------
 
-// Confirm binds the operator's decision to the enrollment and the exact key it was shown: it holds only
-// while the enrollment is scanned and its scanned key is hostKey. A different key ends the enrollment with
+// Confirm binds the operator's decision to the enrollment (id) and the exact key it was shown: it holds only
+// while that enrollment is scanned and its scanned key is hostKey. A request for an enrollment that is not
+// the one now holding the name's row never changes it: it is a CONFLICT. A different key ends the enrollment with
 // SSH_HOST_KEY_MISMATCH and its Cloudflare objects are cleaned up; a cancelled or expired enrollment, or
 // one that is not yet scanned, is a CONFLICT.
-func (s *TunnelEnrollments) Confirm(ctx context.Context, by Caller, name, hostKey string) (TunnelEnrollmentView, error) {
+func (s *TunnelEnrollments) Confirm(ctx context.Context, by Caller, name string, id domain.ID, hostKey string) (TunnelEnrollmentView, error) {
 	hostKey = strings.TrimSpace(hostKey)
 	if _, err := sshnode.ParseHostKey(hostKey); err != nil {
 		return TunnelEnrollmentView{}, err
 	}
-	row, actor, err := s.authorized(ctx, by, name, actionNodeAdd)
-	if err == nil {
-		err = s.requireStarter(ctx, actor, row)
-	}
+	row, actor, err := s.authorizedDecision(ctx, by, name, id)
 	if err != nil {
 		return TunnelEnrollmentView{}, err
 	}
@@ -562,13 +573,27 @@ func (s *TunnelEnrollments) Confirm(ctx context.Context, by Caller, name, hostKe
 	})
 }
 
-// Refuse records that the operator did not accept the scanned key: the enrollment ends with
-// SSH_HOST_KEY_MISMATCH and is cleaned up.
-func (s *TunnelEnrollments) Refuse(ctx context.Context, by Caller, name string) (TunnelEnrollmentView, error) {
-	row, actor, err := s.authorized(ctx, by, name, actionNodeAdd)
+// authorizedDecision resolves the enrollment the operator decided on, by its ID, for the identity that started it.
+func (s *TunnelEnrollments) authorizedDecision(ctx context.Context, by Caller, name string, id domain.ID) (database.TunnelEnrollment, domain.Actor, error) {
+	if id == "" {
+		return database.TunnelEnrollment{}, domain.Actor{}, smerr.New(smerr.CodeInvalidArgument, "", "enrollment_id is required")
+	}
+	row, actor, err := s.authorized(ctx, by, name, id, actionNodeAdd)
 	if err == nil {
 		err = s.requireStarter(ctx, actor, row)
 	}
+	return row, actor, err
+}
+
+// Refuse records that the operator did not accept hostKey, the key of enrollment id: that enrollment ends
+// with SSH_HOST_KEY_MISMATCH and is cleaned up. Another enrollment, or the same one scanned with another
+// key, is a CONFLICT and is left as it is.
+func (s *TunnelEnrollments) Refuse(ctx context.Context, by Caller, name string, id domain.ID, hostKey string) (TunnelEnrollmentView, error) {
+	hostKey = strings.TrimSpace(hostKey)
+	if _, err := sshnode.ParseHostKey(hostKey); err != nil {
+		return TunnelEnrollmentView{}, err
+	}
+	row, actor, err := s.authorizedDecision(ctx, by, name, id)
 	if err != nil {
 		return TunnelEnrollmentView{}, err
 	}
@@ -579,6 +604,9 @@ func (s *TunnelEnrollments) Refuse(ctx context.Context, by Caller, name string) 
 		}
 		if !s.open(current, s.cfg.Clock.Now()) || current.Phase != database.PhaseScanned {
 			return TunnelEnrollmentView{}, enrollmentNotConfirmable(current, s.cfg.Clock.Now())
+		}
+		if current.ScannedHostKey != hostKey {
+			return TunnelEnrollmentView{}, smerr.New(smerr.CodeConflict, "", "the enrollment scanned another key than the one refused")
 		}
 		return s.refuseKey(ctx, tx, actor, current, reasonRefused)
 	})
@@ -622,7 +650,7 @@ func enrollmentNotConfirmable(row database.TunnelEnrollment, now time.Time) erro
 // it starts the removal, and a confirmation or a commit that comes after this reads the reason and loses.
 // Cancelling an enrollment that is ending or ended is a no-op; a committed one is a CONFLICT.
 func (s *TunnelEnrollments) Cancel(ctx context.Context, by Caller, name string) (TunnelEnrollmentView, error) {
-	row, actor, err := s.authorized(ctx, by, name, actionNodeAdd)
+	row, actor, err := s.authorized(ctx, by, name, "", actionNodeAdd)
 	if err != nil {
 		return TunnelEnrollmentView{}, err
 	}

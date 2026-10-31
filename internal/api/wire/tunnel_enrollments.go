@@ -35,10 +35,19 @@ type TunnelEnrollment struct {
 	Error              string    `json:"error,omitempty"`
 }
 
-// ConfirmTunnelEnrollmentRequest is POST .../{name}/confirm. HostPublicKey must be the key the enrollment
-// scanned, the one the operator was shown; any other key ends the enrollment with SSH_HOST_KEY_MISMATCH.
+// ConfirmTunnelEnrollmentRequest is POST .../{name}/confirm. EnrollmentID is the enrollment the operator was
+// shown: a request for any other enrollment of the name is a CONFLICT. HostPublicKey must be the key that
+// enrollment scanned, the one the operator was shown; any other key ends the enrollment with
+// SSH_HOST_KEY_MISMATCH.
 type ConfirmTunnelEnrollmentRequest struct {
-	HostPublicKey string `json:"host_public_key"`
+	EnrollmentID  domain.ID `json:"enrollment_id"`
+	HostPublicKey string    `json:"host_public_key"`
+}
+
+// RefuseTunnelEnrollmentRequest is POST .../{name}/refuse: the enrollment and the key the operator refuses.
+type RefuseTunnelEnrollmentRequest struct {
+	EnrollmentID  domain.ID `json:"enrollment_id"`
+	HostPublicKey string    `json:"host_public_key"`
 }
 
 // TunnelEnrollmentToken is the response of GET .../{name}/token and the only place the connector token

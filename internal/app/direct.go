@@ -438,7 +438,7 @@ func (a *Apps) CreateGitHubProvider(ctx context.Context, by Caller, r wire.Creat
 		if err != nil {
 			return DirectResult[domain.Provider]{}, err
 		}
-		if err := requireFreeProviderName(ctx, tx, p.Name); err != nil {
+		if err := requireNameFree(ctx, tx, p.Name, ""); err != nil {
 			return DirectResult[domain.Provider]{}, err
 		}
 		ref := domain.ResourceRef{Type: domain.ResourceProvider, ID: p.ProviderID}
@@ -450,17 +450,6 @@ func (a *Apps) CreateGitHubProvider(ctx context.Context, by Caller, r wire.Creat
 			return a.applyCreateGitHubProvider(ctx, tx, actor, p)
 		})
 	})
-}
-
-func requireFreeProviderName(ctx context.Context, q database.Querier, name string) error {
-	all, err := database.ListProviders(ctx, q)
-	if err != nil {
-		return err
-	}
-	if slices.ContainsFunc(all, func(p domain.Provider) bool { return p.Name == name }) {
-		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("a provider named %q already exists", name))
-	}
-	return nil
 }
 
 // ---- parameters of job-mode actions -----------------------------------------

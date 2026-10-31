@@ -29,6 +29,9 @@ type enrollmentDaemon struct {
 	phases []string
 	reads  int
 	key    wire.HostKey
+	id     domain.ID
+	// replaced: from the second read on, the name belongs to another enrollment.
+	replaced bool
 	// existing: GET answers it from the first call; otherwise the first GET is a 404 until a start.
 	started bool
 }
@@ -37,9 +40,12 @@ func (d *enrollmentDaemon) view() wire.TunnelEnrollment {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	phase := d.phases[min(d.reads, len(d.phases)-1)]
+	if d.replaced && d.reads == 1 {
+		d.id = newTestID()
+	}
 	d.reads++
 	v := wire.TunnelEnrollment{
-		ID: newTestID(), NodeID: newTestID(), Name: "vps1", Hostname: "ssh-vps1.example.com", Phase: phase,
+		ID: d.id, NodeID: newTestID(), Name: "vps1", Hostname: "ssh-vps1.example.com", Phase: phase,
 		ExpiresAt: domain.SystemClock{}.Now().Add(time.Hour), JoinLine: enrollLine, Tags: []string{},
 	}
 	if phase == "scanned" || phase == "confirmed" || phase == "committed" {
@@ -50,7 +56,7 @@ func (d *enrollmentDaemon) view() wire.TunnelEnrollment {
 
 func newEnrollmentDaemon(t *testing.T, existing bool, phases ...string) *enrollmentDaemon {
 	t.Helper()
-	d := &enrollmentDaemon{phases: phases, key: scannedKey(t), started: existing}
+	d := &enrollmentDaemon{phases: phases, key: scannedKey(t), started: existing, id: newTestID()}
 	d.fakeAPI = newFakeAPI(t, router(map[string]http.HandlerFunc{
 		"GET " + wire.Path(wire.PathTunnelEnrollment, "vps1"): func(w http.ResponseWriter, _ *http.Request) {
 			d.mu.Lock()
@@ -143,7 +149,7 @@ func TestTunnelAddPrintsTheLineAndTheTokenSeparatelyThenCommits(t *testing.T) {
 	}
 	confirms := d.sent("POST", wire.PathTunnelEnrollmentConfirm)
 	var confirmed wire.ConfirmTunnelEnrollmentRequest
-	if len(confirms) != 1 || json.Unmarshal([]byte(confirms[0].Body), &confirmed) != nil || confirmed.HostPublicKey != d.key.AuthorizedKey {
+	if len(confirms) != 1 || json.Unmarshal([]byte(confirms[0].Body), &confirmed) != nil || confirmed.HostPublicKey != d.key.AuthorizedKey || confirmed.EnrollmentID != d.id {
 		t.Errorf("the confirmation must carry the exact scanned key: %+v", confirms)
 	}
 	if !strings.Contains(r.stderr, d.key.FingerprintSHA256) {
@@ -222,6 +228,8 @@ func TestTunnelExcludesTheDirectNodeFlags(t *testing.T) {
 		{"nodes", "add", "--tunnel"},
 		{"nodes", "add", "--tunnel", "--name", "vps1", "--show-token", "--cancel"},
 		{"nodes", "add", "--tunnel", "--name", "vps1", "--expires-in", "48h"},
+		{"nodes", "add", "--tunnel", "--name", "vps1", "--interval", "0s"},
+		{"nodes", "add", "--tunnel", "--name", "vps1", "--interval", "-1s"},
 		{"nodes", "add", "--name", "vps1", "--host", "h", "--admin-user", "u", "--expires-in", "1h"},
 		{"nodes", "add", "--name", "vps1", "--cancel"},
 	} {
@@ -267,6 +275,21 @@ func TestTunnelAddLeavesTheEnrollmentRunningWhenInterrupted(t *testing.T) {
 	}
 	for _, m := range d.Mutations() {
 		t.Errorf("an interrupted wait must change nothing: %s %s", m.Method, m.Path)
+	}
+}
+
+func TestTunnelAddStopsWhenTheNameMovesToAnotherEnrollment(t *testing.T) {
+	d := newEnrollmentDaemon(t, true, "dns_created", "scanned", "committed")
+	d.replaced = true
+	interactive(t, false)
+
+	r := d.run(append(enrollArgs, "--fingerprint", d.key.FingerprintSHA256)...)
+
+	if r.code != exitUsage || !strings.Contains(r.stderr, "replaced by another one") {
+		t.Errorf("code=%d err=%q", r.code, r.stderr)
+	}
+	if len(d.sent("POST", wire.PathTunnelEnrollmentConfirm)) != 0 || len(d.sent("POST", wire.PathTunnelEnrollmentRefuse)) != 0 {
+		t.Errorf("a decision was sent for an enrollment that is gone: %v", d.paths())
 	}
 }
 

@@ -104,6 +104,7 @@ var schemaTypes = map[string]reflect.Type{
 	"TunnelEnrollmentToken":          reflect.TypeFor[wire.TunnelEnrollmentToken](),
 	"StartTunnelEnrollmentRequest":   reflect.TypeFor[wire.StartTunnelEnrollmentRequest](),
 	"ConfirmTunnelEnrollmentRequest": reflect.TypeFor[wire.ConfirmTunnelEnrollmentRequest](),
+	"RefuseTunnelEnrollmentRequest":  reflect.TypeFor[wire.RefuseTunnelEnrollmentRequest](),
 	"PageOfTunnelEnrollment":         reflect.TypeFor[wire.Page[wire.TunnelEnrollment]](),
 	"DirectOfTunnelEnrollment":       reflect.TypeFor[wire.Direct[wire.TunnelEnrollment]](),
 

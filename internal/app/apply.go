@@ -173,6 +173,9 @@ func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, 
 	if existing, found, err := i.localProvider(ctx, q); err != nil || found {
 		return existing, err
 	}
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
+		return domain.Provider{}, err
+	}
 	now := i.cfg.Clock.Now()
 	provider, err := database.CreateProvider(ctx, q, domain.Provider{
 		ID: p.ProviderID, Type: local.ProviderType, Name: p.Name, Origin: domain.ProviderAPI, CreatedAt: now, UpdatedAt: now,
@@ -398,7 +401,7 @@ func (a *Apps) applyCreateGitHubProvider(ctx context.Context, q database.Querier
 	} else if smerr.CodeOf(err) != smerr.CodeNotFound {
 		return domain.Provider{}, err
 	}
-	if err := requireFreeProviderName(ctx, q, p.Name); err != nil {
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
 		return domain.Provider{}, err
 	}
 	now := a.cfg.Clock.Now()

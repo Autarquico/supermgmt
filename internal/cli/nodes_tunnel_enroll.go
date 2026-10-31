@@ -73,6 +73,8 @@ func (t *tunnelFlags) check(cmd *cobra.Command, name, fingerprint string) error 
 	switch {
 	case name == "":
 		return usageErrorf("--name is required")
+	case t.interval <= 0:
+		return usageErrorf("--interval must be greater than zero")
 	case t.showToken && t.cancel:
 		return usageErrorf("--show-token and --cancel are mutually exclusive")
 	case t.showToken || t.cancel:
@@ -251,7 +253,7 @@ func (r *enrollRun) confirmKey(view wire.TunnelEnrollment) error {
 	r.say("%s presents %s key %s", view.Hostname, keyType(view.HostPublicKey), view.HostKeyFingerprint)
 	if r.fingerprint != "" {
 		if r.fingerprint != view.HostKeyFingerprint {
-			return r.refuse(fmt.Sprintf("%s presents %s, not the expected %s", view.Hostname, view.HostKeyFingerprint, r.fingerprint))
+			return r.refuse(view, fmt.Sprintf("%s presents %s, not the expected %s", view.Hostname, view.HostKeyFingerprint, r.fingerprint))
 		}
 	} else {
 		r.say("Compare it with the host key fingerprint the node printed.")
@@ -262,17 +264,17 @@ func (r *enrollRun) confirmKey(view wire.TunnelEnrollment) error {
 			return err
 		}
 		if answer != "yes" {
-			return r.refuse("the host key was not trusted")
+			return r.refuse(view, "the host key was not trusted")
 		}
 	}
-	_, err := r.api.ConfirmTunnelEnrollment(r.ctx, view.Name, view.HostPublicKey)
+	_, err := r.api.ConfirmTunnelEnrollment(r.ctx, view.Name, view.ID, view.HostPublicKey)
 	return err
 }
 
 // refuse ends the enrollment because the operator did not accept the key. The daemon answers
 // SSH_HOST_KEY_MISMATCH, which is the outcome, so it is reported as the command's own error.
-func (r *enrollRun) refuse(why string) error {
-	if err := r.api.RefuseTunnelEnrollment(r.cmd.Context(), r.name); err != nil && smerr.CodeOf(err) != smerr.CodeSSHHostKeyMismatch {
+func (r *enrollRun) refuse(view wire.TunnelEnrollment, why string) error {
+	if err := r.api.RefuseTunnelEnrollment(r.cmd.Context(), view.Name, view.ID, view.HostPublicKey); err != nil && smerr.CodeOf(err) != smerr.CodeSSHHostKeyMismatch {
 		return fmt.Errorf("%s, and ending the enrollment failed: %w", why, err)
 	}
 	return smerr.New(smerr.CodeSSHHostKeyMismatch, "", why+": the enrollment is ended and its Cloudflare objects are being removed")
@@ -312,6 +314,9 @@ func (r *enrollRun) until(view wire.TunnelEnrollment, done func(wire.TunnelEnrol
 				return view, r.interrupted()
 			}
 			return view, err
+		}
+		if next.ID != view.ID {
+			return view, usageErrorf("the enrollment of %s was replaced by another one: stopped waiting; run `sm nodes add --tunnel --name %s` again to attach to it", r.name, r.name)
 		}
 		view = next
 	}

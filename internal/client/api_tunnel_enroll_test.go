@@ -81,10 +81,10 @@ func TestConfirmRefuseAndCancelAreKeyedPostsOnTheName(t *testing.T) {
 	})
 	api := d.client(client.Options{})
 
-	if got, err := api.ConfirmTunnelEnrollment(context.Background(), "vps1", "ssh-ed25519 AAAA"); err != nil || got.Phase != "confirmed" {
+	if got, err := api.ConfirmTunnelEnrollment(context.Background(), "vps1", "e1", "ssh-ed25519 AAAA"); err != nil || got.Phase != "confirmed" {
 		t.Fatalf("confirm = %+v, %v", got, err)
 	}
-	if err := api.RefuseTunnelEnrollment(context.Background(), "vps1"); smerr.CodeOf(err) != smerr.CodeSSHHostKeyMismatch {
+	if err := api.RefuseTunnelEnrollment(context.Background(), "vps1", "e1", "ssh-ed25519 AAAA"); smerr.CodeOf(err) != smerr.CodeSSHHostKeyMismatch {
 		t.Fatalf("refuse = %v", err)
 	}
 	if _, err := api.CancelTunnelEnrollment(context.Background(), "vps1"); err != nil {
@@ -97,7 +97,7 @@ func TestConfirmRefuseAndCancelAreKeyedPostsOnTheName(t *testing.T) {
 		}
 	}
 	var body wire.ConfirmTunnelEnrollmentRequest
-	if err := json.Unmarshal(d.Requests()[0].Body, &body); err != nil || body.HostPublicKey != "ssh-ed25519 AAAA" {
+	if err := json.Unmarshal(d.Requests()[0].Body, &body); err != nil || body.HostPublicKey != "ssh-ed25519 AAAA" || body.EnrollmentID != "e1" {
 		t.Errorf("confirm body = %s", d.Requests()[0].Body)
 	}
 }

@@ -160,22 +160,22 @@ func TestTheTokenRouteRefusesAnIdempotencyKeyAndAnEnrollmentThatIsNotWaiting(t *
 func TestConfirmingTheScannedKeyMovesTheEnrollmentAndAnotherKeyEndsIt(t *testing.T) {
 	h := newHarness(t)
 	scanned, other := hostKey(t), hostKey(t)
-	h.seedEnrollment("vps1", "scanned", scanned)
-	h.seedEnrollment("vps2", "scanned", scanned)
-	body := func(k string) string {
-		b, _ := json.Marshal(wire.ConfirmTunnelEnrollmentRequest{HostPublicKey: k})
+	vps1 := h.seedEnrollment("vps1", "scanned", scanned)
+	vps2 := h.seedEnrollment("vps2", "scanned", scanned)
+	body := func(id domain.ID, k string) string {
+		b, _ := json.Marshal(wire.ConfirmTunnelEnrollmentRequest{EnrollmentID: id, HostPublicKey: k})
 		return string(b)
 	}
 
-	r := h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "vps1"), body(scanned), "c1")
+	r := h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "vps1"), body(vps1.ID, scanned), "c1")
 	if got := dataOf[wire.TunnelEnrollment](t, r); r.Status != http.StatusOK || got.Phase != "confirmed" {
 		t.Fatalf("confirm: %d %s", r.Status, r.Body)
 	}
-	if r = h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "vps1"), body(scanned), "c2"); r.Status != http.StatusOK {
+	if r = h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "vps1"), body(vps1.ID, scanned), "c2"); r.Status != http.StatusOK {
 		t.Errorf("a repeat of the same confirmation: %d %s", r.Status, r.Body)
 	}
 
-	r = h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "vps2"), body(other), "c3")
+	r = h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "vps2"), body(vps2.ID, other), "c3")
 	if e := decodeError(t, r); e.Code != "SSH_HOST_KEY_MISMATCH" {
 		t.Fatalf("another key: %d %s", r.Status, r.Body)
 	}
@@ -187,25 +187,28 @@ func TestConfirmingTheScannedKeyMovesTheEnrollmentAndAnotherKeyEndsIt(t *testing
 func TestConfirmingACancelledOrUnscannedEnrollmentIsAConflict(t *testing.T) {
 	h := newHarness(t)
 	scanned := hostKey(t)
-	h.seedEnrollment("waiting", "dns_created", "")
-	h.seedEnrollment("raced", "scanned", scanned)
-	body := `{"host_public_key":"` + scanned + `"}`
+	waiting := h.seedEnrollment("waiting", "dns_created", "")
+	raced := h.seedEnrollment("raced", "scanned", scanned)
+	body := func(id domain.ID) string {
+		return `{"enrollment_id":"` + id.String() + `","host_public_key":"` + scanned + `"}`
+	}
 
-	if r := h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "waiting"), body, "k1"); r.Status != http.StatusConflict {
+	if r := h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "waiting"), body(waiting.ID), "k1"); r.Status != http.StatusConflict {
 		t.Errorf("not scanned yet: %d %s", r.Status, r.Body)
 	}
 	if r := h.post(enrollmentPath(wire.PathTunnelEnrollmentCancel, "raced"), "", "k2"); r.Status != http.StatusOK {
 		t.Fatalf("cancel: %d %s", r.Status, r.Body)
 	}
-	if r := h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "raced"), body, "k3"); r.Status != http.StatusConflict {
+	if r := h.post(enrollmentPath(wire.PathTunnelEnrollmentConfirm, "raced"), body(raced.ID), "k3"); r.Status != http.StatusConflict {
 		t.Errorf("confirm after cancel: %d %s", r.Status, r.Body)
 	}
 }
 
 func TestRefusingTheScannedKeyIsAHostKeyMismatch(t *testing.T) {
 	h := newHarness(t)
-	h.seedEnrollment("vps1", "scanned", hostKey(t))
-	r := h.post(enrollmentPath(wire.PathTunnelEnrollmentRefuse, "vps1"), "", "k")
+	key := hostKey(t)
+	row := h.seedEnrollment("vps1", "scanned", key)
+	r := h.post(enrollmentPath(wire.PathTunnelEnrollmentRefuse, "vps1"), `{"enrollment_id":"`+row.ID.String()+`","host_public_key":"`+key+`"}`, "k")
 	if e := decodeError(t, r); e.Code != "SSH_HOST_KEY_MISMATCH" {
 		t.Errorf("refuse: %d %s", r.Status, r.Body)
 	}

@@ -72,7 +72,7 @@ func TestEnrollmentFromStartToCommitNeverDialsTheNodeDirectly(t *testing.T) {
 		t.Errorf("view shows %q / %q, want the scanned key", shown.HostPublicKey, shown.HostKeyFingerprint)
 	}
 
-	confirmed, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+	confirmed, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 	mustf(t, err, "Confirm")
 	if confirmed.Phase != string(database.PhaseConfirmed) {
 		t.Fatalf("confirmed phase = %s", confirmed.Phase)
@@ -232,13 +232,13 @@ func TestAStartWithoutACloudflareBlockNamesTheSettings(t *testing.T) {
 // A key other than the scanned one ends the enrollment with SSH_HOST_KEY_MISMATCH, pins nothing and removes
 // the Cloudflare objects.
 func TestAWrongKeyEndsTheEnrollmentWithAMismatchAndCleansUp(t *testing.T) {
-	for name, decide := range map[string]func(*enrollSetting, string) error{
-		"another key": func(es *enrollSetting, _ string) error {
-			_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", newAuthorizedKey())
+	for name, decide := range map[string]func(*enrollSetting, TunnelEnrollmentView, string) error{
+		"another key": func(es *enrollSetting, view TunnelEnrollmentView, _ string) error {
+			_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, newAuthorizedKey())
 			return err
 		},
-		"refused": func(es *enrollSetting, _ string) error {
-			_, err := es.svc.Refuse(context.Background(), es.admin(), "vps1")
+		"refused": func(es *enrollSetting, view TunnelEnrollmentView, key string) error {
+			_, err := es.svc.Refuse(context.Background(), es.admin(), "vps1", view.ID, key)
 			return err
 		},
 	} {
@@ -247,7 +247,7 @@ func TestAWrongKeyEndsTheEnrollmentWithAMismatchAndCleansUp(t *testing.T) {
 			baseNodes := es.nodeCount()
 			view, key := es.scannedEnrollment()
 
-			wantCode(t, decide(es, key), smerr.CodeSSHHostKeyMismatch)
+			wantCode(t, decide(es, view, key), smerr.CodeSSHHostKeyMismatch)
 			if got := es.enrollmentRow(view.ID); got.Phase != database.PhaseMismatch || got.ConfirmedHostKey != "" {
 				t.Fatalf("enrollment = %s, confirmed %q", got.Phase, got.ConfirmedHostKey)
 			}
@@ -273,7 +273,7 @@ func TestConfirmationRacesWithCancelAndExpiry(t *testing.T) {
 		view, key := es.scannedEnrollment()
 		_, err := es.svc.Cancel(context.Background(), es.admin(), "vps1")
 		mustf(t, err, "Cancel")
-		_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		wantCode(t, err, smerr.CodeConflict)
 		row := es.settle(view.ID, 3)
 		if row.Phase != database.PhaseCancelled || row.TerminalReason != reasonCancelled {
@@ -287,7 +287,7 @@ func TestConfirmationRacesWithCancelAndExpiry(t *testing.T) {
 	t.Run("cancel between confirm and commit", func(t *testing.T) {
 		es := newEnrollSetting(t)
 		view, key := es.scannedEnrollment()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		mustf(t, err, "Confirm")
 		_, err = es.svc.Cancel(context.Background(), es.admin(), "vps1")
 		mustf(t, err, "Cancel")
@@ -304,7 +304,7 @@ func TestConfirmationRacesWithCancelAndExpiry(t *testing.T) {
 	t.Run("expiry between confirm and commit", func(t *testing.T) {
 		es := newEnrollSetting(t)
 		view, key := es.scannedEnrollment()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		mustf(t, err, "Confirm")
 		es.clock.Advance(2 * time.Hour)
 
@@ -320,19 +320,19 @@ func TestConfirmationRacesWithCancelAndExpiry(t *testing.T) {
 	t.Run("confirm after the commit", func(t *testing.T) {
 		es := newEnrollSetting(t)
 		view, key := es.scannedEnrollment()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		mustf(t, err, "Confirm")
 		es.settle(view.ID, 3)
-		_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		wantCode(t, err, smerr.CodeConflict)
 		_, err = es.svc.Cancel(context.Background(), es.admin(), "vps1")
 		wantCode(t, err, smerr.CodeConflict)
 	})
 	t.Run("confirm before the scan", func(t *testing.T) {
 		es := newEnrollSetting(t)
-		es.start()
+		view := es.start()
 		es.work()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", newAuthorizedKey())
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, newAuthorizedKey())
 		wantCode(t, err, smerr.CodeConflict)
 	})
 }
@@ -351,7 +351,7 @@ func TestAnIdentityRotatedAfterTheStartDoesNotChangeTheEnrollment(t *testing.T) 
 	es.work()
 	key := es.nodeComesUp()
 	es.settle(view.ID, 3)
-	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 	mustf(t, err, "Confirm")
 	row := es.settle(view.ID, 3)
 	if row.Phase != database.PhaseCommitted {
@@ -382,7 +382,7 @@ func TestARestartAfterTheConfirmationCommitsTheConfirmedKey(t *testing.T) {
 	t.Run("the same key", func(t *testing.T) {
 		es := newEnrollSetting(t)
 		view, key := es.scannedEnrollment()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		mustf(t, err, "Confirm")
 		es.restart()
 
@@ -395,7 +395,7 @@ func TestARestartAfterTheConfirmationCommitsTheConfirmedKey(t *testing.T) {
 	t.Run("another key at the proof", func(t *testing.T) {
 		es := newEnrollSetting(t)
 		view, key := es.scannedEnrollment()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		mustf(t, err, "Confirm")
 		es.restart()
 		es.dialer.through("supermgmt").down("probe", smerr.New(smerr.CodeSSHHostKeyMismatch, "", "host key changed"))
@@ -412,7 +412,7 @@ func TestARestartAfterTheConfirmationCommitsTheConfirmedKey(t *testing.T) {
 	t.Run("the node is not answering yet", func(t *testing.T) {
 		es := newEnrollSetting(t)
 		view, key := es.scannedEnrollment()
-		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+		_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 		mustf(t, err, "Confirm")
 		es.dialer.through("supermgmt").down("probe", transportDown())
 
@@ -608,7 +608,7 @@ func TestTheSchedulerSubmitsOneJobAtATimeWithBackoff(t *testing.T) {
 func TestTheCommitChecksTheNameAgain(t *testing.T) {
 	es := newEnrollSetting(t)
 	view, key := es.scannedEnrollment()
-	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 	mustf(t, err, "Confirm")
 	es.inTx(func(ctx context.Context, tx *database.Tx) error {
 		_, err := database.CreateProvider(ctx, tx, domain.Provider{
@@ -633,7 +633,7 @@ func TestTheCommitChecksTheNameAgain(t *testing.T) {
 func TestDisablingATunnelOnlyNodeIsRefusedWhenPlanning(t *testing.T) {
 	es := newEnrollSetting(t)
 	view, key := es.scannedEnrollment()
-	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 	mustf(t, err, "Confirm")
 	es.settle(view.ID, 3)
 	plansBefore := len(es.events("plan.create"))
@@ -653,7 +653,7 @@ func TestDisablingATunnelOnlyNodeIsRefusedWhenPlanning(t *testing.T) {
 // Reading the list and the token needs the right to do so; the list shows only open enrollments.
 func TestReadsAndTheTokenAreAuthorized(t *testing.T) {
 	es := newEnrollSetting(t)
-	es.start()
+	view := es.start()
 	es.work()
 
 	_, err := es.svc.Token(context.Background(), es.caller(es.dave), "vps1")
@@ -662,7 +662,7 @@ func TestReadsAndTheTokenAreAuthorized(t *testing.T) {
 	wantCode(t, err, smerr.CodePolicyDenied)
 	_, err = es.svc.Cancel(context.Background(), es.caller(es.dave), "vps1")
 	wantCode(t, err, smerr.CodePolicyDenied)
-	_, err = es.svc.Confirm(context.Background(), es.caller(es.dave), "vps1", newAuthorizedKey())
+	_, err = es.svc.Confirm(context.Background(), es.caller(es.dave), "vps1", view.ID, newAuthorizedKey())
 	wantCode(t, err, smerr.CodePolicyDenied)
 
 	views, err := es.svc.List(context.Background(), es.admin())
@@ -772,9 +772,9 @@ func TestOnlyWhoStartedAnEnrollmentGetsItsTokenAndDecidesItsKey(t *testing.T) {
 
 			_, err := es.svc.Token(context.Background(), other, "vps1")
 			wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
-			_, err = es.svc.Confirm(context.Background(), other, "vps1", key)
+			_, err = es.svc.Confirm(context.Background(), other, "vps1", view.ID, key)
 			wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
-			_, err = es.svc.Refuse(context.Background(), other, "vps1")
+			_, err = es.svc.Refuse(context.Background(), other, "vps1", view.ID, key)
 			wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
 			if row := es.enrollmentRow(view.ID); row.Phase != database.PhaseScanned || row.ConfirmedHostKey != "" {
 				t.Errorf("a refused caller moved the enrollment: %s", row.Phase)
@@ -883,9 +883,58 @@ func TestAnApprovedDirectAddIsRefusedWhenAnEnrollmentTookTheName(t *testing.T) {
 
 	key := es.nodeComesUp()
 	es.settle(view.ID, 3)
-	_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+	_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", view.ID, key)
 	mustf(t, err, "Confirm")
 	if row := es.settle(view.ID, 3); row.Phase != database.PhaseCommitted {
 		t.Errorf("phase = %s (%s), want committed", row.Phase, row.LastError)
+	}
+}
+
+// A decision names the enrollment the operator saw: once its name belongs to another enrollment, the old
+// confirmation and the old refusal are conflicts and leave the new one untouched.
+func TestADecisionAboutAFinishedEnrollmentNeverChangesTheNextOneOfTheName(t *testing.T) {
+	for name, nextKey := range map[string]func(es *enrollSetting, first string) string{
+		"same key":    func(es *enrollSetting, first string) string { return first },
+		"another key": func(es *enrollSetting, _ string) string { return newAuthorizedKey() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			es := newEnrollSetting(t)
+			first, key := es.scannedEnrollment()
+			_, err := es.svc.Cancel(context.Background(), es.admin(), "vps1")
+			mustf(t, err, "Cancel")
+			if row := es.settle(first.ID, 3); row.Phase != database.PhaseCancelled {
+				t.Fatalf("first enrollment = %s, want cancelled", row.Phase)
+			}
+			second := es.start()
+			es.work()
+			es.hostKey = nextKey(es, key)
+			if row := es.settle(second.ID, 3); row.Phase != database.PhaseScanned {
+				t.Fatalf("second enrollment = %s (%s), want scanned", row.Phase, row.LastError)
+			}
+
+			_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", first.ID, key)
+			wantCode(t, err, smerr.CodeConflict)
+			_, err = es.svc.Refuse(context.Background(), es.admin(), "vps1", first.ID, key)
+			wantCode(t, err, smerr.CodeConflict)
+
+			if row := es.enrollmentRow(second.ID); row.Phase != database.PhaseScanned || row.ConfirmedHostKey != "" || row.TerminalReason != "" {
+				t.Errorf("second enrollment moved: %s, confirmed %q, reason %q", row.Phase, row.ConfirmedHostKey, row.TerminalReason)
+			}
+		})
+	}
+}
+
+func TestADecisionMustNameAnEnrollmentOfThatName(t *testing.T) {
+	es := newEnrollSetting(t)
+	view, key := es.scannedEnrollment()
+
+	_, err := es.svc.Confirm(context.Background(), es.admin(), "vps1", "", key)
+	wantCode(t, err, smerr.CodeInvalidArgument)
+	_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", es.ids.NewID(), key)
+	wantCode(t, err, smerr.CodeNotFound)
+	_, err = es.svc.Refuse(context.Background(), es.admin(), "vps1", view.ID, newAuthorizedKey())
+	wantCode(t, err, smerr.CodeConflict)
+	if row := es.enrollmentRow(view.ID); row.Phase != database.PhaseScanned {
+		t.Errorf("enrollment = %s, want it untouched", row.Phase)
 	}
 }

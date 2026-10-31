@@ -539,8 +539,8 @@ paths:
       operationId: confirmTunnelEnrollment
       summary: Confirm the host key the enrollment scanned.
       description: >-
-        A compare-and-swap on the scanned key: it holds only while the enrollment is scanned and its scanned key is
-        the one sent. A different key ends the enrollment with SSH_HOST_KEY_MISMATCH and its Cloudflare objects are
+        A compare-and-swap on the enrollment and the scanned key: it holds only while the enrollment with the given
+        enrollment_id is scanned and its scanned key is the one sent; another enrollment of the name is a CONFLICT. A different key ends the enrollment with SSH_HOST_KEY_MISMATCH and its Cloudflare objects are
         removed. A cancelled, expired or not yet scanned enrollment is a CONFLICT.
       tags: [nodes]
       x-supermgmt-route: action:node.add
@@ -563,12 +563,19 @@ paths:
     post:
       operationId: refuseTunnelEnrollment
       summary: Refuse the host key the enrollment scanned.
-      description: Ends the enrollment with SSH_HOST_KEY_MISMATCH (always answered as that error) and removes its Cloudflare objects.
+      description: >-
+        Ends the enrollment with SSH_HOST_KEY_MISMATCH (always answered as that error) and removes its Cloudflare objects.
+        It holds only while the enrollment with the given enrollment_id is scanned with the given key; otherwise it is a CONFLICT.
       tags: [nodes]
       x-supermgmt-route: action:node.add
       parameters:
         - $ref: '#/components/parameters/TunnelEnrollmentName'
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RefuseTunnelEnrollmentRequest'}
       responses:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/ssh/tunnel-enrollments/{name}/cancel:
@@ -1830,9 +1837,16 @@ components:
         error: {type: string, description: Why a halted or ended enrollment is not moving, or what the node is still waited for.}
     ConfirmTunnelEnrollmentRequest:
       type: object
-      required: [host_public_key]
+      required: [enrollment_id, host_public_key]
       properties:
+        enrollment_id: {$ref: '#/components/schemas/ID'}
         host_public_key: {type: string, description: The scanned key the operator was shown.}
+    RefuseTunnelEnrollmentRequest:
+      type: object
+      required: [enrollment_id, host_public_key]
+      properties:
+        enrollment_id: {$ref: '#/components/schemas/ID'}
+        host_public_key: {type: string, description: The scanned key the operator refuses.}
     TunnelEnrollmentToken:
       type: object
       required: [token]

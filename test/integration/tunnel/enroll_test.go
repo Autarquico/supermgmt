@@ -228,7 +228,7 @@ func (r *enrollRig) enrollToCommit(name string) (app.TunnelEnrollmentView, domai
 	if _, found := r.nodeNamed(name); found {
 		r.t.Fatal("a node row exists before the confirmation")
 	}
-	_, err = r.enroll.Confirm(context.Background(), r.admin, name, scanned.HostPublicKey)
+	_, err = r.enroll.Confirm(context.Background(), r.admin, name, scanned.ID, scanned.HostPublicKey)
 	must(r.t, err)
 	done := r.until(name, string(database.PhaseCommitted))
 	node, found := r.nodeNamed(name)
@@ -285,7 +285,7 @@ func TestTheConnectorTokenLeavesNoTraceOnTheControlPlane(t *testing.T) {
 		t.Fatal("no connector token while the enrollment is open")
 	}
 	scanned := r.view("vps1")
-	_, err = r.enroll.Confirm(context.Background(), r.admin, "vps1", scanned.HostPublicKey)
+	_, err = r.enroll.Confirm(context.Background(), r.admin, "vps1", scanned.ID, scanned.HostPublicKey)
 	must(t, err)
 	r.until("vps1", string(database.PhaseCommitted))
 

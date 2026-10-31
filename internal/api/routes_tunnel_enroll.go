@@ -83,7 +83,7 @@ func (rs *routeSet) tunnelEnrollments() {
 			if err != nil {
 				return app.TunnelEnrollmentView{}, err
 			}
-			return svc.Confirm(ctx, by, in.r.PathValue("name"), req.HostPublicKey)
+			return svc.Confirm(ctx, by, in.r.PathValue("name"), req.EnrollmentID, req.HostPublicKey)
 		},
 		enrollmentDone))
 	rs.write(http.MethodPost, wire.PathTunnelEnrollmentRefuse, actionNodeAdd, mutation(s,
@@ -92,7 +92,11 @@ func (rs *routeSet) tunnelEnrollments() {
 			if err != nil {
 				return app.TunnelEnrollmentView{}, err
 			}
-			return svc.Refuse(ctx, by, in.r.PathValue("name"))
+			req, err := decode[wire.RefuseTunnelEnrollmentRequest](in)
+			if err != nil {
+				return app.TunnelEnrollmentView{}, err
+			}
+			return svc.Refuse(ctx, by, in.r.PathValue("name"), req.EnrollmentID, req.HostPublicKey)
 		},
 		enrollmentDone))
 	rs.write(http.MethodPost, wire.PathTunnelEnrollmentCancel, actionNodeAdd, mutation(s,

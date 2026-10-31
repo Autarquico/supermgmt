@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/domain"
 )
 
 // ---- nodes reached only through Cloudflare Tunnel (ADR-0039) ----------------
@@ -30,16 +31,17 @@ func (c *Client) TunnelEnrollmentToken(ctx context.Context, name string) (wire.T
 	return call[wire.TunnelEnrollmentToken](ctx, c, get(wire.Path(wire.PathTunnelEnrollmentToken, name), nil))
 }
 
-// ConfirmTunnelEnrollment binds the operator's confirmation to the exact scanned key.
-func (c *Client) ConfirmTunnelEnrollment(ctx context.Context, name, hostPublicKey string) (wire.TunnelEnrollment, error) {
+// ConfirmTunnelEnrollment binds the operator's confirmation to the enrollment and the exact scanned key shown.
+func (c *Client) ConfirmTunnelEnrollment(ctx context.Context, name string, enrollment domain.ID, hostPublicKey string) (wire.TunnelEnrollment, error) {
 	return call[wire.TunnelEnrollment](ctx, c, post(wire.Path(wire.PathTunnelEnrollmentConfirm, name),
-		wire.ConfirmTunnelEnrollmentRequest{HostPublicKey: hostPublicKey}))
+		wire.ConfirmTunnelEnrollmentRequest{EnrollmentID: enrollment, HostPublicKey: hostPublicKey}))
 }
 
 // RefuseTunnelEnrollment records that the operator did not accept the scanned key. The daemon answers with
 // SSH_HOST_KEY_MISMATCH, which is the expected outcome.
-func (c *Client) RefuseTunnelEnrollment(ctx context.Context, name string) error {
-	_, err := call[wire.TunnelEnrollment](ctx, c, post(wire.Path(wire.PathTunnelEnrollmentRefuse, name), nil))
+func (c *Client) RefuseTunnelEnrollment(ctx context.Context, name string, enrollment domain.ID, hostPublicKey string) error {
+	_, err := call[wire.TunnelEnrollment](ctx, c, post(wire.Path(wire.PathTunnelEnrollmentRefuse, name),
+		wire.RefuseTunnelEnrollmentRequest{EnrollmentID: enrollment, HostPublicKey: hostPublicKey}))
 	return err
 }
 

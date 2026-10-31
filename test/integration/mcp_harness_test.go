@@ -572,6 +572,7 @@ func (rig *mcpRig) seedEnrollment() {
 	rig.t.Helper()
 	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
 		now, id := rig.clock.Now(), rig.ids.NewID()
+		rig.fixtures["tunnel_enrollment"] = id.String()
 		instance, err := database.GetInstance(ctx, tx)
 		if err != nil {
 			return err
