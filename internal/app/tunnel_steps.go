@@ -93,7 +93,11 @@ func (r *tunnelRun) ownsAccessApp(state database.CloudflareState, a cloudflare.A
 }
 
 func (r *tunnelRun) ensureIngress(ctx context.Context, _ database.CloudflareState) error {
-	tunnelID, want := r.known().TunnelID, cloudflare.SSHIngress(r.hostname)
+	tunnelID := r.known().TunnelID
+	want, err := desiredIngress(ctx, r.cfg.DB.Reader(), r.node.ID, r.hostname, "")
+	if err != nil {
+		return err
+	}
 	current, err := r.api.GetTunnelConfig(ctx, tunnelID)
 	if err != nil {
 		return err

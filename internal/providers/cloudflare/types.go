@@ -1,6 +1,9 @@
 package cloudflare
 
 import (
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/audit"
@@ -35,11 +38,30 @@ const (
 	ServiceNotFound = "http_status:404"
 )
 
+// RouteRule is an app route's rule: hostname to the app's published port on the node.
+type RouteRule struct {
+	Hostname string
+	Port     uint16
+}
+
+// ServiceLocalHTTP is the origin of an app route: cloudflared dials the node's loopback.
+func ServiceLocalHTTP(port uint16) string { return "http://127.0.0.1:" + strconv.Itoa(int(port)) }
+
+// NodeIngress routes the SSH hostname to the node's SSH daemon, then each route by hostname order, and
+// answers 404 to everything else.
+func NodeIngress(sshHostname string, routes []RouteRule) []IngressRule {
+	sorted := slices.SortedFunc(slices.Values(routes), func(a, b RouteRule) int { return strings.Compare(a.Hostname, b.Hostname) })
+	rules := make([]IngressRule, 0, len(sorted)+2)
+	rules = append(rules, IngressRule{Hostname: sshHostname, Service: ServiceSSH})
+	for _, r := range sorted {
+		rules = append(rules, IngressRule{Hostname: r.Hostname, Service: ServiceLocalHTTP(r.Port)})
+	}
+	return append(rules, IngressRule{Service: ServiceNotFound})
+}
+
 // SSHIngress routes hostname to the node's SSH daemon and answers 404 to
 // everything else.
-func SSHIngress(hostname string) []IngressRule {
-	return []IngressRule{{Hostname: hostname, Service: ServiceSSH}, {Service: ServiceNotFound}}
-}
+func SSHIngress(hostname string) []IngressRule { return NodeIngress(hostname, nil) }
 
 // ClosedIngress routes nothing: every request is answered 404.
 func ClosedIngress() []IngressRule { return []IngressRule{{Service: ServiceNotFound}} }

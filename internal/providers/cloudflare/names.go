@@ -18,6 +18,16 @@ func AccessAppName(instanceID, nodeID string) string {
 	return "supermgmt " + instanceID + " " + nodeID
 }
 
+// RouteAccessAppName is the name of an app route's Access application.
+func RouteAccessAppName(instanceID, routeID string) string {
+	return "supermgmt " + instanceID + " route " + routeID
+}
+
+// RouteDNSComment is the ownership marker on an app route's DNS record.
+func RouteDNSComment(instanceID, routeID string) string {
+	return "supermgmt:" + instanceID + ":route:" + routeID
+}
+
 // ServicePolicyName is the name of the instance's Service Auth policy.
 func ServicePolicyName(instanceID string) string { return "supermgmt service " + instanceID }
 

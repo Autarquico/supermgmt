@@ -57,6 +57,8 @@ provider.delete            provider    destructive  direct      -              -
 environment.write          environment high         direct      -              -                        -
 app.write                  app         operational  direct      -              -                        -
 app_target.write           app_target  operational  direct      -              -                        -
+app_route.expose           app_target  operational  direct      -              -                        -
+app_route.unexpose         app_target  operational  direct      -              -                        -
 config.write               instance    high         direct      -              -                        -
 secret.write               secret      high         direct      -              -                        -
 identity.write             identity    high         direct      -              -                        -

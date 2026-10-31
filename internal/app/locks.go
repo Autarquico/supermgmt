@@ -41,12 +41,17 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"service.stop":                   domain.LockExclusive,
 	"service.restart":                domain.LockExclusive,
 	"backup.create":                  domain.LockExclusive,
+	appRouteExposeAction:             domain.LockExclusive, // the app target (ownLock); the ingress lock in PlanLocks
+	appRouteUnexposeAction:           domain.LockExclusive,
 	deploymentCreateAction:           domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
 	deploymentRollbackAction:         domain.LockExclusive,
 }
 
 // cloudflareInstanceLock serializes the jobs that touch the instance-wide
-// Cloudflare objects (service token, reusable policies) across every node.
+// Cloudflare objects (service token, reusable policies) across every node. It
+// is also the ingress lock: every job that writes a node tunnel's ingress
+// (setup, disable, expose, unexpose) holds it and recomputes the list after
+// acquiring it (ADR-0040).
 var cloudflareInstanceLock = domain.LockSpec{Key: "cloudflare:instance", Mode: domain.LockExclusive}
 
 // ownLock is the lock on the job's own resource. A service is locked through
@@ -103,6 +108,9 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		return nil, err
 	}
 	specs := []domain.LockSpec{own}
+	if isAppRouteJob(job.Type) {
+		specs = append(specs, cloudflareInstanceLock) // route jobs may run without a plan: activation after a deployment
+	}
 	if job.PlanID == nil {
 		if isDeploymentJob(job.Type) {
 			return nil, smerr.New(smerr.CodeInternal, "", "deployment job has no plan to take its locks from")
@@ -124,7 +132,8 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		}
 		specs = append(specs, held...)
 	}
-	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" || job.Type == policy.ActionCloudflareRotate {
+	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" ||
+		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable {
 		specs = append(specs, cloudflareInstanceLock)
 	}
 	instance, err := enrollmentInstanceLock(ctx, q, job, *stored)
