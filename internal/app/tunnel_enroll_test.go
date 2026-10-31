@@ -793,17 +793,49 @@ func TestOnlyWhoStartedAnEnrollmentGetsItsTokenAndDecidesItsKey(t *testing.T) {
 	}
 }
 
-// A caller who may not act learns nothing about which enrollments exist.
-func TestAnUnauthorizedCallerCannotTellWhetherAnEnrollmentExists(t *testing.T) {
+// A caller who may not act is refused on an enrollment that exists; a name nobody enrolled is NOT_FOUND
+// whoever asks, since there is no target to evaluate policy on.
+func TestAnUnauthorizedCallerIsRefusedOnlyOnAnExistingEnrollment(t *testing.T) {
 	es := newEnrollSetting(t)
 	es.start()
 	es.work()
-	for _, name := range []string{"vps1", "nowhere"} {
-		_, err := es.svc.Token(context.Background(), es.caller(es.dave), name)
-		wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
-	}
-	_, err := es.svc.Token(context.Background(), es.admin(), "nowhere")
+	_, err := es.svc.Token(context.Background(), es.caller(es.dave), "vps1")
+	wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
+	_, err = es.svc.Token(context.Background(), es.caller(es.dave), "nowhere")
 	wantCode(t, err, smerr.CodeNotFound)
+	_, err = es.svc.Token(context.Background(), es.admin(), "nowhere")
+	wantCode(t, err, smerr.CodeNotFound)
+}
+
+// A caller whose node.read and node.add are scoped to an environment can look a fresh name up (NOT_FOUND,
+// which is what the CLI waits for) and then start the enrollment there.
+func TestACallerScopedToAnEnvironmentCanStartAnEnrollmentOnAFreshName(t *testing.T) {
+	es := newEnrollSetting(t)
+	es.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := database.CreateEnvironment(ctx, tx, domain.Environment{ID: es.ids.NewID(), Name: "staging", RiskLevel: domain.EnvironmentStaging})
+		return err
+	})
+	scoped, err := policy.Parse([]byte(string(policy.DefaultYAML()) + `  - name: staging-enrollers
+    subjects: ["identity:` + es.dave.String() + `"]
+    resources: ["environment:staging"]
+    allow: ["node.read", "node.add"]
+`))
+	mustf(t, err, "Parse")
+	es.fixture.cfg.Policy = scoped
+	es.svc = es.newService(es.handler.tunnel)
+
+	dave := es.caller(es.dave)
+	_, err = es.svc.Get(context.Background(), dave, "vps1")
+	wantCode(t, err, smerr.CodeNotFound)
+
+	res, err := es.svc.Start(context.Background(), dave, StartTunnelEnrollment{Name: "vps1", Environment: "staging"})
+	mustf(t, err, "Start")
+	if res.Applied == nil {
+		t.Fatalf("the staging enrollment is not applied: %+v", res)
+	}
+	if _, err := es.svc.Get(context.Background(), dave, "vps1"); err != nil {
+		t.Errorf("Get of the enrollment just started: %v", err)
+	}
 }
 
 // Cancelling deletes the connector token from the store, every version.

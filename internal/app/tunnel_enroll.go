@@ -328,8 +328,10 @@ func (s *TunnelEnrollments) Get(ctx context.Context, by Caller, name string) (Tu
 }
 
 // authorized checks the caller may do action on the enrollment of the name, then returns the newest one.
-// Policy answers before the name is resolved, so a caller who may not act learns nothing about which
-// enrollments exist. A refusal of an existing enrollment is audited.
+// A name with no enrollment has no target to evaluate policy on (a rule scoped to an environment or a tag
+// cannot match it), so only the MCP gate runs and the answer is NOT_FOUND: a caller scoped to staging can
+// then start an enrollment there. An existing enrollment gets the full policy check on its real target, and
+// a refusal is audited.
 func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name, action string) (database.TunnelEnrollment, domain.Actor, error) {
 	q := s.cfg.DB.Reader()
 	actor, err := s.beginRequest(ctx, q, by)
@@ -337,21 +339,22 @@ func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name, act
 		return database.TunnelEnrollment{}, domain.Actor{}, err
 	}
 	row, err := database.GetLatestTunnelEnrollmentByName(ctx, q, name)
-	if err != nil && smerr.CodeOf(err) != smerr.CodeNotFound {
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		if res, gated := s.mcpGate(actor, action); gated {
+			ref := nodeRef(row.ID)
+			return database.TunnelEnrollment{}, actor, s.refuse(ctx, actor, action, ref, res, false)
+		}
+		return database.TunnelEnrollment{}, actor, smerr.New(smerr.CodeNotFound, "", "tunnel enrollment not found")
+	}
+	if err != nil {
 		return database.TunnelEnrollment{}, domain.Actor{}, err
 	}
-	found := err == nil
-	target := policy.Target{Ref: nodeRef(row.ID), Attrs: policy.Attributes{Node: name, Provider: name}}
-	if found {
-		if target, err = s.target(ctx, q, row); err != nil {
-			return database.TunnelEnrollment{}, domain.Actor{}, err
-		}
+	target, err := s.target(ctx, q, row)
+	if err != nil {
+		return database.TunnelEnrollment{}, domain.Actor{}, err
 	}
 	if res := s.authorize(policy.Request{Actor: actor, Action: action, Targets: []policy.Target{target}}); res.Decision != policy.DecisionAllow {
-		return database.TunnelEnrollment{}, actor, s.refuse(ctx, actor, action, target.Ref, res, found)
-	}
-	if !found {
-		return database.TunnelEnrollment{}, actor, smerr.New(smerr.CodeNotFound, "", "tunnel enrollment not found")
+		return database.TunnelEnrollment{}, actor, s.refuse(ctx, actor, action, target.Ref, res, true)
 	}
 	return row, actor, nil
 }
