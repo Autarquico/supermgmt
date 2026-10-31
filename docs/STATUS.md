@@ -11,6 +11,7 @@
 <!-- pm-sync:done-this-week -->
 - #31 Reach SSH nodes through Cloudflare Tunnel
 - #45 Reach the Proxmox API through the host's SSH connection
+- #48 Add a node that is reachable only through Cloudflare Tunnel
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -18,7 +19,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #48 Add a node that is reachable only through Cloudflare Tunnel
+_(nada)_
 <!-- /pm-sync:in-progress -->
 
 ---
