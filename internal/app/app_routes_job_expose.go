@@ -40,6 +40,11 @@ func (r *routeRun) exposeRoute(ctx context.Context) error {
 	}
 	if r.route.Phase == database.AppRouteIngressReady || r.route.Phase == database.AppRouteAccessReady {
 		// A resumed route lost its rule when it halted, and no step below writes it again.
+		if r.route.Phase == database.AppRouteAccessReady && r.route.Access == "owners" {
+			if err := r.run("Access application", r.requireAccessApp(ctx)); err != nil {
+				return err
+			}
+		}
 		if err := r.syncIngress(ctx, ""); err != nil {
 			return r.run("tunnel ingress", err)
 		}

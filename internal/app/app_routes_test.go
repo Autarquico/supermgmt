@@ -444,6 +444,39 @@ func TestAnExhaustedExposeHaltsTheRouteWithdrawsItsRuleAndExposeAgainResumesIt(t
 	}
 }
 
+func TestExposeAgainChecksTheAccessApplicationBeforeAnOwnersRouteServesAgain(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+	res, err := rs.expose(webRequest(shop))
+	mustf(t, err, "Expose")
+	job := rs.approved(res)
+	rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID)
+	rs.arm("refused before", 3) // halts in access_ready
+	if err := rs.runJob(job); err == nil {
+		t.Fatal("the transient failure changed nothing")
+	}
+	route, err := rs.liveRoute(shop)
+	mustf(t, err, "route")
+	if !rs.cf.RemoveApp(route.Objects.AccessAppID) {
+		t.Fatal("no Access application to remove")
+	}
+
+	again, err := rs.expose(webRequest(shop))
+	mustf(t, err, "Expose of the halted route")
+	before := len(rs.cf.Mutations())
+	if err := rs.runApproved(again); err == nil {
+		t.Fatal("a missing Access application did not stop the resume")
+	}
+
+	if got := rs.route(route.ID).Phase; !got.Halted() {
+		t.Errorf("phase = %s, want halted", got)
+	}
+	if got := rs.cf.Mutations()[before:]; len(got) != 0 {
+		t.Errorf("mutations = %v, want none: the rule is not published without its Access application", got)
+	}
+	rs.wantIngress()
+}
+
 func TestExposeAgainChecksTheDNSBeforeAHaltedRouteServesAgain(t *testing.T) {
 	rs := newRouteSetting(t)
 	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
