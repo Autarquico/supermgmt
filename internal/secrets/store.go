@@ -167,6 +167,24 @@ func (s *Store) Discard(ctx context.Context, id domain.ID) error {
 	return s.repo.DeleteStaged(ctx, id)
 }
 
+// Purge deletes every version of name, so that no earlier value stays readable or in a backup taken after
+// it. A name that is not stored is not an error.
+func (s *Store) Purge(ctx context.Context, name string) error {
+	s.keys.ops.Lock()
+	defer s.keys.ops.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.repo.DeleteByName(ctx, name); err != nil {
+		return fmt.Errorf("purge secret %s: %w", name, err)
+	}
+	for ref := range s.signers {
+		if ref.Name == name {
+			delete(s.signers, ref)
+		}
+	}
+	return nil
+}
+
 func digest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])

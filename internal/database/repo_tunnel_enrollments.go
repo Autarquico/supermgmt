@@ -51,6 +51,7 @@ type TunnelEnrollment struct {
 	Hostname         string
 	Objects          TunnelObjects
 	ExpiresAt        time.Time
+	StartedBy        domain.ID // the identity that started it, or whose approved plan did
 	Identity         EnrollmentIdentity
 	ScannedHostKey   string
 	ConfirmedHostKey string
@@ -62,7 +63,7 @@ type TunnelEnrollment struct {
 }
 
 const tunnelEnrollmentColumns = `id, name, environment_id, tags_json, phase, halted_phase, phase_started_at,
-	account_id, zone, instance_id, hostname, tunnel_id, dns_record_id, access_app_id, expires_at,
+	account_id, zone, instance_id, hostname, tunnel_id, dns_record_id, access_app_id, expires_at, started_by,
 	identity_public_key, identity_fingerprint, identity_credential_ref, scanned_host_key, confirmed_host_key,
 	token_ref, terminal_reason, last_error, created_at, updated_at`
 
@@ -75,7 +76,7 @@ func scanTunnelEnrollment(s scanner) (TunnelEnrollment, error) {
 	)
 	err := s.Scan(&e.ID, &e.Name, &env, &tags, &e.Phase, &halted, &startedMs,
 		&e.AccountID, &e.Zone, &e.InstanceID, &e.Hostname,
-		&e.Objects.TunnelID, &e.Objects.DNSRecordID, &e.Objects.AccessAppID, &expiresMs,
+		&e.Objects.TunnelID, &e.Objects.DNSRecordID, &e.Objects.AccessAppID, &expiresMs, &e.StartedBy,
 		&e.Identity.PublicKey, &e.Identity.Fingerprint, &e.Identity.CredentialRef,
 		&e.ScannedHostKey, &e.ConfirmedHostKey, &e.TokenRef, &e.TerminalReason, &e.LastError, &createdMs, &updatedMs)
 	if err != nil {
@@ -94,8 +95,8 @@ func scanTunnelEnrollment(s scanner) (TunnelEnrollment, error) {
 }
 
 // CreateTunnelEnrollment records the start of an enrollment. The phase is always started; ID, Name,
-// EnvironmentID, Tags, AccountID, Zone, InstanceID, Hostname, ExpiresAt, Identity, TokenRef and CreatedAt of
-// e are used. A name that already has an open enrollment yields CONFLICT.
+// EnvironmentID, Tags, AccountID, Zone, InstanceID, Hostname, ExpiresAt, StartedBy, Identity, TokenRef and
+// CreatedAt of e are used. A name that already has an open enrollment yields CONFLICT.
 func CreateTunnelEnrollment(ctx context.Context, q Querier, e TunnelEnrollment) (TunnelEnrollment, error) {
 	tags, err := json.Marshal(append([]string{}, e.Tags...))
 	if err != nil {
@@ -103,11 +104,11 @@ func CreateTunnelEnrollment(ctx context.Context, q Querier, e TunnelEnrollment) 
 	}
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO tunnel_enrollments (id, name, environment_id, tags_json, phase, phase_started_at,
-			account_id, zone, instance_id, hostname, expires_at, identity_public_key, identity_fingerprint,
-			identity_credential_ref, token_ref, created_at, updated_at)
-		VALUES (?, ?, NULLIF(?, ''), ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			account_id, zone, instance_id, hostname, expires_at, started_by, identity_public_key,
+			identity_fingerprint, identity_credential_ref, token_ref, created_at, updated_at)
+		VALUES (?, ?, NULLIF(?, ''), ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Name, e.EnvironmentID, string(tags), millis(e.CreatedAt),
-		e.AccountID, e.Zone, e.InstanceID, e.Hostname, millis(e.ExpiresAt),
+		e.AccountID, e.Zone, e.InstanceID, e.Hostname, millis(e.ExpiresAt), e.StartedBy,
 		e.Identity.PublicKey, e.Identity.Fingerprint, e.Identity.CredentialRef, e.TokenRef,
 		millis(e.CreatedAt), millis(e.CreatedAt))
 	if err != nil {
@@ -146,8 +147,7 @@ func ListOpenTunnelEnrollments(ctx context.Context, q Querier) ([]TunnelEnrollme
 }
 
 // AdvanceTunnelEnrollment moves the enrollment to next, recording any non-empty object IDs in the same
-// statement, but only while the stored phase still equals expected. A halted enrollment resumes through
-// here with expected set to failed or conflict. Otherwise CONFLICT (or NOT_FOUND) and nothing changes.
+// statement, but only while the stored phase still equals expected. Otherwise CONFLICT (or NOT_FOUND) and nothing changes.
 func AdvanceTunnelEnrollment(ctx context.Context, q Querier, id domain.ID,
 	expected, next TunnelPhase, objects TunnelObjects, now time.Time,
 ) (TunnelEnrollment, error) {
@@ -160,18 +160,6 @@ func AdvanceTunnelEnrollment(ctx context.Context, q Querier, id domain.ID,
 		WHERE id = ? AND phase = ?`,
 		next, millis(now), millis(now), objects.TunnelID, objects.DNSRecordID, objects.AccessAppID, id, expected)
 	return finishEnrollmentUpdate(ctx, q, res, err, "advance", id, expected)
-}
-
-// ResumeHaltedTunnelEnrollment moves a halted enrollment back to the phase it held, keeping
-// phase_started_at so the objects an earlier attempt created stay adoptable.
-func ResumeHaltedTunnelEnrollment(ctx context.Context, q Querier, id domain.ID, halted TunnelPhase, now time.Time) (TunnelEnrollment, error) {
-	if !halted.Halted() {
-		return TunnelEnrollment{}, smerr.New(smerr.CodeInvalidArgument, "", "only a failed or conflict enrollment can be resumed")
-	}
-	res, err := q.ExecContext(ctx, `
-		UPDATE tunnel_enrollments SET phase = halted_phase, halted_phase = NULL, last_error = '', updated_at = ?
-		WHERE id = ? AND phase = ? AND halted_phase IS NOT NULL`, millis(now), id, halted)
-	return finishEnrollmentUpdate(ctx, q, res, err, "resume", id, halted)
 }
 
 // HaltTunnelEnrollment marks the enrollment failed or conflict, keeping its phase as HaltedPhase, under
@@ -213,16 +201,6 @@ func ConfirmTunnelEnrollment(ctx context.Context, q Querier, id domain.ID, hostK
 			phase_started_at = ?, updated_at = ?
 		WHERE id = ? AND phase = 'scanned' AND scanned_host_key = ?`, millis(now), millis(now), id, hostKey)
 	return finishEnrollmentUpdate(ctx, q, res, err, "confirm", id, PhaseScanned)
-}
-
-// SetTunnelEnrollmentTokenRef records where the connector token is stored. It is written once, while the
-// enrollment is open.
-func SetTunnelEnrollmentTokenRef(ctx context.Context, q Querier, id domain.ID, ref string, now time.Time) error {
-	res, err := q.ExecContext(ctx, `
-		UPDATE tunnel_enrollments SET token_ref = ?, updated_at = ?
-		WHERE id = ? AND token_ref = '' AND phase NOT IN ('committed', 'expired', 'cancelled')`, ref, millis(now), id)
-	_, err = finishEnrollmentUpdate(ctx, q, res, err, "set token of", id, PhaseStarted)
-	return err
 }
 
 // StartTunnelEnrollmentRemoval moves the enrollment from expected to removing and records why. The

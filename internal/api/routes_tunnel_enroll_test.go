@@ -36,6 +36,13 @@ func (m *memorySecrets) Get(_ context.Context, ref secrets.Ref) (audit.Secret, e
 	return v, nil
 }
 
+func (m *memorySecrets) Purge(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.values, name)
+	return nil
+}
+
 func (m *memorySecrets) Put(_ context.Context, name string, plaintext audit.Secret, _ map[string]any) (secrets.Ref, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -70,7 +77,7 @@ func (h *harness) seedEnrollment(name, phase, scanned string) database.TunnelEnr
 		}
 		row, err = database.CreateTunnelEnrollment(ctx, tx, database.TunnelEnrollment{
 			ID: id, Name: name, AccountID: "acct", Zone: "example.com", InstanceID: instance.ID.String(),
-			Hostname: "ssh-" + name + ".example.com", ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+			Hostname: "ssh-" + name + ".example.com", ExpiresAt: now.Add(time.Hour), StartedBy: h.caller, CreatedAt: now,
 			Identity: database.EnrollmentIdentity{PublicKey: "ssh-ed25519 AAAA", Fingerprint: "SHA256:x", CredentialRef: "secret://ssh/default?version=1"},
 			TokenRef: "secret://cloudflare/enroll/" + id.String(),
 		})

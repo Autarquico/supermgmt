@@ -206,7 +206,8 @@ func (s *TunnelEnrollments) startParams(r StartTunnelEnrollment) (nodeAddParams,
 	}, nil
 }
 
-// createRow reserves the name and records the enrollment, with the instance's SSH identity as it is now.
+// createRow reserves the name and records the enrollment as started by actor (the caller of an immediate
+// start, the requester of an approved plan), with the instance's SSH identity as it is now.
 // The name is checked here, in the transaction that inserts the row.
 func (s *TunnelEnrollments) createRow(ctx context.Context, q database.Querier, actor domain.Actor, p nodeAddParams, identity secrets.Identity) (database.TunnelEnrollment, error) {
 	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
@@ -233,7 +234,7 @@ func (s *TunnelEnrollments) createRow(ctx context.Context, q database.Querier, a
 	row, err := database.CreateTunnelEnrollment(ctx, q, database.TunnelEnrollment{
 		ID: p.NodeID, Name: p.Name, EnvironmentID: environment, Tags: p.Tags,
 		AccountID: zone.AccountID, Zone: zone.Zone, InstanceID: instance.ID.String(), Hostname: hostname,
-		ExpiresAt: now.Add(time.Duration(p.ExpiresIn) * time.Second),
+		ExpiresAt: now.Add(time.Duration(p.ExpiresIn) * time.Second), StartedBy: actor.ID,
 		Identity: database.EnrollmentIdentity{
 			PublicKey: identity.AuthorizedKey, Fingerprint: identity.FingerprintSHA256, CredentialRef: pinnedIdentityRef(identity),
 		},
@@ -326,8 +327,9 @@ func (s *TunnelEnrollments) Get(ctx context.Context, by Caller, name string) (Tu
 	return s.view(ctx, s.cfg.DB.Reader(), row)
 }
 
-// authorized loads the newest enrollment of the name and checks the caller may do action on it, auditing a
-// refusal.
+// authorized checks the caller may do action on the enrollment of the name, then returns the newest one.
+// Policy answers before the name is resolved, so a caller who may not act learns nothing about which
+// enrollments exist. A refusal of an existing enrollment is audited.
 func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name, action string) (database.TunnelEnrollment, domain.Actor, error) {
 	q := s.cfg.DB.Reader()
 	actor, err := s.beginRequest(ctx, q, by)
@@ -335,45 +337,53 @@ func (s *TunnelEnrollments) authorized(ctx context.Context, by Caller, name, act
 		return database.TunnelEnrollment{}, domain.Actor{}, err
 	}
 	row, err := database.GetLatestTunnelEnrollmentByName(ctx, q, name)
-	if err != nil {
+	if err != nil && smerr.CodeOf(err) != smerr.CodeNotFound {
 		return database.TunnelEnrollment{}, domain.Actor{}, err
 	}
-	return row, actor, s.requireOn(ctx, actor, action, row)
+	found := err == nil
+	target := policy.Target{Ref: nodeRef(row.ID), Attrs: policy.Attributes{Node: name, Provider: name}}
+	if found {
+		if target, err = s.target(ctx, q, row); err != nil {
+			return database.TunnelEnrollment{}, domain.Actor{}, err
+		}
+	}
+	if res := s.authorize(policy.Request{Actor: actor, Action: action, Targets: []policy.Target{target}}); res.Decision != policy.DecisionAllow {
+		return database.TunnelEnrollment{}, actor, s.refuse(ctx, actor, action, target.Ref, res, found)
+	}
+	if !found {
+		return database.TunnelEnrollment{}, actor, smerr.New(smerr.CodeNotFound, "", "tunnel enrollment not found")
+	}
+	return row, actor, nil
+}
+
+// requireStarter limits the steps that decide what the node will be (reading the connector token, confirming
+// or refusing the key) to the identity that started the enrollment: another holder of node.add, or one
+// whose own node.add needs approval, could otherwise pin a host of their choosing without that approval.
+func (s *TunnelEnrollments) requireStarter(ctx context.Context, actor domain.Actor, row database.TunnelEnrollment) error {
+	if actor.ID == row.StartedBy {
+		return nil
+	}
+	res := policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonDefaultDeny}
+	return s.refuse(ctx, actor, actionNodeAdd, nodeRef(row.ID), res, true)
+}
+
+// refuse answers a refused request with its typed error, auditing it when it is about an enrollment that exists.
+func (s *TunnelEnrollments) refuse(ctx context.Context, actor domain.Actor, action string, ref domain.ResourceRef, res policy.Result, audited bool) error {
+	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		if audited {
+			if err := s.auditDecision(ctx, tx, actor, action, ref, res); err != nil {
+				return err
+			}
+		}
+		return reject(decisionError(res))
+	})
 }
 
 // refuseTokenToMCP denies the connector token to an mcp actor whatever its grant: it is a credential, and an
 // mcp bearer never gets one (mcpgate.go). The refusal is audited like any other.
 func (s *TunnelEnrollments) refuseTokenToMCP(ctx context.Context, actor domain.Actor, row database.TunnelEnrollment) error {
-	target, err := s.target(ctx, s.cfg.DB.Reader(), row)
-	if err != nil {
-		return err
-	}
 	res := policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonMCPActionForbidden}
-	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		if err := s.auditDecision(ctx, tx, actor, actionNodeAdd, target.Ref, res); err != nil {
-			return err
-		}
-		return reject(decisionError(res))
-	})
-}
-
-// requireOn checks policy for action on the enrollment as on the node it will become. A refusal is audited.
-func (s *TunnelEnrollments) requireOn(ctx context.Context, actor domain.Actor, action string, row database.TunnelEnrollment) error {
-	q := s.cfg.DB.Reader()
-	target, err := s.target(ctx, q, row)
-	if err != nil {
-		return err
-	}
-	res := s.authorize(policy.Request{Actor: actor, Action: action, Targets: []policy.Target{target}})
-	if res.Decision == policy.DecisionAllow {
-		return nil
-	}
-	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
-		if err := s.auditDecision(ctx, tx, actor, action, target.Ref, res); err != nil {
-			return err
-		}
-		return reject(decisionError(res))
-	})
+	return s.refuse(ctx, actor, actionNodeAdd, nodeRef(row.ID), res, true)
 }
 
 // target is the policy view of the node an enrollment will become: its tags and environment.
@@ -451,7 +461,8 @@ func (s *TunnelEnrollments) joinLine(instance domain.ID, authorizedKey string) s
 
 // ---- the connector token ---------------------------------------------------------------
 
-// Token returns the connector token while the enrollment is open (action node.add on the enrollment). It
+// Token returns the connector token to whoever started the enrollment while it is open (action node.add on
+// the enrollment). It
 // is stored in the secret store, shown here and nowhere else, and deleted when the node is proven, the
 // enrollment ends or is cancelled.
 func (s *TunnelEnrollments) Token(ctx context.Context, by Caller, name string) (audit.Secret, error) {
@@ -461,6 +472,9 @@ func (s *TunnelEnrollments) Token(ctx context.Context, by Caller, name string) (
 	}
 	if actor.Type == domain.ActorMCP {
 		return "", s.refuseTokenToMCP(ctx, actor, row)
+	}
+	if err := s.requireStarter(ctx, actor, row); err != nil {
+		return "", err
 	}
 	if err := s.tokenAvailability(row); err != nil {
 		return "", err
@@ -475,8 +489,6 @@ func (s *TunnelEnrollments) Token(ctx context.Context, by Caller, name string) (
 		return "", smerr.New(smerr.CodeConflict, "", "the Cloudflare side of the enrollment is still being built: ask again in a moment")
 	case err != nil:
 		return "", err
-	case token == retiredCredential:
-		return "", smerr.New(smerr.CodeConflict, "", "the connector token is no longer available")
 	}
 	err = s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		return s.emit(ctx, tx, actor, eventEnrollmentToken, nodeRef(row.ID), domain.ResultSucceeded,
@@ -513,6 +525,9 @@ func (s *TunnelEnrollments) Confirm(ctx context.Context, by Caller, name, hostKe
 		return TunnelEnrollmentView{}, err
 	}
 	row, actor, err := s.authorized(ctx, by, name, actionNodeAdd)
+	if err == nil {
+		err = s.requireStarter(ctx, actor, row)
+	}
 	if err != nil {
 		return TunnelEnrollmentView{}, err
 	}
@@ -548,6 +563,9 @@ func (s *TunnelEnrollments) Confirm(ctx context.Context, by Caller, name, hostKe
 // SSH_HOST_KEY_MISMATCH and is cleaned up.
 func (s *TunnelEnrollments) Refuse(ctx context.Context, by Caller, name string) (TunnelEnrollmentView, error) {
 	row, actor, err := s.authorized(ctx, by, name, actionNodeAdd)
+	if err == nil {
+		err = s.requireStarter(ctx, actor, row)
+	}
 	if err != nil {
 		return TunnelEnrollmentView{}, err
 	}

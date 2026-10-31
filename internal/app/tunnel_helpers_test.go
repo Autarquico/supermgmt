@@ -49,6 +49,13 @@ func (m *memSecrets) Get(_ context.Context, ref secrets.Ref) (audit.Secret, erro
 	return versions[len(versions)-1], nil
 }
 
+func (m *memSecrets) Purge(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.vals, name)
+	return nil
+}
+
 func (m *memSecrets) Put(_ context.Context, name string, plaintext audit.Secret, _ map[string]any) (secrets.Ref, error) {
 	m.mu.Lock()
 	m.vals[name] = append(m.vals[name], plaintext)

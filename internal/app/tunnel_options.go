@@ -52,6 +52,7 @@ var _ CloudflareAPI = (*cloudflare.Client)(nil)
 type TunnelSecrets interface {
 	Get(ctx context.Context, ref secrets.Ref) (audit.Secret, error)
 	Put(ctx context.Context, name string, plaintext audit.Secret, meta map[string]any) (secrets.Ref, error)
+	Purge(ctx context.Context, name string) error
 }
 
 // TunnelOptions enable the tunnel jobs. Without them (no cloudflare: block)

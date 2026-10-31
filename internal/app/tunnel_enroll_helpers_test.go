@@ -194,6 +194,27 @@ func (es *enrollSetting) scannedEnrollment() (TunnelEnrollmentView, string) {
 	return view, key
 }
 
+// wantNoTokenVersions fails when any version of the enrollment's connector token is still in the secret store.
+func (es *enrollSetting) wantNoTokenVersions(id domain.ID, when string) {
+	es.t.Helper()
+	es.secrets.mu.Lock()
+	defer es.secrets.mu.Unlock()
+	if left := len(es.secrets.vals[enrollmentTokenPrefix+id.String()]); left != 0 {
+		es.t.Errorf("%d versions of the connector token remain after %s", left, when)
+	}
+}
+
+// secondAdmin is an identity with the admin role that did not start any enrollment.
+func (es *enrollSetting) secondAdmin() Caller {
+	es.t.Helper()
+	var id domain.ID
+	es.inTx(func(ctx context.Context, tx *database.Tx) error {
+		id = es.fixture.identity(ctx, tx, "root2", domain.ActorHuman, es.role(ctx, tx, "admin"))
+		return nil
+	})
+	return es.caller(id)
+}
+
 // everything is every place the connector token could have been written: audit events, job payloads, plans,
 // enrollment rows and the views.
 func (es *enrollSetting) everything(id domain.ID) string {

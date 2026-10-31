@@ -205,22 +205,13 @@ func (s *TunnelEnrollments) ensureToken(ctx context.Context, lease jobs.Lease, j
 	return s.storeToken(ctx, row, token)
 }
 
-// retireToken makes the stored connector token unreadable. The store keeps every version and has no delete,
-// so the latest one is overwritten with a value that is no credential, as the service-token rotation does.
-func (s *TunnelEnrollments) retireToken(ctx context.Context, row database.TunnelEnrollment) error {
+// purgeToken deletes every version of the stored connector token.
+func (s *TunnelEnrollments) purgeToken(ctx context.Context, row database.TunnelEnrollment) error {
 	name, err := secretName(row.TokenRef)
 	if err != nil {
 		return err
 	}
-	stored, err := s.engine.opts.Secrets.Get(ctx, secrets.Ref{Name: name})
-	if smerr.CodeOf(err) == smerr.CodeNotFound || (err == nil && stored == retiredCredential) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	_, err = s.engine.opts.Secrets.Put(ctx, name, retiredCredential, map[string]any{"purpose": "cloudflare tunnel connector token of a node enrollment (retired)"})
-	return err
+	return s.engine.opts.Secrets.Purge(ctx, name)
 }
 
 // ---- scan ---------------------------------------------------------------------------
@@ -322,7 +313,7 @@ func (s *TunnelEnrollments) proveAndCommit(ctx context.Context, lease jobs.Lease
 		return false, s.note(ctx, lease, row, "waiting for the node: "+sanitizedError(err))
 	}
 	// The node answered through the tunnel, so its connector runs and the token has done its work.
-	if err := s.retireToken(ctx, row); err != nil {
+	if err := s.purgeToken(ctx, row); err != nil {
 		return false, err
 	}
 	committed, err := s.commitNode(ctx, lease, job, row)
@@ -447,9 +438,9 @@ func endingOf(row database.TunnelEnrollment) (string, database.TunnelPhase) {
 }
 
 // cleanup takes the Cloudflare objects down (the teardown of ADR-0039) and releases the name. The token is
-// retired first: once the enrollment is ending nobody should be shown it.
+// purged first: once the enrollment is ending nobody should be shown it.
 func (s *TunnelEnrollments) cleanup(ctx context.Context, lease jobs.Lease, job jobs.Job, row database.TunnelEnrollment) error {
-	if err := s.retireToken(ctx, row); err != nil {
+	if err := s.purgeToken(ctx, row); err != nil {
 		return err
 	}
 	r, rec, err := s.newRun(ctx, lease, job, row)

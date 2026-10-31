@@ -41,6 +41,9 @@ func (i *Inventory) applyNodeAdd(ctx context.Context, q database.Querier, actor 
 	if smerr.CodeOf(err) != smerr.CodeNotFound {
 		return domain.Node{}, err
 	}
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
+		return domain.Node{}, err
+	}
 	var environment *domain.ID
 	if p.Environment != "" {
 		env, err := environmentNamed(ctx, q, p.Environment)

@@ -297,6 +297,7 @@ func TestEveryWriteTransactionIsClassified(t *testing.T) {
 		"SecretsRepo.PutStaged":                 "staging a secret import under KeyManager; covered by the transport guard",
 		"SecretsRepo.ActivateStaged":            "activation by an approved job; jobs are never claimed during hold",
 		"SecretsRepo.DeleteStaged":              "discarding a staged import; cleanup, allowed during hold",
+		"SecretsRepo.DeleteByName":              "purging a spent connector token at an enrollment's end; cleanup, jobs are never claimed during hold",
 	}
 	found := map[string]bool{}
 	files, err := filepath.Glob("*.go")

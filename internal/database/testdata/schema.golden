@@ -770,6 +770,7 @@ CREATE TABLE tunnel_enrollments (
     dns_record_id           TEXT NOT NULL DEFAULT '',            -- '' until created; set once
     access_app_id           TEXT NOT NULL DEFAULT '',            -- '' until created; set once
     expires_at              INTEGER NOT NULL,
+    started_by              TEXT NOT NULL,                       -- identity that started the enrollment; the only one that reads the token and confirms or refuses the key
     identity_public_key     TEXT NOT NULL,                       -- SSH identity snapshot taken at start; used by the line, the proof and the commit
     identity_fingerprint    TEXT NOT NULL,
     identity_credential_ref TEXT NOT NULL,                       -- versioned secret reference of the snapshot's private key
@@ -922,7 +923,7 @@ BEGIN SELECT RAISE(ABORT, 'a finished tunnel enrollment does not change phase');
 
 -- trigger tunnel_enrollments_ids_once
 CREATE TRIGGER tunnel_enrollments_ids_once BEFORE UPDATE OF id, name, environment_id, tags_json, account_id, zone,
-        instance_id, hostname, tunnel_id, dns_record_id, access_app_id, expires_at, identity_public_key,
+        instance_id, hostname, tunnel_id, dns_record_id, access_app_id, expires_at, started_by, identity_public_key,
         identity_fingerprint, identity_credential_ref, confirmed_host_key, token_ref, created_at ON tunnel_enrollments
 WHEN (OLD.tunnel_id <> '' AND NEW.tunnel_id <> OLD.tunnel_id)
   OR (OLD.dns_record_id <> '' AND NEW.dns_record_id <> OLD.dns_record_id)
@@ -932,6 +933,7 @@ WHEN (OLD.tunnel_id <> '' AND NEW.tunnel_id <> OLD.tunnel_id)
   OR NEW.id <> OLD.id OR NEW.name <> OLD.name OR NEW.environment_id IS NOT OLD.environment_id
   OR NEW.tags_json <> OLD.tags_json OR NEW.account_id <> OLD.account_id OR NEW.zone <> OLD.zone
   OR NEW.instance_id <> OLD.instance_id OR NEW.hostname <> OLD.hostname OR NEW.expires_at <> OLD.expires_at
+  OR NEW.started_by <> OLD.started_by
   OR NEW.identity_public_key <> OLD.identity_public_key OR NEW.identity_fingerprint <> OLD.identity_fingerprint
   OR NEW.identity_credential_ref <> OLD.identity_credential_ref OR NEW.created_at <> OLD.created_at
 BEGIN SELECT RAISE(ABORT, 'a tunnel enrollment keeps its identity snapshot and recorded object IDs'); END;

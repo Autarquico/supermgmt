@@ -117,8 +117,7 @@ func TestOneOpenEnrollmentPerName(t *testing.T) {
 		wantError(t, err, smerr.CodeConflict, "")
 
 		// removal in progress still holds it; the end releases it
-		first = must(ResumeHaltedTunnelEnrollment(ctx, q, first.ID, PhaseConflict, testEpoch))
-		first = must(StartTunnelEnrollmentRemoval(ctx, q, first.ID, PhaseStarted, "expired", testEpoch))
+		first = must(StartTunnelEnrollmentRemoval(ctx, q, first.ID, PhaseConflict, "expired", testEpoch))
 		if first.Phase != PhaseRemoving || first.TerminalReason != "expired" {
 			t.Fatalf("removing = %+v", first)
 		}

@@ -134,9 +134,7 @@ func TestEnrollmentFromStartToCommitNeverDialsTheNodeDirectly(t *testing.T) {
 	// the token is gone after the commit, and was in no row, audit event, job or view
 	_, err = es.svc.Token(context.Background(), es.admin(), "vps1")
 	wantCode(t, err, smerr.CodeConflict)
-	if stored, _ := es.secrets.Get(context.Background(), secrets.Ref{Name: enrollmentTokenPrefix + view.ID.String()}); stored != retiredCredential {
-		t.Errorf("the stored token is still readable after the commit")
-	}
+	es.wantNoTokenVersions(view.ID, "the commit")
 	if everything := es.everything(view.ID); strings.Contains(everything, token.Reveal()) {
 		t.Error("the connector token is in an audit event, a job, a plan, the row or a view")
 	}
@@ -436,7 +434,7 @@ func TestAnExpiredEnrollmentIsTakenDownAndTheNameReleased(t *testing.T) {
 	baseNodes := es.nodeCount()
 	view := es.start()
 	es.work()
-	token := es.tokenOf("vps1")
+	_ = es.tokenOf("vps1")
 	shared, base := es.instanceObjects(), len(es.cf.Mutations())
 
 	es.clock.Advance(90 * time.Minute)
@@ -457,9 +455,7 @@ func TestAnExpiredEnrollmentIsTakenDownAndTheNameReleased(t *testing.T) {
 	if _, err := es.svc.Token(context.Background(), es.admin(), "vps1"); smerr.CodeOf(err) != smerr.CodeConflict {
 		t.Errorf("token after the expiry: %v", err)
 	}
-	if stored, _ := es.secrets.Get(context.Background(), secrets.Ref{Name: enrollmentTokenPrefix + view.ID.String()}); stored != retiredCredential || strings.Contains(string(stored), token.Reveal()) {
-		t.Error("the token is still stored after the expiry")
-	}
+	es.wantNoTokenVersions(view.ID, "the expiry")
 	if _, err := es.svc.Start(context.Background(), es.admin(), StartTunnelEnrollment{Name: "vps1"}); err != nil {
 		t.Errorf("the name was not released: %v", err)
 	}
@@ -739,5 +735,125 @@ func TestOnlyTheProvisioningJobTakesTheInstanceLock(t *testing.T) {
 	mustf(t, es.sched.Tick(context.Background()), "Tick")
 	if takesInstance() {
 		t.Error("the scan job takes the instance lock")
+	}
+}
+
+// The steps that decide what the node will be belong to whoever started the enrollment, whether the start was
+// immediate or went through an approval: another holder of node.add, even one whose own add needs approval,
+// can neither read the token nor confirm or refuse the key, but can still cancel.
+func TestOnlyWhoStartedAnEnrollmentGetsItsTokenAndDecidesItsKey(t *testing.T) {
+	cases := []struct {
+		name  string
+		start func(es *enrollSetting) TunnelEnrollmentView
+	}{
+		{"immediate start", func(es *enrollSetting) TunnelEnrollmentView { return es.start() }},
+		{"approved start", func(es *enrollSetting) TunnelEnrollmentView {
+			res, err := es.svc.Start(context.Background(), es.admin(), StartTunnelEnrollment{Name: "vps1", Environment: "prod"})
+			mustf(t, err, "Start")
+			es.approveToQuorum(res.Pending.Job)
+			es.work()
+			row, err := database.OpenTunnelEnrollmentByName(context.Background(), es.db.Reader(), "vps1")
+			mustf(t, err, "OpenTunnelEnrollmentByName")
+			return TunnelEnrollmentView{ID: row.ID}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			es := newEnrollSetting(t)
+			view := c.start(es)
+			if got := es.enrollmentRow(view.ID).StartedBy; got != es.fixture.admin {
+				t.Fatalf("started_by = %q, want the requester %q", got, es.fixture.admin)
+			}
+			key := es.nodeComesUp()
+			if row := es.settle(view.ID, 3); row.Phase != database.PhaseScanned {
+				t.Fatalf("phase = %s (%s), want scanned", row.Phase, row.LastError)
+			}
+			other := es.secondAdmin()
+
+			_, err := es.svc.Token(context.Background(), other, "vps1")
+			wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
+			_, err = es.svc.Confirm(context.Background(), other, "vps1", key)
+			wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
+			_, err = es.svc.Refuse(context.Background(), other, "vps1")
+			wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
+			if row := es.enrollmentRow(view.ID); row.Phase != database.PhaseScanned || row.ConfirmedHostKey != "" {
+				t.Errorf("a refused caller moved the enrollment: %s", row.Phase)
+			}
+			if len(es.events(eventEnrollmentToken)) != 0 {
+				t.Error("a token was shown to the other caller")
+			}
+
+			if _, err := es.svc.Token(context.Background(), es.admin(), "vps1"); err != nil {
+				t.Errorf("Token as the starter: %v", err)
+			}
+			if _, err := es.svc.Cancel(context.Background(), other, "vps1"); err != nil {
+				t.Errorf("Cancel by another node.add holder: %v", err)
+			}
+		})
+	}
+}
+
+// A caller who may not act learns nothing about which enrollments exist.
+func TestAnUnauthorizedCallerCannotTellWhetherAnEnrollmentExists(t *testing.T) {
+	es := newEnrollSetting(t)
+	es.start()
+	es.work()
+	for _, name := range []string{"vps1", "nowhere"} {
+		_, err := es.svc.Token(context.Background(), es.caller(es.dave), name)
+		wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
+	}
+	_, err := es.svc.Token(context.Background(), es.admin(), "nowhere")
+	wantCode(t, err, smerr.CodeNotFound)
+}
+
+// Cancelling deletes the connector token from the store, every version.
+func TestCancellingDeletesTheConnectorToken(t *testing.T) {
+	es := newEnrollSetting(t)
+	view := es.start()
+	es.work()
+	_ = es.tokenOf("vps1")
+
+	_, err := es.svc.Cancel(context.Background(), es.admin(), "vps1")
+	mustf(t, err, "Cancel")
+	es.settle(view.ID, 5)
+
+	if row := es.enrollmentRow(view.ID); row.Phase != database.PhaseCancelled {
+		t.Fatalf("phase = %s, want cancelled", row.Phase)
+	}
+	es.wantNoTokenVersions(view.ID, "the cancel")
+}
+
+// An approved direct node.add cannot take a name an enrollment holds: the name is checked again at the apply.
+func TestAnApprovedDirectAddIsRefusedWhenAnEnrollmentTookTheName(t *testing.T) {
+	es := newEnrollSetting(t)
+	res, err := es.inv.AddSSHNode(context.Background(), es.admin(), AddSSHNode{
+		Name: "vps1", Host: "10.0.0.9", AdminUser: "admin", HostKey: newAuthorizedKey(), Environment: "prod",
+	})
+	mustf(t, err, "AddSSHNode")
+	if res.Pending == nil {
+		t.Fatalf("the add is not parked for approval: %+v", res)
+	}
+	view := es.start()
+
+	es.approveToQuorum(res.Pending.Job)
+	var conflicts int
+	for _, failure := range es.work() {
+		if smerr.CodeOf(failure) == smerr.CodeConflict {
+			conflicts++
+		}
+	}
+	if conflicts == 0 {
+		t.Error("the approved add was not refused with a conflict")
+	}
+	if _, found := es.nodeNamed("vps1"); found {
+		t.Fatal("the approved add inserted a node over the enrollment's name")
+	}
+
+	key := es.nodeComesUp()
+	es.settle(view.ID, 3)
+	_, err = es.svc.Confirm(context.Background(), es.admin(), "vps1", key)
+	mustf(t, err, "Confirm")
+	if row := es.settle(view.ID, 3); row.Phase != database.PhaseCommitted {
+		t.Errorf("phase = %s (%s), want committed", row.Phase, row.LastError)
 	}
 }

@@ -162,6 +162,7 @@ func newMCPRig(t *testing.T, writes bool) *mcpRig {
 	rig.listen()
 	rig.seedPlan()
 	rig.seedGovernedResources()
+	rig.seedEnrollment()
 	rig.runtime.commands.Store(0)
 	return rig
 }
@@ -562,6 +563,30 @@ func (rig *mcpRig) seedGovernedResources() {
 			ID: client, IdentityID: identity, Name: "fixture-client", Origin: database.MCPOriginLocal,
 			State: database.MCPClientPendingToken, RequestedBy: rig.admin.ID, ApprovedAt: now, CreatedAt: now, UpdatedAt: now,
 		})
+	})
+}
+
+// seedEnrollment stores an open tunnel enrollment named vps1, started by the admin and waiting for its node, so
+// that the enrollment routes are authorized against a real row, as the jobs leave it.
+func (rig *mcpRig) seedEnrollment() {
+	rig.t.Helper()
+	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
+		now, id := rig.clock.Now(), rig.ids.NewID()
+		instance, err := database.GetInstance(ctx, tx)
+		if err != nil {
+			return err
+		}
+		_, err = database.CreateTunnelEnrollment(ctx, tx, database.TunnelEnrollment{
+			ID: id, Name: "vps1", AccountID: "acct", Zone: "example.com", InstanceID: instance.ID.String(),
+			Hostname: "ssh-vps1.example.com", ExpiresAt: now.Add(time.Hour), StartedBy: rig.admin.ID, CreatedAt: now,
+			Identity: database.EnrollmentIdentity{PublicKey: "ssh-ed25519 AAAA", Fingerprint: "SHA256:x", CredentialRef: "secret://ssh/default?version=1"},
+			TokenRef: "secret://cloudflare/enroll/" + id.String(),
+		})
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE tunnel_enrollments SET phase = 'dns_created' WHERE id = ?`, id)
+		return err
 	})
 }
 

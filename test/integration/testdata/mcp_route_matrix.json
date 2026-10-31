@@ -1205,12 +1205,12 @@
    "headers": null,
    "stream": false,
    "off": {
-    "status": 404
+    "status": 200
    },
    "on": {
-    "status": 404
+    "status": 200
    },
-   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+   "note": "The rig holds an open enrollment vps1; reading it is a query, and the connector token is never in the view."
   },
   {
    "route": "GET /api/v1/nodes/ssh/tunnel-enrollments/{name}/token",
@@ -1220,12 +1220,14 @@
    "headers": null,
    "stream": false,
    "off": {
-    "status": 404
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
    },
    "on": {
-    "status": 404
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
    },
-   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+   "note": "The rig holds an open enrollment vps1 started by the admin. The connector token is a credential, refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
   },
   {
    "route": "POST /api/v1/nodes/ssh/tunnel-enrollments",
@@ -1250,12 +1252,14 @@
    "headers": null,
    "stream": false,
    "off": {
-    "status": 404
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
    },
    "on": {
-    "status": 404
+    "status": 403,
+    "reason": "DEFAULT_DENY"
    },
-   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+   "note": "The rig holds an open enrollment vps1 started by the admin, not by the mcp actor: confirming or refusing its key is for whoever started it, so a granted mcp actor with writes on gets DEFAULT_DENY."
   },
   {
    "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/refuse",
@@ -1265,12 +1269,14 @@
    "headers": null,
    "stream": false,
    "off": {
-    "status": 404
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
    },
    "on": {
-    "status": 404
+    "status": 403,
+    "reason": "DEFAULT_DENY"
    },
-   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+   "note": "The rig holds an open enrollment vps1 started by the admin, not by the mcp actor: confirming or refusing its key is for whoever started it, so a granted mcp actor with writes on gets DEFAULT_DENY."
   },
   {
    "route": "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/cancel",
@@ -1280,12 +1286,13 @@
    "headers": null,
    "stream": false,
    "off": {
-    "status": 404
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
    },
    "on": {
-    "status": 404
+    "status": 200
    },
-   "note": "The rig holds no enrollment named vps1, and the name is resolved before the action is authorized. The connector token is refused to an mcp actor whatever its grant: TestAnMCPActorNeverGetsTheConnectorToken."
+   "note": "The rig holds an open enrollment vps1. Cancelling only removes, so any holder of node.add may: a granted mcp actor with writes on cancels it."
   }
  ]
 }

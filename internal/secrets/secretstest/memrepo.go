@@ -110,6 +110,13 @@ func (m *MemRepo) DeleteStaged(_ context.Context, id domain.ID) error {
 	return nil
 }
 
+func (m *MemRepo) DeleteByName(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records = slices.DeleteFunc(m.records, func(r secrets.Record) bool { return r.Name == name })
+	return nil
+}
+
 func (m *MemRepo) indexOf(id domain.ID) int {
 	return slices.IndexFunc(m.records, func(r secrets.Record) bool { return r.ID == id })
 }

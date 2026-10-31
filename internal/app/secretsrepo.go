@@ -98,6 +98,13 @@ func (r *SecretsRepo) DeleteStaged(ctx context.Context, id domain.ID) error {
 	})
 }
 
+// DeleteByName removes every version of a secret.
+func (r *SecretsRepo) DeleteByName(ctx context.Context, name string) error {
+	return r.db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
+		return database.DeleteSecretsByName(ctx, tx, name)
+	})
+}
+
 func metadataOf(text string) (map[string]any, error) {
 	if text == "" {
 		return nil, nil

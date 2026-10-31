@@ -38,6 +38,13 @@ func (s *secretShelf) Get(_ context.Context, ref secrets.Ref) (audit.Secret, err
 	return v, nil
 }
 
+func (s *secretShelf) Purge(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.vals, name)
+	return nil
+}
+
 func (s *secretShelf) Put(_ context.Context, name string, v audit.Secret, _ map[string]any) (secrets.Ref, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

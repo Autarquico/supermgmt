@@ -205,19 +205,3 @@ func (t *TunnelEnrollmentScheduler) submit(ctx context.Context, row database.Tun
 	})
 	return err
 }
-
-// Run ticks every interval until ctx ends, handing each failure to report.
-func (t *TunnelEnrollmentScheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := t.Tick(ctx); err != nil {
-				report(err)
-			}
-		}
-	}
-}
