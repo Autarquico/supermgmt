@@ -31,6 +31,7 @@ github.com/autarquico/supermgmt/internal/app.ProxmoxSync.readInventory  exempt: 
 github.com/autarquico/supermgmt/internal/app.Repositories.readableProvider  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.activeKEK  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.backupDoneEvidence  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.canonicalHostname  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.decodeObservation  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.decodeStored  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.deployHandler.load  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
@@ -64,11 +65,13 @@ github.com/autarquico/supermgmt/internal/app.readSnapshotJSON  exempt: loads or 
 github.com/autarquico/supermgmt/internal/app.requestedFromRefs  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.requestedImagesOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.requireEntitled  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.routeHostname  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.setupCapability  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.setupOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.setupParamsOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.stepView  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.toParams  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.validDNSLabel  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.verbOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/audit.redactViaJSON  exempt: round-trips a value the daemon built through JSON to scrub it
 github.com/autarquico/supermgmt/internal/auth.Hash  FuzzBearer
@@ -151,6 +154,7 @@ github.com/autarquico/supermgmt/internal/database.readSchemaVersion  exempt: SQL
 github.com/autarquico/supermgmt/internal/database.readSnapshot  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.readerQuery  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanAPIToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself
+github.com/autarquico/supermgmt/internal/database.scanAppRoute  FuzzScanAppRoute
 github.com/autarquico/supermgmt/internal/database.scanDeployment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanEnvironment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanJoinToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself
