@@ -317,3 +317,33 @@ func TestStageRefusesAnInvalidName(t *testing.T) {
 		t.Errorf("error = %v, want INVALID_ARGUMENT", err)
 	}
 }
+
+func TestPurgeDeletesEveryVersionOfOneNameAndNoOther(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	for _, value := range []audit.Secret{"one", "two", "three"} {
+		if _, err := f.store.Put(ctx, "demo/token", value, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.store.Put(ctx, "demo/other", "kept", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.store.Purge(ctx, "demo/token"); err != nil {
+		t.Fatal(err)
+	}
+
+	for version := 0; version <= 3; version++ {
+		_, err := f.store.Get(ctx, secrets.Ref{Name: "demo/token", Version: version})
+		if smerr.CodeOf(err) != smerr.CodeNotFound {
+			t.Errorf("version %d after the purge: %v, want NOT_FOUND", version, err)
+		}
+	}
+	if got, err := f.store.Get(ctx, secrets.Ref{Name: "demo/other"}); err != nil || got.Reveal() != "kept" {
+		t.Errorf("another name was touched: %v", err)
+	}
+	if err := f.store.Purge(ctx, "demo/token"); err != nil {
+		t.Errorf("purging a missing name: %v", err)
+	}
+}

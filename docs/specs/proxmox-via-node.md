@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Reach the Proxmox API through the host's SSH connection
 type: epic
-status: active
+status: shipped
 priority: P1
 size: L
 issue: 45

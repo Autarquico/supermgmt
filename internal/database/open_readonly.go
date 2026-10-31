@@ -122,6 +122,8 @@ func (ReadOnlySecrets) ActivateStaged(context.Context, domain.ID) (secrets.Recor
 
 func (ReadOnlySecrets) DeleteStaged(context.Context, domain.ID) error { return errReadOnlySecrets }
 
+func (ReadOnlySecrets) DeleteByName(context.Context, string) error { return errReadOnlySecrets }
+
 func (ReadOnlySecrets) PutSettings(context.Context, map[string]string) error {
 	return errReadOnlySecrets
 }

@@ -22,7 +22,7 @@ Available Commands:
   help        Help about any command
   install     Install SuperMgmt (invoked by install.sh)
   jobs        List and govern jobs (default: list)
-  join        Enroll this node with a SuperMgmt server (run as root)
+  join        Enroll this node with a SuperMgmt server, or prepare it for a Cloudflare Tunnel enrollment (run as root)
   login       Sign in to a remote server
   logout      Sign out: revoke the session on the server and forget the stored credential
   mcp         Serve MCP over stdio as a registered MCP client

@@ -9,6 +9,7 @@ github.com/autarquico/supermgmt/internal/api.Server.registerProvider  exempt: ro
 github.com/autarquico/supermgmt/internal/api.decode  FuzzReadInput
 github.com/autarquico/supermgmt/internal/api.decodeOptional  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/api.parseDeploymentFilter  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/api.parseExpiresIn  exempt: time.ParseDuration plus a sign check; no parsing of its own
 github.com/autarquico/supermgmt/internal/api.readInput  FuzzReadInput
 github.com/autarquico/supermgmt/internal/api.reading  exempt: route registration helper, not a parser
 github.com/autarquico/supermgmt/internal/api.routeSet.read  exempt: route registration helper, not a parser
@@ -101,7 +102,9 @@ github.com/autarquico/supermgmt/internal/cli.offlineSecrets.Put  exempt: operato
 github.com/autarquico/supermgmt/internal/cli.parseID  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.parseImages  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.parseLifetime  exempt: operator-local CLI input or file; trusted by the operator running the command
+github.com/autarquico/supermgmt/internal/cli.readBoundedLine  FuzzReadBoundedLine
 github.com/autarquico/supermgmt/internal/cli.readCA  exempt: operator-local CLI input or file; trusted by the operator running the command
+github.com/autarquico/supermgmt/internal/cli.readConnectorTokenFromStream  FuzzReadConnectorTokenFromStream
 github.com/autarquico/supermgmt/internal/cli.readJSONFile  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.readKeychainToken  exempt: thin wrapper over the token-file reader (FuzzReadTokenFile)
 github.com/autarquico/supermgmt/internal/cli.readPassphrase  exempt: operator-local CLI input or file; trusted by the operator running the command
@@ -112,6 +115,7 @@ github.com/autarquico/supermgmt/internal/cli.readSecretFromStream  exempt: opera
 github.com/autarquico/supermgmt/internal/cli.readSecretFromTerminal  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.readToken  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.readTokenFile  FuzzReadTokenFile
+github.com/autarquico/supermgmt/internal/cli.readTokenFromTTY  exempt: terminal read; delegates to the fuzzed readBoundedLine
 github.com/autarquico/supermgmt/internal/client.Client.followOnce  exempt: typed daemon API call, stream plumbing or CA file read; frames are parsed by FuzzReadFrames
 github.com/autarquico/supermgmt/internal/client.LoadProfiles  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/client.call  exempt: typed daemon API call, stream plumbing or CA file read; frames are parsed by FuzzReadFrames
@@ -151,6 +155,7 @@ github.com/autarquico/supermgmt/internal/database.scanDeployment  exempt: SQLite
 github.com/autarquico/supermgmt/internal/database.scanEnvironment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanJoinToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanNode  exempt: SQLite rows, migrations and lock files the daemon wrote itself
+github.com/autarquico/supermgmt/internal/database.scanTunnelEnrollment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/deployments/compose.Interpolate  FuzzInterpolate
 github.com/autarquico/supermgmt/internal/deployments/compose.Load  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/deployments/compose.decodeSingleDocument  FuzzCheckRaw
@@ -221,7 +226,9 @@ github.com/autarquico/supermgmt/internal/jobs.scanJob  exempt: rows and evidence
 github.com/autarquico/supermgmt/internal/jobs.storedEvidence  exempt: rows and evidence the daemon wrote itself
 github.com/autarquico/supermgmt/internal/join.Client.Enroll  exempt: OS file read or typed API call; the answer is decoded by the shared client
 github.com/autarquico/supermgmt/internal/join.System.ReadFile  exempt: OS file read or typed API call; the answer is decoded by the shared client
+github.com/autarquico/supermgmt/internal/join.readHostKey  FuzzReadHostKey
 github.com/autarquico/supermgmt/internal/join.serverError  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/join/jointest.StoppingHost.ReadFile  exempt: test stand-in returning a fixed host key
 github.com/autarquico/supermgmt/internal/mcp.NewServer  FuzzToolArguments
 github.com/autarquico/supermgmt/internal/mcp.ViewCreatedPlan  exempt: renders a plan document the daemon built
 github.com/autarquico/supermgmt/internal/mcp.planRisk  exempt: renders a plan document the daemon built
@@ -296,6 +303,7 @@ github.com/autarquico/supermgmt/internal/pveid.unmarshalRows  FuzzParsePVEList
 github.com/autarquico/supermgmt/internal/runtimes/docker.decodeInspect  FuzzDecodeInspect
 github.com/autarquico/supermgmt/internal/runtimes/docker.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/docker.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/systemd.ValidateConnectorToken  FuzzValidateConnectorToken
 github.com/autarquico/supermgmt/internal/runtimes/systemd.keyringFingerprint  FuzzKeyringFingerprint
 github.com/autarquico/supermgmt/internal/runtimes/systemd.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/systemd.parseOSRelease  FuzzParseOSRelease

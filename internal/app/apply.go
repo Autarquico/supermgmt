@@ -30,11 +30,18 @@ func nodeRef(id domain.ID) domain.ResourceRef {
 }
 
 func (i *Inventory) applyNodeAdd(ctx context.Context, q database.Querier, actor domain.Actor, p nodeAddParams) (domain.Node, error) {
+	if p.Tunnel {
+		// An enrollment is advanced by its own job; this path would insert a node with no host.
+		return domain.Node{}, smerr.New(smerr.CodeCapabilityUnavailable, "", "tunnel enrollment is not available: the instance has no cloudflare: block")
+	}
 	existing, err := database.GetNode(ctx, q, p.NodeID)
 	if err == nil {
 		return existing, nil
 	}
 	if smerr.CodeOf(err) != smerr.CodeNotFound {
+		return domain.Node{}, err
+	}
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
 		return domain.Node{}, err
 	}
 	var environment *domain.ID
@@ -165,6 +172,9 @@ func (i *Inventory) applyNodeRemove(ctx context.Context, q database.Querier, act
 func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, actor domain.Actor, p localParams) (domain.Provider, error) {
 	if existing, found, err := i.localProvider(ctx, q); err != nil || found {
 		return existing, err
+	}
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
+		return domain.Provider{}, err
 	}
 	now := i.cfg.Clock.Now()
 	provider, err := database.CreateProvider(ctx, q, domain.Provider{
@@ -391,7 +401,7 @@ func (a *Apps) applyCreateGitHubProvider(ctx context.Context, q database.Querier
 	} else if smerr.CodeOf(err) != smerr.CodeNotFound {
 		return domain.Provider{}, err
 	}
-	if err := requireFreeProviderName(ctx, q, p.Name); err != nil {
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
 		return domain.Provider{}, err
 	}
 	now := a.cfg.Clock.Now()

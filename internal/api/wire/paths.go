@@ -38,6 +38,15 @@ const (
 	PathNodes           = Prefix + "/nodes"
 	PathNodesSSH        = Prefix + "/nodes/ssh"
 	PathNodesSSHHostKey = Prefix + "/nodes/ssh/host-key"
+
+	// Nodes reached only through Cloudflare Tunnel (ADR-0039).
+	PathTunnelEnrollments       = Prefix + "/nodes/ssh/tunnel-enrollments"
+	PathTunnelEnrollment        = Prefix + "/nodes/ssh/tunnel-enrollments/{name}"
+	PathTunnelEnrollmentToken   = Prefix + "/nodes/ssh/tunnel-enrollments/{name}/token"
+	PathTunnelEnrollmentConfirm = Prefix + "/nodes/ssh/tunnel-enrollments/{name}/confirm"
+	PathTunnelEnrollmentRefuse  = Prefix + "/nodes/ssh/tunnel-enrollments/{name}/refuse"
+	PathTunnelEnrollmentCancel  = Prefix + "/nodes/ssh/tunnel-enrollments/{name}/cancel"
+
 	PathNode            = Prefix + "/nodes/{id}"
 	PathNodeProbe       = Prefix + "/nodes/{id}/probe"
 	PathNodeServices    = Prefix + "/nodes/{id}/services"

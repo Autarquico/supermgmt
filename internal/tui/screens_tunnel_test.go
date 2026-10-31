@@ -92,3 +92,35 @@ func TestASetupRerunFromThePaletteKeepsDockerLogsAndTunnel(t *testing.T) {
 		t.Errorf("parameters = %v: no-docker and journal must change them", p)
 	}
 }
+
+func TestAddNodeTunnelViaPaletteStartsTheEnrollmentAndPointsToTheCLI(t *testing.T) {
+	api := newFake()
+	h := newHarness(t, api, 140, 28)
+	h.start()
+
+	h.press("/")
+	h.typeText("add node vps1 tunnel")
+	h.press("enter")
+
+	if len(api.enrollments) != 1 || api.enrollments[0].Name != "vps1" {
+		t.Fatalf("requests = %+v", api.enrollments)
+	}
+	contains(t, h.view(), "sm nodes add --tunnel --name vps1")
+}
+
+func TestAddNodeTunnelNeedsTheWholeCommand(t *testing.T) {
+	api := newFake()
+	h := newHarness(t, api, 120, 28)
+	h.start()
+
+	for _, line := range []string{"add", "add node vps1", "add host vps1 tunnel", "add node vps1 direct"} {
+		h.press("/")
+		h.typeText(line)
+		h.press("enter")
+		contains(t, h.view(), "usage: add node <name> tunnel")
+		h.press("esc")
+	}
+	if len(api.enrollments) != 0 {
+		t.Errorf("a malformed command started an enrollment: %+v", api.enrollments)
+	}
+}

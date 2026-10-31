@@ -239,6 +239,9 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamProxmox, Type: ParamString, Values: []string{"true", "false"}},
 	}
 
+	nodeAdd := direct("node.add", domain.ResourceNode, op)
+	nodeAdd.Params = []ParamSpec{{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}}}
+
 	return []ActionSpec{
 		query("node.read", domain.ResourceNode, ""),
 		query("service.read", domain.ResourceService, "service.read"),
@@ -278,7 +281,7 @@ func buildCatalog() []ActionSpec {
 		job(ActionLogBrokerInstall, domain.ResourceNode, high, noRun, "node.ssh", 1),
 		job("backup.create", domain.ResourceInstance, op, idem, "", 3),
 
-		direct("node.add", domain.ResourceNode, op),
+		nodeAdd,
 		direct("node.update", domain.ResourceNode, op),
 		direct("node.remove", domain.ResourceNode, destr),
 		direct("provider.write", domain.ResourceProvider, high),

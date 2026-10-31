@@ -77,3 +77,8 @@ paths = ['''^internal/runtimes/systemd/tunnel_test\.go$''']
 description = "synthetic Proxmox token secret the node setup must store and never log"
 targetRules = ["generic-api-key"]
 paths = ['''^internal/app/setup_proxmox_test\.go$''', '''^internal/runtimes/systemd/proxmox_test\.go$''']
+
+[[allowlists]]
+description = "synthetic Cloudflare connector tokens (secret-sentinel) the tunnel enrollment must store, show once and never log"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/api/routes_tunnel_enroll_test\.go$''', '''^internal/cli/join_tunnel_test\.go$''', '''^internal/cli/nodes_tunnel_enroll_test\.go$''', '''^internal/join/tunnel_test\.go$''']

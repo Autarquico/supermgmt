@@ -99,6 +99,7 @@ func (s *Server) buildRoutes() []route {
 	r.mcpClients()
 	r.webhook()
 	r.nodes()
+	r.tunnelEnrollments()
 	r.sessions()
 	r.services()
 	r.login()

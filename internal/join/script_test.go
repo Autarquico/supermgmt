@@ -73,6 +73,61 @@ func TestJoinScriptRefusesBadArgumentsBeforeTouchingTheNetwork(t *testing.T) {
 	}
 }
 
+const tunnelKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC/0rZjuLbOAYMUDGUQxdU6VZp13y6BXawIDIRfDnJPc"
+
+func runJoinScript(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	cmd := exec.CommandContext(t.Context(), sh, append([]string{joinScript}, args...)...)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "SUPERMGMT_RELEASE_BASE_URL=http://127.0.0.1:1"}
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, string(out)
+	case errors.As(err, &exit):
+		return exit.ExitCode(), string(out)
+	}
+	t.Fatal(err)
+	return -1, ""
+}
+
+func TestJoinScriptTunnelModeRefusesBadArgumentsBeforeTouchingTheNetwork(t *testing.T) {
+	tests := map[string][]string{
+		"no instance":             {"--tunnel", "--authorized-key", tunnelKey},
+		"no key":                  {"--tunnel", "--instance", "inst-1"},
+		"token as argument":       {"--tunnel", "--instance", "inst-1", "--authorized-key", tunnelKey, "--token", "eyJsecret"},
+		"bare token argument":     {"--tunnel", "--instance", "inst-1", "--authorized-key", tunnelKey, "eyJsecret"},
+		"with a server":           {"--tunnel", "--instance", "inst-1", "--authorized-key", tunnelKey, "--server", "https://mgmt.example.com"},
+		"with a token file":       {"--tunnel", "--instance", "inst-1", "--authorized-key", tunnelKey, "--token-file", "f"},
+		"instance without tunnel": {"--server", "https://mgmt.example.com", "--token-stdin", "--instance", "inst-1"},
+		"key without value":       {"--tunnel", "--instance", "inst-1", "--authorized-key"},
+	}
+	for name, args := range tests {
+		t.Run(name, func(t *testing.T) {
+			code, out := runJoinScript(t, args...)
+
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2; output %q", code, out)
+			}
+			if strings.Contains(out, "eyJsecret") {
+				t.Errorf("the output echoes the token: %q", out)
+			}
+		})
+	}
+}
+
+func TestJoinScriptTunnelModeNeedsNoServer(t *testing.T) {
+	code, out := runJoinScript(t, "--tunnel", "--instance", "inst-1", "--authorized-key", tunnelKey)
+
+	if code == 2 {
+		t.Fatalf("the arguments were refused: %q", out)
+	}
+}
+
 func readScript(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.FromSlash(path))

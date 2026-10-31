@@ -3,6 +3,9 @@
 #
 # Usage: join.sh --server URL [--token-stdin | --token-file FILE] [--ca-file FILE] [--hostname NAME] [--ssh-port N]
 #        Without a token option the token is asked for on the terminal, without echo. It is never an argument.
+#        join.sh --tunnel --instance ID --authorized-key KEY [--token-stdin]
+#        Prepares a node that only a Cloudflare Tunnel will reach; no server is contacted. `sm join --tunnel`
+#        asks for the connector token on the terminal, without echo, unless --token-stdin is given.
 # Env:   SUPERMGMT_VERSION=vX.Y.Z|latest  SUPERMGMT_CHANNEL=stable|beta
 #        SUPERMGMT_RELEASE_BASE_URL  mirror/test override of the release download base; never skips verification
 # Exit:  2 invalid arguments, 3 unsupported platform, 4 prerequisite failure, 5 download/checksum/signature failure;
@@ -131,9 +134,10 @@ usage_error() { die 2 "$1 (see the usage at the top of join.sh)"; }
 
 parse_args() {
 	SERVER=; TOKEN_FILE=; TOKEN_STDIN=no; CA_FILE=; NODE_NAME=; SSH_PORT=
+	TUNNEL=no; INSTANCE=; AUTHORIZED_KEY=
 	while [ $# -gt 0 ]; do
 		case $1 in
-			--server | --token-file | --ca-file | --hostname | --ssh-port)
+			--server | --token-file | --ca-file | --hostname | --ssh-port | --instance | --authorized-key)
 				[ $# -ge 2 ] || usage_error "$1 needs a value"
 				case $1 in
 					--server) SERVER=$2 ;;
@@ -141,12 +145,22 @@ parse_args() {
 					--ca-file) CA_FILE=$2 ;;
 					--hostname) NODE_NAME=$2 ;;
 					--ssh-port) SSH_PORT=$2 ;;
+					--instance) INSTANCE=$2 ;;
+					--authorized-key) AUTHORIZED_KEY=$2 ;;
 				esac
 				shift 2 ;;
+			--tunnel) TUNNEL=yes; shift ;;
 			--token-stdin) TOKEN_STDIN=yes; shift ;;
 			*) usage_error 'unknown or unsupported argument (the token is never an argument)' ;;
 		esac
 	done
+	if [ "$TUNNEL" = yes ]; then
+		[ -n "$INSTANCE" ] || usage_error '--tunnel needs --instance'
+		[ -n "$AUTHORIZED_KEY" ] || usage_error '--tunnel needs --authorized-key'
+		[ -z "$SERVER$TOKEN_FILE$CA_FILE$NODE_NAME$SSH_PORT" ] || usage_error '--tunnel takes no --server, --token-file, --ca-file, --hostname or --ssh-port'
+		return
+	fi
+	[ -z "$INSTANCE$AUTHORIZED_KEY" ] || usage_error '--instance and --authorized-key are only for --tunnel'
 	[ -n "$SERVER" ] || usage_error '--server is required'
 	[ -z "$TOKEN_FILE" ] || [ "$TOKEN_STDIN" = no ] || usage_error '--token-file and --token-stdin are mutually exclusive'
 }
@@ -219,6 +233,14 @@ main() {
 	verify_the_verifier
 	resolve_version
 	download_archive
+	if [ "$TUNNEL" = yes ]; then
+		# sm asks for the connector token itself, on /dev/tty, without echo.
+		log "verified; starting sm join --tunnel"
+		set -- --tunnel --instance "$INSTANCE" --authorized-key "$AUTHORIZED_KEY"
+		[ "$TOKEN_STDIN" = no ] || set -- "$@" --token-stdin
+		"$BIN/sm" join "$@"
+		return
+	fi
 	[ -n "$TOKEN_FILE" ] || [ "$TOKEN_STDIN" = yes ] || prompt_for_token
 	log "verified; starting sm join"
 	set -- --server "$SERVER"

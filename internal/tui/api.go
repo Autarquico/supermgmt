@@ -69,3 +69,9 @@ type Handoff struct {
 	Cmd  *exec.Cmd
 	Done func(exitCode int, launchErr error)
 }
+
+// TunnelEnrollmentAPI starts the enrollment of a node reachable only through Cloudflare Tunnel (ADR-0039).
+// It is optional like AppsAPI: without it the palette entry says the daemon does not serve it.
+type TunnelEnrollmentAPI interface {
+	StartTunnelEnrollment(ctx context.Context, r wire.StartTunnelEnrollmentRequest) (wire.Direct[wire.TunnelEnrollment], error)
+}

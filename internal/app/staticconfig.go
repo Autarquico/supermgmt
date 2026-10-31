@@ -203,6 +203,9 @@ func (s *StaticReconciler) environmentOf(ctx context.Context, q database.Querier
 }
 
 func (s *StaticReconciler) createSSHNode(ctx context.Context, q database.Querier, p config.SSHProvider, e sshnode.Endpoint, environment *domain.ID) error {
+	if err := requireNameFree(ctx, q, p.Name, ""); err != nil {
+		return err
+	}
 	now := s.cfg.Clock.Now()
 	provider, err := database.CreateProvider(ctx, q, domain.Provider{
 		ID: s.cfg.IDs.NewID(), Type: sshnode.ProviderType, Name: p.Name, Origin: domain.ProviderStatic,
@@ -375,6 +378,9 @@ func (s *StaticReconciler) staticProvider(ctx context.Context, q database.Querie
 	want.Origin, want.UpdatedAt = domain.ProviderStatic, now
 	i := slices.IndexFunc(providers, func(x domain.Provider) bool { return x.Name == want.Name })
 	if i < 0 {
+		if err := requireNameFree(ctx, q, want.Name, ""); err != nil {
+			return err
+		}
 		want.ID, want.CreatedAt = s.cfg.IDs.NewID(), now
 		created, err := database.CreateProvider(ctx, q, want)
 		if err != nil {

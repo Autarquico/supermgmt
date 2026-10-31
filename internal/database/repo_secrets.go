@@ -95,6 +95,14 @@ func DeleteStagedSecret(ctx context.Context, q Querier, id domain.ID) error {
 	return nil
 }
 
+// DeleteSecretsByName removes every version of the named secret, staged ones included.
+func DeleteSecretsByName(ctx context.Context, q Querier, name string) error {
+	if _, err := q.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, name); err != nil {
+		return fmt.Errorf("delete secret versions: %w", err)
+	}
+	return nil
+}
+
 // GetSecretByID returns a stored version, current or staged.
 func GetSecretByID(ctx context.Context, q Querier, id domain.ID) (SecretRecord, error) {
 	return scanSecret(q.QueryRowContext(ctx, secretColumns+` FROM secrets WHERE id = ?`, id))

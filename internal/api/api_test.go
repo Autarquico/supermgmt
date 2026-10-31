@@ -81,6 +81,9 @@ func TestTheLocalSocketServesTheContract(t *testing.T) {
 		"POST " + wire.PathSecrets, "POST " + wire.PathMasterKeyRotate, "POST " + wire.PathMasterKeyRetire,
 		"POST " + wire.PathMasterKeyExport, "POST " + wire.PathSSHKeyRotate, "GET " + wire.PathMasterKeys,
 		"GET " + wire.PathBackups, "POST " + wire.PathBackups, "POST " + wire.PathEnrollments, "POST " + wire.PathEnroll,
+		"GET " + wire.PathTunnelEnrollments, "POST " + wire.PathTunnelEnrollments, "GET " + wire.PathTunnelEnrollment,
+		"GET " + wire.PathTunnelEnrollmentToken, "POST " + wire.PathTunnelEnrollmentConfirm,
+		"POST " + wire.PathTunnelEnrollmentRefuse, "POST " + wire.PathTunnelEnrollmentCancel,
 	}
 	got := map[string]bool{}
 	for _, rt := range h.server.Routes() {

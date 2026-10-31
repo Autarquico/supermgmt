@@ -44,6 +44,8 @@ type Repo interface {
 	// DeleteStaged removes a staged version. A current or missing one is left
 	// alone.
 	DeleteStaged(ctx context.Context, id domain.ID) error
+	// DeleteByName removes every version of name, staged ones included. A missing name is not an error.
+	DeleteByName(ctx context.Context, name string) error
 	// ReferencedKEKs lists the distinct kek_id values of all secrets rows,
 	// staged ones included.
 	ReferencedKEKs(ctx context.Context) ([]domain.ID, error)

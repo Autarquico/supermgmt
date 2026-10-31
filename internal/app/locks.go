@@ -127,6 +127,11 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" || job.Type == policy.ActionCloudflareRotate {
 		specs = append(specs, cloudflareInstanceLock)
 	}
+	instance, err := enrollmentInstanceLock(ctx, q, job, *stored)
+	if err != nil {
+		return nil, err
+	}
+	specs = append(specs, instance...)
 	for _, in := range stored.Inputs {
 		ref := domain.ResourceRef{Type: domain.ResourceType(in.Type), ID: domain.ID(in.ID)}
 		specs = append(specs, domain.ResourceLock(ref, domain.LockShared))

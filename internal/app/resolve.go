@@ -219,7 +219,7 @@ type built struct {
 func (b built) request(actor domain.Actor) policy.Request {
 	params := b.plan.Parameters
 	if b.spec.Mode == policy.ModeDirect {
-		params = nil
+		params = directPolicyParams(b.spec, b.plan)
 	}
 	return policy.Request{
 		Actor: actor, Action: b.plan.Action, Params: params,

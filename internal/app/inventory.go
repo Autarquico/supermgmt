@@ -235,6 +235,14 @@ func (i *Inventory) addParams(ctx context.Context, q database.Querier, r AddSSHN
 }
 
 func (i *Inventory) requireFreeName(ctx context.Context, q database.Querier, name string) error {
+	return requireNameFree(ctx, q, name, "")
+}
+
+// requireNameFree refuses a name held by a provider or by an open tunnel enrollment other than except (the
+// enrollment that is about to become the node, "" for none). A tunnel enrollment reserves its name from its
+// start until it is committed, expired or cancelled; its enrollment start and its commit transaction call
+// this too.
+func requireNameFree(ctx context.Context, q database.Querier, name string, except domain.ID) error {
 	providers, err := database.ListProviders(ctx, q)
 	if err != nil {
 		return err
@@ -242,7 +250,14 @@ func (i *Inventory) requireFreeName(ctx context.Context, q database.Querier, nam
 	if slices.ContainsFunc(providers, func(p domain.Provider) bool { return p.Name == name }) {
 		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("a node or provider named %q already exists", name))
 	}
-	return nil
+	held, err := database.OpenTunnelEnrollmentByName(ctx, q, name)
+	switch {
+	case smerr.CodeOf(err) == smerr.CodeNotFound, err == nil && held.ID == except:
+		return nil
+	case err != nil:
+		return err
+	}
+	return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("a tunnel enrollment for %q is open; cancel it or let it expire first", name))
 }
 
 // normalizeTags validates and sorts tags (control-plane-owned authorization

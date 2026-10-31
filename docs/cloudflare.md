@@ -21,7 +21,7 @@ sm daemon --(cloudflared access ssh, Access service token)--> Cloudflare --> clo
 - A hostname `ssh-<node-name>.<zone>` routes to the node's local SSH port. A Cloudflare Access application in front of that hostname admits two kinds of caller: SuperMgmt's own service token (automation) and the people listed in `owner_emails` (interactive sessions).
 - SSH stays end to end. The pinned host key, the dedicated `supermgmt` account, policy and approvals are the same as for a direct node. Cloudflare carries the stream; no step ever repins a host key automatically.
 
-Scope: SSH nodes running Debian 13 or Ubuntu 24.04. A node that was never reachable directly cannot be turned into a tunnel node yet (see [What it does not do](#what-it-does-not-do)).
+Scope: SSH nodes running Debian 13 or Ubuntu 24.04. A node SuperMgmt can reach directly is switched with [`sm nodes setup --tunnel`](#turn-a-node-into-a-tunnel-node). A node it has never reached, such as a VPS with every inbound port closed or a host behind NAT, is added through the tunnel from the start ([Add a node that has no inbound path](#add-a-node-that-has-no-inbound-path)).
 
 ### What you need
 
@@ -136,6 +136,37 @@ On the node:
 
 If `cloudflared` is already installed and setup's own source file is absent, setup uses it, adds no repository and removes nothing later (`TestAnExistingCloudflaredIsUsedAndNeverManaged`). This includes one installed from Cloudflare's own guide, with that guide's repository entry and key: setup leaves them alone, and `tunnel disable` never removes them (`TestAnInstalledCloudflaredWithTheGuidesSourceIsUsedAndLeftAlone`). The tunnel credential never appears in a command line, the unit, a plan, a log or an error: it travels as the standard input of one staging command whose remote output is withheld (`TestTheTokenReachesTheNodeOnlyAsSensitiveStdinOfTheTokenStagingStep`). Whether `cloudflared tunnel run` logs it at its default level is not verified; the checklist inspects the node's journal.
 
+### Add a node that has no inbound path
+
+**Experimental, tested against fakes only.** Use this for a node SuperMgmt cannot dial: it needs only outbound HTTPS. The node must run Debian 13 or Ubuntu 24.04 with systemd.
+
+```bash
+sm nodes add --name vps1 --tunnel
+```
+
+1. **Approval and Cloudflare.** `node.add` with `tunnel` goes through policy and approval like any add. Once approved, SuperMgmt creates the tunnel, its ingress, the Access application and, last, the DNS record. No node exists yet: the name is reserved until the enrollment ends, and the enrollment expires after 1 hour unless you pass `--expires-in` (24 hours at most).
+2. **The line for the node.** The command prints one line to run as root on the node, and separately the tunnel credential:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/scripts/join.sh | sudo sh -s -- --tunnel --instance <id> --authorized-key '<key>'
+   ```
+   The line holds only public values: the instance ID and SuperMgmt's public key. When the script asks, paste the credential. It is read from the terminal without echo, and refused as an argument. `sm nodes add --tunnel --name vps1 --show-token` prints it again while the enrollment is open.
+3. **On the node.** The script verifies the signed `sm` like `join.sh` always does, then `sm join --tunnel`:
+   - checks the system before changing anything;
+   - installs `cloudflared` with the same pinned repository key, unit and credential file as `--tunnel` setup;
+   - creates the `supermgmt` account with one `restrict` key line;
+   - prints the host key fingerprint.
+
+   It never calls SuperMgmt. Running it again changes nothing; a new credential replaces the old one.
+4. **The fingerprint.** SuperMgmt scans the host key through the tunnel and shows its fingerprint. Compare it with the one the node printed, and answer. `--fingerprint SHA256:…` answers for you, and is required without a terminal. A different key ends the enrollment with `SSH_HOST_KEY_MISMATCH` and removes what it created.
+5. **The node.** With the key pinned, SuperMgmt probes the node as the dedicated account through the tunnel, then saves it with `transport: cloudflare`. If you interrupt the command, the enrollment keeps running; run the same command again to follow it.
+
+`sm nodes list` shows open enrollments with their expiry. `sm nodes add --tunnel --name vps1 --cancel` ends one. An enrollment that is cancelled, expires or finds a different key removes its DNS record, closes its ingress, then removes its Access application and its tunnel. It keeps the instance's service token and policies, and it is marked finished only when nothing is left.
+
+A node added this way:
+- has only the dedicated account: setup steps that need root wait until you add an admin user;
+- cannot return to direct SSH, because it has no direct path, so `sm nodes tunnel disable` is refused;
+- if its tunnel breaks, is recovered with `sm nodes remove` and a new enrollment.
+
 ### Using a tunnel node
 
 Probes, service actions, logs and deployments work with the same commands. Interactive sessions (`sm ssh web1`, and `s` in the TUI) use **your** Access login through your own `cloudflared`, never SuperMgmt's service token; a person who is not in `owner_emails` is denied by Access. Admission by Access grants neither an SSH login (your key must still be authorised on the node) nor any SuperMgmt privilege. Before spawning `cloudflared`, the daemon asks Access with the service token and refuses to dial when Access answers 401 or 403, or redirects to its login page under `/cdn-cgi/access/login`, with "Cloudflare Access did not admit the service token" (`TestPreflightRefusesWhatCloudflaredWouldTurnIntoALoginFlow`). The tunnel hostname and the `cloudflared` path are validated before any process starts (`TestInteractiveCommandCloudflareRefusesHostileHostnamesAndUnknownTransports`).
@@ -216,7 +247,7 @@ The three credentials, where each lives and what it can do: [Security](security.
 
 ### What it does not do
 
-- Add a node that was never directly reachable (`sm nodes add` has no tunnel option yet).
+- An admin account on a node added through the tunnel, or a way back to direct SSH for it.
 - ProxyJump or a bastion, WARP or private-network routing, tunnelling the SuperMgmt server itself.
 - More than one account or zone, a service token per node, or nodes other than Debian 13 and Ubuntu 24.04.
 

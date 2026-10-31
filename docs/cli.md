@@ -711,20 +711,30 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 ### sm join
 
-Enroll this node with a SuperMgmt server (run as root)
+Enroll this node with a SuperMgmt server, or prepare it for a Cloudflare Tunnel enrollment (run as root)
+
+Without --tunnel, enroll this node with the SuperMgmt server at --server using a join token.
+
+With --tunnel, prepare a node that only the Cloudflare Tunnel will reach: install cloudflared with the
+connector token, create the dedicated account for the instance's key, and print the host key fingerprint to
+compare on the operator's side. No SuperMgmt server is contacted. The connector token is asked for on the
+terminal without echo, or read from standard input with --token-stdin; it is never an argument.
 
 ```text
-sm join --server URL (--token-file FILE | --token-stdin) [flags]
+sm join (--server URL (--token-file FILE | --token-stdin) | --tunnel --instance ID --authorized-key KEY [--token-stdin]) [flags]
 ```
 
 Flags:
 
+- `--authorized-key` (string): with --tunnel: the instance's public SSH key for the dedicated account
 - `--ca-file` (string): PEM file of the CA that signed the server certificate (default: system roots)
 - `--hostname` (string): node name to enroll as (default: this machine's hostname)
+- `--instance` (string): with --tunnel: the SuperMgmt instance ID that names the managed key
 - `--server` (string): https URL of the SuperMgmt server
 - `--ssh-port` (int): port of this node's sshd (default 22)
 - `--token-file` (string): file holding the join token
 - `--token-stdin` (bool): read the join token from stdin
+- `--tunnel` (bool): prepare this node for a Cloudflare Tunnel enrollment; no server is contacted
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -861,6 +871,13 @@ Add an SSH node. The host key is scanned and its SHA256 fingerprint shown; nothi
 trusted until you confirm it: pass --fingerprint SHA256:... (verified out of band) or type
 'yes' at the prompt. The confirmed key is pinned for every later connection.
 
+With --tunnel the node needs no inbound port: it is reached through Cloudflare Tunnel (experimental).
+The command prints one line to run on the node and, separately, the connector token to paste at the
+node's prompt; then it waits for the node, shows the host key fingerprint the instance scanned over the
+tunnel and asks you to compare it with the one the node printed (or pass --fingerprint). Ctrl-C leaves the
+enrollment running; run the command again to reattach. --show-token prints the token again, --cancel
+removes the enrollment and its Cloudflare objects.
+
 ```text
 sm nodes add [flags]
 ```
@@ -869,14 +886,19 @@ Flags:
 
 - `--admin-credential-ref` (string): your credential for admin-user (default ssh-agent://default)
 - `--admin-user` (string): your own account on the node (e.g. root or a personal login)
+- `--cancel` (bool): with --tunnel: cancel the open enrollment and remove its Cloudflare objects
 - `--credential-ref` (string): automation credential (default secret://ssh/default)
 - `--environment` (string): environment name
+- `--expires-in` (duration, default `1h0m0s`): with --tunnel: how long the node has to run the line (at most 24h)
 - `--fingerprint` (string): expected host key fingerprint (SHA256:...)
 - `--host` (string): host name or address
+- `--interval` (duration, default `2s`): with --tunnel: how often to poll the enrollment
 - `--local` (bool): register this machine (read-only)
 - `--name` (string): node name
 - `--port` (int, default `22`): SSH port
+- `--show-token` (bool): with --tunnel: print the connector token of the open enrollment again
 - `--tag` (stringSlice): tag (repeatable)
+- `--tunnel` (bool): add a node reachable only through Cloudflare Tunnel (experimental)
 - `--user` (string): automation account (default supermgmt)
 - `--yes` (bool): with --local: consent without prompting
 

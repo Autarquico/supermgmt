@@ -38,10 +38,11 @@ var milestones = []milestone{
 	{"m5", "658078b15d68846ed67b80d4e2f463c114be27cf", "v0.5.0", 6},
 }
 
-// pendingSchema is a migration merged after the last milestone and not yet released: its fixture
-// can only be generated from a merge commit on main (ADR-0035), so it is listed here until a
-// milestone with that schema is added, then set back to 0. 7: 000007_cloudflare_tunnels.
-const pendingSchema = 7
+// pendingSchema is the highest migration merged after the last milestone and not yet released:
+// its fixture can only be generated from a merge commit on main (ADR-0035), so it is listed here
+// until a milestone with that schema is added, then set back to 0. Every migration between the
+// last milestone and it is pending too. 7: 000007_cloudflare_tunnels, 8: 000008_tunnel_enrollments.
+const pendingSchema = 8
 
 // number is the N of mN.
 func (m milestone) number() int {

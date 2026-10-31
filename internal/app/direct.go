@@ -68,6 +68,10 @@ type nodeAddParams struct {
 	AdminCredentialRef string    `json:"admin_credential_ref"`
 	Environment        string    `json:"environment"`
 	Tags               []string  `json:"tags"`
+	// Tunnel starts an enrollment through a Cloudflare Tunnel instead of inserting the node (ADR-0039):
+	// the host and credentials are empty, and ExpiresIn is the enrollment's lifetime in seconds.
+	Tunnel    bool `json:"tunnel,omitempty"`
+	ExpiresIn int  `json:"expires_in_seconds,omitempty"`
 }
 
 // NodePatch changes the configured fields of a node; nil fields are unchanged.
@@ -434,7 +438,7 @@ func (a *Apps) CreateGitHubProvider(ctx context.Context, by Caller, r wire.Creat
 		if err != nil {
 			return DirectResult[domain.Provider]{}, err
 		}
-		if err := requireFreeProviderName(ctx, tx, p.Name); err != nil {
+		if err := requireNameFree(ctx, tx, p.Name, ""); err != nil {
 			return DirectResult[domain.Provider]{}, err
 		}
 		ref := domain.ResourceRef{Type: domain.ResourceProvider, ID: p.ProviderID}
@@ -446,17 +450,6 @@ func (a *Apps) CreateGitHubProvider(ctx context.Context, by Caller, r wire.Creat
 			return a.applyCreateGitHubProvider(ctx, tx, actor, p)
 		})
 	})
-}
-
-func requireFreeProviderName(ctx context.Context, q database.Querier, name string) error {
-	all, err := database.ListProviders(ctx, q)
-	if err != nil {
-		return err
-	}
-	if slices.ContainsFunc(all, func(p domain.Provider) bool { return p.Name == name }) {
-		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("a provider named %q already exists", name))
-	}
-	return nil
 }
 
 // ---- parameters of job-mode actions -----------------------------------------
@@ -613,12 +606,18 @@ func (c core) evaluate(ctx context.Context, q database.Querier, actor domain.Act
 
 // applyHandler runs the approved change of a control_plane.apply job. apps is
 // the catalog that applies app, app target and GitHub provider changes; it may
-// be nil on an instance that has none.
+// be nil on an instance that has none. enrollments takes the node.add jobs that
+// start or advance a tunnel enrollment (ADR-0039); it is nil without a
+// cloudflare: block, and such a job then fails in applyNodeAdd.
 type applyHandler struct {
-	inv  *Inventory
-	apps *Apps
+	inv         *Inventory
+	apps        *Apps
+	enrollments *TunnelEnrollments
 }
 
 func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
+	if handled, err := h.enrollments.runJob(ctx, lease); handled || err != nil {
+		return err
+	}
 	return h.inv.runApproved(ctx, lease, h.apps)
 }

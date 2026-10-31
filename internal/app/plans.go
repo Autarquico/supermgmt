@@ -129,8 +129,13 @@ func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, 
 	if err := requireTunnelAllowed(p.cfg.Cloudflare != nil, node); err != nil {
 		return err
 	}
-	if req.Action == policy.ActionNodeTunnelDisable && node.Endpoint.TunnelHostname != "" {
-		return nil // the node already has its hostname
+	if req.Action == policy.ActionNodeTunnelDisable {
+		if err := requireDirectPath(node); err != nil {
+			return err
+		}
+		if node.Endpoint.TunnelHostname != "" {
+			return nil // the node already has its hostname
+		}
 	}
 	_, err = tunnelHostnameOf(node.Name, p.cfg.Cloudflare.Zone)
 	return err

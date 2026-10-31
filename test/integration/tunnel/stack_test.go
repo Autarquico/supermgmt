@@ -77,6 +77,7 @@ type stack struct {
 
 	appCfg app.Config
 	jobs   *jobs.Store
+	enroll *app.TunnelEnrollments // nil without a cloudflare: block
 	plans  *app.Plans
 	appr   *app.Approvals
 	admin  app.Caller
@@ -185,9 +186,15 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	must(t, err)
 	prober, err := app.NewProber(s.appCfg, conn, nil)
 	must(t, err)
+	if tunnelOptions != nil {
+		s.enroll, err = app.NewTunnelEnrollments(s.appCfg, s.plans, s.jobs, app.TunnelEnrollmentOptions{
+			Tunnel: tunnelOptions, Identity: app.SSHIdentityOf(s.store), Connector: conn, Scan: s.pool.ScanHostKey, Prober: prober,
+		})
+		must(t, err)
+	}
 	handlers, err := app.NewHandlers(s.appCfg, app.HandlersOptions{
 		Store: s.jobs, Connector: conn, Inventory: inventory, Prober: prober,
-		Identity: app.SSHIdentityOf(s.store), Tunnel: tunnelOptions,
+		Identity: app.SSHIdentityOf(s.store), Tunnel: tunnelOptions, Enrollments: s.enroll,
 	})
 	must(t, err)
 

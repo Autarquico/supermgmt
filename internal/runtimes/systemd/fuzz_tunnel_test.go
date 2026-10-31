@@ -3,6 +3,7 @@ package systemd
 import (
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,23 @@ func FuzzKeyringFingerprint(f *testing.F) {
 	f.Fuzz(func(t *testing.T, ring []byte) {
 		if fp, err := keyringFingerprint(ring); err == nil && !fingerprint40.MatchString(fp) {
 			t.Fatalf("fingerprint %q", fp)
+		}
+	})
+}
+
+func FuzzValidateConnectorToken(f *testing.F) {
+	f.Add(tunnelToken)
+	f.Add("short")
+	f.Add(tunnelToken + "\n")
+	f.Add("eyJh IjoiYWNj")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, token string) {
+		err := ValidateConnectorToken(token)
+		if err == nil && (len(token) < minTokenLength || len(token) > maxTokenLength || !tokenRE.MatchString(token)) {
+			t.Fatalf("accepted %q", token)
+		}
+		if err != nil && len(token) >= minTokenLength && strings.Contains(err.Error(), token) {
+			t.Fatalf("the error carries the token: %v", err)
 		}
 	})
 }

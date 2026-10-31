@@ -327,8 +327,9 @@ func lower(in []string) []string {
 }
 
 // reattachAccessApps points every Access application this instance owns at the
-// policies of state. Applications that are gone or already right are left
-// alone.
+// policies of state: those of the nodes and those of the open tunnel
+// enrollments, whose nodes do not exist yet. Applications that are gone or
+// already right are left alone.
 func (r *tunnelRun) reattachAccessApps(ctx context.Context, state database.CloudflareState) error {
 	nodes, err := database.ListNodes(ctx, r.cfg.DB.Reader())
 	if err != nil {
@@ -340,28 +341,49 @@ func (r *tunnelRun) reattachAccessApps(ctx context.Context, state database.Cloud
 		if err != nil {
 			return err
 		}
-		if recorded == "" {
-			continue
-		}
-		name := cloudflare.AccessAppName(r.instanceID, node.ID.String())
-		apps, err := r.api.FindAccessApps(ctx, name)
-		if err != nil {
+		if err := r.reattachAccessApp(ctx, node.ID, recorded, want); err != nil {
 			return err
 		}
-		for _, app := range apps {
-			if app.ID != recorded || slices.Equal(app.PolicyIDs, want) {
-				continue
-			}
-			if err := r.mayMutate(ctx); err != nil {
-				return err
-			}
-			spec := cloudflare.AppSpec{Name: app.Name, Domain: app.Domain, PolicyIDs: want, AllowedIdPs: app.AllowedIdPs}
-			if _, err := r.api.UpdateAccessApp(ctx, app.ID, spec); err != nil {
-				return err
-			}
-			if err := r.auditInstance(ctx, eventAccessAppUpdated, map[string]any{"access_app_id": app.ID, "name": app.Name, "node_id": node.ID.String()}); err != nil {
-				return err
-			}
+	}
+	enrollments, err := database.ListOpenTunnelEnrollments(ctx, r.cfg.DB.Reader())
+	if err != nil {
+		return err
+	}
+	for _, e := range enrollments {
+		if e.AccountID != r.opts.Config.AccountID {
+			continue
+		}
+		if err := r.reattachAccessApp(ctx, e.ID, e.Objects.AccessAppID, want); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reattachAccessApp repairs the policies of one recorded application, named after the ID of its node (or of
+// the enrollment that will become it). No recorded ID: nothing to repair.
+func (r *tunnelRun) reattachAccessApp(ctx context.Context, nodeID domain.ID, recorded string, want []string) error {
+	if recorded == "" {
+		return nil
+	}
+	name := cloudflare.AccessAppName(r.instanceID, nodeID.String())
+	apps, err := r.api.FindAccessApps(ctx, name)
+	if err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if app.ID != recorded || slices.Equal(app.PolicyIDs, want) {
+			continue
+		}
+		if err := r.mayMutate(ctx); err != nil {
+			return err
+		}
+		spec := cloudflare.AppSpec{Name: app.Name, Domain: app.Domain, PolicyIDs: want, AllowedIdPs: app.AllowedIdPs}
+		if _, err := r.api.UpdateAccessApp(ctx, app.ID, spec); err != nil {
+			return err
+		}
+		if err := r.auditInstance(ctx, eventAccessAppUpdated, map[string]any{"access_app_id": app.ID, "name": app.Name, "node_id": nodeID.String()}); err != nil {
+			return err
 		}
 	}
 	return nil
