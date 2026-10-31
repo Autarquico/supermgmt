@@ -448,6 +448,74 @@
    }
   },
   {
+   "route": "GET /api/v1/app-targets/{id}/routes",
+   "class": "query",
+   "path": "/api/v1/app-targets/{route_target}/routes",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/app-targets/{id}/routes",
+   "class": "write",
+   "path": "/api/v1/app-targets/{route_target}/routes",
+   "body": "{\"hostname\":\"shop.example.com\",\"service\":\"web\",\"port\":8080}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   },
+   "note": "The rig holds a tunnel node with a target and a waiting route app.example.com. A granted mcp actor with writes on plans an expose of shop.example.com; the route row is written only after approval, so nothing but the plan and its job is created."
+  },
+  {
+   "route": "DELETE /api/v1/app-targets/{id}/routes/{hostname}",
+   "class": "write",
+   "path": "/api/v1/app-targets/{route_target}/routes/app.example.com",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 202,
+    "created": {
+     "jobs": 1,
+     "plans": 1
+    }
+   },
+   "note": "Unexposing the seeded waiting route app.example.com only plans its removal; the route stays until the job runs."
+  },
+  {
+   "route": "GET /api/v1/app-routes",
+   "class": "query",
+   "path": "/api/v1/app-routes",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
    "route": "GET /api/v1/deployments",
    "class": "query",
    "path": "/api/v1/deployments",

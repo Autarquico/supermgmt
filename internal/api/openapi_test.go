@@ -100,6 +100,11 @@ var schemaTypes = map[string]reflect.Type{
 	"MCPClient":         reflect.TypeFor[wire.MCPClient](),
 	"MCPTokenIssued":    reflect.TypeFor[wire.MCPTokenIssued](),
 
+	"AppRoute":              reflect.TypeFor[wire.AppRoute](),
+	"ExposeAppRouteRequest": reflect.TypeFor[wire.ExposeAppRouteRequest](),
+	"AppRouteSubmission":    reflect.TypeFor[wire.AppRouteSubmission](),
+	"PageOfAppRoute":        reflect.TypeFor[wire.Page[wire.AppRoute]](),
+
 	"TunnelEnrollment":               reflect.TypeFor[wire.TunnelEnrollment](),
 	"TunnelEnrollmentToken":          reflect.TypeFor[wire.TunnelEnrollmentToken](),
 	"StartTunnelEnrollmentRequest":   reflect.TypeFor[wire.StartTunnelEnrollmentRequest](),

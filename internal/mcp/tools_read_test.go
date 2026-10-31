@@ -32,7 +32,7 @@ const (
 // readToolNames is the closed set of read tools of spec §24.
 var readToolNames = []string{
 	"infra_get_deployment", "infra_get_health", "infra_get_node", "infra_get_service",
-	"infra_get_service_logs", "infra_list_apps", "infra_list_deployments", "infra_list_events",
+	"infra_get_service_logs", "infra_list_app_routes", "infra_list_apps", "infra_list_deployments", "infra_list_events",
 	"infra_list_nodes", "infra_list_services",
 }
 

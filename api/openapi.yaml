@@ -1309,6 +1309,82 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfAppTarget'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/app-targets/{id}/routes:
+    get:
+      operationId: listAppTargetRoutes
+      summary: The routes of one application target that are not removed.
+      tags: [apps]
+      x-supermgmt-route: action:app_target.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The routes of the target.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfAppRoute'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: exposeAppRoute
+      summary: Publish a service port of the target through its node's Cloudflare Tunnel (experimental).
+      description: >-
+        Always a plan of app_route.expose that becomes a job. An omitted access is public before policy evaluates, and a
+        public route is reachable from the internet with no authentication; policy rates it high risk. Nothing is
+        written before approval when policy asks for it (route is null). Refused before Cloudflare is touched when
+        Cloudflare is not configured, the node has no connector, the hostname is invalid, outside the zone, in the ssh-
+        namespace or taken, the node already has 98 routes, or the newest known-good deployment does not publish the
+        port on 127.0.0.1 or 0.0.0.0 over TCP. A target with no known-good deployment yet is accepted and the route waits.
+      tags: [apps]
+      x-supermgmt-route: action:app_route.expose
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ExposeAppRouteRequest'}
+      responses:
+        '202':
+          description: The expose job; it waits for approval when policy asks.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/AppRouteSubmission'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/app-targets/{id}/routes/{hostname}:
+    delete:
+      operationId: unexposeAppRoute
+      summary: Remove a route of the target (experimental).
+      description: >-
+        Always a plan of app_route.unexpose that becomes a job. The job removes the DNS record, then the ingress rule,
+        then the Access app, so the hostname is never served without its Access app. The hostname can be exposed again
+        once the route is removed.
+      tags: [apps]
+      x-supermgmt-route: action:app_route.unexpose
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/RouteHostname'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: The unexpose job; it waits for approval when policy asks.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/AppRouteSubmission'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/app-routes:
+    get:
+      operationId: listAppRoutes
+      summary: The routes, not removed, of every target the caller may read.
+      tags: [apps]
+      x-supermgmt-route: action:app_target.read
+      responses:
+        '200':
+          description: The routes.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfAppRoute'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/deployments:
     get:
       operationId: listDeployments
@@ -1516,6 +1592,12 @@ components:
       required: true
       description: Resource id.
       schema: {$ref: '#/components/schemas/ID'}
+    RouteHostname:
+      name: hostname
+      in: path
+      required: true
+      description: Canonical hostname of the route.
+      schema: {type: string, minLength: 1}
     TunnelEnrollmentName:
       name: name
       in: path
@@ -2476,6 +2558,40 @@ components:
         spec_revision: {type: integer, format: int64}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
+    AppRoute:
+      type: object
+      description: A service port of a target published at a hostname through the node's tunnel.
+      required: [id, app_target_id, hostname, service, port, access, phase, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        app_target_id: {$ref: '#/components/schemas/ID'}
+        hostname: {type: string}
+        service: {type: string}
+        port: {type: integer}
+        access: {type: string, enum: [public, owners], description: 'public is reachable from the internet with no authentication; owners sits behind Cloudflare Access.'}
+        phase: {type: string, description: 'waiting (no healthy deployment publishes the port), provisioning, ingress_ready, access_ready, active; removing, dns_removed, ingress_removed; failed and conflict when halted.'}
+        last_error: {type: string, description: Why a halted route is not moving.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    ExposeAppRouteRequest:
+      type: object
+      required: [hostname, service, port]
+      properties:
+        hostname: {type: string, description: A name under the configured zone; canonicalised to lower case.}
+        service: {type: string, description: The Compose service that publishes the port.}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        access: {type: string, enum: [public, owners], description: Omitted means public.}
+    AppRouteSubmission:
+      type: object
+      required: [route, submission]
+      properties:
+        route: {oneOf: [{$ref: '#/components/schemas/AppRoute'}, {type: 'null'}], description: Null while an expose awaits approval.}
+        submission: {$ref: '#/components/schemas/Submission'}
+    PageOfAppRoute:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AppRoute'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
     App:
       type: object
       description: Compose content may hold `${secret:<ref>}` references, never a secret value.

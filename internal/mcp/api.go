@@ -34,6 +34,9 @@ type API interface {
 	SubmitPlan(ctx context.Context, plan domain.ID, planHash string) (wire.Submission, error)
 	CreateDeployment(ctx context.Context, r wire.CreateDeploymentRequest) (wire.Deployment, error)
 	RollbackDeployment(ctx context.Context, id domain.ID, r wire.RollbackRequest) (wire.Deployment, error)
+	ListAppRoutes(ctx context.Context) (wire.Page[wire.AppRoute], error)
+	ExposeAppRoute(ctx context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error)
+	UnexposeAppRoute(ctx context.Context, target domain.ID, hostname string) (wire.AppRouteSubmission, error)
 }
 
 // Options configure the server. WriteTools is mcp.write_tools_enabled: the

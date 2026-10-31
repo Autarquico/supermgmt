@@ -153,7 +153,10 @@ func newMCPRig(t *testing.T, writes bool) *mcpRig {
 
 	pol, err := policy.Parse(append(policy.DefaultYAML(), []byte(mcpRigGrant)...))
 	mcpRigMust(t, err)
-	cfg := app.Config{DB: db, Clock: clock, IDs: ids, Policy: pol, Credentials: activeCredentials{}, MCPWritesEnabled: writes}
+	cfg := app.Config{
+		DB: db, Clock: clock, IDs: ids, Policy: pol, Credentials: activeCredentials{}, MCPWritesEnabled: writes,
+		Cloudflare: &config.Cloudflare{AccountID: mcpRigAccount, Zone: mcpRigZone, APITokenRef: config.DefaultCloudflareAPITokenRef, AccessTokenRef: config.DefaultCloudflareAccessTokenRef},
+	}
 
 	rig := &mcpRig{t: t, db: db, clock: clock, ids: ids, writes: writes, fixtures: map[string]string{}, runtime: &mcpRigRuntime{}}
 	rig.seedIdentities()
@@ -163,6 +166,7 @@ func newMCPRig(t *testing.T, writes bool) *mcpRig {
 	rig.seedPlan()
 	rig.seedGovernedResources()
 	rig.seedEnrollment()
+	rig.seedRoute()
 	rig.runtime.commands.Store(0)
 	return rig
 }
@@ -587,6 +591,63 @@ func (rig *mcpRig) seedEnrollment() {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE tunnel_enrollments SET phase = 'dns_created' WHERE id = ?`, id)
+		return err
+	})
+}
+
+const (
+	mcpRigAccount = "acct"
+	mcpRigZone    = "example.com"
+)
+
+// seedRoute adds a node that already has a Cloudflare connector, an app target on it and a waiting route of that
+// target, so that the route routes address a real row and the expose request reaches policy. The tunnel is
+// committed as the tunnel jobs leave it; no Cloudflare object exists, because no route here reaches Cloudflare.
+func (rig *mcpRig) seedRoute() {
+	rig.t.Helper()
+	var app struct {
+		Applied wire.App `json:"applied"`
+	}
+	rig.fixture(http.MethodPost, wire.PathApps, `{"name":"tunnel-shop","deployed_service":"web","compose_source":"control-plane",`+
+		`"compose_content":"services:\n  web:\n    image: example/web\n","image_policy":{"deployed":"web"}}`).data(rig.t, &app)
+	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
+		now := rig.clock.Now()
+		instance, err := database.GetInstance(ctx, tx)
+		if err != nil {
+			return err
+		}
+		env, err := database.GetEnvironment(ctx, tx, domain.ID(rig.fixtures["environment"]))
+		if err != nil {
+			return err
+		}
+		node, err := database.CreateNode(ctx, tx, domain.Node{
+			ID: rig.ids.NewID(), ProviderID: domain.ID(rig.fixtures["provider"]), NativeID: "edge-1", Name: "edge-1", Kind: "ssh",
+			EnvironmentID: &env.ID, ManagementState: domain.ManagementManaged, Reachability: domain.ReachabilityUnknown,
+			Endpoint:  domain.NodeEndpoint{Transport: domain.TransportCloudflare, TunnelHostname: "ssh-edge-1." + mcpRigZone},
+			CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := database.ImportCommittedTunnelOperation(ctx, tx, database.TunnelOperation{
+			ID: rig.ids.NewID(), NodeID: node.ID, AccountID: mcpRigAccount, Zone: mcpRigZone, InstanceID: instance.ID.String(),
+			Hostname: "ssh-edge-1." + mcpRigZone, Objects: database.TunnelObjects{TunnelID: "tunnel-edge-1"}, CreatedAt: now,
+		}); err != nil {
+			return err
+		}
+		target, err := database.CreateAppTarget(ctx, tx, database.AppTarget{
+			ID: rig.ids.NewID(), AppID: app.Applied.ID, EnvironmentID: env.ID, NodeID: node.ID, ComposeProject: "sm-tunnel-shop-dev",
+			DeploymentPolicyJSON: []byte(`{}`), CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		rig.fixtures["route_target"] = target.ID.String()
+		_, err = database.InsertAppRoute(ctx, tx, database.AppRoute{
+			ID: rig.ids.NewID(), AppTargetID: target.ID, NodeID: node.ID, Hostname: "app." + mcpRigZone, Service: "web", Port: 80,
+			Access: "owners", AccountID: mcpRigAccount, Zone: mcpRigZone, InstanceID: instance.ID.String(),
+			TunnelID: "tunnel-edge-1", TunnelGeneration: 1, CreatedBy: rig.admin.ID, CreatedAt: now,
+		})
 		return err
 	})
 }

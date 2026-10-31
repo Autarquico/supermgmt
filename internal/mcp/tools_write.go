@@ -52,6 +52,12 @@ func addWriteTools(s *sdk.Server, api API) {
 			})
 			return deploymentResult(deployment), err
 		})
+	actionTool(s, "infra_expose_app",
+		"Publish a service port of an app target at a hostname through its node's Cloudflare Tunnel. Access defaults to public: reachable from the internet with no authentication, which is high risk and waits for approval where policy requires; owners puts it behind Cloudflare Access. No route exists until the plan is approved.",
+		func(ctx context.Context, in exposeAppInput) (WriteResult, error) { return exposeApp(ctx, api, in) })
+	actionTool(s, "infra_unexpose_app",
+		"Remove the route of a hostname from an app target. It removes the DNS record, then the ingress rule, then the Access app, and waits for approval where policy requires.",
+		func(ctx context.Context, in unexposeAppInput) (WriteResult, error) { return unexposeApp(ctx, api, in) })
 	actionTool(s, "infra_rollback_deployment",
 		"Roll a deployment back to the newest known-good one, or to to_deployment_id. It waits for approval where policy requires.",
 		func(ctx context.Context, in rollbackInput) (WriteResult, error) {

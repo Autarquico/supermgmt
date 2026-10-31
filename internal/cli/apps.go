@@ -26,7 +26,8 @@ func newAppsCmd(env []string) *cobra.Command {
 		Args:  noArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newAppsListCmd(env), newAppsGetCmd(env), newAppsCreateCmd(env), newAppsTargetCmd(env))
+	cmd.AddCommand(newAppsListCmd(env), newAppsGetCmd(env), newAppsCreateCmd(env), newAppsTargetCmd(env),
+		newAppsExposeCmd(env), newAppsUnexposeCmd(env), newAppsRoutesCmd(env))
 	return cmd
 }
 
@@ -91,7 +92,16 @@ func newAppsGetCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emit(cmd, app, func(w io.Writer) error { return writeApp(w, app) })
+			routes, err := appRoutes(cmd.Context(), api, app)
+			if err != nil {
+				return err
+			}
+			return emit(cmd, app, func(w io.Writer) error {
+				if err := writeApp(w, app); err != nil {
+					return err
+				}
+				return writeAppRoutes(w, routes, app)
+			})
 		},
 	}
 }
@@ -121,6 +131,14 @@ func writeAppTargets(w io.Writer, targets []wire.AppTarget) error {
 	}
 	_, _ = fmt.Fprintln(w)
 	return table(w, []string{"TARGET", "ENVIRONMENT", "NODE", "COMPOSE PROJECT", "ROLLBACK"}, rows)
+}
+
+func writeAppRoutes(w io.Writer, routes []wire.AppRoute, app wire.App) error {
+	if len(routes) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(w)
+	return writeRoutes(w, routes, targetLabels([]wire.App{app}))
 }
 
 // resolveApp accepts an app id or an exact app name.

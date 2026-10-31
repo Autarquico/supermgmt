@@ -100,6 +100,11 @@ func addReadTools(s *sdk.Server, api API) {
 			deployment, err := api.GetDeployment(ctx, id)
 			return ViewDeployment(deployment), err
 		})
+	readTool(s, "infra_list_app_routes",
+		"List the routes that publish an app's ports through its node's Cloudflare Tunnel, optionally of one app and environment (each an id or exact name). A route's phase says whether it is waiting for a healthy deployment, active or being removed."+remoteDataNotice,
+		func(ctx context.Context, in listAppRoutesInput) (listResult[RouteView], error) {
+			return listAppRoutes(ctx, api, in)
+		})
 	readTool(s, "infra_list_events",
 		"List audit events, optionally of one resource, newest page last. Use after_seq to follow the log."+remoteDataNotice,
 		func(ctx context.Context, in listEventsInput) (listResult[EventView], error) {

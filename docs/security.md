@@ -185,6 +185,16 @@ The `cloudflared` path is never searched through `PATH`, on the daemon or on the
 
 Every object SuperMgmt creates in Cloudflare carries its instance ID and the node ID in its name (and a comment on the DNS record). After a lost response it looks the object up by name and adopts it only when its own record shows that phase started and the object was created then; anything else with the expected name is a conflict that stops the job (`TestAnObjectWithTheExpectedNameButAnotherOwnerIsAConflictNeverAdopted`). The hostname is created last on setup and removed first on disable, so it is never routable without its Access application.
 
+### Exposed apps
+
+**Experimental, tested against fakes only.** `sm apps expose` publishes an app's port through the node's tunnel ([Cloudflare](cloudflare.md#expose-an-app)).
+
+- **A public route is unauthenticated.** Anyone on the internet who knows the hostname reaches the app as it is. SuperMgmt adds no login, rate limit or filtering, and the app owns its own authentication. The CLI states this, the plan of a public route is high risk and follows the approval rules of that risk, and an omitted access is normalised to `public` before policy evaluates, in the CLI, the API and the MCP plan alike (`TestAPublicExposeIsHighRiskAndWritesNothingUntilApproved`, `TestExposeCatalogRiskFollowsTheAccessMode`). An `owners` route sits behind a Cloudflare Access application with the Owners policy only; the service-token policy that guards SSH is not on it.
+- **Cloudflare objects are named and marked per route** (the Access application by name, the DNS record by comment). A DNS record without the route's marker is never adopted, replaced or deleted, on a first run or a resume (`TestAForeignDNSRecordHaltsTheRouteBeforeAnyMutationAndIsLeftAlone`, `TestASiblingRecordThatAppearsBeforeTheCreateHaltsTheRouteAndWithdrawsTheRule`).
+- **The hostname cannot leave the zone or the SSH namespace.** It is canonicalised, held to the configured zone on a label boundary, and a first label starting with `ssh-` is refused (`TestExposeRefusesBeforeCloudflareAndWritesNoRoute`).
+- **The tunnel's ingress is a managed list.** Cloudflare overwrites the whole list on each write, so an edit made in the dashboard is lost at the next write by SuperMgmt. Every writer takes the same instance lock and recomputes the list after acquiring it (`TestRouteJobsAndDisableHoldTheIngressLock`, `TestASetupRerunKeepsTheRouteRules`).
+- **A route is bound to the Cloudflare identity it was admitted under.** If the node's tunnel, the zone or the account changed, the job halts before any mutation instead of acting on an object that may belong to something else (`TestAChangedTunnelHaltsTheRouteBeforeAnyMutation`).
+
 ### Interactive sessions
 
 `sm ssh` and the TUI's `s` on a tunnel node set `ProxyCommand` to the client's own `cloudflared access ssh` for the validated hostname, so the operator's own Access login applies and no SuperMgmt token is handed over. Every other isolation option stays; unknown transports and hostile hostnames or paths are refused before ssh starts (`TestInteractiveCommandCloudflareOnlyChangesTheProxyCommand`, `TestInteractiveCommandCloudflareRefusesHostileHostnamesAndUnknownTransports`).
