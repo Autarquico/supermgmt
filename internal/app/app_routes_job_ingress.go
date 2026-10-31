@@ -25,6 +25,8 @@ func servesIngress(r database.AppRoute) bool {
 	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady, database.AppRouteActive,
 		database.AppRouteRemoving, database.AppRouteDNSRemoved:
 		return true
+	case database.AppRouteWaiting, database.AppRouteIngressRemoved, database.AppRouteRemoved,
+		database.AppRouteFailed, database.AppRouteConflict:
 	}
 	return false
 }

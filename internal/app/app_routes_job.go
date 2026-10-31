@@ -297,6 +297,8 @@ func nothingToDo(unexpose bool, route database.AppRoute) bool {
 	case database.AppRouteWaiting, database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
 		database.AppRouteIngressRemoved, database.AppRouteRemoved:
 		return true
+	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady,
+		database.AppRouteFailed, database.AppRouteConflict:
 	}
 	return route.Phase.Halted() && slices.Contains([]database.AppRoutePhase{
 		database.AppRouteRemoving, database.AppRouteDNSRemoved, database.AppRouteIngressRemoved,
@@ -340,6 +342,8 @@ func (r *routeRun) exposing() bool {
 	switch r.route.Phase {
 	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady:
 		return true
+	case database.AppRouteWaiting, database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
+		database.AppRouteIngressRemoved, database.AppRouteRemoved, database.AppRouteFailed, database.AppRouteConflict:
 	}
 	return false
 }

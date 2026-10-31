@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -73,8 +74,8 @@ func TestAppRouteAdvanceIsFencedOnPhase(t *testing.T) {
 		r := must(InsertAppRoute(ctx, q, appRouteOf(f, target, by, "app.example.com")))
 		_, err := AdvanceAppRoutePhase(ctx, q, r.ID, AppRouteProvisioning, AppRouteIngressReady, AppRouteObjects{}, testEpoch)
 		wantError(t, err, smerr.CodeConflict, "")
-		e, _ := err.(*smerr.Error)
-		if e == nil || e.Details["current_phase"] != "waiting" || e.Details["expected_phase"] != "provisioning" {
+		var e *smerr.Error
+		if !errors.As(err, &e) || e.Details["current_phase"] != "waiting" || e.Details["expected_phase"] != "provisioning" {
 			t.Fatalf("conflict details = %v", err)
 		}
 		_, err = AdvanceAppRoutePhase(ctx, q, "missing", AppRouteWaiting, AppRouteProvisioning, AppRouteObjects{}, testEpoch)

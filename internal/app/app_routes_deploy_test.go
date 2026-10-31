@@ -27,7 +27,7 @@ func newRouteWorld(t *testing.T) *routeWorld {
 	t.Helper()
 	w := &routeWorld{deployWorld: newDeployWorld(t)}
 	w.inTx(func(ctx context.Context, tx *database.Tx) error {
-		w.system = w.fixture.identity(ctx, tx, "system", domain.ActorSystem, "")
+		w.system = w.identity(ctx, tx, "system", domain.ActorSystem, "")
 		return nil
 	})
 	w.handler.systemID = w.system

@@ -25,7 +25,7 @@ func (r rowOf) Scan(dest ...any) error {
 			continue
 		}
 		v := reflect.ValueOf(d).Elem()
-		switch v.Kind() {
+		switch v.Kind() { //nolint:exhaustive // the destinations are strings and ints
 		case reflect.String:
 			v.SetString(r.text)
 		case reflect.Int, reflect.Int64:
