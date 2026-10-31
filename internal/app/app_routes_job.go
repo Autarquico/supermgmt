@@ -245,9 +245,23 @@ func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job
 	if unexpose {
 		err = r.removeRoute(ctx)
 	} else {
-		err = r.exposeRoute(ctx)
+		err = r.resumeAndExpose(ctx)
 	}
 	return r.settle(ctx, err)
+}
+
+// resumeAndExpose brings a halted route back to a serving phase only after its DNS preflight passed, so a
+// failing check leaves it halted.
+func (r *routeRun) resumeAndExpose(ctx context.Context) error {
+	if r.route.Phase.Halted() {
+		if _, err := r.checkDNS(ctx, r.route.HaltedPhase); err != nil {
+			return err
+		}
+		if err := r.resume(ctx); err != nil {
+			return err
+		}
+	}
+	return r.exposeRoute(ctx)
 }
 
 // routeOf is the route the job moves. An unexpose moves the live route of its hostname. An expose moves the

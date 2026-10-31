@@ -404,32 +404,71 @@ func TestAnExposeJobThatRunsAfterTheUnexposeDoesNotAdmitTheRouteAgain(t *testing
 }
 
 func TestAnExhaustedExposeHaltsTheRouteWithdrawsItsRuleAndExposeAgainResumesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		refuse int // the mutation that fails: 2 is the Access application, 3 the DNS record
+		halted database.AppRoutePhase
+	}{
+		{"ingress_ready", 2, database.AppRouteIngressReady},
+		{"access_ready", 3, database.AppRouteAccessReady},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := newRouteSetting(t)
+			rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+			res, err := rs.expose(webRequest(shop))
+			mustf(t, err, "Expose")
+			job := rs.approved(res)
+			rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID) // the claim makes this the last attempt
+			rs.arm("refused before", tc.refuse)
+
+			if err := rs.runJob(job); err == nil {
+				t.Fatal("the transient failure changed nothing")
+			}
+
+			route, err := rs.liveRoute(shop)
+			mustf(t, err, "route")
+			if route.Phase != database.AppRouteFailed || route.HaltedPhase != tc.halted {
+				t.Fatalf("route = %s (halted in %s), want failed in %s", route.Phase, route.HaltedPhase, tc.halted)
+			}
+			rs.wantIngress() // a halt while exposing withdraws the rule
+
+			again, err := rs.expose(webRequest(shop))
+			mustf(t, err, "Expose of the halted route")
+			mustf(t, rs.runApproved(again), "run")
+
+			if got := rs.route(route.ID); got.Phase != database.AppRouteActive || rs.countRoutes() != 1 {
+				t.Errorf("route = %s (%s), %d rows; want the same route active", got.Phase, got.LastError, rs.countRoutes())
+			}
+			rs.wantIngress(shop)
+		})
+	}
+}
+
+func TestExposeAgainChecksTheDNSBeforeAHaltedRouteServesAgain(t *testing.T) {
 	rs := newRouteSetting(t)
 	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
 	res, err := rs.expose(webRequest(shop))
 	mustf(t, err, "Expose")
 	job := rs.approved(res)
-	rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID) // the claim makes this the last attempt
-	rs.arm("refused before", 2)                                                 // the Access application, after the ingress write
-
+	rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID)
+	rs.arm("refused before", 2)
 	if err := rs.runJob(job); err == nil {
 		t.Fatal("the transient failure changed nothing")
 	}
-
 	route, err := rs.liveRoute(shop)
 	mustf(t, err, "route")
-	if route.Phase != database.AppRouteFailed || route.HaltedPhase != database.AppRouteIngressReady {
-		t.Fatalf("route = %s (halted in %s), want failed in ingress_ready", route.Phase, route.HaltedPhase)
-	}
-	rs.wantIngress() // a halt while exposing withdraws the rule
+	rs.cf.SeedDNSRecord(shop, "elsewhere.example.net", "")
 
 	again, err := rs.expose(webRequest(shop))
 	mustf(t, err, "Expose of the halted route")
-	mustf(t, rs.runApproved(again), "run")
-
-	if got := rs.route(route.ID); got.Phase != database.AppRouteActive || rs.countRoutes() != 1 {
-		t.Errorf("route = %s (%s), %d rows; want the same route active", got.Phase, got.LastError, rs.countRoutes())
+	if err := rs.runApproved(again); err == nil {
+		t.Fatal("a foreign record did not stop the resume")
 	}
+
+	if got := rs.route(route.ID).Phase; !got.Halted() {
+		t.Errorf("phase = %s, want halted: the route must not serve before its preflight passes", got)
+	}
+	rs.wantIngress()
 }
 
 func TestAWaitingRouteStaysWaitingWhenTheNewestVersionNoLongerPublishesItsPort(t *testing.T) {

@@ -27,7 +27,7 @@ func (r *routeRun) exposeRoute(ctx context.Context) error {
 		}
 	}
 	// Checked on every run, resumes included, and before the first mutation.
-	if _, err := r.checkDNS(ctx); err != nil {
+	if _, err := r.checkDNS(ctx, r.route.Phase); err != nil {
 		return err
 	}
 	if waiting {
@@ -36,6 +36,12 @@ func (r *routeRun) exposeRoute(ctx context.Context) error {
 		}
 		if err := r.advance(ctx, database.AppRouteProvisioning, database.AppRouteObjects{}, "", nil); err != nil {
 			return err
+		}
+	}
+	if r.route.Phase == database.AppRouteIngressReady || r.route.Phase == database.AppRouteAccessReady {
+		// A resumed route lost its rule when it halted, and no step below writes it again.
+		if err := r.syncIngress(ctx, ""); err != nil {
+			return r.run("tunnel ingress", err)
 		}
 	}
 	steps := []struct {
@@ -73,8 +79,9 @@ func (r *routeRun) dnsComment() string {
 // checkDNS proves that every record of the hostname is this route's own: it carries the route's marker, is a
 // proxied CNAME and points at the frozen tunnel. A record that is not (a foreign one, a sibling that appeared
 // after an earlier check, one that changed) halts the route and is never touched. It returns the route's
-// record, nil when there is none. The record may exist only once the Access application is in place.
-func (r *routeRun) checkDNS(ctx context.Context) (*cloudflare.DNSRecord, error) {
+// record, nil when there is none. The record may exist only once the Access application is in place, which
+// phase says: a halted route is checked against the phase it will resume at.
+func (r *routeRun) checkDNS(ctx context.Context, phase database.AppRoutePhase) (*cloudflare.DNSRecord, error) {
 	records, err := r.tun.api.FindDNSRecords(ctx, r.tun.zoneID, r.route.Hostname)
 	if err != nil {
 		return nil, err
@@ -94,7 +101,7 @@ func (r *routeRun) checkDNS(ctx context.Context) (*cloudflare.DNSRecord, error) 
 	if recorded := r.route.Objects.DNSRecordID; recorded != "" && (own == nil || own.ID != recorded) {
 		return nil, routeFailed("the DNS record recorded for this route changed or no longer exists; unexpose the route and expose it again")
 	}
-	if own != nil && r.route.Phase != database.AppRouteAccessReady && r.route.Phase != database.AppRouteActive {
+	if own != nil && phase != database.AppRouteAccessReady && phase != database.AppRouteActive {
 		return nil, routeConflictRecord(*own, "exists before the Access application of this route")
 	}
 	return own, nil
