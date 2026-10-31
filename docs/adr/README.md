@@ -45,3 +45,4 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0037](0037-cloudflare-tunnel-transport.md) | Reaching SSH nodes through Cloudflare Tunnel | Proposed | cloudflare-tunnel-transport |
 | [0038](0038-proxmox-via-node.md) | Reaching the Proxmox API through the host's SSH connection | Proposed | proxmox-via-node |
 | [0039](0039-node-enroll-tunnel.md) | Adding a node that is reachable only through Cloudflare Tunnel | Proposed | node-enroll-tunnel |
+| [0040](0040-app-expose-tunnel.md) | Exposing apps through the node's Cloudflare Tunnel | Proposed | app-expose-tunnel |

@@ -50,6 +50,9 @@ func (f *DeploymentFinalizer) Rollback(ctx context.Context, by Caller, id domain
 		if err != nil {
 			return DeploymentView{}, err
 		}
+		if err := requireContentServesRoutes(ctx, tx, scope.target.ID, rollbackContent(kg)); err != nil {
+			return DeploymentView{}, err
+		}
 		b, err := buildDeploymentPlan(ctx, tx, deploymentPlanSpec{
 			action: deploymentRollbackAction, requester: by.ID, scope: scope, content: rollbackContent(kg),
 			secrets: secretInputsOf(kg.plan.Content.SecretBindings), backup: kg.policy.PreDeployBackup != nil,

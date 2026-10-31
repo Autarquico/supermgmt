@@ -193,14 +193,10 @@ func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, 
 		domain.ResultSucceeded, map[string]any{"type": local.ProviderType, "node_id": p.NodeID.String()})
 }
 
-// runApproved executes a control_plane.apply job. Key operations manage their
+// runApproved executes a control_plane.apply job whose plan has the given action. Key operations manage their
 // own transactions (rotation rewraps every secret in one), so they cannot run
 // inside the fenced transaction the other direct actions use.
-func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease, apps *Apps) error {
-	action, err := i.approvedAction(ctx, lease)
-	if err != nil {
-		return err
-	}
+func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease, apps *Apps, action string) error {
 	if action == actionSecretWrite {
 		return i.runSecretWrite(ctx, lease)
 	}
@@ -221,19 +217,6 @@ func (i *Inventory) runApproved(ctx context.Context, lease jobs.Lease, apps *App
 		}
 		return i.applyApproved(ctx, tx, actor, action, job)
 	})
-}
-
-// approvedAction is the action of the plan the job carries.
-func (i *Inventory) approvedAction(ctx context.Context, lease jobs.Lease) (string, error) {
-	job, err := i.jobs.Get(ctx, i.cfg.DB.Reader(), lease.JobID)
-	if err != nil {
-		return "", err
-	}
-	if job.PlanID == nil {
-		return "", smerr.New(smerr.CodeInternal, "", "control_plane.apply job has no plan")
-	}
-	rec, err := database.GetPlan(ctx, i.cfg.DB.Reader(), *job.PlanID)
-	return rec.Action, err
 }
 
 func (i *Inventory) runSecretWrite(ctx context.Context, lease jobs.Lease) error {
@@ -309,12 +292,12 @@ func payloadOf[T any](job jobs.Job) (T, error) {
 // ---- approved changes of the apps catalog -------------------------------------
 
 // handles reports whether the approved change belongs to the apps catalog: app
-// and app target writes, and the registration of a GitHub provider.
+// and app target writes, app routes, and the registration of a GitHub provider.
 func (a *Apps) handles(action string, job jobs.Job) bool {
 	switch {
 	case a == nil:
 		return false
-	case action == appWriteAction, action == appTargetWriteAction:
+	case action == appWriteAction, action == appTargetWriteAction, action == appRouteExposeAction, action == appRouteUnexposeAction:
 		return true
 	case action == actionProviderWite:
 		return payloadHasKey(job, githubAPIURLKey)
@@ -337,6 +320,8 @@ func (a *Apps) applyApproved(ctx context.Context, q database.Querier, actor doma
 		return a.applyApprovedApp(ctx, q, actor, job)
 	case appTargetWriteAction:
 		return a.applyApprovedTarget(ctx, q, actor, job)
+	case appRouteExposeAction, appRouteUnexposeAction:
+		return a.applyApprovedAppRoute(ctx, q, actor, action, job)
 	case actionProviderWite:
 		p, err := payloadOf[githubProviderParams](job)
 		if err != nil {

@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Add a node that is reachable only through Cloudflare Tunnel
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
 issue: 48

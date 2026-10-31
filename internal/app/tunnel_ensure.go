@@ -98,13 +98,33 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 			return zero, 0, err
 		}
 	}
+	return adoptOrCreate(ctx, r.fenced(), o, others)
+}
+
+// fencedCreate is what the adopt-or-create step needs of its caller: the check that precedes the only
+// mutation, the wait between lookups and the error of an object that is not ours.
+type fencedCreate struct {
+	mayMutate func(context.Context) error
+	sleep     func(context.Context, time.Duration) error
+	conflict  func(kind, name string) error
+}
+
+func (r *tunnelRun) fenced() fencedCreate {
+	return fencedCreate{mayMutate: r.mayMutate, sleep: r.opts.sleep, conflict: newOwnershipConflict}
+}
+
+// adoptOrCreate adopts the one unrecorded object an earlier attempt created, or creates it once. others are
+// the objects of the name that are not the recorded one. After an ambiguous or conflicting create it looks
+// up again with a backoff, and declares a conflict only for an object it can see.
+func adoptOrCreate[T any](ctx context.Context, f fencedCreate, o namedObject[T], others []T) (T, howFound, error) {
+	var zero T
 	if obj, verdict := pickAdoption(others, o.adoptable); verdict != adoptNone {
 		if verdict == adoptConflict {
-			return zero, 0, newOwnershipConflict(o.kind, o.name)
+			return zero, 0, f.conflict(o.kind, o.name)
 		}
 		return obj, foundAdopted, nil
 	}
-	if err := r.mayMutate(ctx); err != nil {
+	if err := f.mayMutate(ctx); err != nil {
 		return zero, 0, err
 	}
 	obj, err := o.create(ctx)
@@ -116,7 +136,7 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 		return zero, 0, err
 	}
 	for _, wait := range lookupBackoff {
-		if err := r.opts.sleep(ctx, wait); err != nil {
+		if err := f.sleep(ctx, wait); err != nil {
 			return zero, 0, err
 		}
 		if found, ferr := o.find(ctx); ferr != nil {
@@ -125,12 +145,35 @@ func ensureNamed[T any](ctx context.Context, r *tunnelRun, o namedObject[T]) (T,
 			if obj, verdict := pickAdoption(found, o.adoptable); verdict == adoptYes {
 				return obj, foundAdopted, nil
 			}
-			return zero, 0, newOwnershipConflict(o.kind, o.name)
+			return zero, 0, f.conflict(o.kind, o.name)
 		}
 	}
 	// Nothing is visible after the backoff: the object may be this operation's
 	// own and not listed yet, so it is not a conflict. The retry looks again.
 	return zero, 0, err
+}
+
+// ensureRouteNamed is ensureNamed for the objects of an app route (ADR-0040). A recorded object that no
+// longer exists is drift the route cannot repair, because its IDs are written once: gone says so instead of
+// creating the object again. Adoption still needs the caller's adoptable rule, which fences it to objects
+// created since the phase started.
+func ensureRouteNamed[T any](ctx context.Context, f fencedCreate, o namedObject[T], gone func() error) (T, howFound, error) {
+	var zero T
+	found, err := o.find(ctx)
+	if err != nil {
+		return zero, 0, err
+	}
+	var others []T
+	for _, obj := range found {
+		if o.known != "" && o.idOf(obj) == o.known {
+			return obj, foundRecorded, nil
+		}
+		others = append(others, obj)
+	}
+	if o.known != "" {
+		return zero, 0, gone()
+	}
+	return adoptOrCreate(ctx, f, o, others)
 }
 
 type adoption int

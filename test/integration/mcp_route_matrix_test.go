@@ -77,7 +77,7 @@ type mcpMatrixWant struct {
 // cause, each a table or a filtered table.
 var mcpMatrixWatches = []string{
 	"jobs", "plans", "job_approvals", "api_tokens", "deployments", "mcp_clients", "identities", "role_bindings",
-	"secrets", "join_tokens", "interactive_sessions", "sessions", "apps", "app_targets", "nodes", "providers",
+	"secrets", "join_tokens", "interactive_sessions", "sessions", "apps", "app_targets", "app_routes", "nodes", "providers",
 	"api_tokens WHERE revoked_at IS NOT NULL", "jobs WHERE state = 'cancelled'",
 }
 

@@ -69,7 +69,7 @@ The approval floor ("`mcp` + risk at least operational always needs approval") a
 
 Exactly these, no more. Every tool reaches the control plane through the same API a human uses, so policy, audit and rate limits are the API's. `tools/list` is pinned by golden files (`internal/mcp/testdata/tools.read.golden.json`, `tools.all.golden.json`) and carries `_meta["dev.supermgmt/schema_version"] = 1`.
 
-Always registered (11): ten read-only tools (`readOnlyHint`) and `infra_plan_action`, which stores a plan but executes nothing:
+Always registered (12): eleven read-only tools (`readOnlyHint`) and `infra_plan_action`, which stores a plan but executes nothing:
 
 | Tool | Reads |
 |---|---|
@@ -79,13 +79,14 @@ Always registered (11): ten read-only tools (`readOnlyHint`) and `infra_plan_act
 | `infra_get_service` | one service, by id or `name@node` |
 | `infra_get_service_logs` | last log lines of a service (at most 500 lines, 64 KiB); needs `service.logs` |
 | `infra_list_apps` | applications |
+| `infra_list_app_routes` | the routes that publish an app's ports through its node's tunnel, optionally of one app and environment, with their phase |
 | `infra_list_deployments` | deployments, optionally by app, target, environment, state |
 | `infra_get_deployment` | one deployment with its steps |
 | `infra_list_events` | audit events |
 | `infra_get_health` | derived health of one node, service or deployment |
 | `infra_plan_action` | builds and stores a plan for one action on one target; nothing runs |
 
-Write tools (5, **registered only when `mcp.write_tools_enabled: true`**):
+Write tools (7, **registered only when `mcp.write_tools_enabled: true`**):
 
 | Tool | What it does |
 |---|---|
@@ -94,8 +95,10 @@ Write tools (5, **registered only when `mcp.write_tools_enabled: true`**):
 | `infra_reboot_node` | plans, then submits, a node reboot |
 | `infra_create_deployment` | creates a deployment (waits for CI, then approval where policy requires) |
 | `infra_rollback_deployment` | rolls a deployment back (waits for approval where policy requires) |
+| `infra_expose_app` | publishes a service port of an app target at a hostname through its node's tunnel; access is `public` unless `owners` is given, and a public route is high risk and waits for approval where policy requires |
+| `infra_unexpose_app` | removes the route of a hostname from an app target (waits for approval where policy requires) |
 
-With writes disabled the 5 write tools are absent from `tools/list` and calling one by name is an unknown-tool error (`TestNewServer_WritesDisabledListsReadToolsAndPlanOnly`, `TestNewServer_WritesDisabledRefusesWriteToolsByName`). No resources and no prompts are offered.
+With writes disabled the 7 write tools are absent from `tools/list` and calling one by name is an unknown-tool error (`TestNewServer_WritesDisabledListsReadToolsAndPlanOnly`, `TestNewServer_WritesDisabledRefusesWriteToolsByName`). No resources and no prompts are offered.
 
 ### Names and ids
 
@@ -115,7 +118,7 @@ A failed tool call returns `isError: true` with the API error `code`, `reason` a
 
 `mcp.write_tools_enabled` defaults to `false`. It does two things, and the second is the one that matters:
 
-1. The five write tools are not registered.
+1. The seven write tools are not registered.
 2. The application layer denies every non-query action to an `mcp` identity with `MCP_WRITES_DISABLED`, so a raw API call with the MCP token fails too. Deployment admission applies the same rule before any row, CI watch or provider call exists (`TestMCPWritesOff_EveryNonQueryActionIsDenied`, `TestMCPWritesOff_HumansAreUnaffected`, `TestDeploymentAdmission_MCPWithWritesOffLeavesNothingBehind` in `internal/app/deployments_admission_test.go`).
 
 What a client sees with writes off, per route (`test/integration/mcp_route_matrix_test.go`, `testdata/mcp_route_matrix.json`, run against the socket and the in-process path):

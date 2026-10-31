@@ -46,7 +46,10 @@ var lockModeByJobType = map[string]domain.LockMode{
 }
 
 // cloudflareInstanceLock serializes the jobs that touch the instance-wide
-// Cloudflare objects (service token, reusable policies) across every node.
+// Cloudflare objects (service token, reusable policies) across every node. It
+// is also the ingress lock: every job that writes a node tunnel's ingress
+// (setup, disable, expose, unexpose) holds it and recomputes the list after
+// acquiring it (ADR-0040).
 var cloudflareInstanceLock = domain.LockSpec{Key: "cloudflare:instance", Mode: domain.LockExclusive}
 
 // ownLock is the lock on the job's own resource. A service is locked through
@@ -124,7 +127,9 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		}
 		specs = append(specs, held...)
 	}
-	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" || job.Type == policy.ActionCloudflareRotate {
+	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" ||
+		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable ||
+		job.Type == JobControlPlaneApply && isAppRouteAction(stored.Action) { // the route job moves its route under the app target's lock
 		specs = append(specs, cloudflareInstanceLock)
 	}
 	instance, err := enrollmentInstanceLock(ctx, q, job, *stored)

@@ -94,6 +94,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	if tunnel != nil {
 		h.disable = &tunnelDisableHandler{core: c, store: o.Store, conn: o.Connector, prober: o.Prober, tunnel: tunnel}
 		h.rotate = &tunnelRotateHandler{store: o.Store, tunnel: tunnel}
+		h.apply.routes = &appRouteHandler{core: c, store: o.Store, tunnel: tunnel}
 	}
 	if o.Proxmox != nil {
 		h.power = &proxmoxPowerHandler{

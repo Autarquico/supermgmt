@@ -199,6 +199,38 @@ The node must be reachable directly again, because it is dialled directly from t
 
 **Stays after disable:** the instance's service token, its two policies and the stored service-token secret. A node with no tunnel and no unfinished setup is refused before anything changes (`TestDisableOfANodeWithoutATunnelIsRefusedBeforeAnythingChanges`, `TestADisableOfANodeWithoutAnyEnableStillSaysThereIsNothingToDisable`).
 
+### Expose an app
+
+**Experimental, tested against fakes only.** An app that a tunnel node runs can be published at a hostname in your zone without touching the Cloudflare dashboard:
+
+```bash
+sm apps expose shop prod --hostname shop.example.com --service web --port 8080
+sm apps expose shop prod --hostname admin.example.com --service web --port 8081 --access owners
+sm apps routes
+sm apps unexpose shop prod --hostname shop.example.com
+```
+
+`--access` is `public` (the default) or `owners`. A **public** route is reachable from the internet with no authentication at all: SuperMgmt adds none, and the app owns its own login. The command says so, and the plan is high risk. An **owners** route puts a Cloudflare Access application in front of the hostname that admits only the addresses in `owner_emails`, and its risk is medium. The TUI palette has `expose` and `unexpose`, and an MCP client has `infra_list_app_routes`, `infra_expose_app` and `infra_unexpose_app` ([MCP](mcp.md)); an omitted access is `public` there too, and the tools always go through plan and approval.
+
+**What is refused, before anything is written or Cloudflare is called:**
+- Cloudflare is not configured, or the target's node has no connector (the message suggests `sm nodes setup <node> --tunnel`), or a tunnel disable is in progress.
+- The hostname is invalid, is not under the configured zone on a label boundary (`evil-example.com` is not under `example.com`), or its first label starts with `ssh-`, which node SSH hostnames use.
+- Another live route, of any app and in any letter case, already has the hostname.
+- The node already has 98 routes, which with the SSH rule and the catch-all is the 100-rule limit of a tunnel.
+- The target's newest known-good deployment does not publish the service and port over TCP on `127.0.0.1` or `0.0.0.0`. A port published only on IPv6 or on another interface is refused, because `cloudflared` dials `127.0.0.1`.
+
+**When it goes live.** A target with no known-good deployment yet is accepted and its route is `waiting`: nothing has happened in Cloudflare. When a deployment of the target succeeds and publishes the port, the route activates by itself. A deployment that fails its health check leaves it `waiting`. Once a route exists, a deployment or rollback whose model no longer publishes its service and port is refused (or fails before touching the node) naming the route; run `sm apps unexpose` first.
+
+**What gets created**, in this order: the ingress rule on the node's tunnel, the Access application (`owners` only; policy `Owners` only), and last the proxied CNAME `<hostname>` to `<tunnel>.cfargotunnel.com` with the comment `supermgmt:<instance>:route:<route-id>`. An `owners` route has no DNS record until its Access application exists. Phases are `waiting`, `provisioning`, `ingress_ready`, `access_ready`, `active`, and on removal `removing`, `dns_removed`, `ingress_removed`; a route that stopped shows `failed` or `conflict` with the reason in `sm apps routes`. A DNS record for the hostname that does not carry the route's marker is never adopted, replaced or deleted: the route halts naming it.
+
+**Unexpose** removes the DNS record first, then the ingress rule, then the Access application, so the hostname is never served without its protection. The hostname can be exposed again afterwards.
+
+**The ingress is a managed list.** Cloudflare replaces a tunnel's whole ingress on each write. Rules you add to this tunnel in the dashboard are lost on the next expose, unexpose, `sm nodes setup --tunnel`, rotation or disable. `sm nodes setup <node> --tunnel` keeps the app routes' rules, and `sm nodes tunnel disable` is refused while the node has routes that are not removed, listing them.
+
+**If the node's tunnel changes** (it was recreated, or the zone or account in the configuration changed), a route halts before any change and tells you to unexpose and expose again. Unexposing a route whose tunnel was recreated removes its DNS record and Access application and skips the ingress rule, which went with the old tunnel. If the account, zone or instance changed, the route is marked removed with no Cloudflare call, and the `app_route.removed` audit event lists the object IDs left behind for you to delete by hand.
+
+Not covered: moving a route between nodes, changing access or port in place (unexpose, then expose), wildcard hostnames or hostnames outside the zone, non-HTTP origins, and drift detection of route objects (`sm nodes tunnel status` still checks only the SSH objects). The real-account checks are open: [Expose an app](manual-checks/app-expose-tunnel.md).
+
 ### Stop using Cloudflare
 
 1. Run `sm nodes tunnel disable <node>` for every tunnel node while the `cloudflare:` block is still configured; without the block, disable is refused as not configured.
@@ -317,3 +349,4 @@ State it precisely, because it is easy to assume otherwise:
 - Decision record: [ADR-0017](adr/0017-server-transport-credentials-sessions.md) server transport, credentials and sessions.
 - Decision record for node tunnels: [ADR-0037](adr/0037-cloudflare-tunnel-transport.md) Cloudflare Tunnel transport.
 - Real-account checklist: [Cloudflare Tunnel](manual-checks/cloudflare-tunnel.md).
+- Decision record for app routes: [ADR-0040](adr/0040-app-expose-tunnel.md). Checklist: [Expose an app](manual-checks/app-expose-tunnel.md).

@@ -231,6 +231,10 @@ var wantM4Routes = map[string]string{
 	"POST " + wire.PathAppTargets:          "app_target.write",
 	"GET " + wire.PathAppTarget:            "app_target.read",
 	"PATCH " + wire.PathAppTarget:          "app_target.write",
+	"GET " + wire.PathAppTargetRoutes:      "app_target.read",
+	"POST " + wire.PathAppTargetRoutes:     "app_route.expose",
+	"DELETE " + wire.PathAppTargetRoute:    "app_route.unexpose",
+	"GET " + wire.PathAppRoutes:            "app_target.read",
 	"GET " + wire.PathProviderRepositories: "provider.read",
 	"GET " + wire.PathDeployments:          "deployment.read",
 	"POST " + wire.PathDeployments:         "deployment.create",
@@ -334,6 +338,12 @@ func TestM4RoutesValidateTheirInput(t *testing.T) {
 		{"app id that is not an id", http.MethodGet, wire.Path(wire.PathApp, "nope"), "", nil, http.StatusBadRequest},
 		{"unknown app", http.MethodGet, f.pathFor(wire.PathApp), "", nil, http.StatusNotFound},
 		{"patch without If-Match", http.MethodPatch, f.pathFor(wire.PathApp), `{}`, key, http.StatusBadRequest},
+		{"routes of every target", http.MethodGet, wire.PathAppRoutes, "", nil, http.StatusOK},
+		{"routes of a target that is not an id", http.MethodGet, wire.Path(wire.PathAppTargetRoutes, "nope"), "", nil, http.StatusBadRequest},
+		{"expose without an Idempotency-Key", http.MethodPost, f.pathFor(wire.PathAppTargetRoutes), `{}`, nil, http.StatusBadRequest},
+		{"expose with an unknown field", http.MethodPost, f.pathFor(wire.PathAppTargetRoutes), `{"x":1}`, key, http.StatusBadRequest},
+		{"unexpose without an Idempotency-Key", http.MethodDelete, wire.Path(wire.PathAppTargetRoute, f.ids.NewID().String(), "a.example.com"), "", nil, http.StatusBadRequest},
+		{"expose without cloudflare", http.MethodPost, f.pathFor(wire.PathAppTargetRoutes), `{"hostname":"a.example.com","service":"web","port":8080}`, key, http.StatusBadRequest},
 		{"cancel unknown deployment", http.MethodPost, f.pathFor(wire.PathDeploymentCancel), "", key, http.StatusNotFound},
 	}
 	for _, tc := range cases {

@@ -154,6 +154,20 @@ func (f *Fake) RemovePolicy(id string) bool {
 	return false
 }
 
+// RemoveApp deletes an Access application without a request, as someone in the
+// dashboard would; it reports whether one was there.
+func (f *Fake) RemoveApp(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, a := range f.apps {
+		if a.ID == id {
+			f.apps = append(f.apps[:i], f.apps[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // SeedApp adds an Access application without a request.
 func (f *Fake) SeedApp(name, domain string, policyIDs ...string) App {
 	f.mu.Lock()

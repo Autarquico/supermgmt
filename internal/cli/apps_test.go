@@ -27,6 +27,9 @@ func appsAPI(t *testing.T, apps ...wire.App) *fakeAPI {
 	t.Helper()
 	routes := map[string]http.HandlerFunc{
 		"GET " + wire.PathApps: func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, wire.Page[wire.App]{Items: apps}) },
+		"GET " + wire.PathAppRoutes: func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Page[wire.AppRoute]{Items: []wire.AppRoute{}})
+		},
 	}
 	for _, a := range apps {
 		routes["GET "+wire.Path(wire.PathApp, string(a.ID))] = func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, a) }

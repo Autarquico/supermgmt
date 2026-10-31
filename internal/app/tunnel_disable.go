@@ -81,6 +81,11 @@ func (h tunnelDisableHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err := requireDirectPath(node); err != nil {
 		return err
 	}
+	// Repeated here because the job holds the ingress lock now: an expose admitted while the disable waited
+	// for it is seen, and no route is left pointing at a closed tunnel.
+	if err := requireNoLiveRoutes(ctx, h.cfg.DB.Reader(), node.ID); err != nil {
+		return err
+	}
 	run, err := h.begin(ctx, lease, job, node)
 	if err != nil {
 		return err

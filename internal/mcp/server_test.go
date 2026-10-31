@@ -29,8 +29,8 @@ var (
 	planToolName = "infra_plan_action"
 
 	writeToolNames = []string{
-		"infra_create_deployment", "infra_reboot_node", "infra_restart_service",
-		"infra_rollback_deployment", "infra_submit_plan",
+		"infra_create_deployment", "infra_expose_app", "infra_reboot_node", "infra_restart_service",
+		"infra_rollback_deployment", "infra_submit_plan", "infra_unexpose_app",
 	}
 )
 
@@ -61,6 +61,21 @@ type serverFakeAPI struct {
 	submits            []submitCall
 	deploymentRequests []wire.CreateDeploymentRequest
 	rollbacks          []rollbackCall
+	exposes            []exposeCall
+	unexposes          []unexposeCall
+	routeSubmission    wire.AppRouteSubmission
+}
+
+// exposeCall is one ExposeAppRoute call seen by serverFakeAPI.
+type exposeCall struct {
+	target  domain.ID
+	request wire.ExposeAppRouteRequest
+}
+
+// unexposeCall is one UnexposeAppRoute call seen by serverFakeAPI.
+type unexposeCall struct {
+	target   domain.ID
+	hostname string
 }
 
 func (f *serverFakeAPI) CreatePlan(_ context.Context, r wire.CreatePlanRequest) (wire.CreatedPlan, error) {
@@ -83,8 +98,18 @@ func (f *serverFakeAPI) RollbackDeployment(_ context.Context, id domain.ID, r wi
 	return f.deployment, f.deploymentEr
 }
 
+func (f *serverFakeAPI) ExposeAppRoute(_ context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error) {
+	f.exposes = append(f.exposes, exposeCall{target, r})
+	return f.routeSubmission, f.submitErr
+}
+
+func (f *serverFakeAPI) UnexposeAppRoute(_ context.Context, target domain.ID, hostname string) (wire.AppRouteSubmission, error) {
+	f.unexposes = append(f.unexposes, unexposeCall{target, hostname})
+	return f.routeSubmission, f.submitErr
+}
+
 func (f *serverFakeAPI) wrote() bool {
-	return len(f.planRequests)+len(f.submits)+len(f.deploymentRequests)+len(f.rollbacks) > 0
+	return len(f.planRequests)+len(f.submits)+len(f.deploymentRequests)+len(f.rollbacks)+len(f.exposes)+len(f.unexposes) > 0
 }
 
 // newServerFakeAPI serves the nodes, services and apps of readTestAPI and a
@@ -105,6 +130,13 @@ func newServerFakeAPI() *serverFakeAPI {
 		},
 		Policy: api.plan.Policy,
 	}
+	api.routeSubmission = wire.AppRouteSubmission{Submission: wire.Submission{
+		Job: wire.Job{
+			ID: serverJobID, Type: "control_plane.apply", State: domain.JobAwaitingApproval, Risk: domain.RiskHigh,
+			Resource: wire.ResourceRef{Type: "app_target", ID: readTargetID}, PlanHash: serverHash,
+		},
+		Policy: api.plan.Policy,
+	}}
 	return api
 }
 

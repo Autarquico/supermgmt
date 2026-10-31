@@ -23,7 +23,8 @@ rules:
             "mcp_client.issue_token", "mcp_client.delete",
             "token.create", "token.revoke", "enrollment.create", "secret.write",
             "backup.create", "node.setup", "sudoers.write", "log_broker.install",
-            "node.tunnel.disable", "cloudflare.access_token.rotate"]
+            "node.tunnel.disable", "cloudflare.access_token.rotate",
+            "app_route.expose", "app_route.unexpose"]
   - name: builtin-mcp-read
     subjects: ["type:mcp"]
     allow: ["*.read", "plan.create"]
