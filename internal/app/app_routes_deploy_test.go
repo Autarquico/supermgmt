@@ -89,8 +89,8 @@ func TestASucceededDeploymentActivatesTheWaitingRoutesItPublishes(t *testing.T) 
 	mustf(t, w.run(), "Run")
 
 	w.want(dep.ID, deployments.StateSucceeded)
-	if got := w.routeRow(route.ID); got.Phase != database.AppRouteProvisioning {
-		t.Errorf("phase = %s, want provisioning", got.Phase)
+	if got := w.routeRow(route.ID); got.Phase != database.AppRouteWaiting {
+		t.Errorf("phase = %s, want waiting: only the route's own job moves it on", got.Phase)
 	}
 	if jobs := w.routeJobs(); !slices.Equal(jobs, []string{appRouteExposeAction}) {
 		t.Errorf("route jobs = %v, want one expose", jobs)
@@ -107,8 +107,8 @@ func TestActivationSubmitsNoSecondJobWhenOneIsOpen(t *testing.T) {
 	mustf(t, w.run(), "Run") // claims the deployment: the route job waits behind the target's lock
 
 	w.want(dep.ID, deployments.StateSucceeded)
-	if got := w.routeRow(route.ID); got.Phase != database.AppRouteProvisioning {
-		t.Errorf("phase = %s, want provisioning for the job that is already open", got.Phase)
+	if got := w.routeRow(route.ID); got.Phase != database.AppRouteWaiting {
+		t.Errorf("phase = %s, want waiting for the job that is already open", got.Phase)
 	}
 	if jobs := w.routeJobs(); len(jobs) != 1 {
 		t.Errorf("route jobs = %v, want only the open one", jobs)
@@ -144,11 +144,13 @@ func TestActivationOnlyMovesTheRoutesTheVersionPublishes(t *testing.T) {
 		return w.handler.activateRoutes(ctx, tx, w.target.ID, ports)
 	})
 
-	if got := w.routeRow(served.ID); got.Phase != database.AppRouteProvisioning {
-		t.Errorf("published route: phase = %s, want provisioning", got.Phase)
+	if jobs := w.routeJobs(); len(jobs) != 1 {
+		t.Errorf("route jobs = %v, want one, for the published route", jobs)
 	}
-	if got := w.routeRow(other.ID); got.Phase != database.AppRouteWaiting {
-		t.Errorf("unpublished route: phase = %s, want waiting", got.Phase)
+	for name, route := range map[string]database.AppRoute{"published": served, "unpublished": other} {
+		if got := w.routeRow(route.ID); got.Phase != database.AppRouteWaiting {
+			t.Errorf("%s route: phase = %s, want waiting", name, got.Phase)
+		}
 	}
 }
 

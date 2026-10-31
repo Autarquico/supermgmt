@@ -114,6 +114,10 @@ func (rs *routeSetting) enqueue(action string, route database.AppRoute) jobs.Job
 			return err
 		}
 		sub, err = rs.plans.planAndSubmit(ctx, tx, by, actor, b, res)
+		if err != nil || action != appRouteExposeAction {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE app_routes SET plan_id = ? WHERE id = ?`, sub.Job.PlanID, route.ID) // as admission does
 		return err
 	})
 	job := sub.Job
@@ -624,4 +628,109 @@ func TestExposeCatalogRiskFollowsTheAccessMode(t *testing.T) {
 	if got, err := policy.RiskFor(policy.ActionAppRouteUnexpose, map[string]any{"hostname": shop}); err != nil || got != domain.RiskOperational {
 		t.Errorf("unexpose risk = %q, %v", got, err)
 	}
+}
+
+// ---- a route is published only by its own job ------------------------------------------------------------
+
+func TestAnotherWritersIngressLeavesOutAWaitingRouteWhoseDNSWasNeverChecked(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.cf.SeedDNSRecord(shop, cloudflare.TunnelTarget(rs.addRoute(shop, 8080, "owners", database.AppRouteWaiting).TunnelID), "left behind")
+	other := rs.addRoute(apiHost, 8080, "public", database.AppRouteProvisioning)
+	rs.enqueue(appRouteExposeAction, other)
+
+	mustf(t, rs.attempt(), "expose of the other route")
+
+	rs.wantIngress(apiHost)
+}
+
+func TestAWaitingRouteWithAForeignRecordHaltsBeforeItIsEverPublished(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+	route := rs.addRoute(shop, 8080, "owners", database.AppRouteWaiting)
+	foreign := rs.cf.SeedDNSRecord(shop, "elsewhere.example.net", "")
+	rs.enqueue(appRouteExposeAction, route)
+	before := len(rs.cf.Mutations())
+
+	err := rs.attempt()
+
+	if err == nil || !strings.Contains(err.Error(), foreign.ID) {
+		t.Fatalf("error = %v, want it to name the record %s", err, foreign.ID)
+	}
+	got := rs.route(route.ID)
+	if got.Phase != database.AppRouteConflict || got.HaltedPhase != database.AppRouteWaiting {
+		t.Errorf("route = %s (halted in %s), want a conflict held in waiting", got.Phase, got.HaltedPhase)
+	}
+	if len(rs.cf.Mutations()) != before {
+		t.Error("the halt was preceded by a Cloudflare mutation")
+	}
+	rs.wantIngress()
+}
+
+// ---- the Access application is checked again before the record exists ----------------------------------
+
+// atAccessReady puts an owners route in access_ready with the Access application app recorded, as an earlier
+// attempt that stopped before the DNS record would have left it.
+func (rs *routeSetting) atAccessReady(route database.AppRoute, appID string) {
+	rs.exec(`UPDATE app_routes SET phase = 'access_ready', access_app_id = ? WHERE id = ?`, appID, route.ID)
+}
+
+func TestAnOwnersRouteResumedAtAccessReadyHaltsWhenItsAccessApplicationIsGone(t *testing.T) {
+	rs := newRouteSetting(t)
+	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
+	rs.atAccessReady(route, "deleted-in-the-dashboard")
+	rs.enqueue(appRouteExposeAction, route)
+
+	err := rs.attempt()
+
+	var halt *routeHalt
+	if !errors.As(err, &halt) || halt.halt != database.AppRouteFailed {
+		t.Fatalf("error = %v, want a failed halt", err)
+	}
+	if _, _, records := rs.routeObjects(shop); records != 0 {
+		t.Errorf("%d DNS records created for a hostname without its Access application", records)
+	}
+}
+
+func TestAnOwnersRouteResumedAtAccessReadyRepairsADriftedAccessApplicationBeforeTheRecord(t *testing.T) {
+	for name, drift := range map[string]func(rs *routeSetting, route database.AppRoute) cffake.App{
+		"policies": func(rs *routeSetting, route database.AppRoute) cffake.App {
+			return rs.cf.SeedApp(cloudflare.RouteAccessAppName(rs.instanceID(), route.ID.String()), shop, rs.cf.SeedPolicy("everyone", "anyone@example.test").ID)
+		},
+		"domain": func(rs *routeSetting, route database.AppRoute) cffake.App {
+			return rs.cf.SeedApp(cloudflare.RouteAccessAppName(rs.instanceID(), route.ID.String()), "elsewhere.example.test", rs.ownersPolicy())
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rs := newRouteSetting(t)
+			route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
+			app := drift(rs, route)
+			rs.atAccessReady(route, app.ID)
+			rs.enqueue(appRouteExposeAction, route)
+
+			mustf(t, rs.attempt(), "expose")
+
+			for _, got := range rs.cf.Apps() {
+				if got.ID == app.ID && (got.Domain != shop || !slices.Equal(got.PolicyIDs, []string{rs.ownersPolicy()})) {
+					t.Errorf("app = %+v, want %s behind the owners policy only", got, shop)
+				}
+			}
+			if got := rs.route(route.ID).Phase; got != database.AppRouteActive {
+				t.Errorf("phase = %s", got)
+			}
+		})
+	}
+}
+
+func (rs *routeSetting) instanceID() string {
+	rs.t.Helper()
+	instance, err := database.GetInstance(context.Background(), rs.db.Reader())
+	mustf(rs.t, err, "GetInstance")
+	return instance.ID.String()
+}
+
+func (rs *routeSetting) ownersPolicy() string {
+	rs.t.Helper()
+	state, err := database.GetCloudflareState(context.Background(), rs.db.Reader())
+	mustf(rs.t, err, "GetCloudflareState")
+	return state.OwnersPolicyID
 }

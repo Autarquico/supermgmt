@@ -611,16 +611,6 @@ func (c core) evaluate(ctx context.Context, q database.Querier, actor domain.Act
 
 // ---- control_plane.apply ---------------------------------------------------
 
-// isRouteJob reports whether the job's plan is an app route action.
-func (h applyHandler) isRouteJob(ctx context.Context, lease jobs.Lease) (bool, error) {
-	job, err := h.inv.jobs.Get(ctx, h.inv.cfg.DB.Reader(), lease.JobID)
-	if err != nil || job.PlanID == nil {
-		return false, err
-	}
-	rec, err := database.GetPlan(ctx, h.inv.cfg.DB.Reader(), *job.PlanID)
-	return isAppRouteAction(rec.Action), err
-}
-
 // applyHandler runs the approved change of a control_plane.apply job. apps is
 // the catalog that applies app, app target and GitHub provider changes; it may
 // be nil on an instance that has none. enrollments takes the node.add jobs that
@@ -639,17 +629,22 @@ func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if handled, err := h.enrollments.runJob(ctx, lease); handled || err != nil {
 		return err
 	}
-	if route, err := h.isRouteJob(ctx, lease); route || err != nil {
-		if err != nil {
-			return err
-		}
-		if h.routes == nil {
-			return requireTunnelAllowed(false, domain.Node{})
-		}
-		if err := h.inv.runApproved(ctx, lease, h.apps); err != nil {
-			return err
-		}
-		return h.routes.Run(ctx, lease)
+	job, err := h.inv.jobs.Get(ctx, h.inv.cfg.DB.Reader(), lease.JobID)
+	if err != nil {
+		return err
 	}
-	return h.inv.runApproved(ctx, lease, h.apps)
+	action, err := jobAction(ctx, h.inv.cfg.DB.Reader(), job)
+	if err != nil {
+		return err
+	}
+	if !isAppRouteAction(action) {
+		return h.inv.runApproved(ctx, lease, h.apps, action)
+	}
+	if h.routes == nil {
+		return requireTunnelAllowed(false, domain.Node{})
+	}
+	if err := h.inv.runApproved(ctx, lease, h.apps, action); err != nil {
+		return err
+	}
+	return h.routes.run(ctx, lease, job, action)
 }

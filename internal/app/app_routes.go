@@ -24,8 +24,9 @@ const reservedSSHLabelPrefix = "ssh-"
 
 // AppRoutes exposes an app target's published port through its node's Cloudflare Tunnel (ADR-0040). A request
 // is a plan of app_route.expose or app_route.unexpose. The route row is written when the request is admitted:
-// in the request transaction when policy needs no approval, else by the apply step of the approved job. The
-// Cloudflare work itself runs in that same control_plane.apply job (app_routes_job.go).
+// in the request transaction when policy needs no approval, else by the apply step of the approved job, always
+// in waiting. The Cloudflare work itself runs in that same control_plane.apply job (app_routes_job.go), which
+// is the only writer of the route's progress from then on.
 type AppRoutes struct {
 	core
 	plans *Plans
@@ -71,21 +72,18 @@ func (s *AppRoutes) Expose(ctx context.Context, by Caller, targetID domain.ID, r
 		if err != nil {
 			return AppRouteResult{}, err
 		}
-		var route *database.AppRoute
 		if res.ApprovalRequired {
 			// Nothing is written before the approval, but an expose that cannot be admitted is refused now.
 			if _, _, err := s.assess(ctx, tx, targetID, p, true); err != nil {
 				return AppRouteResult{}, err
 			}
-		} else {
-			row, err := s.admit(ctx, tx, actor, targetID, p, true)
-			if err != nil {
-				return AppRouteResult{}, err
-			}
-			route = &row
 		}
 		submission, err := s.plans.planAndSubmit(ctx, tx, by, actor, b, res)
-		return AppRouteResult{Route: route, Submission: submission}, err
+		if err != nil || res.ApprovalRequired {
+			return AppRouteResult{Submission: submission}, err
+		}
+		row, err := s.admit(ctx, tx, actor, targetID, *submission.Job.PlanID, p, true)
+		return AppRouteResult{Route: &row, Submission: submission}, err
 	})
 }
 
@@ -226,8 +224,7 @@ func validDNSLabel(label string) bool {
 // ---- admission --------------------------------------------------------------------------------------
 
 // assess runs the refusals of spec item 1 and says what the admitted route would start as: nothing when
-// the hostname already belongs to this very route, else its tunnel identity and whether the newest known-good
-// deployment publishes the port yet.
+// the hostname already belongs to this very route, else its tunnel identity.
 func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID domain.ID, p appRouteParams, request bool) (*admission, *database.AppRoute, error) {
 	if s.cfg.Cloudflare == nil {
 		return nil, nil, requireTunnelAllowed(false, domain.Node{})
@@ -271,8 +268,7 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 		return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
 			"the node %s already has %d routes, the limit of its tunnel", node.Name, maxRoutesPerNode))
 	}
-	publishes, err := s.knownGoodPublishes(ctx, q, targetID, p.Service, port)
-	if err != nil {
+	if err := requireKnownGoodServes(ctx, q, targetID, p.Service, port); err != nil {
 		return nil, nil, err
 	}
 	instance, err := database.GetInstance(ctx, q)
@@ -280,7 +276,7 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 		return nil, nil, err
 	}
 	return &admission{
-		node: node, tunnelID: tunnelID, generation: generation, instanceID: instance.ID.String(), publishes: publishes,
+		node: node, tunnelID: tunnelID, generation: generation, instanceID: instance.ID.String(),
 	}, nil, nil
 }
 
@@ -290,36 +286,45 @@ type admission struct {
 	tunnelID   string
 	generation int64
 	instanceID string
-	// publishes is whether the newest known-good deployment already publishes the port. False means that the
-	// target has none yet, and the route waits.
-	publishes bool
 }
 
-// knownGoodPublishes reports whether the newest known-good deployment of the target publishes service:port for
-// the tunnel; false with no error when the target has none. A known-good deployment that does not is a refusal.
-func (s *AppRoutes) knownGoodPublishes(ctx context.Context, q database.Querier, targetID domain.ID, service string, port int) (bool, error) {
+// newestKnownGoodServes reports whether the target has a known-good deployment and whether the newest one
+// publishes service:port for the tunnel.
+func newestKnownGoodServes(ctx context.Context, q database.Querier, targetID domain.ID, service string, port int) (known, serves bool, err error) {
 	good, err := database.NewestKnownGood(ctx, q, targetID, nil)
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
-		return false, nil
+		return false, false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	ports, err := deploymentHostPorts(ctx, q, good)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	if !routeServed(ports, service, port) {
-		return false, invalidArgument(
-			"the newest known-good deployment does not publish service %q on port %d over TCP at 127.0.0.1 or 0.0.0.0, the only addresses the tunnel connector dials", service, port)
-	}
-	return true, nil
+	return true, routeServed(ports, service, port), nil
 }
 
-// admit writes the route of p for the target and returns it: the route that already carries the hostname for
-// this same request, else a new row in waiting, or in provisioning when the port is already published. The
-// count of the node's routes and the insert share the caller's transaction.
-func (s *AppRoutes) admit(ctx context.Context, q database.Querier, actor domain.Actor, targetID domain.ID, p appRouteParams, request bool) (database.AppRoute, error) {
+// requireKnownGoodServes refuses a route when the newest known-good deployment of the target does not publish
+// its port. A target with none yet is accepted: the route waits for one.
+func requireKnownGoodServes(ctx context.Context, q database.Querier, targetID domain.ID, service string, port int) error {
+	known, serves, err := newestKnownGoodServes(ctx, q, targetID, service, port)
+	if err != nil || !known || serves {
+		return err
+	}
+	return invalidArgument(
+		"the newest known-good deployment does not publish service %q on port %d over TCP at 127.0.0.1 or 0.0.0.0, the only addresses the tunnel connector dials", service, port)
+}
+
+// admit writes the route of p for the target, in waiting, and returns it. A plan admits one route: when the
+// plan wrote one already, in any phase, that row comes back and nothing is written, so a retried or late job
+// never admits again. Else the route that carries the hostname for this same request is returned. The count of
+// the node's routes and the insert share the caller's transaction.
+func (s *AppRoutes) admit(ctx context.Context, q database.Querier, actor domain.Actor, targetID, planID domain.ID, p appRouteParams, request bool) (database.AppRoute, error) {
+	admitted, err := database.GetAppRouteByPlan(ctx, q, planID)
+	if err == nil || smerr.CodeOf(err) != smerr.CodeNotFound {
+		return admitted, err
+	}
 	adm, existing, err := s.assess(ctx, q, targetID, p, request)
 	if err != nil || existing != nil {
 		if existing != nil {
@@ -329,29 +334,34 @@ func (s *AppRoutes) admit(ctx context.Context, q database.Querier, actor domain.
 	}
 	port, _ := strconv.Atoi(p.Port)
 	now := s.cfg.Clock.Now()
-	route, err := database.InsertAppRoute(ctx, q, database.AppRoute{
+	return database.InsertAppRoute(ctx, q, database.AppRoute{
 		ID: s.cfg.IDs.NewID(), AppTargetID: targetID, NodeID: adm.node.ID, Hostname: p.Hostname, Service: p.Service, Port: port,
 		Access: p.Access, AccountID: s.cfg.Cloudflare.AccountID, Zone: s.cfg.Cloudflare.Zone, InstanceID: adm.instanceID,
-		TunnelID: adm.tunnelID, TunnelGeneration: adm.generation, CreatedBy: actor.ID, CreatedAt: now,
+		TunnelID: adm.tunnelID, TunnelGeneration: adm.generation, PlanID: &planID, CreatedBy: actor.ID, CreatedAt: now,
 	})
-	if err != nil || !adm.publishes {
-		return route, err
-	}
-	return database.AdvanceAppRoutePhase(ctx, q, route.ID, database.AppRouteWaiting, database.AppRouteProvisioning, database.AppRouteObjects{}, now)
 }
 
-// applyApprovedAppRoute is the apply step of the control_plane.apply job of an app route plan: it admits
-// the route of an approved expose, as the request does when policy needs no approval, and does nothing for an
-// unexpose or for a route admitted already. The Cloudflare work follows in the same job (appRouteHandler).
+// applyApprovedAppRoute is the apply step of the control_plane.apply job of an app route plan. It admits the
+// route of an expose that waited for approval, and only that one: with no approval the request admitted the route
+// itself, and the system's activation is for a route admitted already, so a retry or a late job of those never
+// admits again. It does nothing for an unexpose either. The Cloudflare work follows in the same job
+// (appRouteHandler).
 func (a *Apps) applyApprovedAppRoute(ctx context.Context, q database.Querier, actor domain.Actor, action string, job jobs.Job) error {
 	if action == appRouteUnexposeAction {
 		return nil
+	}
+	if job.PlanID == nil {
+		return smerr.New(smerr.CodeInternal, "", "app route job has no plan")
+	}
+	decisions, err := database.ListDecisions(ctx, q, job.ID, job.PlanHash)
+	if err != nil || len(decisions) == 0 {
+		return err
 	}
 	p, err := payloadOf[appRouteParams](job)
 	if err != nil {
 		return err
 	}
-	_, err = a.Routes().admit(ctx, q, actor, job.Resource.ID, p, false)
+	_, err = a.Routes().admit(ctx, q, actor, job.Resource.ID, *job.PlanID, p, false)
 	return err
 }
 

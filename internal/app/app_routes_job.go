@@ -36,7 +36,8 @@ const (
 )
 
 // appRouteParams are the parameters of an app_route.expose / app_route.unexpose plan and of its job payload.
-// Unexpose carries only the hostname. The route is found by its hostname, which is unique among live routes.
+// Unexpose carries only the hostname, which is unique among live routes. An expose finds its route by the plan
+// that admitted it; the system's activation of a route admitted already finds it by these parameters.
 type appRouteParams struct {
 	Hostname string `json:"hostname"`
 	Service  string `json:"service,omitempty"`
@@ -95,15 +96,6 @@ type appRouteHandler struct {
 	tunnel *tunnelEngine
 }
 
-// planAction is the action of the plan the job carries.
-func (h appRouteHandler) planAction(ctx context.Context, job jobs.Job) (string, error) {
-	if job.PlanID == nil {
-		return "", smerr.New(smerr.CodeInternal, "", "app route job has no plan")
-	}
-	rec, err := database.GetPlan(ctx, h.cfg.DB.Reader(), *job.PlanID)
-	return rec.Action, err
-}
-
 // routeHalt ends the route in failed or conflict. The route keeps the phase it held, and a new job resumes it.
 type routeHalt struct {
 	halt database.AppRoutePhase
@@ -119,7 +111,9 @@ func routeConflict(kind, name string) error {
 		"a Cloudflare %s named %q exists and was not created by this route; resolve it in Cloudflare and expose the route again", kind, name))}
 }
 
-func routeFailed(message string) error {
+func routeFailed(message string) error { return failedHalt(message) }
+
+func failedHalt(message string) *routeHalt {
 	return &routeHalt{halt: database.AppRouteFailed, inner: smerr.New(smerr.CodeConflict, "", message)}
 }
 
@@ -204,26 +198,28 @@ func (rr *routeRecord) halt(ctx context.Context, to database.AppRoutePhase, caus
 	})
 }
 
+// Run is the handler of a route job that runs on its own, without the apply step before it.
 func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	job, err := h.store.Get(ctx, h.cfg.DB.Reader(), lease.JobID)
 	if err != nil {
 		return err
 	}
-	action, err := h.planAction(ctx, job)
+	action, err := jobAction(ctx, h.cfg.DB.Reader(), job)
 	if err != nil {
 		return err
 	}
+	return h.run(ctx, lease, job, action)
+}
+
+func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job, action string) error {
 	unexpose := action == appRouteUnexposeAction
 	params, err := payloadOf[appRouteParams](job)
 	if err != nil {
 		return err
 	}
-	route, err := database.GetLiveAppRouteByHostname(ctx, h.cfg.DB.Reader(), params.Hostname)
-	if smerr.CodeOf(err) == smerr.CodeNotFound || err == nil && route.AppTargetID != job.Resource.ID {
-		return nil // removed already, or the hostname belongs to another target now: nothing left for this job
-	}
-	if err != nil {
-		return err
+	route, found, err := h.routeOf(ctx, job, params, unexpose)
+	if err != nil || !found {
+		return err // not found: removed already, or the hostname belongs to another route now
 	}
 	rr := routeRecord{core: h.core, lease: lease, job: job, route: route}
 	if nothingToDo(unexpose, route) {
@@ -267,6 +263,49 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	return r.settle(ctx, err)
 }
 
+// routeOf is the route the job moves. An unexpose moves the live route of its hostname. An expose moves the
+// route its plan admitted, removed or not, so a retry or a late job never reaches a route admitted by another
+// request. A plan that admitted none (the system's activation, or the request that resumes a halted route)
+// moves the live route that has exactly its parameters. found is false when there is none: it was removed,
+// or the hostname belongs to something else now.
+func (h appRouteHandler) routeOf(ctx context.Context, job jobs.Job, params appRouteParams, unexpose bool) (route database.AppRoute, found bool, err error) {
+	q := h.cfg.DB.Reader()
+	switch {
+	case unexpose:
+		route, err = database.GetLiveAppRouteByHostname(ctx, q, params.Hostname)
+	case job.PlanID == nil:
+		return route, false, smerr.New(smerr.CodeInternal, "", "app route job has no plan")
+	default:
+		route, err = database.GetAppRouteByPlan(ctx, q, *job.PlanID)
+		if smerr.CodeOf(err) == smerr.CodeNotFound {
+			route, err = database.GetLiveAppRouteByHostname(ctx, q, params.Hostname)
+			if err == nil && !sameRoute(route, params) {
+				err = smerr.New(smerr.CodeNotFound, "", "app route")
+			}
+		}
+	}
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		return database.AppRoute{}, false, nil
+	}
+	if err != nil {
+		return database.AppRoute{}, false, err
+	}
+	return route, route.AppTargetID == job.Resource.ID && route.Hostname == params.Hostname, nil
+}
+
+func sameRoute(route database.AppRoute, p appRouteParams) bool {
+	return fmt.Sprint(route.Port) == p.Port && route.Service == p.Service && route.Access == p.Access
+}
+
+// jobAction is the action of the plan the job carries.
+func jobAction(ctx context.Context, q database.Querier, job jobs.Job) (string, error) {
+	if job.PlanID == nil {
+		return "", smerr.New(smerr.CodeInternal, "", "control_plane.apply job has no plan")
+	}
+	rec, err := database.GetPlan(ctx, q, *job.PlanID)
+	return rec.Action, err
+}
+
 // abandoned ends the removal of a route whose Cloudflare account, zone or instance is no longer the configured
 // one: its objects belong to a place this instance cannot reach, so the route is marked removed with no
 // Cloudflare call, and the object IDs it recorded are listed in the audit event for the operator to clean up.
@@ -287,17 +326,17 @@ func (h appRouteHandler) abandoned(ctx context.Context, rr *routeRecord) (bool, 
 	return true, rr.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, leftover)
 }
 
-// nothingToDo reports whether the job has no work: its route is where the job takes it, waits for a deployment
-// (a succeeded one schedules its own job), or the other job's removal (or the removal itself) has taken it past.
+// nothingToDo reports whether the job has no work: its route is where the job takes it, or another job's
+// removal (or the removal itself) has taken it past. A waiting route is the expose job's to start.
 func nothingToDo(unexpose bool, route database.AppRoute) bool {
 	if unexpose {
 		return route.Phase == database.AppRouteRemoved
 	}
 	switch route.Phase {
-	case database.AppRouteWaiting, database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
+	case database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
 		database.AppRouteIngressRemoved, database.AppRouteRemoved:
 		return true
-	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady,
+	case database.AppRouteWaiting, database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady,
 		database.AppRouteFailed, database.AppRouteConflict:
 	}
 	return route.Phase.Halted() && slices.Contains([]database.AppRoutePhase{
@@ -322,20 +361,38 @@ type routeRun struct {
 	unexposing bool
 }
 
-// settle halts the route when err ends it and returns err. A conflict while exposing first takes the rule
-// out of the ingress: a record nobody here owns may point at the tunnel, and the halted route must not serve.
+// settle halts the route when err ends it and returns err. The error ends it when it is a halt, or when it is
+// the job's last: no retry is left to finish the work, so the route stops in failed, where a new command resumes
+// it. A route halted while exposing first has its rule taken out of the ingress: a halt fails closed.
 func (r *routeRun) settle(ctx context.Context, err error) error {
-	var halt *routeHalt
-	if !errors.As(err, &halt) || r.route.Phase.Halted() {
+	if err == nil || r.route.Phase.Halted() {
 		return err
 	}
-	if halt.halt == database.AppRouteConflict && r.exposing() {
+	var halt *routeHalt
+	cause := err
+	if !errors.As(err, &halt) {
+		if !r.exhausted(ctx, err) {
+			return err
+		}
+		halt = failedHalt(fmt.Sprintf("the job gave up: %s", err))
+		cause = halt
+	}
+	if r.exposing() {
 		_ = r.syncIngress(context.WithoutCancel(ctx), r.route.ID) // best effort: the next writer drops the rule too
 	}
-	if herr := r.halt(ctx, halt.halt, err); herr != nil {
+	if herr := r.halt(ctx, halt.halt, cause); herr != nil {
 		return errors.Join(err, herr)
 	}
 	return err
+}
+
+// exhausted reports whether err is the failure that ends the job: its last attempt, outside a shutdown or an
+// outcome the job cannot tell.
+func (r *routeRun) exhausted(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, jobs.ErrOutcomeUnknown) || errors.Is(err, jobs.ErrLeaseLost) {
+		return false
+	}
+	return r.job.RetryClass != domain.RetryIdempotent || r.job.Attempts >= r.job.MaxAttempts
 }
 
 func (r *routeRun) exposing() bool {

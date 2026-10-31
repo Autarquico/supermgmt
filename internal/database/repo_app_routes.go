@@ -56,6 +56,7 @@ type AppRoute struct {
 	TunnelID         string
 	TunnelGeneration int64
 	Objects          AppRouteObjects
+	PlanID           *domain.ID // the plan whose admission wrote the row
 	LastError        string
 	CreatedBy        domain.ID
 	CreatedAt        time.Time
@@ -72,21 +73,25 @@ type AppRouteFilter struct {
 
 const appRouteColumns = `id, app_target_id, node_id, hostname, service, port, access, phase, halted_phase,
 	phase_started_at, account_id, zone, instance_id, tunnel_id, tunnel_generation, dns_record_id, access_app_id,
-	last_error, created_by, created_at, updated_at`
+	plan_id, last_error, created_by, created_at, updated_at`
 
 func scanAppRoute(s scanner) (AppRoute, error) {
 	var (
 		r                           AppRoute
-		halted                      sql.NullString
+		halted, planID              sql.NullString
 		startedMs, createdMs, updMs int64
 	)
 	err := s.Scan(&r.ID, &r.AppTargetID, &r.NodeID, &r.Hostname, &r.Service, &r.Port, &r.Access, &r.Phase, &halted,
 		&startedMs, &r.AccountID, &r.Zone, &r.InstanceID, &r.TunnelID, &r.TunnelGeneration,
-		&r.Objects.DNSRecordID, &r.Objects.AccessAppID, &r.LastError, &r.CreatedBy, &createdMs, &updMs)
+		&r.Objects.DNSRecordID, &r.Objects.AccessAppID, &planID, &r.LastError, &r.CreatedBy, &createdMs, &updMs)
 	if err != nil {
 		return AppRoute{}, err
 	}
 	r.HaltedPhase = AppRoutePhase(halted.String)
+	if planID.Valid {
+		id := domain.ID(planID.String)
+		r.PlanID = &id
+	}
 	r.PhaseStartedAt = domain.FromUnixMillis(startedMs)
 	r.CreatedAt = domain.FromUnixMillis(createdMs)
 	r.UpdatedAt = domain.FromUnixMillis(updMs)
@@ -94,15 +99,15 @@ func scanAppRoute(s scanner) (AppRoute, error) {
 }
 
 // InsertAppRoute records an accepted route. The phase is always waiting; every field of r but Phase,
-// HaltedPhase, PhaseStartedAt, Objects, LastError and UpdatedAt is used. A hostname that has a live route
+// HaltedPhase, PhaseStartedAt, Objects, LastError and UpdatedAt is used. A nil PlanID stores NULL. A hostname that has a live route
 // yields CONFLICT. The node must be the target's node.
 func InsertAppRoute(ctx context.Context, q Querier, r AppRoute) (AppRoute, error) {
 	_, err := q.ExecContext(ctx, `
 		INSERT INTO app_routes (id, app_target_id, node_id, hostname, service, port, access, phase, phase_started_at,
-			account_id, zone, instance_id, tunnel_id, tunnel_generation, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			account_id, zone, instance_id, tunnel_id, tunnel_generation, plan_id, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.AppTargetID, r.NodeID, r.Hostname, r.Service, r.Port, r.Access, millis(r.CreatedAt),
-		r.AccountID, r.Zone, r.InstanceID, r.TunnelID, r.TunnelGeneration, r.CreatedBy, millis(r.CreatedAt), millis(r.CreatedAt))
+		r.AccountID, r.Zone, r.InstanceID, r.TunnelID, r.TunnelGeneration, r.PlanID, r.CreatedBy, millis(r.CreatedAt), millis(r.CreatedAt))
 	if err != nil {
 		return AppRoute{}, conflictIfDuplicate(err, "live app route for hostname")
 	}
@@ -112,6 +117,15 @@ func InsertAppRoute(ctx context.Context, q Querier, r AppRoute) (AppRoute, error
 // GetAppRoute returns the route, or NOT_FOUND.
 func GetAppRoute(ctx context.Context, q Querier, id domain.ID) (AppRoute, error) {
 	r, err := scanAppRoute(q.QueryRowContext(ctx, `SELECT `+appRouteColumns+` FROM app_routes WHERE id = ?`, id))
+	if err != nil {
+		return AppRoute{}, getErr(err, "app route")
+	}
+	return r, nil
+}
+
+// GetAppRouteByPlan returns the route that the admission of the plan wrote, in any phase, or NOT_FOUND.
+func GetAppRouteByPlan(ctx context.Context, q Querier, planID domain.ID) (AppRoute, error) {
+	r, err := scanAppRoute(q.QueryRowContext(ctx, `SELECT `+appRouteColumns+` FROM app_routes WHERE plan_id = ?`, planID))
 	if err != nil {
 		return AppRoute{}, getErr(err, "app route")
 	}

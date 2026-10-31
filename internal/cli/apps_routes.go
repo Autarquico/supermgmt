@@ -35,9 +35,6 @@ func newAppsExposeCmd(env []string) *cobra.Command {
 			if hostname == "" || service == "" || port == 0 {
 				return usageErrorf("--hostname, --service and --port are required")
 			}
-			if access == "" {
-				access = routeAccessPublic
-			}
 			if access != routeAccessPublic && access != routeAccessOwners {
 				return usageErrorf("--access must be %s or %s", routeAccessPublic, routeAccessOwners)
 			}

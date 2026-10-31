@@ -10,9 +10,10 @@ import (
 )
 
 // activateRoutes runs in the transaction that settles a deployment as succeeded. It moves the target's
-// waiting routes whose port the new version publishes to provisioning and gives each an expose job submitted
-// by the system identity (ADR-0040). An expose job still open for the route (the request that admitted it
-// queued one behind this deployment) is the job that will do the work, so no second one is submitted.
+// waiting routes whose port the new version publishes and gives each an expose job submitted by the system
+// identity (ADR-0040). The route stays waiting: only its own job, holding the ingress lock and after its DNS
+// preflight, moves it on. An expose job still open for the route (the request that admitted it queued one
+// behind this deployment) is the job that will do the work, so no second one is submitted.
 func (h deployHandler) activateRoutes(ctx context.Context, tx *database.Tx, targetID domain.ID, ports []compose.HostPort) error {
 	waiting, err := database.ListWaitingAppRoutes(ctx, tx, targetID)
 	if err != nil {
@@ -24,9 +25,6 @@ func (h deployHandler) activateRoutes(ctx context.Context, tx *database.Tx, targ
 		}
 		open, err := hasOpenExposeJob(ctx, tx, route)
 		if err != nil {
-			return err
-		}
-		if _, err := database.AdvanceAppRoutePhase(ctx, tx, route.ID, database.AppRouteWaiting, database.AppRouteProvisioning, database.AppRouteObjects{}, h.cfg.Clock.Now()); err != nil {
 			return err
 		}
 		if !open {
@@ -65,17 +63,17 @@ func (h deployHandler) submitExpose(ctx context.Context, tx *database.Tx, route 
 	return err
 }
 
-// hasOpenExposeJob reports whether an expose job of the route's hostname on its target is waiting for
-// approval, queued, running or interrupted.
+// hasOpenExposeJob reports whether an expose job of the route's hostname on its target is queued, running or
+// interrupted. One awaiting approval has admitted nothing yet, so it is not the job that will move this route.
 func hasOpenExposeJob(ctx context.Context, q database.Querier, route database.AppRoute) (bool, error) {
 	var n int
 	err := q.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM jobs
 		WHERE type = ? AND resource_type = ? AND resource_id = ?
 		  AND json_extract(payload_json, '$.hostname') = ? AND json_extract(payload_json, '$.service') IS NOT NULL
-		  AND state IN (?, ?, ?, ?)`,
+		  AND state IN (?, ?, ?)`,
 		JobControlPlaneApply, domain.ResourceAppTarget, route.AppTargetID, route.Hostname,
-		domain.JobAwaitingApproval, domain.JobQueued, domain.JobRunning, domain.JobInterrupted).Scan(&n)
+		domain.JobQueued, domain.JobRunning, domain.JobInterrupted).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("count the open jobs of route %s: %w", route.Hostname, err)
 	}

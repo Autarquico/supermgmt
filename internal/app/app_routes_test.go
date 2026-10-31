@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/deployments"
@@ -94,9 +95,8 @@ func (rs *routeSetting) expose(r ExposeRouteRequest) (AppRouteResult, error) {
 	return rs.service().Expose(context.Background(), rs.caller(rs.admin), rs.target.ID, r)
 }
 
-// runApproved claims the job of an expose result, approving it first when it waits, and runs it through the
-// control_plane.apply handler.
-func (rs *routeSetting) runApproved(res AppRouteResult) error {
+// approved approves the job of an expose or unexpose result while it waits, and returns it queued.
+func (rs *routeSetting) approved(res AppRouteResult) jobs.Job {
 	rs.t.Helper()
 	job := res.Submission.Job
 	for _, approver := range []domain.ID{rs.bob, rs.carol} {
@@ -107,8 +107,32 @@ func (rs *routeSetting) runApproved(res AppRouteResult) error {
 		job, err = rs.approve(approver, job)
 		mustf(rs.t, err, "approve")
 	}
-	rs.queued, rs.current = job, rs.applyHandler()
+	return job
+}
+
+// runApproved claims the job of a result, approving it first when it waits, and runs it through the
+// control_plane.apply handler.
+func (rs *routeSetting) runApproved(res AppRouteResult) error {
+	rs.t.Helper()
+	rs.queued, rs.current = rs.approved(res), rs.applyHandler()
 	return rs.attempt()
+}
+
+// runJob claims the next job, which must be job, and runs it through the control_plane.apply handler as the
+// engine does: a failure goes back to the store, which requeues the job or ends it.
+func (rs *routeSetting) runJob(job jobs.Job) error {
+	rs.t.Helper()
+	claimed, ok := rs.claim()
+	if !ok || claimed.Job.ID != job.ID {
+		rs.t.Fatalf("claimed %v (found %v), want job %s", claimed.Job.ID, ok, job.ID)
+	}
+	err := rs.applyHandler().Run(context.Background(), claimed.Lease)
+	if err == nil {
+		mustf(rs.t, rs.store.Succeed(context.Background(), claimed.Lease), "Succeed")
+		return nil
+	}
+	mustf(rs.t, rs.store.Fail(context.Background(), claimed.Lease, err), "Fail")
+	return err
 }
 
 func webRequest(hostname string) ExposeRouteRequest {
@@ -306,22 +330,113 @@ func TestExposeAgainOfAHaltedRouteResumesItAndRefusesALiveOne(t *testing.T) {
 	}
 }
 
-func TestApplyApprovedAdmissionIsIdempotent(t *testing.T) {
+func TestApplyApprovedAdmissionIsIdempotentAndNeverAdmitsAgainAfterTheRemoval(t *testing.T) {
 	rs := newRouteSetting(t)
 	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
-	p := appRouteParams{Hostname: shop, Service: "web", Port: "8080", Access: "public"}
-	raw, err := json.Marshal(p)
-	mustf(t, err, "Marshal")
-	job := jobs.Job{Resource: appTargetRef(rs.target.ID), Payload: raw}
+	res, err := rs.expose(ExposeRouteRequest{Hostname: shop, Service: "web", Port: 8080, Access: "public"}) // waits for approval
+	mustf(t, err, "Expose")
+	job := rs.approved(res)
 
-	for range 2 {
+	stored := rs.job(job.ID)
+	apply := func() {
 		rs.inTx(func(ctx context.Context, tx *database.Tx) error {
-			return rs.apps().applyApprovedAppRoute(ctx, tx, domain.Actor{ID: rs.admin, Type: domain.ActorHuman}, appRouteExposeAction, job)
+			return rs.apps().applyApprovedAppRoute(ctx, tx, domain.Actor{ID: rs.admin, Type: domain.ActorHuman}, appRouteExposeAction, stored)
 		})
 	}
+	apply()
+	apply()
+	if rs.countRoutes() != 1 {
+		t.Fatalf("%d routes after two applies, want 1", rs.countRoutes())
+	}
+
+	rs.exec(`UPDATE app_routes SET phase = 'removed'`) // the route was unexposed while a retry waited
+	apply()
 
 	if rs.countRoutes() != 1 {
-		t.Errorf("%d routes after two applies, want 1", rs.countRoutes())
+		t.Errorf("%d routes after a retry that followed the removal, want the removed one only", rs.countRoutes())
+	}
+}
+
+func TestExposeAdmitsInWaitingEvenWhenTheVersionPublishesThePort(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+
+	res, err := rs.expose(webRequest(shop))
+
+	mustf(t, err, "Expose")
+	if res.Route != nil && res.Route.Phase != database.AppRouteWaiting {
+		t.Errorf("admitted in %s, want waiting: the route's own job starts it", res.Route.Phase)
+	}
+	rs.wantIngress()
+}
+
+func TestAnExposeJobThatRunsAfterTheUnexposeDoesNotAdmitTheRouteAgain(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+	route := rs.addRoute(shop, 8080, "owners", database.AppRouteWaiting) // admitted by the request transaction
+	exposeJob := rs.enqueue(appRouteExposeAction, route)
+	rs.exec(`UPDATE jobs SET scheduled_at = scheduled_at + 600000 WHERE id = ?`, exposeJob.ID) // still queued when the unexpose comes
+	unexpose, err := rs.service().Unexpose(context.Background(), rs.caller(rs.admin), rs.target.ID, shop)
+	mustf(t, err, "Unexpose")
+	mustf(t, rs.runJob(rs.approved(unexpose)), "unexpose")
+	rs.clock.Advance(11 * time.Minute) // within the approval's lifetime
+
+	mustf(t, rs.runJob(exposeJob), "expose")
+
+	if rs.countRoutes() != 1 {
+		t.Errorf("%d routes, want only the removed one", rs.countRoutes())
+	}
+	if _, err := rs.liveRoute(shop); smerr.CodeOf(err) != smerr.CodeNotFound {
+		t.Errorf("the late job brought the route back: %v", err)
+	}
+	rs.wantIngress()
+}
+
+func TestAnExhaustedExposeHaltsTheRouteWithdrawsItsRuleAndExposeAgainResumesIt(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+	res, err := rs.expose(webRequest(shop))
+	mustf(t, err, "Expose")
+	job := rs.approved(res)
+	rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID) // the claim makes this the last attempt
+	rs.arm("refused before", 2)                                                 // the Access application, after the ingress write
+
+	if err := rs.runJob(job); err == nil {
+		t.Fatal("the transient failure changed nothing")
+	}
+
+	route, err := rs.liveRoute(shop)
+	mustf(t, err, "route")
+	if route.Phase != database.AppRouteFailed || route.HaltedPhase != database.AppRouteIngressReady {
+		t.Fatalf("route = %s (halted in %s), want failed in ingress_ready", route.Phase, route.HaltedPhase)
+	}
+	rs.wantIngress() // a halt while exposing withdraws the rule
+
+	again, err := rs.expose(webRequest(shop))
+	mustf(t, err, "Expose of the halted route")
+	mustf(t, rs.runApproved(again), "run")
+
+	if got := rs.route(route.ID); got.Phase != database.AppRouteActive || rs.countRoutes() != 1 {
+		t.Errorf("route = %s (%s), %d rows; want the same route active", got.Phase, got.LastError, rs.countRoutes())
+	}
+}
+
+func TestAWaitingRouteStaysWaitingWhenTheNewestVersionNoLongerPublishesItsPort(t *testing.T) {
+	rs := newRouteSetting(t)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
+	route := rs.addRoute(shop, 8080, "owners", database.AppRouteWaiting) // admitted while the old version still publishes 8080
+	rs.enqueue(appRouteExposeAction, route)
+	rs.clock.Advance(time.Minute)
+	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 9090)) // the deployment that passed its guard earlier succeeds without 8080
+	before := len(rs.cf.Mutations())
+
+	mustf(t, rs.attempt(), "run")
+
+	if got := rs.route(route.ID).Phase; got != database.AppRouteWaiting {
+		t.Errorf("phase = %s, want waiting", got)
+	}
+	if len(rs.cf.Mutations()) != before {
+		t.Error("a route whose port is not published reached Cloudflare")
 	}
 }
 
