@@ -105,7 +105,7 @@ func (rs *routeSetting) route(id domain.ID) database.AppRoute {
 // makes attempt run its job. The plan is what the claim revalidates.
 func (rs *routeSetting) enqueue(action string, route database.AppRoute) jobs.Job {
 	rs.t.Helper()
-	params := appRouteParams{Hostname: route.Hostname}
+	params := appRouteParams{Hostname: route.Hostname, RouteID: route.ID.String()}
 	if action == appRouteExposeAction {
 		params = appRouteParams{Hostname: route.Hostname, Service: route.Service, Port: fmt.Sprint(route.Port), Access: route.Access}
 	}

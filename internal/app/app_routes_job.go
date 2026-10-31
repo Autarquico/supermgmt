@@ -36,13 +36,15 @@ const (
 )
 
 // appRouteParams are the parameters of an app_route.expose / app_route.unexpose plan and of its job payload.
-// Unexpose carries only the hostname, which is unique among live routes. An expose finds its route by the plan
+// Unexpose carries the hostname and the ID of the route it was requested for, so an approval that comes after
+// the hostname was exposed again cannot remove the newer route. An expose finds its route by the plan
 // that admitted it; the system's activation of a route admitted already finds it by these parameters.
 type appRouteParams struct {
 	Hostname string `json:"hostname"`
 	Service  string `json:"service,omitempty"`
 	Port     string `json:"port,omitempty"`
 	Access   string `json:"access,omitempty"`
+	RouteID  string `json:"route_id,omitempty"`
 }
 
 func (p appRouteParams) validate(expose bool) error {
@@ -51,7 +53,7 @@ func (p appRouteParams) validate(expose bool) error {
 	}
 	if !expose {
 		if p.Service != "" || p.Port != "" || p.Access != "" {
-			return invalidArgument("unexpose takes only a hostname")
+			return invalidArgument("unexpose takes no service, port or access")
 		}
 		return nil
 	}
@@ -267,7 +269,7 @@ func (r *routeRun) resumeAndExpose(ctx context.Context) error {
 	return r.exposeRoute(ctx)
 }
 
-// routeOf is the route the job moves. An unexpose moves the live route of its hostname. An expose moves the
+// routeOf is the route the job moves. An unexpose moves the route it was requested for. An expose moves the
 // route its plan admitted, removed or not, so a retry or a late job never reaches a route admitted by another
 // request. A plan that admitted none (the system's activation, or the request that resumes a halted route)
 // moves the live route that has exactly its parameters. found is false when there is none: it was removed,
@@ -275,8 +277,10 @@ func (r *routeRun) resumeAndExpose(ctx context.Context) error {
 func (h appRouteHandler) routeOf(ctx context.Context, job jobs.Job, params appRouteParams, unexpose bool) (route database.AppRoute, found bool, err error) {
 	q := h.cfg.DB.Reader()
 	switch {
+	case unexpose && params.RouteID == "":
+		return route, false, nil
 	case unexpose:
-		route, err = database.GetLiveAppRouteByHostname(ctx, q, params.Hostname)
+		route, err = database.GetAppRoute(ctx, q, domain.ID(params.RouteID))
 	case job.PlanID == nil:
 		return route, false, smerr.New(smerr.CodeInternal, "", "app route job has no plan")
 	default:

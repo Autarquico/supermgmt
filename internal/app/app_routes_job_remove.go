@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare"
@@ -113,17 +114,46 @@ func (r *routeRun) removeDNS(ctx context.Context) error {
 	return r.advance(ctx, database.AppRouteDNSRemoved, database.AppRouteObjects{}, "", nil)
 }
 
-// removeIngress takes the rule out of the frozen tunnel's ingress. A tunnel that is no longer the node's (or no
-// longer exists) has no rule of this route to take out, so the step is skipped.
+// removeIngress takes the rule out of the frozen tunnel's ingress. When the frozen tunnel is no longer the
+// node's, the node's desired list says nothing about it, so its rule is taken out directly; a tunnel that no
+// longer exists has no rule to take out.
 func (r *routeRun) removeIngress(ctx context.Context) error {
 	err := r.requireTunnel(ctx)
 	if err == nil {
 		err = r.syncIngress(ctx, r.route.ID)
 	}
-	if err != nil && !errors.Is(err, errTunnelChanged) {
+	if errors.Is(err, errTunnelChanged) {
+		err = r.dropFrozenRule(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	return r.advance(ctx, database.AppRouteIngressRemoved, database.AppRouteObjects{}, "", nil)
+}
+
+// dropFrozenRule rewrites the frozen tunnel's ingress without the rule of this route's hostname, keeping every
+// other rule in its place.
+func (r *routeRun) dropFrozenRule(ctx context.Context) error {
+	current, err := r.tun.api.GetTunnelConfig(ctx, r.route.TunnelID)
+	if cloudflare.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	kept := slices.DeleteFunc(slices.Clone(current.Ingress), func(rule cloudflare.IngressRule) bool {
+		return rule.Hostname == r.route.Hostname
+	})
+	if len(kept) == len(current.Ingress) {
+		return nil
+	}
+	if err := r.guard(ctx); err != nil {
+		return err
+	}
+	if _, err := r.tun.api.PutTunnelIngress(ctx, r.route.TunnelID, kept); err != nil {
+		return err
+	}
+	return r.audit(ctx, eventIngressSet, map[string]any{"tunnel_id": r.route.TunnelID, "rules": len(kept)})
 }
 
 func (r *routeRun) removeAccess(ctx context.Context) error {

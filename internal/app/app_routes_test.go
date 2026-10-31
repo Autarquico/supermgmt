@@ -17,6 +17,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain/plan"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/providers/cloudflare/cffake"
 )
 
 func (rs *routeSetting) service() *AppRoutes {
@@ -548,7 +549,9 @@ func TestUnexposeRemovesTheRouteAndAnotherTargetsHostnameIsNotFound(t *testing.T
 	}
 }
 
-func TestUnexposeAfterTheNodesTunnelChangedStillRemovesWhatItOwns(t *testing.T) {
+// exposedOnARecreatedTunnel exposes an owners route, then records another tunnel as the node's.
+func exposedOnARecreatedTunnel(t *testing.T) (*routeSetting, database.AppRoute) {
+	t.Helper()
 	rs := newRouteSetting(t)
 	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
 	rs.enqueue(appRouteExposeAction, route)
@@ -564,6 +567,11 @@ func TestUnexposeAfterTheNodesTunnelChangedStillRemovesWhatItOwns(t *testing.T) 
 		})
 		return err
 	})
+	return rs, route
+}
+
+func TestUnexposeAfterTheNodesTunnelChangedStillRemovesWhatItOwns(t *testing.T) {
+	rs, route := exposedOnARecreatedTunnel(t)
 
 	res, err := rs.service().Unexpose(context.Background(), rs.caller(rs.admin), rs.target.ID, shop)
 	mustf(t, err, "Unexpose")
@@ -576,8 +584,74 @@ func TestUnexposeAfterTheNodesTunnelChangedStillRemovesWhatItOwns(t *testing.T) 
 	if apps != 0 || records != 0 {
 		t.Errorf("apps, records = %d, %d; want the Access app and the DNS record deleted", apps, records)
 	}
-	if rules != 1 {
-		t.Errorf("rules = %d, want the ingress step skipped for a tunnel that is not the node's", rules)
+	if rules != 0 {
+		t.Errorf("rules = %d, want the rule taken out of the frozen tunnel", rules)
+	}
+	rs.wantIngress()
+}
+
+func TestUnexposeAfterTheFrozenTunnelWasDeletedSkipsItsIngress(t *testing.T) {
+	rs, route := exposedOnARecreatedTunnel(t)
+	mustf(t, rs.chaos.CloudflareAPI.DeleteTunnel(context.Background(), route.TunnelID), "delete the frozen tunnel")
+
+	res, err := rs.service().Unexpose(context.Background(), rs.caller(rs.admin), rs.target.ID, shop)
+	mustf(t, err, "Unexpose")
+	mustf(t, rs.runApproved(res), "run")
+
+	if got := rs.route(route.ID); got.Phase != database.AppRouteRemoved {
+		t.Fatalf("phase = %s (%s), want removed", got.Phase, got.LastError)
+	}
+	apps, records := 0, 0
+	for _, a := range rs.cf.Apps() {
+		if a.Domain == shop {
+			apps++
+		}
+	}
+	for _, d := range rs.cf.DNSRecords() {
+		if d.Name == shop {
+			records++
+		}
+	}
+	if apps != 0 || records != 0 {
+		t.Errorf("apps, records = %d, %d; want none", apps, records)
+	}
+}
+
+func TestUnexposeKeepsTheAccessApplicationWhenTheFrozenTunnelCannotBeRead(t *testing.T) {
+	rs, route := exposedOnARecreatedTunnel(t)
+	rs.cf.Inject(cffake.OpTunnelConfigGet, cffake.FailBefore, -1)
+
+	res, err := rs.service().Unexpose(context.Background(), rs.caller(rs.admin), rs.target.ID, shop)
+	mustf(t, err, "Unexpose")
+	if err := rs.runApproved(res); err == nil {
+		t.Fatal("an unexpose that could not read the frozen tunnel succeeded")
+	}
+
+	if got := rs.route(route.ID); got.Phase == database.AppRouteRemoved || got.Phase == database.AppRouteIngressRemoved {
+		t.Errorf("phase = %s, want the removal stopped before the ingress step completed", got.Phase)
+	}
+	if _, apps, _ := rs.routeObjects(shop); apps != 1 {
+		t.Errorf("Access apps = %d, want the application kept while the rule may still serve", apps)
+	}
+}
+
+func TestAnUnexposeApprovedAfterTheHostnameWasExposedAgainLeavesTheNewRoute(t *testing.T) {
+	rs := newRouteSetting(t)
+	old := rs.addRoute(shop, 8080, "public", database.AppRouteWaiting)
+	first, err := rs.service().Unexpose(context.Background(), rs.caller(rs.admin), rs.target.ID, shop)
+	mustf(t, err, "first Unexpose")
+	second, err := rs.service().Unexpose(context.Background(), rs.caller(rs.admin), rs.target.ID, shop)
+	mustf(t, err, "second Unexpose")
+	mustf(t, rs.runApproved(first), "run the first")
+	if got := rs.route(old.ID).Phase; got != database.AppRouteRemoved {
+		t.Fatalf("phase = %s, want removed", got)
+	}
+	reused := rs.addRoute(shop, 8080, "public", database.AppRouteWaiting)
+
+	mustf(t, rs.runApproved(second), "run the second")
+
+	if got := rs.route(reused.ID).Phase; got != database.AppRouteWaiting {
+		t.Errorf("the route that reused the hostname is %s, want it untouched by an unexpose requested for the old one", got)
 	}
 }
 

@@ -82,6 +82,7 @@ const (
 	ParamService  = "service"
 	ParamPort     = "port"
 	ParamAccess   = "access"
+	ParamRouteID  = "route_id" // app_route.unexpose: the route the request was made for
 )
 
 // node.setup parameters (ADR-0009). docker_access has no default: the caller
@@ -261,7 +262,10 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamAccess, Type: ParamString, Values: []string{"public", "owners"}, RiskByValue: map[string]domain.RiskClass{"public": high}},
 	}
 	appRouteUnexpose := direct(ActionAppRouteUnexpose, domain.ResourceAppTarget, op)
-	appRouteUnexpose.Params = []ParamSpec{{Name: ParamHostname, Type: ParamString, Required: true}}
+	appRouteUnexpose.Params = []ParamSpec{
+		{Name: ParamHostname, Type: ParamString, Required: true},
+		{Name: ParamRouteID, Type: ParamString},
+	}
 
 	return []ActionSpec{
 		query("node.read", domain.ResourceNode, ""),

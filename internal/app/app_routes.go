@@ -99,6 +99,7 @@ func (s *AppRoutes) Unexpose(ctx context.Context, by Caller, targetID domain.ID,
 		if err != nil {
 			return AppRouteResult{}, err
 		}
+		p.RouteID = route.ID.String()
 		b, err := s.planOf(ctx, tx, by, appRouteUnexposeAction, targetID, p)
 		if err != nil {
 			return AppRouteResult{}, err
