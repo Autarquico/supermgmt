@@ -19,7 +19,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-_(nada)_
+- #50 Expose an app through its node's Cloudflare Tunnel
 <!-- /pm-sync:in-progress -->
 
 ---
