@@ -21,7 +21,7 @@ ADR-0037 gives a node one Cloudflare Tunnel whose ingress is exactly one SSH rul
 - Expose: ingress rule, then the Access application (only for `owners`), then a proxied CNAME to the tunnel, last.
 - Unexpose removes the DNS record, then the ingress rule, and the Access application last, so a hostname still reachable through cached DNS is never served unprotected.
 - Each route freezes the account, zone, instance, tunnel and tunnel generation at admission, and halts if any of them changed.
-- A `provisioning` phase records the intent before the first ingress write, and the derived list includes that route from then on, so a crash between the write and its record leaves no rule that another writer can drop or that removal cannot find.
+- A `provisioning` phase, written only by the route's own job under the ingress lock after its DNS preflight, records the intent before the first ingress write, and the derived list includes that route from then on, so a crash between the write and its record leaves no rule that another writer can drop or that removal cannot find.
 - Each route has its own phases, halt and resume, and IDs written once, as `tunnel_operations` does. Objects are adopted only by their marker (`supermgmt:<instance>:route:<id>`) and only if they were created after the phase started.
 - Every DNS record for the hostname is checked on every run, including resumes: marker, proxied CNAME, frozen tunnel. A record without the marker halts the route and is never adopted, replaced or deleted.
 - Hostnames are lowercased and must sit under the zone on a label boundary. The `ssh-` first-label namespace is reserved for node SSH hostnames.
