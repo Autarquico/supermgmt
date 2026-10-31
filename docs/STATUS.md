@@ -18,7 +18,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-_(nada)_
+- #48 Add a node that is reachable only through Cloudflare Tunnel
 <!-- /pm-sync:in-progress -->
 
 ---
