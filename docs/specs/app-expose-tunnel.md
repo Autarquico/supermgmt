@@ -95,7 +95,7 @@ Maintainer goal (2026-10-29): apps are exposed through the tunnel without config
    - **MCP.**
      - Read tool `infra_list_app_routes`, filtered by app and environment. Apps and environments are given by name or id.
      - Write tools `infra_expose_app` and `infra_unexpose_app`, following `infra_create_deployment` (`internal/mcp/tools_write.go:40`). They exist only when write tools are enabled, and they always go through policy and approval. A `public` route is high risk, and an omitted access is normalised to `public` before evaluation.
-     - Both actions declare `hostname`, `service`, `port` and `access` in the catalog (`internal/policy/catalog.go`), so `infra_plan_action` (`internal/mcp/tools_plan.go:44`) can plan them too.
+     - Both actions declare `hostname`, `service`, `port` and `access` in the catalog (`internal/policy/catalog.go`). They are direct actions, like `node.add`: `infra_plan_action` (`internal/mcp/tools_plan.go:44`) refuses them, and MCP clients use `infra_expose_app` and `infra_unexpose_app`.
      - The tool goldens (`internal/mcp/testdata/tools.{read,all}.golden.json`, `testdata/wire/tools_list.golden.json`) and the MCP route matrix (`test/integration/testdata/mcp_route_matrix.json`) are updated.
 9. **Docs.**
    - `docs/cloudflare.md` gains an "Expose an app" section.

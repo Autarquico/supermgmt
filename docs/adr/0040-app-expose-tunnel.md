@@ -29,7 +29,7 @@ ADR-0037 gives a node one Cloudflare Tunnel whose ingress is exactly one SSH rul
 ### Only healthy versions are published
 
 - A route activates only while the target's newest known-good deployment publishes the port over TCP on `127.0.0.1` or `0.0.0.0`.
-- A route requested earlier stays `pending`. A deployment that settles as succeeded schedules its target's pending routes.
+- A route requested earlier stays `waiting`. A deployment that settles as succeeded schedules its target's waiting routes.
 - A deployment or rollback that would drop a routed port, in its forward or its automatic-rollback model, is refused at request time and checked again under the target's execution lock. A route therefore never points at a port the current version does not publish.
 
 ### Access
