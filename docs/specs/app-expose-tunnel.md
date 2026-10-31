@@ -1,16 +1,19 @@
 ---
 codename: supermgmt
-title: "Expose an app through its node's Cloudflare Tunnel"
+title: Expose an app through its node's Cloudflare Tunnel
 type: epic
-status: draft
+status: active
 priority: P1
 size: XL
-issue: null
+issue: 50
 prs: []
-related_issues: []
+related_issues: [50]
 depends_on: []
 supersedes: []
-related_specs: [cloudflare-tunnel-transport, node-enroll-tunnel, m4-apps-deployments]
+related_specs:
+  - cloudflare-tunnel-transport
+  - node-enroll-tunnel
+  - m4-apps-deployments
 created: 2026-10-31
 updated: 2026-10-31
 ---
