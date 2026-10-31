@@ -217,8 +217,11 @@ func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job
 			// As with a halted tunnel operation, an automatic retry must not undo the halt.
 			return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("the route %s is halted (%s); resolve it and run the command again", route.Hostname, route.LastError))
 		}
-		if err := rr.resume(ctx); err != nil {
-			return err
+		if unexpose {
+			// An expose resumes in resumeAndExpose, after its DNS preflight.
+			if err := rr.resume(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	if unexpose && rr.route.Phase == database.AppRouteWaiting {

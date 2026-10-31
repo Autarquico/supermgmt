@@ -465,8 +465,8 @@ func TestExposeAgainChecksTheDNSBeforeAHaltedRouteServesAgain(t *testing.T) {
 		t.Fatal("a foreign record did not stop the resume")
 	}
 
-	if got := rs.route(route.ID).Phase; !got.Halted() {
-		t.Errorf("phase = %s, want halted: the route must not serve before its preflight passes", got)
+	if got := rs.route(route.ID).Phase; got != database.AppRouteFailed {
+		t.Errorf("phase = %s, want failed: the route must not serve before its preflight passes", got)
 	}
 	rs.wantIngress()
 }
