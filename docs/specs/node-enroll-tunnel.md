@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: XL
 issue: 48
-prs: []
+prs: [49]
 related_issues: [48]
 depends_on: []
 supersedes: []
 related_specs: [cloudflare-tunnel-transport, proxmox-via-node]
 created: 2026-10-30
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # Add a node that is reachable only through Cloudflare Tunnel
