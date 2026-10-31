@@ -23,7 +23,7 @@ func (h deployHandler) activateRoutes(ctx context.Context, tx *database.Tx, targ
 		if !routeServed(ports, route.Service, route.Port) {
 			continue
 		}
-		open, err := hasOpenExposeJob(ctx, tx, route)
+		open, err := h.hasOpenExposeJob(ctx, tx, route)
 		if err != nil {
 			return err
 		}
@@ -64,16 +64,18 @@ func (h deployHandler) submitExpose(ctx context.Context, tx *database.Tx, route 
 }
 
 // hasOpenExposeJob reports whether an expose job of the route's hostname on its target is queued, running or
-// interrupted. One awaiting approval has admitted nothing yet, so it is not the job that will move this route.
-func hasOpenExposeJob(ctx context.Context, q database.Querier, route database.AppRoute) (bool, error) {
+// interrupted, or is the system's own activation awaiting approval (a public route): that job moves the route,
+// and another would only queue a duplicate for the approvers. A user's request awaiting approval has admitted
+// nothing yet, so it is not the job that will move this route.
+func (h deployHandler) hasOpenExposeJob(ctx context.Context, q database.Querier, route database.AppRoute) (bool, error) {
 	var n int
 	err := q.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM jobs
 		WHERE type = ? AND resource_type = ? AND resource_id = ?
 		  AND json_extract(payload_json, '$.hostname') = ? AND json_extract(payload_json, '$.service') IS NOT NULL
-		  AND state IN (?, ?, ?)`,
+		  AND (state IN (?, ?, ?) OR (state = ? AND actor_id = ?))`,
 		JobControlPlaneApply, domain.ResourceAppTarget, route.AppTargetID, route.Hostname,
-		domain.JobQueued, domain.JobRunning, domain.JobInterrupted).Scan(&n)
+		domain.JobQueued, domain.JobRunning, domain.JobInterrupted, domain.JobAwaitingApproval, h.systemID).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("count the open jobs of route %s: %w", route.Hostname, err)
 	}

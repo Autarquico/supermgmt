@@ -17,6 +17,19 @@ import (
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare/cffake"
 )
 
+// Run lets a test register the route handler on its own, without the apply step before it.
+func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
+	job, err := h.store.Get(ctx, h.cfg.DB.Reader(), lease.JobID)
+	if err != nil {
+		return err
+	}
+	action, err := jobAction(ctx, h.cfg.DB.Reader(), job)
+	if err != nil {
+		return err
+	}
+	return h.run(ctx, lease, job, action)
+}
+
 // routeSetting is a node with an enabled tunnel and an app target on it.
 type routeSetting struct {
 	*tunnelSetting
@@ -607,7 +620,7 @@ func TestDesiredIngressListsTheRoutesThatServe(t *testing.T) {
 	for _, r := range got {
 		hosts = append(hosts, r.Hostname)
 	}
-	want := []string{rs.hostname(), "b-prov.example.test", "c-active.example.test", "d-removing.example.test", "f-halted-removal.example.test", ""}
+	want := []string{rs.hostname(), "b-prov.example.test", "c-active.example.test", "d-removing.example.test", ""}
 	if !slices.Equal(hosts, want) {
 		t.Errorf("hostnames = %v, want %v", hosts, want)
 	}
@@ -733,4 +746,35 @@ func (rs *routeSetting) ownersPolicy() string {
 	state, err := database.GetCloudflareState(context.Background(), rs.db.Reader())
 	mustf(rs.t, err, "GetCloudflareState")
 	return state.OwnersPolicyID
+}
+
+func TestAHaltedRouteNeverServesTheIngressWhateverPhaseItHaltedIn(t *testing.T) {
+	phases := []database.AppRoutePhase{
+		database.AppRouteWaiting, database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady,
+		database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
+	}
+	for _, halted := range []database.AppRoutePhase{database.AppRouteFailed, database.AppRouteConflict} {
+		for _, in := range phases {
+			if servesIngress(database.AppRoute{Phase: halted, HaltedPhase: in}) {
+				t.Errorf("a route %s while %s serves the ingress", halted, in)
+			}
+		}
+	}
+}
+
+func TestAnExhaustedJobThatFailsBeforeItsRunExistsStillHaltsTheRoute(t *testing.T) {
+	rs := newRouteSetting(t)
+	route := rs.addRoute(shop, 8080, "owners", database.AppRouteIngressReady) // an earlier attempt wrote the rule
+	job := rs.enqueue(appRouteExposeAction, route)
+	rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID) // the claim makes this the last attempt
+	rs.cf.Inject(cffake.OpZoneList, cffake.FailBefore, -1)                      // the zone lookup of the run fails
+
+	if err := rs.attempt(); err == nil {
+		t.Fatal("the zone lookup did not fail")
+	}
+
+	got := rs.route(route.ID)
+	if got.Phase != database.AppRouteFailed || got.HaltedPhase != database.AppRouteIngressReady {
+		t.Errorf("route = %s (halted in %s), want failed in ingress_ready", got.Phase, got.HaltedPhase)
+	}
 }

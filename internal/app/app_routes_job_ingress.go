@@ -14,14 +14,10 @@ import (
 )
 
 // servesIngress reports whether the route's rule belongs to the node's ingress (ADR-0040). A route that
-// halted while being exposed never serves: a halt fails closed, and the next writer drops its rule. One that
-// halted while being removed keeps the rule until its removal reaches that step.
+// halted never serves, in whichever phase it stopped: a halt fails closed, and the next writer drops its rule.
+// A removal that halts stops the app sooner, and the Access application still goes last.
 func servesIngress(r database.AppRoute) bool {
-	phase := r.Phase
-	if phase.Halted() {
-		return r.HaltedPhase == database.AppRouteRemoving || r.HaltedPhase == database.AppRouteDNSRemoved
-	}
-	switch phase {
+	switch r.Phase {
 	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady, database.AppRouteActive,
 		database.AppRouteRemoving, database.AppRouteDNSRemoved:
 		return true

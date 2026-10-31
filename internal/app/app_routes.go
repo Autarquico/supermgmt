@@ -233,9 +233,8 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 	existing, err := database.GetLiveAppRouteByHostname(ctx, q, p.Hostname)
 	switch {
 	case err == nil:
-		same := existing.AppTargetID == targetID && existing.Service == p.Service && existing.Port == port && existing.Access == p.Access
 		switch {
-		case !same:
+		case !routeHas(existing, targetID, p):
 			return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf("the hostname %s is already routed", p.Hostname))
 		case request && !existing.Phase.Halted():
 			return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf("the hostname %s is already routed (%s)", p.Hostname, existing.Phase))
@@ -341,14 +340,20 @@ func (s *AppRoutes) admit(ctx context.Context, q database.Querier, actor domain.
 	})
 }
 
+// routeHas reports whether route is the one targetID's expose with parameters p asks for.
+func routeHas(route database.AppRoute, targetID domain.ID, p appRouteParams) bool {
+	port, _ := strconv.Atoi(p.Port) // validated by exposeParams and by the plan's target
+	return route.AppTargetID == targetID && route.Service == p.Service && route.Port == port && route.Access == p.Access
+}
+
 // applyApprovedAppRoute is the apply step of the control_plane.apply job of an app route plan. It admits the
 // route of an expose that waited for approval, and only that one: with no approval the request admitted the route
 // itself, and the system's activation is for a route admitted already, so a retry or a late job of those never
 // admits again. It does nothing for an unexpose either. The Cloudflare work follows in the same job
 // (appRouteHandler).
 func (a *Apps) applyApprovedAppRoute(ctx context.Context, q database.Querier, actor domain.Actor, action string, job jobs.Job) error {
-	if action == appRouteUnexposeAction {
-		return nil
+	if action == appRouteUnexposeAction || actor.Type == domain.ActorSystem {
+		return nil // the system activates a route admitted already; it admits none, even one a human approved
 	}
 	if job.PlanID == nil {
 		return smerr.New(smerr.CodeInternal, "", "app route job has no plan")

@@ -10,6 +10,9 @@ import (
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare"
 )
 
+// accessAppType is the only type of Access application that gates an origin hostname.
+const accessAppType = "self_hosted"
+
 // exposeRoute walks the route from where it stopped to active, in the ADR-0037 order: the ingress rule, the
 // Access application (owners only) and the proxied CNAME last, so the hostname is never routable without
 // its Access application. A waiting route starts only when the newest known-good deployment publishes its port
@@ -132,6 +135,9 @@ func (r *routeRun) accessSpec(ctx context.Context) (cloudflare.AppSpec, error) {
 // repairAccessApp brings an Access application that drifted from spec (domain, policies, identity providers)
 // back to it, under the guard.
 func (r *routeRun) repairAccessApp(ctx context.Context, app cloudflare.AccessApp, spec cloudflare.AppSpec) error {
+	if app.Type != accessAppType {
+		return routeConflict("Access application", spec.Name) // an update cannot change the type, so it is not repaired
+	}
 	if app.Domain == spec.Domain && slices.Equal(app.PolicyIDs, spec.PolicyIDs) && sameSet(app.AllowedIdPs, spec.AllowedIdPs) {
 		return nil
 	}
@@ -159,7 +165,7 @@ func (r *routeRun) exposeAccess(ctx context.Context) error {
 		create: func(ctx context.Context) (cloudflare.AccessApp, error) { return r.tun.api.CreateAccessApp(ctx, spec) },
 		idOf:   func(a cloudflare.AccessApp) string { return a.ID },
 		adoptable: func(a cloudflare.AccessApp) bool {
-			return r.createdSince(a.CreatedAt) && a.Domain == r.route.Hostname && slices.Equal(a.PolicyIDs, spec.PolicyIDs)
+			return r.createdSince(a.CreatedAt) && a.Type == accessAppType && a.Domain == r.route.Hostname && slices.Equal(a.PolicyIDs, spec.PolicyIDs)
 		},
 	}, r.objectGone("Access application"))
 	if err != nil {

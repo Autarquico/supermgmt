@@ -198,19 +198,6 @@ func (rr *routeRecord) halt(ctx context.Context, to database.AppRoutePhase, caus
 	})
 }
 
-// Run is the handler of a route job that runs on its own, without the apply step before it.
-func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
-	job, err := h.store.Get(ctx, h.cfg.DB.Reader(), lease.JobID)
-	if err != nil {
-		return err
-	}
-	action, err := jobAction(ctx, h.cfg.DB.Reader(), job)
-	if err != nil {
-		return err
-	}
-	return h.run(ctx, lease, job, action)
-}
-
 func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job, action string) error {
 	unexpose := action == appRouteUnexposeAction
 	params, err := payloadOf[appRouteParams](job)
@@ -245,15 +232,15 @@ func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job
 	}
 	node, err := database.GetNode(ctx, h.cfg.DB.Reader(), rr.route.NodeID)
 	if err != nil {
-		return err
+		return rr.giveUp(ctx, err)
 	}
 	run, err := h.tunnel.newRun(ctx, lease, job, node, rr.route.Hostname)
 	if err != nil {
-		return err
+		return rr.giveUp(ctx, err)
 	}
 	r := &routeRun{routeRecord: rr, tun: run, unexposing: unexpose}
 	if r.sshHostname, err = sshHostnameOf(node, h.tunnel.opts.Config.Zone); err != nil {
-		return err
+		return rr.giveUp(ctx, err)
 	}
 	if unexpose {
 		err = r.removeRoute(ctx)
@@ -279,7 +266,7 @@ func (h appRouteHandler) routeOf(ctx context.Context, job jobs.Job, params appRo
 		route, err = database.GetAppRouteByPlan(ctx, q, *job.PlanID)
 		if smerr.CodeOf(err) == smerr.CodeNotFound {
 			route, err = database.GetLiveAppRouteByHostname(ctx, q, params.Hostname)
-			if err == nil && !sameRoute(route, params) {
+			if err == nil && !routeHas(route, job.Resource.ID, params) {
 				err = smerr.New(smerr.CodeNotFound, "", "app route")
 			}
 		}
@@ -291,10 +278,6 @@ func (h appRouteHandler) routeOf(ctx context.Context, job jobs.Job, params appRo
 		return database.AppRoute{}, false, err
 	}
 	return route, route.AppTargetID == job.Resource.ID && route.Hostname == params.Hostname, nil
-}
-
-func sameRoute(route database.AppRoute, p appRouteParams) bool {
-	return fmt.Sprint(route.Port) == p.Port && route.Service == p.Service && route.Access == p.Access
 }
 
 // jobAction is the action of the plan the job carries.
@@ -374,7 +357,7 @@ func (r *routeRun) settle(ctx context.Context, err error) error {
 		if !r.exhausted(ctx, err) {
 			return err
 		}
-		halt = failedHalt(fmt.Sprintf("the job gave up: %s", err))
+		halt = gaveUp(err)
 		cause = halt
 	}
 	if r.exposing() {
@@ -386,13 +369,28 @@ func (r *routeRun) settle(ctx context.Context, err error) error {
 	return err
 }
 
+func gaveUp(err error) *routeHalt { return failedHalt(fmt.Sprintf("the job gave up: %s", err)) }
+
+// giveUp halts the route as failed when err ends the job before a routeRun exists to settle it. There is no
+// tunnel run to withdraw the rule with: a halted route does not serve, so the next ingress writer drops it.
+func (rr *routeRecord) giveUp(ctx context.Context, err error) error {
+	if rr.route.Phase.Halted() || !rr.exhausted(ctx, err) {
+		return err
+	}
+	halt := gaveUp(err)
+	if herr := rr.halt(ctx, halt.halt, halt); herr != nil {
+		return errors.Join(err, herr)
+	}
+	return err
+}
+
 // exhausted reports whether err is the failure that ends the job: its last attempt, outside a shutdown or an
 // outcome the job cannot tell.
-func (r *routeRun) exhausted(ctx context.Context, err error) bool {
+func (rr *routeRecord) exhausted(ctx context.Context, err error) bool {
 	if ctx.Err() != nil || errors.Is(err, jobs.ErrOutcomeUnknown) || errors.Is(err, jobs.ErrLeaseLost) {
 		return false
 	}
-	return r.job.RetryClass != domain.RetryIdempotent || r.job.Attempts >= r.job.MaxAttempts
+	return rr.job.RetryClass != domain.RetryIdempotent || rr.job.Attempts >= rr.job.MaxAttempts
 }
 
 func (r *routeRun) exposing() bool {

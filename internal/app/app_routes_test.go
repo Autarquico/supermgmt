@@ -141,6 +141,7 @@ func webRequest(hostname string) ExposeRouteRequest {
 
 func TestExposeAdmitsTheRouteAndTheJobRunsItThroughControlPlaneApply(t *testing.T) {
 	rs := newRouteSetting(t)
+	rs.exec(`UPDATE environments SET risk_level = 'development'`) // an owners expose needs no approval there
 	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
 
 	res, err := rs.expose(webRequest("Shop.Example.Test."))
@@ -149,12 +150,11 @@ func TestExposeAdmitsTheRouteAndTheJobRunsItThroughControlPlaneApply(t *testing.
 	if res.Submission.Job.Type != JobControlPlaneApply {
 		t.Errorf("job type = %s, want %s", res.Submission.Job.Type, JobControlPlaneApply)
 	}
-	if res.Route != nil {
-		if res.Route.Hostname != shop || res.Route.Phase != database.AppRouteProvisioning {
-			t.Errorf("route = %+v, want %s in provisioning", res.Route, shop)
-		}
-	} else if _, err := rs.liveRoute(shop); smerr.CodeOf(err) != smerr.CodeNotFound {
-		t.Errorf("a request waiting for approval wrote a route: %v", err)
+	if res.Route == nil {
+		t.Fatal("an expose that needs no approval admitted no route")
+	}
+	if res.Route.Hostname != shop || res.Route.Phase != database.AppRouteWaiting {
+		t.Errorf("route = %+v, want %s in waiting", res.Route, shop)
 	}
 
 	mustf(t, rs.runApproved(res), "run")
@@ -359,15 +359,26 @@ func TestApplyApprovedAdmissionIsIdempotentAndNeverAdmitsAgainAfterTheRemoval(t 
 
 func TestExposeAdmitsInWaitingEvenWhenTheVersionPublishesThePort(t *testing.T) {
 	rs := newRouteSetting(t)
+	rs.exec(`UPDATE environments SET risk_level = 'development'`) // an owners expose needs no approval there
 	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
 
 	res, err := rs.expose(webRequest(shop))
 
 	mustf(t, err, "Expose")
-	if res.Route != nil && res.Route.Phase != database.AppRouteWaiting {
-		t.Errorf("admitted in %s, want waiting: the route's own job starts it", res.Route.Phase)
+	job := res.Submission.Job
+	if res.Route == nil || job.State == domain.JobAwaitingApproval {
+		t.Fatalf("route = %v, job %s: the request must admit the route itself", res.Route, job.State)
+	}
+	if res.Route.Phase != database.AppRouteWaiting || res.Route.PlanID == nil || *res.Route.PlanID != *job.PlanID {
+		t.Errorf("route = %+v, want waiting with the plan of the job", res.Route)
 	}
 	rs.wantIngress()
+
+	mustf(t, rs.runApproved(res), "run") // the apply step must not admit it again
+
+	if got := rs.route(res.Route.ID); got.Phase != database.AppRouteActive || rs.countRoutes() != 1 {
+		t.Errorf("route = %s (%s), %d rows; want the same route active", got.Phase, got.LastError, rs.countRoutes())
+	}
 }
 
 func TestAnExposeJobThatRunsAfterTheUnexposeDoesNotAdmitTheRouteAgain(t *testing.T) {
@@ -569,7 +580,7 @@ func TestTheSystemsActivationPlanRevalidatesAndRunsTheRoute(t *testing.T) {
 	if got.Phase != database.AppRouteActive {
 		t.Fatalf("phase = %s (%s), want active", got.Phase, got.LastError)
 	}
-	open, err := hasOpenExposeJob(context.Background(), rs.db.Reader(), got)
+	open, err := h.hasOpenExposeJob(context.Background(), rs.db.Reader(), got)
 	mustf(t, err, "hasOpenExposeJob")
 	if open {
 		t.Error("the finished job still counts as open")
