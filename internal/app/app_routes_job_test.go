@@ -20,32 +20,16 @@ import (
 // routeSetting is a node with an enabled tunnel and an app target on it.
 type routeSetting struct {
 	*tunnelSetting
-	target   database.AppTarget
-	expose   appRouteHandler
-	unexpose appRouteHandler
-}
-
-type planlessRoutes struct{ *Revalidator }
-
-func (p planlessRoutes) Revalidate(ctx context.Context, q database.Querier, job jobs.Job) error {
-	if isAppRouteJob(job.Type) {
-		return revalidateAppRouteJob(ctx, q, job)
-	}
-	return p.Revalidator.Revalidate(ctx, q, job)
+	target database.AppTarget
+	routes appRouteHandler
 }
 
 func newRouteSetting(t *testing.T) *routeSetting {
 	t.Helper()
 	ts := newEnabledTunnel(t)
 	rs := &routeSetting{tunnelSetting: ts}
-	// Route jobs have no plan, which Revalidator refuses until it calls revalidateAppRouteJob (see the report).
-	reval, err := NewRevalidator(ts.fixture.cfg)
-	mustf(t, err, "NewRevalidator")
-	ts.store, err = jobs.NewStore(jobs.Config{DB: ts.db, Clock: ts.clock, IDs: ts.ids, Revalidator: planlessRoutes{reval}, LockPlanner: LockPlanner{}})
-	mustf(t, err, "NewStore")
-	rs.expose = appRouteHandler{core: ts.handler.core, store: ts.store, tunnel: ts.handler.tunnel}
-	rs.unexpose = rs.expose
-	rs.unexpose.unexpose = true
+	rs.routes = appRouteHandler{core: ts.handler.core, store: ts.store, tunnel: ts.handler.tunnel}
+	rs.current = rs.routes
 	ts.inTx(func(ctx context.Context, tx *database.Tx) error {
 		now := ts.clock.Now()
 		app, err := database.CreateApp(ctx, tx, database.App{
@@ -100,24 +84,54 @@ func (rs *routeSetting) route(id domain.ID) database.AppRoute {
 	return r
 }
 
-// enqueue queues the job of route and makes attempt run it.
+// enqueue plans, submits and approves the action for route as the admin, the way the request path does, and
+// makes attempt run its job. The plan is what the claim revalidates.
 func (rs *routeSetting) enqueue(action string, route database.AppRoute) jobs.Job {
 	rs.t.Helper()
-	nj, err := newAppRouteJob(action, route)
-	mustf(rs.t, err, "newAppRouteJob")
-	nj.ActorID, nj.Credential = rs.admin, domain.CredentialContext{Kind: domain.CredentialSession, ID: "test"}
-	var job jobs.Job
+	params := appRouteParams{Hostname: route.Hostname}
+	if action == appRouteExposeAction {
+		params = appRouteParams{Hostname: route.Hostname, Service: route.Service, Port: fmt.Sprint(route.Port), Access: route.Access}
+	}
+	raw, err := toParams(params)
+	mustf(rs.t, err, "toParams")
+	by := rs.caller(rs.admin)
+	var sub Submission
 	rs.inTx(func(ctx context.Context, tx *database.Tx) error {
-		var err error
-		job, err = rs.store.Enqueue(ctx, tx, nj)
+		actor, err := loadCaller(ctx, tx, by)
+		if err != nil {
+			return err
+		}
+		b, err := build(ctx, tx, action, rs.admin, appTargetRef(rs.target.ID), raw)
+		if err != nil {
+			return err
+		}
+		res, err := rs.plans.evaluate(ctx, tx, actor, b)
+		if err != nil {
+			return err
+		}
+		sub, err = rs.plans.planAndSubmit(ctx, tx, by, actor, b, res)
 		return err
 	})
-	rs.queued = job
-	rs.current = rs.expose
-	if action == appRouteUnexposeAction {
-		rs.current = rs.unexpose
+	job := sub.Job
+	for _, approver := range []domain.ID{rs.bob, rs.carol} { // as many as the policy asks for
+		if job.State != domain.JobAwaitingApproval {
+			break
+		}
+		job, err = rs.approve(approver, job)
+		mustf(rs.t, err, "approve")
 	}
+	rs.queued, rs.current = job, rs.routes
 	return job
+}
+
+// dropQueued cancels the requeued job of a worker that died, so the next job is the one the test enqueues.
+func (rs *routeSetting) dropQueued(job jobs.Job) {
+	rs.t.Helper()
+	interruptAndRequeue(rs.t, rs.fixture, job.ID)
+	rs.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := rs.store.Cancel(ctx, tx, job.ID, domain.Actor{ID: rs.admin, Type: domain.ActorHuman})
+		return err
+	})
 }
 
 func (rs *routeSetting) ingress() []cffake.Ingress {
@@ -416,7 +430,7 @@ func TestACrashAfterTheIngressWriteIsCleanedUpByUnexposeAndSurvivesAnotherWriter
 	if !slices.ContainsFunc(want, func(r cloudflare.IngressRule) bool { return r.Hostname == shop }) {
 		t.Fatalf("another writer would drop the unrecorded rule: %+v", want)
 	}
-	interruptAndRequeue(t, rs.fixture, rs.queued.ID)
+	rs.dropQueued(rs.queued)
 	rs.enqueue(appRouteUnexposeAction, rs.route(route.ID))
 	mustf(t, rs.attempt(), "unexpose")
 
@@ -437,7 +451,7 @@ func TestUnexposeFindsAnAccessApplicationCreatedButNeverRecorded(t *testing.T) {
 	if got := rs.route(route.ID); got.Phase != database.AppRouteIngressReady || got.Objects.AccessAppID != "" {
 		t.Fatalf("route = %+v", got)
 	}
-	interruptAndRequeue(t, rs.fixture, rs.queued.ID)
+	rs.dropQueued(rs.queued)
 
 	rs.enqueue(appRouteUnexposeAction, rs.route(route.ID))
 	mustf(t, rs.attempt(), "unexpose")
@@ -510,9 +524,9 @@ func (rs *routeSetting) exec(query string, args ...any) {
 
 func TestADisableIsRefusedWhileTheNodeHasRoutesAndNamesThem(t *testing.T) {
 	rs := newRouteSetting(t)
+	rs.planDisable() // asked before the routes were admitted: the job refuses them itself
 	rs.addRoute(shop, 8080, "public", database.AppRouteWaiting)
 	rs.addRoute("blog.example.test", 8080, "public", database.AppRouteWaiting)
-	rs.planDisable()
 	before := len(rs.cf.Mutations())
 
 	err := rs.attempt()
@@ -543,6 +557,7 @@ func TestADisableProceedsOnceTheRoutesAreRemoved(t *testing.T) {
 
 func TestRouteJobsAndDisableHoldTheIngressLock(t *testing.T) {
 	rs := newRouteSetting(t)
+	disable := rs.planDisable()
 	route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
 	held := func(job jobs.Job) []domain.LockSpec {
 		specs, err := LockPlanner{}.PlanLocks(context.Background(), rs.db.Reader(), job)
@@ -550,7 +565,7 @@ func TestRouteJobsAndDisableHoldTheIngressLock(t *testing.T) {
 		return specs
 	}
 	for _, action := range []string{appRouteExposeAction, appRouteUnexposeAction} {
-		specs := held(rs.enqueue(action, route)) // no plan: an activation after a deployment
+		specs := held(rs.enqueue(action, route))
 		if !slices.Contains(specs, cloudflareInstanceLock) {
 			t.Errorf("%s locks = %+v, want the instance lock", action, specs)
 		}
@@ -558,7 +573,7 @@ func TestRouteJobsAndDisableHoldTheIngressLock(t *testing.T) {
 			t.Errorf("%s locks = %+v, want the app target", action, specs)
 		}
 	}
-	if specs := held(rs.planDisable()); !slices.Contains(specs, cloudflareInstanceLock) {
+	if specs := held(disable); !slices.Contains(specs, cloudflareInstanceLock) {
 		t.Errorf("node.tunnel.disable locks = %+v, want the instance lock", specs)
 	}
 }

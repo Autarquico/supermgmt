@@ -41,8 +41,6 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"service.stop":                   domain.LockExclusive,
 	"service.restart":                domain.LockExclusive,
 	"backup.create":                  domain.LockExclusive,
-	appRouteExposeAction:             domain.LockExclusive, // the app target (ownLock); the ingress lock in PlanLocks
-	appRouteUnexposeAction:           domain.LockExclusive,
 	deploymentCreateAction:           domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
 	deploymentRollbackAction:         domain.LockExclusive,
 }
@@ -108,9 +106,6 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		return nil, err
 	}
 	specs := []domain.LockSpec{own}
-	if isAppRouteJob(job.Type) {
-		specs = append(specs, cloudflareInstanceLock) // route jobs may run without a plan: activation after a deployment
-	}
 	if job.PlanID == nil {
 		if isDeploymentJob(job.Type) {
 			return nil, smerr.New(smerr.CodeInternal, "", "deployment job has no plan to take its locks from")
@@ -133,7 +128,8 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		specs = append(specs, held...)
 	}
 	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" ||
-		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable {
+		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable ||
+		job.Type == JobControlPlaneApply && isAppRouteAction(stored.Action) { // the route job moves its route under the app target's lock
 		specs = append(specs, cloudflareInstanceLock)
 	}
 	instance, err := enrollmentInstanceLock(ctx, q, job, *stored)

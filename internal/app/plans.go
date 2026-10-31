@@ -133,6 +133,9 @@ func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, 
 		if err := requireDirectPath(node); err != nil {
 			return err
 		}
+		if err := requireNoLiveRoutes(ctx, q, node.ID); err != nil {
+			return err
+		}
 		if node.Endpoint.TunnelHostname != "" {
 			return nil // the node already has its hostname
 		}

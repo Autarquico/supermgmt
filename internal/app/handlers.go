@@ -56,13 +56,10 @@ type Handlers struct {
 	// disable and rotate are nil without a cloudflare: block.
 	disable *tunnelDisableHandler
 	rotate  *tunnelRotateHandler
-	// expose and unexpose move one app route each (ADR-0040); nil without a cloudflare: block.
-	expose   *appRouteHandler
-	unexpose *appRouteHandler
-	action   actionHandler
-	apply    applyHandler
-	power    *proxmoxPowerHandler // nil unless Proxmox is configured
-	deploy   *deployHandler       // nil unless deployments are configured
+	action  actionHandler
+	apply   applyHandler
+	power   *proxmoxPowerHandler // nil unless Proxmox is configured
+	deploy  *deployHandler       // nil unless deployments are configured
 }
 
 // NewHandlers validates the options.
@@ -97,8 +94,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 	if tunnel != nil {
 		h.disable = &tunnelDisableHandler{core: c, store: o.Store, conn: o.Connector, prober: o.Prober, tunnel: tunnel}
 		h.rotate = &tunnelRotateHandler{store: o.Store, tunnel: tunnel}
-		h.expose = &appRouteHandler{core: c, store: o.Store, tunnel: tunnel}
-		h.unexpose = &appRouteHandler{core: c, store: o.Store, tunnel: tunnel, unexpose: true}
+		h.apply.routes = &appRouteHandler{core: c, store: o.Store, tunnel: tunnel}
 	}
 	if o.Proxmox != nil {
 		h.power = &proxmoxPowerHandler{
@@ -127,8 +123,6 @@ func (h *Handlers) Map() map[string]jobs.Handler {
 	if h.disable != nil {
 		table[policy.ActionNodeTunnelDisable] = h.disable
 		table[policy.ActionCloudflareRotate] = h.rotate
-		table[appRouteExposeAction] = h.expose
-		table[appRouteUnexposeAction] = h.unexpose
 	}
 	if h.power != nil {
 		table[policy.ActionProxmoxVMPower] = h.power

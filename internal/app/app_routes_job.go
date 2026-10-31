@@ -2,16 +2,17 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	"github.com/autarquico/supermgmt/internal/domain/plan"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
@@ -34,52 +35,73 @@ const (
 	eventAppRouteHalted  = "app_route.halted"
 )
 
-// appRouteJobPayload is what an expose or unexpose job carries: the route it moves.
-type appRouteJobPayload struct {
-	RouteID domain.ID `json:"route_id"`
+// appRouteParams are the parameters of an app_route.expose / app_route.unexpose plan and of its job payload.
+// Unexpose carries only the hostname. The route is found by its hostname, which is unique among live routes.
+type appRouteParams struct {
+	Hostname string `json:"hostname"`
+	Service  string `json:"service,omitempty"`
+	Port     string `json:"port,omitempty"`
+	Access   string `json:"access,omitempty"`
 }
 
-// newAppRouteJob is the job that moves route, for action (appRouteExposeAction or appRouteUnexposeAction).
-// The caller sets the actor, the credential and the plan, and enqueues it in its own transaction.
-func newAppRouteJob(action string, route database.AppRoute) (jobs.NewJob, error) {
-	payload, err := json.Marshal(appRouteJobPayload{RouteID: route.ID})
-	if err != nil {
-		return jobs.NewJob{}, err
+func (p appRouteParams) validate(expose bool) error {
+	if p.Hostname == "" {
+		return invalidArgument("hostname is required")
 	}
-	return jobs.NewJob{
-		Type: action, Resource: appTargetRef(route.AppTargetID), Risk: domain.RiskOperational,
-		RetryClass: domain.RetryIdempotent, MaxAttempts: 3, Payload: payload,
-	}, nil
-}
-
-func isAppRouteJob(jobType string) bool {
-	return jobType == appRouteExposeAction || jobType == appRouteUnexposeAction
-}
-
-// revalidateAppRouteJob is the claim check of a route job, which carries no plan: the route exists and is the
-// one of the job's target. Who may expose was decided when the route was admitted, and the job only carries
-// that decision out.
-func revalidateAppRouteJob(ctx context.Context, q database.Querier, job jobs.Job) error {
-	payload, err := payloadOf[appRouteJobPayload](job)
-	if err != nil {
-		return err
+	if !expose {
+		if p.Service != "" || p.Port != "" || p.Access != "" {
+			return invalidArgument("unexpose takes only a hostname")
+		}
+		return nil
 	}
-	route, err := database.GetAppRoute(ctx, q, payload.RouteID)
-	if err != nil {
-		return err
+	if port, err := strconv.Atoi(p.Port); err != nil || port < 1 || port > 65535 {
+		return invalidArgument("port must be a number between 1 and 65535")
 	}
-	if route.AppTargetID != job.Resource.ID {
-		return smerr.New(smerr.CodeInternal, "", "the route does not belong to the target of its job")
+	if p.Service == "" {
+		return invalidArgument("service is required")
+	}
+	if p.Access != "public" && p.Access != "owners" {
+		return invalidArgument("access must be public or owners")
 	}
 	return nil
 }
 
-// appRouteHandler executes app_route.expose and app_route.unexpose; unexpose selects the second.
+func isAppRouteAction(action string) bool {
+	return action == appRouteExposeAction || action == appRouteUnexposeAction
+}
+
+// appRouteTarget is the policy view of an app_route plan: the app target it is about.
+func appRouteTarget(ctx context.Context, q database.Querier, spec policy.ActionSpec, ref domain.ResourceRef, params map[string]any) (policy.Target, *int64, []plan.Input, error) {
+	p, err := fromParams[appRouteParams](params)
+	if err != nil {
+		return policy.Target{}, nil, nil, err
+	}
+	if err := p.validate(spec.Name == appRouteExposeAction); err != nil {
+		return policy.Target{}, nil, nil, err
+	}
+	r, err := resolveAppTarget(ctx, q, ref.ID)
+	if err != nil {
+		return policy.Target{}, nil, nil, err
+	}
+	return r.target, &r.revision, r.inputs, nil
+}
+
+// appRouteHandler moves the route of a plan of app_route.expose or app_route.unexpose. It runs inside the
+// control_plane.apply job, after the apply step has admitted the row; the plan is what revalidation checked
+// at claim, for the user's request and for the system's activation after a deployment alike.
 type appRouteHandler struct {
 	core
-	store    *jobs.Store
-	tunnel   *tunnelEngine
-	unexpose bool
+	store  *jobs.Store
+	tunnel *tunnelEngine
+}
+
+// planAction is the action of the plan the job carries.
+func (h appRouteHandler) planAction(ctx context.Context, job jobs.Job) (string, error) {
+	if job.PlanID == nil {
+		return "", smerr.New(smerr.CodeInternal, "", "app route job has no plan")
+	}
+	rec, err := database.GetPlan(ctx, h.cfg.DB.Reader(), *job.PlanID)
+	return rec.Action, err
 }
 
 // routeHalt ends the route in failed or conflict. The route keeps the phase it held, and a new job resumes it.
@@ -187,19 +209,24 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	payload, err := payloadOf[appRouteJobPayload](job)
+	action, err := h.planAction(ctx, job)
 	if err != nil {
 		return err
 	}
-	route, err := database.GetAppRoute(ctx, h.cfg.DB.Reader(), payload.RouteID)
+	unexpose := action == appRouteUnexposeAction
+	params, err := payloadOf[appRouteParams](job)
 	if err != nil {
 		return err
 	}
-	if route.AppTargetID != job.Resource.ID {
-		return smerr.New(smerr.CodeInternal, "", "the route does not belong to the target of its job")
+	route, err := database.GetLiveAppRouteByHostname(ctx, h.cfg.DB.Reader(), params.Hostname)
+	if smerr.CodeOf(err) == smerr.CodeNotFound || err == nil && route.AppTargetID != job.Resource.ID {
+		return nil // removed already, or the hostname belongs to another target now: nothing left for this job
+	}
+	if err != nil {
+		return err
 	}
 	rr := routeRecord{core: h.core, lease: lease, job: job, route: route}
-	if h.nothingToDo(route) {
+	if nothingToDo(unexpose, route) {
 		return nil
 	}
 	if route.Phase.Halted() {
@@ -211,7 +238,7 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 			return err
 		}
 	}
-	if h.unexpose && rr.route.Phase == database.AppRouteWaiting {
+	if unexpose && rr.route.Phase == database.AppRouteWaiting {
 		// Nothing happened in Cloudflare, so nothing is called.
 		return rr.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, map[string]any{})
 	}
@@ -227,7 +254,7 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if r.sshHostname, err = sshHostnameOf(node, h.tunnel.opts.Config.Zone); err != nil {
 		return err
 	}
-	if h.unexpose {
+	if unexpose {
 		err = r.removeRoute(ctx)
 	} else {
 		err = r.exposeRoute(ctx)
@@ -237,8 +264,8 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 
 // nothingToDo reports whether the job has no work: its route is where the job takes it, or the other job's
 // removal (or the removal itself) has taken it past.
-func (h appRouteHandler) nothingToDo(route database.AppRoute) bool {
-	if h.unexpose {
+func nothingToDo(unexpose bool, route database.AppRoute) bool {
+	if unexpose {
 		return route.Phase == database.AppRouteRemoved
 	}
 	switch route.Phase {

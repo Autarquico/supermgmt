@@ -177,6 +177,8 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 		return appWriteTarget(ctx, q, ref, params)
 	case appTargetWriteAction:
 		return appTargetWriteTarget(ctx, q, ref, params)
+	case appRouteExposeAction, appRouteUnexposeAction:
+		return appRouteTarget(ctx, q, spec, ref, params)
 	case actionMCPClientRegister:
 		return mcpRegisterTarget(ref, params)
 	case actionMCPClientDelete:
@@ -604,6 +606,16 @@ func (c core) evaluate(ctx context.Context, q database.Querier, actor domain.Act
 
 // ---- control_plane.apply ---------------------------------------------------
 
+// isRouteJob reports whether the job's plan is an app route action.
+func (h applyHandler) isRouteJob(ctx context.Context, lease jobs.Lease) (bool, error) {
+	job, err := h.inv.jobs.Get(ctx, h.inv.cfg.DB.Reader(), lease.JobID)
+	if err != nil || job.PlanID == nil {
+		return false, err
+	}
+	rec, err := database.GetPlan(ctx, h.inv.cfg.DB.Reader(), *job.PlanID)
+	return isAppRouteAction(rec.Action), err
+}
+
 // applyHandler runs the approved change of a control_plane.apply job. apps is
 // the catalog that applies app, app target and GitHub provider changes; it may
 // be nil on an instance that has none. enrollments takes the node.add jobs that
@@ -613,11 +625,26 @@ type applyHandler struct {
 	inv         *Inventory
 	apps        *Apps
 	enrollments *TunnelEnrollments
+	// routes moves the app route of an app_route.expose or app_route.unexpose plan once the apply step
+	// admitted it (ADR-0040); nil without a cloudflare: block.
+	routes *appRouteHandler
 }
 
 func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if handled, err := h.enrollments.runJob(ctx, lease); handled || err != nil {
 		return err
+	}
+	if route, err := h.isRouteJob(ctx, lease); route || err != nil {
+		if err != nil {
+			return err
+		}
+		if h.routes == nil {
+			return requireTunnelAllowed(false, domain.Node{})
+		}
+		if err := h.inv.runApproved(ctx, lease, h.apps); err != nil {
+			return err
+		}
+		return h.routes.Run(ctx, lease)
 	}
 	return h.inv.runApproved(ctx, lease, h.apps)
 }

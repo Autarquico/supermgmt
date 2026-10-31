@@ -249,10 +249,14 @@ func (s *TunnelEnrollments) createRow(ctx context.Context, q database.Querier, a
 	})
 }
 
-// directPolicyParams are the parameters policy sees for a direct action: none, except that a node.add of an
+// directPolicyParams are the parameters policy sees for a direct action: none, except that an app route
+// says all of its own (hostname, service, port, access), and that a node.add of an
 // enrollment says tunnel=true, so that rules and the risk of the action can tell it from the insertion of a
 // node by address.
 func directPolicyParams(spec policy.ActionSpec, pl plan.Plan) map[string]any {
+	if isAppRouteAction(spec.Name) {
+		return pl.Parameters // the access mode sets the risk of the route
+	}
 	if spec.Name == actionNodeAdd && pl.Parameters[tunnelParamKey] == true {
 		return map[string]any{policy.ParamTunnel: "true"}
 	}

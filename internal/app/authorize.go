@@ -15,7 +15,7 @@ import (
 // scheduled backup.create; node.add for the steps the scheduler submits for a
 // tunnel enrollment a person already started, ADR-0039). It holds no roles and policy is never
 // evaluated for it, so anything not listed here is denied.
-var systemJobActions = []string{"backup.create", actionNodeAdd}
+var systemJobActions = []string{"backup.create", actionNodeAdd, appRouteExposeAction}
 
 // authorize evaluates req. The system actor gets the fixed allowlist above and
 // never needs approval; every other actor goes through policy.
