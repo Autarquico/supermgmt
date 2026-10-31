@@ -242,6 +242,11 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 		// Nothing happened in Cloudflare, so nothing is called.
 		return rr.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, map[string]any{})
 	}
+	if unexpose {
+		if gone, err := h.abandoned(ctx, &rr); gone || err != nil {
+			return err
+		}
+	}
 	node, err := database.GetNode(ctx, h.cfg.DB.Reader(), rr.route.NodeID)
 	if err != nil {
 		return err
@@ -250,7 +255,7 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	r := &routeRun{routeRecord: rr, tun: run}
+	r := &routeRun{routeRecord: rr, tun: run, unexposing: unexpose}
 	if r.sshHostname, err = sshHostnameOf(node, h.tunnel.opts.Config.Zone); err != nil {
 		return err
 	}
@@ -262,14 +267,34 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	return r.settle(ctx, err)
 }
 
-// nothingToDo reports whether the job has no work: its route is where the job takes it, or the other job's
-// removal (or the removal itself) has taken it past.
+// abandoned ends the removal of a route whose Cloudflare account, zone or instance is no longer the configured
+// one: its objects belong to a place this instance cannot reach, so the route is marked removed with no
+// Cloudflare call, and the object IDs it recorded are listed in the audit event for the operator to clean up.
+func (h appRouteHandler) abandoned(ctx context.Context, rr *routeRecord) (bool, error) {
+	instance, err := database.GetInstance(ctx, h.cfg.DB.Reader())
+	if err != nil {
+		return false, err
+	}
+	cfg := h.tunnel.opts.Config
+	route := rr.route
+	if route.AccountID == cfg.AccountID && route.Zone == cfg.Zone && route.InstanceID == instance.ID.String() {
+		return false, nil
+	}
+	leftover := map[string]any{
+		"abandoned": true, "account_id": route.AccountID, "zone": route.Zone, "tunnel_id": route.TunnelID,
+		"dns_record_id": route.Objects.DNSRecordID, "access_app_id": route.Objects.AccessAppID,
+	}
+	return true, rr.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, leftover)
+}
+
+// nothingToDo reports whether the job has no work: its route is where the job takes it, waits for a deployment
+// (a succeeded one schedules its own job), or the other job's removal (or the removal itself) has taken it past.
 func nothingToDo(unexpose bool, route database.AppRoute) bool {
 	if unexpose {
 		return route.Phase == database.AppRouteRemoved
 	}
 	switch route.Phase {
-	case database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
+	case database.AppRouteWaiting, database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
 		database.AppRouteIngressRemoved, database.AppRouteRemoved:
 		return true
 	}
@@ -290,6 +315,9 @@ type routeRun struct {
 	routeRecord
 	tun         *tunnelRun
 	sshHostname string
+	// unexposing is set for a removal, which only needs the account, zone and instance to be the frozen ones:
+	// the objects it deletes are found by their marker or recorded ID, whatever tunnel the node has now.
+	unexposing bool
 }
 
 // settle halts the route when err ends it and returns err. A conflict while exposing first takes the rule
@@ -323,6 +351,15 @@ func (r *routeRun) requireIdentity(ctx context.Context) error {
 	if r.route.AccountID != cfg.AccountID || r.route.Zone != cfg.Zone || r.route.InstanceID != r.tun.instanceID {
 		return errTunnelChanged
 	}
+	if r.unexposing {
+		return nil
+	}
+	return r.requireTunnel(ctx)
+}
+
+// requireTunnel is errTunnelChanged unless the frozen tunnel, at the frozen generation or a later setup
+// rerun of it, is still the node's tunnel.
+func (r *routeRun) requireTunnel(ctx context.Context) error {
 	ops, err := database.ListTunnelOperations(ctx, r.cfg.DB.Reader(), r.route.NodeID)
 	if err != nil {
 		return err

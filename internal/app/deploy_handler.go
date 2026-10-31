@@ -37,6 +37,8 @@ type DeployOptions struct {
 	Secrets DeploySecrets
 	HTTP    *http.Client
 	Sleep   func(ctx context.Context, d time.Duration) // default: a real timer
+	// SystemID is the system identity that submits the expose job of a route a succeeded deployment activates.
+	SystemID domain.ID
 }
 
 // causeRestoreSnapshot names the restore step that could not even start
@@ -57,6 +59,8 @@ type deployHandler struct {
 	secrets DeploySecrets
 	http    *http.Client
 	sleep   func(ctx context.Context, d time.Duration)
+	// systemID submits the jobs that follow a succeeded deployment (activateRoutes).
+	systemID domain.ID
 }
 
 // deployJob is everything one run reads before it touches the node.
@@ -118,11 +122,13 @@ func newDeployHandler(c core, store *jobs.Store, conn Connector, o DeployOptions
 		return nil, errors.New("app: deployments need a secret source")
 	case o.HTTP == nil:
 		return nil, errors.New("app: deployments need an HTTP client for control-plane health checks")
+	case o.SystemID == "":
+		return nil, errors.New("app: deployments need the system identity that activates app routes")
 	}
 	if o.Sleep == nil {
 		o.Sleep = sleepFor
 	}
-	return &deployHandler{core: c, store: store, dial: conn.Automated, secrets: o.Secrets, http: o.HTTP, sleep: o.Sleep}, nil
+	return &deployHandler{core: c, store: store, dial: conn.Automated, secrets: o.Secrets, http: o.HTTP, sleep: o.Sleep, systemID: o.SystemID}, nil
 }
 
 func (h deployHandler) Run(ctx context.Context, lease jobs.Lease) error {
@@ -209,6 +215,9 @@ func (h deployHandler) loadScope(ctx context.Context, j *deployJob) error {
 // ---- forward --------------------------------------------------------------------------------
 
 func (h deployHandler) forward(ctx context.Context, j *deployJob) error {
+	if err := requireContentServesRoutes(ctx, h.cfg.DB.Reader(), j.target.ID, j.plan.Content); err != nil {
+		return h.failDeployment(ctx, j, err) // before the node is touched
+	}
 	fz, err := h.freeze(ctx, j.plan.Content)
 	if err != nil {
 		return h.failDeployment(ctx, j, err)
@@ -328,6 +337,11 @@ func (h deployHandler) settleHealth(ctx context.Context, j *deployJob, fz frozen
 		var err error
 		if state, err = settleVerification(ctx, tx, j.dep.ID, v, fz.rollbackInputs(j), h.cfg.Clock.Now()); err != nil {
 			return err
+		}
+		if state == deployments.StateSucceeded {
+			if err := h.activateRoutes(ctx, tx, j.target.ID, fz.frozen.HostPorts); err != nil {
+				return err
+			}
 		}
 		return h.announce(ctx, tx, j.dep.ID, state)
 	})

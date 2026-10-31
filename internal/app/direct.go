@@ -128,6 +128,11 @@ func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec
 	if err != nil {
 		return built{}, err
 	}
+	if isAppRouteAction(spec.Name) {
+		if spec.Risk, err = policy.RiskFor(spec.Name, params); err != nil { // public raises the risk of an expose
+			return built{}, err
+		}
+	}
 	return built{
 		spec:   spec,
 		target: target,

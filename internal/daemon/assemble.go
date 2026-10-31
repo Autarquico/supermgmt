@@ -492,7 +492,7 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	}
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
-		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health},
+		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health, SystemID: SystemIdentityID},
 		Tunnel: b.tunnelOptions(), Secrets: b.kit.store, Enrollments: b.enrollments,
 	})
 	if err != nil {

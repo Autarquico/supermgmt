@@ -233,6 +233,12 @@ func (f *DeploymentFinalizer) finalizeDeploy(ctx context.Context, tx *database.T
 	if err != nil {
 		return err
 	}
+	if err := requireRoutesServed(ctx, tx, scope.target.ID, frozen.HostPorts, "the deployment"); err != nil {
+		return refuse(err)
+	}
+	if err := requireRollbackTargetServes(ctx, tx, scope.target.ID, target); err != nil {
+		return refuse(err)
+	}
 	content := deployContent(dep, remote, snapshots, frozen, bindings, target)
 	b, err := buildDeploymentPlan(ctx, tx, deploymentPlanSpec{
 		action: deploymentCreateAction, requester: dep.RequestedBy, scope: scope, content: content,

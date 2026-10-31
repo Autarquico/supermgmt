@@ -26,7 +26,11 @@ type routeSetting struct {
 
 func newRouteSetting(t *testing.T) *routeSetting {
 	t.Helper()
-	ts := newEnabledTunnel(t)
+	return newRouteSettingOn(newEnabledTunnel(t))
+}
+
+// newRouteSettingOn puts an app target on the node of ts, with or without a tunnel.
+func newRouteSettingOn(ts *tunnelSetting) *routeSetting {
 	rs := &routeSetting{tunnelSetting: ts}
 	rs.routes = appRouteHandler{core: ts.handler.core, store: ts.store, tunnel: ts.handler.tunnel}
 	rs.current = rs.routes

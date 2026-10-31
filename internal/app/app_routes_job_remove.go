@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare"
@@ -112,8 +113,14 @@ func (r *routeRun) removeDNS(ctx context.Context) error {
 	return r.advance(ctx, database.AppRouteDNSRemoved, database.AppRouteObjects{}, "", nil)
 }
 
+// removeIngress takes the rule out of the frozen tunnel's ingress. A tunnel that is no longer the node's (or no
+// longer exists) has no rule of this route to take out, so the step is skipped.
 func (r *routeRun) removeIngress(ctx context.Context) error {
-	if err := r.syncIngress(ctx, r.route.ID); err != nil {
+	err := r.requireTunnel(ctx)
+	if err == nil {
+		err = r.syncIngress(ctx, r.route.ID)
+	}
+	if err != nil && !errors.Is(err, errTunnelChanged) {
 		return err
 	}
 	return r.advance(ctx, database.AppRouteIngressRemoved, database.AppRouteObjects{}, "", nil)
