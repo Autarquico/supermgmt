@@ -38,8 +38,8 @@ var milestones = []milestone{
 // pendingSchema is the highest migration merged after the last milestone and not yet released:
 // its fixture can only be generated from a merge commit on main (ADR-0035), so it is listed here
 // until a milestone with that schema is added, then set back to 0. Every migration between the
-// last milestone and it is pending too. 7: 000007_cloudflare_tunnels, 8: 000008_tunnel_enrollments.
-const pendingSchema = 8
+// last milestone and it is pending too. 7: 000007_cloudflare_tunnels, 8: 000008_tunnel_enrollments, 9: 000009_app_routes.
+const pendingSchema = 9
 
 var (
 	fullCommit     = regexp.MustCompile(`^[0-9a-f]{40}$`)
