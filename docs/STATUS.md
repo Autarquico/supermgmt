@@ -20,7 +20,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-_(nada)_
+- #52 Move an app target to another node
 <!-- /pm-sync:in-progress -->
 
 ---
