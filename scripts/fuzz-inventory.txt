@@ -30,6 +30,8 @@ github.com/autarquico/supermgmt/internal/app.ProxmoxSync.read  exempt: calls the
 github.com/autarquico/supermgmt/internal/app.ProxmoxSync.readInventory  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.Repositories.readableProvider  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.activeKEK  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.appMoveHandler.load  exempt: loads rows and JSON the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.appMoveHandler.loadPlanned  exempt: loads rows and JSON the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.backupDoneEvidence  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.canonicalHostname  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.decodeObservation  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
@@ -46,6 +48,7 @@ github.com/autarquico/supermgmt/internal/app.loadDeploymentScope  exempt: loads 
 github.com/autarquico/supermgmt/internal/app.loadKnownGood  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.loadSetup  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.loadStoredDeployment  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.manifestTee.Read  exempt: pass-through tee into TarManifest (FuzzTarManifest); no grammar of its own
 github.com/autarquico/supermgmt/internal/app.metadataOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.oidcBinding  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.parseGrants  exempt: decodes parameters or version strings the daemon stored itself
@@ -65,6 +68,7 @@ github.com/autarquico/supermgmt/internal/app.readSnapshotJSON  exempt: loads or 
 github.com/autarquico/supermgmt/internal/app.requestedFromRefs  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.requestedImagesOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.requireEntitled  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.resourceLimits  FuzzResourceLimits
 github.com/autarquico/supermgmt/internal/app.routeHostname  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.setupCapability  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.setupOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
@@ -73,6 +77,7 @@ github.com/autarquico/supermgmt/internal/app.stepView  exempt: loads or converts
 github.com/autarquico/supermgmt/internal/app.toParams  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.validDNSLabel  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.verbOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.volumeMapOf  FuzzVolumeMapOf
 github.com/autarquico/supermgmt/internal/audit.redactViaJSON  exempt: round-trips a value the daemon built through JSON to scrub it
 github.com/autarquico/supermgmt/internal/auth.Hash  FuzzBearer
 github.com/autarquico/supermgmt/internal/auth.audience.UnmarshalJSON  FuzzIntrospectionAnswer
@@ -333,18 +338,30 @@ github.com/autarquico/supermgmt/internal/secrets.parseExportHeader  FuzzDecodeKe
 github.com/autarquico/supermgmt/internal/secrets.readKeyFile  exempt: key and check records the daemon wrote; raw key bytes have no grammar
 github.com/autarquico/supermgmt/internal/secrets.verifyCheckRecord  exempt: key and check records the daemon wrote; raw key bytes have no grammar
 github.com/autarquico/supermgmt/internal/textsafe.Sanitize  FuzzSanitize
+github.com/autarquico/supermgmt/internal/transport.TarManifest  FuzzTarManifest
+github.com/autarquico/supermgmt/internal/transport.ceilingReader.Read  exempt: byte counter over an io.Reader; no grammar
+github.com/autarquico/supermgmt/internal/transport.trailerReader.Read  FuzzTarManifest
 github.com/autarquico/supermgmt/internal/transport/ssh.ParseAccessToken  FuzzParseAccessToken
 github.com/autarquico/supermgmt/internal/transport/ssh.childConn.Read  exempt: net.Conn plumbing over the cloudflared child's stdout; bytes go to the SSH handshake, which is the parser
 github.com/autarquico/supermgmt/internal/transport/ssh.parsePinned  FuzzParsePinned
 github.com/autarquico/supermgmt/internal/transport/ssh.parseSecretRef  exempt: operator-configured secret ref and raw private key file; key parsing is x/crypto/ssh
 github.com/autarquico/supermgmt/internal/transport/ssh.readPrivateKeyFile  exempt: operator-configured secret ref and raw private key file; key parsing is x/crypto/ssh
 github.com/autarquico/supermgmt/internal/transport/ssh.sanitizeDiagnostic  FuzzSanitizeDiagnostic
+github.com/autarquico/supermgmt/internal/transport/ssh.stream.Read  exempt: pass-through of remote output with deadline accounting; no grammar (stream tests cover it)
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseBackupPath  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseImageSize  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseInfoResources  FuzzParseInfoResources
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseMarkerState  FuzzParseMarkerState
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParsePsState  FuzzParsePsState
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseVolumeInspectMany  FuzzParseVolumeInspectMany
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseVolumeSizes  FuzzParseVolumeSizes
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.Render  FuzzMarkerStateRendering
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ValidateCleanPath  FuzzDeploymentValidatorsAdmitNoShellMetacharacters
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ValidateContainer  FuzzDeploymentValidatorsAdmitNoShellMetacharacters
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.decodeOne  FuzzParseInfoResources
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.parseDeadlineArg  FuzzParseDeadlineArg
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.parseHumanBytes  FuzzParseVolumeSizes
+github.com/autarquico/supermgmt/internal/transport/ssh/templates.parseLabels  FuzzParsePsState
 github.com/autarquico/supermgmt/internal/tui.Model.loadApprovals  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.Model.loadEvents  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.Model.loadJob  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing

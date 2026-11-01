@@ -24,7 +24,7 @@ func symlink(name, target string) member {
 	return member{hdr: tar.Header{Typeflag: tar.TypeSymlink, Name: name, Linkname: target, Mode: 0o777}}
 }
 
-func archive(t *testing.T, members ...member) []byte {
+func archive(t testing.TB, members ...member) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
