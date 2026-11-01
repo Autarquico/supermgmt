@@ -26,7 +26,8 @@ const (
 )
 
 // appMoveHandler runs app_target.move, app_target.cleanup_source and app_target.abandon_move (ADR-0041). The forward
-// path of a move (preflight to done) is app_move_job_forward.go; cleanup and abandon are not implemented yet.
+// path of a move (preflight to done) is app_move_job_forward.go, its compensation app_move_job_compensate.go and the
+// removal of a parked source app_move_cleanup.go.
 //
 // A move job walks the phases of its app_moves row, resuming from the one recorded, and sends every node mutation
 // through the intent dispatcher of deployments. It works on the nodes the move froze, never on the target's live
@@ -47,8 +48,14 @@ func (h appMoveHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	if job.Type != appMoveAction {
-		return smerr.New(smerr.CodeInternal, "", job.Type+" is not implemented yet")
+	switch job.Type {
+	case appMoveCleanupAction:
+		return h.cleanup(ctx, lease, job)
+	case appMoveAbandonAction:
+		return h.abandon(ctx, lease, job)
+	case appMoveAction:
+	default:
+		return smerr.New(smerr.CodeInternal, "", job.Type+" is not a move job")
 	}
 	r, err := h.load(ctx, lease, job)
 	if err != nil {
@@ -176,12 +183,6 @@ func (r *moveRun) unhalt(ctx context.Context) error {
 	})
 }
 
-// compensate undoes a move that failed before its commit (spec §7, phases compensating_*). It is filled in with
-// the compensation; until then the failure ends the job and leaves the move where it stopped.
-func (h appMoveHandler) compensate(_ context.Context, _ *moveRun, cause error) error {
-	return cause
-}
-
 // settle decides what a failure of the forward path means. A failure that ends the move for good compensates it
 // before the commit and halts it after, when nothing can be undone; any other failure is left to the job's retry.
 func (r *moveRun) settle(ctx context.Context, err error) error {
@@ -249,10 +250,7 @@ func (r *moveRun) advance(ctx context.Context, to database.AppMovePhase, event s
 
 // halt records that the move stopped after its commit, with a sanitized message and the audit event.
 func (r *moveRun) halt(ctx context.Context, cause error) error {
-	message := textsafe.Line(audit.ScrubString(cause.Error()))
-	if utf8.RuneCountInString(message) > maxRecordedErrorLength {
-		message = string([]rune(message)[:maxRecordedErrorLength])
-	}
+	message := recordedError(cause)
 	phase := r.move.Phase
 	return r.change(context.WithoutCancel(ctx), func(ctx context.Context, tx *database.Tx) (database.AppMove, error) {
 		halted, err := database.HaltAppMove(ctx, tx, r.move.ID, phase, database.AppMoveFailed, message, r.h.cfg.Clock.Now())
@@ -261,6 +259,15 @@ func (r *moveRun) halt(ctx context.Context, cause error) error {
 		}
 		return halted, r.emitMove(ctx, tx, eventAppMoveHalted, domain.ResultFailed, map[string]any{"phase": string(phase)})
 	})
+}
+
+// recordedError is err as the move record and its audit events keep it: one sanitized line of bounded length.
+func recordedError(err error) string {
+	message := textsafe.Line(audit.ScrubString(err.Error()))
+	if utf8.RuneCountInString(message) > maxRecordedErrorLength {
+		message = string([]rune(message)[:maxRecordedErrorLength])
+	}
+	return message
 }
 
 func (r *moveRun) emitMove(ctx context.Context, tx *database.Tx, action string, result domain.Result, data map[string]any) error {

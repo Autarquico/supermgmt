@@ -82,6 +82,7 @@ type moveSim struct {
 	cpus       int
 	free       int64
 	noPlatform bool
+	marker     string         // the answer to marker.state; "" means the command finished with exit 0
 	imports    map[string]int // applied imports per volume
 	exports    map[string]int // export sessions opened per volume
 }
@@ -149,6 +150,11 @@ func (s *moveSim) answer(c templates.Command) (transport.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch c.Template {
+	case "marker.state":
+		if s.marker == "" {
+			return ok("done 0\n")
+		}
+		return ok(s.marker)
 	case "compose.ps_state":
 		return ok(s.psState())
 	case "compose.project_containers":
@@ -433,6 +439,7 @@ type runWorld struct {
 	crash     map[string]int // kind -> the tick to stop at
 	ticks     map[string]int
 	unhealthy bool
+	healthyA  bool // the source answers its health checks even when unhealthy is set
 	stuck     bool // sleeping does not move the clock
 	before    func(label string, c templates.Command)
 	hook      func() // runs when B's health check is asked
@@ -585,7 +592,7 @@ func (w *runWorld) tick(kind string) bool {
 
 func (w *runWorld) tickError(kind string) error {
 	if w.tick(kind) {
-		return errors.New("crash at a " + kind)
+		return fmt.Errorf("%w: crash at a %s", jobs.ErrOutcomeUnknown, kind) // a crash is no failure to settle
 	}
 	return nil
 }
@@ -599,8 +606,8 @@ func (w *runWorld) afterDispatch(_ *moveSim, _ templates.Command) error {
 	return nil
 }
 
-func (w *runWorld) healthAnswer(*moveSim) string {
-	if w.unhealthy {
+func (w *runWorld) healthAnswer(s *moveSim) string {
+	if w.unhealthy && (!w.healthyA || s != w.a) {
 		return "500"
 	}
 	return "200"
@@ -917,8 +924,8 @@ func TestMoveRun_PreflightRefusesAnUnfitDestinationWithOnlyReadsOnBothNodes(t *t
 			if got := append(w.mutations(w.a), w.mutations(w.b)...); len(got) != 0 {
 				t.Errorf("a refused preflight ran mutating commands: %v", got)
 			}
-			if w.a.state != "running" || w.moveRow().Phase != database.AppMovePreflight || w.moveRow().DestDeploymentID != nil {
-				t.Errorf("A is %s, move %+v: nothing may have changed", w.a.state, w.moveRow())
+			if w.a.state != "running" || w.moveRow().Phase != database.AppMoveRolledBack || w.moveRow().DestDeploymentID != nil {
+				t.Errorf("A is %s, move %+v: nothing may have changed and the move is rolled back", w.a.state, w.moveRow())
 			}
 		})
 	}
@@ -940,8 +947,8 @@ func TestMoveRun_TheAdmissionChecksRunAgainUnderTheLocksBeforeStagingAndBeforeSt
 		err := w.run()
 
 		wantAppsCode(t, err, smerr.CodeCapabilityUnavailable)
-		if got := append(w.mutations(w.a), w.mutations(w.b)...); len(got) != 0 || w.moveRow().Phase != database.AppMovePreflight {
-			t.Errorf("mutations = %v, phase %s: a failed re-check stages nothing", got, w.moveRow().Phase)
+		if got := append(w.mutations(w.a), w.mutations(w.b)...); len(got) != 0 || w.moveRow().Phase != database.AppMoveRolledBack {
+			t.Errorf("mutations = %v, phase %s: a failed re-check stages nothing and rolls the move back", got, w.moveRow().Phase)
 		}
 	})
 	t.Run("before started", func(t *testing.T) {
@@ -956,8 +963,8 @@ func TestMoveRun_TheAdmissionChecksRunAgainUnderTheLocksBeforeStagingAndBeforeSt
 		err := w.run()
 
 		wantAppsCode(t, err, smerr.CodeCapabilityUnavailable)
-		if m := w.moveRow(); m.Phase != database.AppMoveStaged || m.BStartedAt != nil {
-			t.Errorf("move = %+v, want staged and never started", m)
+		if m := w.moveRow(); m.Phase != database.AppMoveRolledBack || m.BStartedAt != nil {
+			t.Errorf("move = %+v, want rolled back and never started", m)
 		}
 		if w.a.state != "running" || len(w.mutations(w.a)) != 0 || slices.Contains(w.mutations(w.b), "compose.start") {
 			t.Errorf("A is %s, A mutations %v, B mutations %v: A must keep serving and B must not start", w.a.state, w.mutations(w.a), w.mutations(w.b))
@@ -1108,18 +1115,18 @@ func TestMoveRun_AnImportWithAnUnknownOutcomeIsNotTouchedBeforeItsDeadline(t *te
 func TestMoveRun_AnUnhealthyBEndsTheMoveBeforeTheCommit(t *testing.T) {
 	w := newRunWorld(t, runOptions{})
 	w.started()
-	w.unhealthy = true
+	w.unhealthy, w.healthyA = true, true
 
 	err := w.run()
 
 	if appsReasonOf(err) != smerr.ReasonHealthFailed {
 		t.Fatalf("Run = %v, want HEALTH_FAILED", err)
 	}
-	if m := w.moveRow(); m.Phase != database.AppMoveStarted || m.BStartedAt == nil {
-		t.Errorf("move = %+v, want started and not verified", m)
+	if m := w.moveRow(); m.Phase != database.AppMoveRolledBack || m.BStartedAt == nil {
+		t.Errorf("move = %+v, want rolled back after B started", m)
 	}
-	if w.targetRow().NodeID != w.node.ID || w.a.state != "running" {
-		t.Errorf("target on %s, A %s: nothing is committed or stopped", w.targetRow().NodeID, w.a.state)
+	if w.targetRow().NodeID != w.node.ID || w.a.state != "running" || w.b.state != "exited" {
+		t.Errorf("target on %s, A %s, B %s: nothing is committed, A serves and B is stopped", w.targetRow().NodeID, w.a.state, w.b.state)
 	}
 }
 
@@ -1138,14 +1145,14 @@ func TestMoveRun_ACommitThatLosesItsCompareAndSetGoesToCompensationNotForward(t 
 
 	wantAppsCode(t, err, smerr.CodeConflict)
 	m := w.moveRow()
-	if m.Phase != database.AppMoveVerified || m.CommittedRevision != 0 {
-		t.Errorf("move = %+v, want verified and uncommitted", m)
+	if m.Phase != database.AppMoveRolledBack || m.CommittedRevision != 0 {
+		t.Errorf("move = %+v, want rolled back and uncommitted", m)
 	}
 	if got := w.targetRow(); got.NodeID != w.node.ID {
 		t.Errorf("target on %s, want it left on A", got.NodeID)
 	}
-	if row := w.row(*m.DestDeploymentID); row.State != deployments.StateVerifying || row.KnownGood {
-		t.Errorf("B's deployment = %+v, want it untouched by the failed commit", row)
+	if row := w.row(*m.DestDeploymentID); row.State != deployments.StateFailed || row.KnownGood {
+		t.Errorf("B's deployment = %+v, want it failed and not known good", row)
 	}
 }
 
