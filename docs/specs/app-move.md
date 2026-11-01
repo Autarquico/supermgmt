@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Move an app target to another node
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
 issue: 52
