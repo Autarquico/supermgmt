@@ -39,8 +39,9 @@ func TestDockerTemplatesAvoidGoTemplateSyntax(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tpl := range all {
-		if strings.HasPrefix(tpl.Name, "docker.") && strings.Contains(tpl.Body, "--format") {
-			t.Errorf("%s uses --format, which needs the reserved double-brace sequence", tpl.Name)
+		goTemplate := strings.Contains(tpl.Body, "--format ") && !strings.Contains(tpl.Body, "--format json") && !strings.Contains(tpl.Body, `\173\173`)
+		if strings.HasPrefix(tpl.Name, "docker.") && goTemplate {
+			t.Errorf("%s writes a Go template with the reserved double-brace sequence; use goTemplateArg", tpl.Name)
 		}
 	}
 }

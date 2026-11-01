@@ -101,6 +101,22 @@ func (c Connector) OpenRelay(ctx context.Context, n domain.Node, credentialRef, 
 	return pool.OpenRelay(ctx, sshnode.DedicatedTarget(n, credentialRef), templates.Relay{SocatPath: socatPath})
 }
 
+// streamOpener is implemented by pools that can open a streaming session
+// (*ssh.Pool does).
+type streamOpener interface {
+	OpenStream(ctx context.Context, t ssh.Target, c templates.Command, o transport.StreamOptions) (transport.Stream, error)
+}
+
+// OpenStream runs a streaming command on n as Automated would reach it. The
+// local provider has no streams.
+func (c Connector) OpenStream(ctx context.Context, n domain.Node, setup *runtimes.SetupMeta, cmd templates.Command, o transport.StreamOptions) (transport.Stream, error) {
+	pool, ok := c.Remote.(streamOpener)
+	if isLocal(n) || !ok {
+		return nil, smerr.New(smerr.CodeCapabilityUnavailable, "", "this node cannot carry a data stream")
+	}
+	return pool.OpenStream(ctx, sshnode.AutomatedTarget(n, setup), cmd, o)
+}
+
 // InvalidateNode retires every pooled connection of the node, whatever the
 // transport, after a tunnel job changed how the node is reached.
 func (c Connector) InvalidateNode(n domain.Node) {

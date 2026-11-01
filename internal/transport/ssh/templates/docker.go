@@ -3,6 +3,7 @@ package templates
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 var containerRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -15,7 +16,40 @@ func ValidateContainer(s string) error {
 	return nil
 }
 
-var paramContainer = Param{Name: "container", Validate: ValidateContainer}
+var (
+	paramContainer = Param{Name: "container", Validate: ValidateContainer}
+	paramVolume    = Param{Name: "volume", Validate: ValidateVolume}
+)
+
+// MaxInspectedVolumes is the most names one docker.volume_inspect_many takes.
+const MaxInspectedVolumes = 64
+
+// validateVolumeList accepts comma-separated volume names, at most
+// MaxInspectedVolumes.
+func validateVolumeList(s string) error {
+	names := strings.Split(s, ",")
+	if len(names) > MaxInspectedVolumes {
+		return fmt.Errorf("more than %d volumes", MaxInspectedVolumes)
+	}
+	for _, n := range names {
+		if err := ValidateVolume(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const volumeInspectManyScript = `set -f
+all=$(docker volume ls --quiet) || exit 1
+IFS=,
+found=
+for v in $1; do
+  printf '%s\n' "$all" | grep -qxF -- "$v" && found="$found $v"
+done
+unset IFS
+[ -n "$found" ] || { echo '[]'; exit 0; }
+exec docker volume inspect -- $found
+`
 
 func containerAction(verb string) Template {
 	return Template{
@@ -42,6 +76,26 @@ var dockerTemplates = []Template{
 	{
 		Name: "docker.logs", Params: []Param{paramContainer, paramLines}, MaxBytes: 4 << 20, MaxLines: MaxLogLines + 10,
 		Body: "docker logs --timestamps --tail {{lines}} -- {{container}} 2>&1",
+	},
+	{
+		// The volume is only removed when no container uses it; there is no force.
+		Name: "docker.volume_rm", Params: []Param{paramVolume}, Mutating: true,
+		Deadline: ActionDeadline, MaxBytes: 64 << 10,
+		Body: "docker volume rm -- {{volume}}",
+	},
+	{
+		Name: "docker.info_resources", MaxBytes: 1 << 10, MaxLines: 5,
+		Body: "docker info --format " + goTemplateArg(`{"NCPU":{{json .NCPU}},"MemTotal":{{json .MemTotal}}}`),
+	},
+	{
+		Name: "docker.volume_sizes", MaxBytes: 8 << 20,
+		Body: "docker system df --verbose --format json",
+	},
+	{
+		// A JSON array of the listed volumes that exist, in any order; a daemon
+		// that cannot list its volumes is a failure, never an empty array.
+		Name: "docker.volume_inspect_many", Params: []Param{{Name: "volumes", Validate: validateVolumeList}}, MaxBytes: 4 << 20,
+		Body: shellScript("sh", volumeInspectManyScript, "volumes"),
 	},
 	containerAction("start"),
 	containerAction("stop"),

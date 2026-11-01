@@ -51,6 +51,9 @@ type Param struct {
 //     back that stdout on success only and never the stderr (see Command).
 //   - Locked templates (mutating) run under the node-side project flock; they
 //     render only through RenderMutatingInput with the project name.
+//   - Streaming templates move a tar over the session's stdout or stdin; they
+//     render only through RenderStream, outside the marker wrapper (the caller
+//     records any intent), and bound themselves with `timeout`.
 //
 // MaxBytes (required) and MaxLines (0 = unlimited) bound what is read back.
 type Template struct {
@@ -64,6 +67,7 @@ type Template struct {
 	Sensitive    bool
 	Locked       bool
 	SecretOutput bool
+	Stream       StreamKind
 	Deadline     time.Duration
 	MaxBytes     int
 	MaxLines     int
@@ -83,9 +87,12 @@ type Command struct {
 	Sensitive    bool
 	SecretOutput bool
 	Mutating     bool
-	Deadline     time.Duration
-	MaxBytes     int
-	MaxLines     int
+	// Stream is set on a streaming command, which only Pool.OpenStream runs.
+	// Deadline is then the node-side `timeout`, not a limit on a buffered run.
+	Stream   StreamKind
+	Deadline time.Duration
+	MaxBytes int
+	MaxLines int
 }
 
 // Matching returns a validator that accepts exactly the strings re matches.
@@ -131,6 +138,17 @@ func RenderMutatingInput(name, marker string, args map[string]string, stdin []by
 	return r.renderMutatingInput(name, marker, args, stdin, flockProject)
 }
 
+// RenderStream renders a streaming template. Its `deadline` argument (see
+// DeadlineArg) is the node-side `timeout`; the command's Deadline is the same
+// value, for the caller that records the intent.
+func RenderStream(name string, args map[string]string) (Command, error) {
+	r, err := catalog()
+	if err != nil {
+		return Command{}, err
+	}
+	return r.renderStream(name, args)
+}
+
 // RenderSetup renders a node.setup step. stdin is passed through untouched.
 func RenderSetup(name string, args map[string]string, stdin []byte) (Command, error) {
 	r, err := catalog()
@@ -158,7 +176,7 @@ func Templates() ([]Template, error) {
 var catalog = sync.OnceValues(func() (registry, error) {
 	return newRegistry(
 		probeTemplates, markerTemplates, systemdTemplates, dockerTemplates, setupTemplates,
-		composeStageTemplates, composeRunTemplates, healthTemplates, proxmoxTemplates,
+		composeStageTemplates, composeRunTemplates, healthTemplates, proxmoxTemplates, streamTemplates,
 	)
 })
 
@@ -199,6 +217,8 @@ func (t Template) check() error {
 		problem = "only a setup template can have secret output"
 	case t.Mutating && t.Deadline <= 0:
 		problem = "mutating template needs a deadline"
+	case t.Stream != StreamNone && (t.Mutating || t.Setup || t.Sudo || t.SecretOutput || t.Deadline != 0 || !strings.HasPrefix(t.Body, "timeout ")):
+		problem = "a streaming template runs under timeout and is neither mutating, setup, sudo nor secret"
 	case t.Sudo && (!strings.HasPrefix(t.Body, "sudo -n ") || strings.Contains(t.Body, " -- ")):
 		problem = `sudo template must start with "sudo -n " and contain no " -- "`
 	case t.MaxBytes <= 0:
@@ -243,7 +263,7 @@ func (r registry) render(name string, args map[string]string) (Command, error) {
 	if err != nil {
 		return Command{}, err
 	}
-	if t.Mutating || t.Setup {
+	if t.Mutating || t.Setup || t.Stream != StreamNone {
 		return Command{}, renderError(name, "not a read-only template")
 	}
 	return t.bind(args)
@@ -291,6 +311,27 @@ func (t Template) checkInputs(stdin []byte, flockProject string) error {
 		return renderError(t.Name, "invalid project")
 	}
 	return nil
+}
+
+func (r registry) renderStream(name string, args map[string]string) (Command, error) {
+	t, err := r.lookup(name)
+	if err != nil {
+		return Command{}, err
+	}
+	if t.Stream == StreamNone {
+		return Command{}, renderError(name, "not a streaming template")
+	}
+	c, err := t.bind(args)
+	if err != nil {
+		return Command{}, err
+	}
+	c.Stream = t.Stream
+	c.Mutating = t.Stream == StreamImport
+	c.Deadline, err = parseDeadlineArg(args["deadline"])
+	if err != nil {
+		return Command{}, renderError(name, err.Error())
+	}
+	return c, nil
 }
 
 func (r registry) renderSetup(name string, args map[string]string, stdin []byte) (Command, error) {
