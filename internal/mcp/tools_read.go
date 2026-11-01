@@ -105,6 +105,11 @@ func addReadTools(s *sdk.Server, api API) {
 		func(ctx context.Context, in listAppRoutesInput) (listResult[RouteView], error) {
 			return listAppRoutes(ctx, api, in)
 		})
+	readTool(s, "infra_list_app_moves",
+		"List the moves of an app target to other nodes, newest first, by app and environment (each an id or exact name). A move's phase says how far it got, whether it is stateful (the app stops while its volumes are copied) and, when it halted, why."+remoteDataNotice,
+		func(ctx context.Context, in listAppMovesInput) (listResult[MoveView], error) {
+			return listAppMoves(ctx, api, in)
+		})
 	readTool(s, "infra_list_events",
 		"List audit events, optionally of one resource, newest page last. Use after_seq to follow the log."+remoteDataNotice,
 		func(ctx context.Context, in listEventsInput) (listResult[EventView], error) {

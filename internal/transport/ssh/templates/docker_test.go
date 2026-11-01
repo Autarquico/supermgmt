@@ -39,8 +39,9 @@ func TestDockerTemplatesAvoidGoTemplateSyntax(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tpl := range all {
-		if strings.HasPrefix(tpl.Name, "docker.") && strings.Contains(tpl.Body, "--format") {
-			t.Errorf("%s uses --format, which needs the reserved double-brace sequence", tpl.Name)
+		goTemplate := strings.Contains(tpl.Body, "--format ") && !strings.Contains(tpl.Body, "--format json") && !strings.Contains(tpl.Body, `\173\173`)
+		if strings.HasPrefix(tpl.Name, "docker.") && goTemplate {
+			t.Errorf("%s writes a Go template with the reserved double-brace sequence; use goTemplateArg", tpl.Name)
 		}
 	}
 }
@@ -52,5 +53,27 @@ func TestDockerLogsMergeStreamsAndBoundLines(t *testing.T) {
 	}
 	if _, err := Render("docker.logs", map[string]string{"container": "web", "lines": "10001"}); err == nil {
 		t.Error("10001 lines accepted")
+	}
+}
+
+func TestUpdateRestartTemplateTakesOnlyAContainerAndAPolicy(t *testing.T) {
+	c, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": "shop-web-1", "policy": "no"})
+	if err != nil || !strings.Contains(c.Line, "docker update --restart 'no' -- 'shop-web-1'; rc=$?") {
+		t.Fatalf("update_restart = %q, %v", c.Line, err)
+	}
+	for _, policy := range []string{"always", "on-failure", "unless-stopped"} {
+		if _, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": "c", "policy": policy}); err != nil {
+			t.Errorf("policy %q refused: %v", policy, err)
+		}
+	}
+	for _, bad := range append([]string{"", "No", "on-failure:3", "-x", "never"}, injectionPayloads...) {
+		if _, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": "c", "policy": bad}); err == nil {
+			t.Errorf("policy %q accepted", bad)
+		}
+	}
+	for _, bad := range append([]string{"", "-x", "a b"}, injectionPayloads...) {
+		if _, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": bad, "policy": "no"}); err == nil {
+			t.Errorf("container %q accepted", bad)
+		}
 	}
 }

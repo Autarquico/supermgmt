@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Expose an app through its node's Cloudflare Tunnel
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
 issue: 50

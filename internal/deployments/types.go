@@ -46,6 +46,7 @@ func AllStates() []State {
 const (
 	KindDeploy   = "deploy"
 	KindRollback = "rollback"
+	KindMove     = "move"
 )
 
 // Rollback modes (spec §19, §19.1).

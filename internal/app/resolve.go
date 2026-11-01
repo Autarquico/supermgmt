@@ -239,6 +239,8 @@ func build(ctx context.Context, q database.Querier, action string, actorID domai
 		return buildDirect(ctx, q, spec, actorID, ref, params)
 	case spec.Mode != policy.ModeJob:
 		return built{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("action %s does not run through a plan", action))
+	case isMoveAction(action):
+		return built{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("action %s is requested with `sm apps move`, not through a plan", action))
 	case spec.Resource != ref.Type:
 		return built{}, smerr.New(smerr.CodeInvalidArgument, "",
 			fmt.Sprintf("action %s targets a %s, not a %s", action, spec.Resource, ref.Type))
@@ -296,6 +298,9 @@ func compositeOf(action string, params map[string]any, target policy.Target) ([]
 // rebuildCurrent recomputes a stored plan's action on its target from the
 // current database state. A target that no longer exists makes the plan stale.
 func rebuildCurrent(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
+	if isMoveAction(rec.Action) {
+		return rebuildMoveAction(ctx, q, rec) // frozen nodes and move record, not the target's live node (spec §9)
+	}
 	stored, err := plan.Parse(rec.PlanJSON)
 	if err != nil {
 		return built{}, err
@@ -340,6 +345,9 @@ func acceptOwnSwitch(ctx context.Context, q database.Querier, current built, sto
 // configured input changed. Observations never change it (spec §6.4).
 func rebuild(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
 	current, err := rebuildCurrent(ctx, q, rec)
+	if isMoveAction(rec.Action) {
+		return current, err // it compares the hash itself, and not after the commit (spec §9)
+	}
 	if err != nil {
 		return built{}, err
 	}

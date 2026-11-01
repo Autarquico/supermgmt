@@ -43,6 +43,9 @@ var lockModeByJobType = map[string]domain.LockMode{
 	"backup.create":                  domain.LockExclusive,
 	deploymentCreateAction:           domain.LockExclusive, // the app target (ownLock); project and ports in deploymentLocks
 	deploymentRollbackAction:         domain.LockExclusive,
+	appMoveAction:                    domain.LockExclusive, // the app target (ownLock); projects and ports of both nodes in moveLocks
+	appMoveCleanupAction:             domain.LockExclusive, // the app target; the source's project in moveLocks
+	appMoveAbandonAction:             domain.LockExclusive,
 }
 
 // cloudflareInstanceLock serializes the jobs that touch the instance-wide
@@ -107,8 +110,8 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	}
 	specs := []domain.LockSpec{own}
 	if job.PlanID == nil {
-		if isDeploymentJob(job.Type) {
-			return nil, smerr.New(smerr.CodeInternal, "", "deployment job has no plan to take its locks from")
+		if isDeploymentJob(job.Type) || isMoveAction(job.Type) {
+			return nil, smerr.New(smerr.CodeInternal, "", job.Type+" job has no plan to take its locks from")
 		}
 		return specs, nil
 	}
@@ -121,7 +124,17 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		return nil, err
 	}
 	if isDeploymentJob(job.Type) {
+		if err := requireNoOpenMove(ctx, q, job.Resource.ID); err != nil { // claim-time refusal of ADR-0041
+			return nil, err
+		}
 		held, err := deploymentLocks(ctx, q, job, *stored)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, held...)
+	}
+	if isMoveAction(job.Type) {
+		held, err := moveLocks(ctx, q, job, *stored)
 		if err != nil {
 			return nil, err
 		}
@@ -148,6 +161,52 @@ func isDeploymentJob(jobType string) bool {
 	return jobType == deploymentCreateAction || jobType == deploymentRollbackAction
 }
 
+// moveLocks are the exclusive locks of a move beyond its app target, taken from the nodes the plan froze and never
+// from the target's live node, which the commit changes (spec §13): the Compose project and each host port of the
+// known-good model on both nodes. Cleanup holds the project of the source node only; an abandon touches no node.
+// The nodes themselves are plan inputs, locked shared.
+func moveLocks(ctx context.Context, q database.Querier, job jobs.Job, p plan.Plan) ([]domain.LockSpec, error) {
+	if job.Type == appMoveAbandonAction {
+		return nil, nil
+	}
+	target, err := database.GetAppTarget(ctx, q, job.Resource.ID)
+	if err != nil {
+		return nil, err
+	}
+	nodes := plannedNodes(p)
+	var specs []domain.LockSpec
+	switch job.Type {
+	case appMoveAction:
+		if len(nodes) != 2 {
+			return nil, smerr.New(smerr.CodeInternal, "", "a move plan must freeze exactly two nodes")
+		}
+		for _, node := range nodes {
+			held, err := projectAndPortLocks(node, target.ComposeProject, p.Content.HostPorts)
+			if err != nil {
+				return nil, err
+			}
+			specs = append(specs, held...)
+		}
+	case appMoveCleanupAction:
+		if len(nodes) != 1 {
+			return nil, smerr.New(smerr.CodeInternal, "", "a cleanup plan must freeze exactly one node")
+		}
+		specs = append(specs, domain.ComposeProjectLock(nodes[0], target.ComposeProject, domain.LockExclusive))
+	}
+	return specs, nil
+}
+
+// plannedNodes are the nodes a plan pins, in input order.
+func plannedNodes(p plan.Plan) []domain.ID {
+	var nodes []domain.ID
+	for _, in := range p.Inputs {
+		if in.Type == string(domain.ResourceNode) {
+			nodes = append(nodes, domain.ID(in.ID))
+		}
+	}
+	return nodes
+}
+
 // deploymentLocks are the exclusive locks of a deployment beyond its app
 // target: the Compose project and each host port on the target's node that
 // the plan or its frozen rollback target publishes. Both are known at
@@ -162,18 +221,24 @@ func deploymentLocks(ctx context.Context, q database.Querier, job jobs.Job, p pl
 	if err != nil {
 		return nil, err
 	}
-	specs := []domain.LockSpec{domain.ComposeProjectLock(target.NodeID, target.ComposeProject, domain.LockExclusive)}
+	return projectAndPortLocks(target.NodeID, target.ComposeProject, ports)
+}
+
+// projectAndPortLocks are the exclusive locks on node of a Compose project and of each distinct host port that
+// is published (addr:port, with /udp for UDP).
+func projectAndPortLocks(node domain.ID, project string, published []string) ([]domain.LockSpec, error) {
+	specs := []domain.LockSpec{domain.ComposeProjectLock(node, project, domain.LockExclusive)}
 	seen := map[netip.AddrPort]bool{}
-	for _, published := range ports {
-		endpoint, err := netip.ParseAddrPort(strings.TrimSuffix(published, "/udp"))
+	for _, port := range published {
+		endpoint, err := netip.ParseAddrPort(strings.TrimSuffix(port, "/udp"))
 		if err != nil {
-			return nil, smerr.Wrap(err, smerr.CodeInternal, "", "plan names an unreadable host port "+published)
+			return nil, smerr.Wrap(err, smerr.CodeInternal, "", "plan names an unreadable host port "+port)
 		}
 		if seen[endpoint] {
 			continue
 		}
 		seen[endpoint] = true
-		specs = append(specs, domain.PortLock(target.NodeID, endpoint.Addr().String(), int(endpoint.Port()), domain.LockExclusive))
+		specs = append(specs, domain.PortLock(node, endpoint.Addr().String(), int(endpoint.Port()), domain.LockExclusive))
 	}
 	return specs, nil
 }
