@@ -466,9 +466,10 @@ func TestMove_RefusesAtRequestTimeAndWritesNothing(t *testing.T) {
 			},
 		},
 		{
-			name: "a route that is not removed", code: smerr.CodeConflict, contains: "unexpose",
+			name: "a route that is still provisioning", code: smerr.CodeConflict, contains: "provisioning",
 			setup: func(w *moveWorld) domain.ID {
 				w.insertRoute()
+				w.exec(`UPDATE app_routes SET phase = 'provisioning'`)
 				return ""
 			},
 		},

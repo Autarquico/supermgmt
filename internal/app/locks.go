@@ -133,6 +133,10 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		}
 		specs = append(specs, held...)
 	}
+	tunnelSetup := job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true"
+	if err := requireNoRoutedMoveForJob(ctx, q, job, stored.Action, tunnelSetup); err != nil { // claim-time refusal of ADR-0042
+		return nil, err
+	}
 	if isMoveAction(job.Type) {
 		held, err := moveLocks(ctx, q, job, *stored)
 		if err != nil {
@@ -140,7 +144,7 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		}
 		specs = append(specs, held...)
 	}
-	if job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true" ||
+	if tunnelSetup ||
 		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable ||
 		job.Type == JobControlPlaneApply && isAppRouteAction(stored.Action) { // the route job moves its route under the app target's lock
 		specs = append(specs, cloudflareInstanceLock)
@@ -163,8 +167,9 @@ func isDeploymentJob(jobType string) bool {
 
 // moveLocks are the exclusive locks of a move beyond its app target, taken from the nodes the plan froze and never
 // from the target's live node, which the commit changes (spec §13): the Compose project and each host port of the
-// known-good model on both nodes. Cleanup holds the project of the source node only; an abandon touches no node.
-// The nodes themselves are plan inputs, locked shared.
+// known-good model on both nodes, and the instance Cloudflare lock when the plan carries routes (ADR-0042).
+// Cleanup holds the project of the source node only; an abandon touches no node. The nodes themselves are plan
+// inputs, locked shared.
 func moveLocks(ctx context.Context, q database.Querier, job jobs.Job, p plan.Plan) ([]domain.LockSpec, error) {
 	if job.Type == appMoveAbandonAction {
 		return nil, nil
@@ -186,6 +191,9 @@ func moveLocks(ctx context.Context, q database.Querier, job jobs.Job, p plan.Pla
 				return nil, err
 			}
 			specs = append(specs, held...)
+		}
+		if slices.ContainsFunc(p.Inputs, func(in plan.Input) bool { return in.Type == moveRouteInputType }) {
+			specs = append(specs, cloudflareInstanceLock)
 		}
 	case appMoveCleanupAction:
 		if len(nodes) != 1 {

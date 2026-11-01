@@ -44,16 +44,17 @@ func (r *moveRun) forward(ctx context.Context) error {
 		case database.AppMoveStarted:
 			err = r.verifyDest(ctx)
 		case database.AppMoveVerified:
-			err = r.commit(ctx)
+			err = r.afterVerified(ctx)
+		case database.AppMoveRoutesDestIncluded, database.AppMoveRoutesSwitched, database.AppMoveRoutesSourceCleaned:
+			err = errRoutedWork(r.move.Phase)
 		case database.AppMoveCommitted:
 			err = r.parkSource(ctx)
 		case database.AppMoveSourceParked:
 			err = r.advance(ctx, database.AppMoveDone, "")
 		case database.AppMoveDone, database.AppMoveRolledBack, database.AppMoveFailed, database.AppMoveConflict,
+			database.AppMoveCompensatingRoutesRestored, database.AppMoveCompensatingRoutesWithdrawn,
 			database.AppMoveCompensatingBStopped, database.AppMoveCompensatingSourceStarted,
 			database.AppMoveCompensatingSourceVerified, database.AppMoveCompensatingBRemoved:
-			err = smerr.New(smerr.CodeInternal, "", fmt.Sprintf("the forward path has no work for phase %s", r.move.Phase))
-		default:
 			err = smerr.New(smerr.CodeInternal, "", fmt.Sprintf("the forward path has no work for phase %s", r.move.Phase))
 		}
 		if err != nil {
@@ -61,6 +62,24 @@ func (r *moveRun) forward(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// afterVerified is the step out of verified: the commit for an unrouted move, the routes for a routed one.
+func (r *moveRun) afterVerified(ctx context.Context) error {
+	routes, err := database.ListAppMoveRoutes(ctx, r.h.cfg.DB.Reader(), r.move.ID)
+	if err != nil {
+		return err
+	}
+	if len(routes) == 0 {
+		return r.commit(ctx)
+	}
+	return errRoutedWork(r.move.Phase)
+}
+
+// errRoutedWork stands where the Cloudflare work of a routed move goes (ADR-0042): the phases between verified and
+// done that only a routed move walks. A routed move that reaches one stops there.
+func errRoutedWork(phase database.AppMovePhase) error {
+	return smerr.New(smerr.CodeInternal, "", fmt.Sprintf("the routes of a move have no work for phase %s yet", phase))
 }
 
 // ---- stage (spec §4) ---------------------------------------------------------------------------------------------

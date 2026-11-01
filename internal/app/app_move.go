@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -25,6 +24,8 @@ const (
 type AppMoves struct {
 	core
 	plans *Plans
+	// tunnel reads the Access applications of the routes a move carries; nil until UseTunnel.
+	tunnel *tunnelEngine
 }
 
 // NewAppMoves validates cfg. plans must have been built with the job store the moves run on.
@@ -37,6 +38,15 @@ func NewAppMoves(cfg Config, plans *Plans) (*AppMoves, error) {
 		return nil, errors.New("app: moves need the plans service")
 	}
 	return &AppMoves{core: c, plans: plans}, nil
+}
+
+// UseTunnel gives the service the Cloudflare options with which admission reads the Access applications of the
+// routes of a target (ADR-0042). Without them a target with an owners route is refused: an unchecked Access
+// application is never assumed to be there.
+func (s *AppMoves) UseTunnel(opts *TunnelOptions) error {
+	engine, err := newTunnelEngine(s.core, opts)
+	s.tunnel = engine
+	return err
 }
 
 // AppMoveView is a move with its volume map.
@@ -97,6 +107,9 @@ func (s *AppMoves) Move(ctx context.Context, by Caller, targetID, to domain.ID) 
 			Stateful: basis.facts.stateful, CreatedBy: actor.ID, CreatedAt: now,
 		}, basis.facts.volumes)
 		if err != nil {
+			return AppMoveResult{}, err
+		}
+		if _, err := database.InsertAppMoveRoutes(ctx, tx, created.ID, basis.routes, now); err != nil {
 			return AppMoveResult{}, err
 		}
 		return s.viewOf(ctx, tx, created, submission, false)
@@ -165,7 +178,17 @@ func (s *AppMoves) admit(ctx context.Context, q database.Querier, scope deployme
 	if err := requireNoMoveConflicts(ctx, q, scope.target, dest, nil); err != nil {
 		return moveBasis{}, err
 	}
-	return newMoveBasis(ctx, q, scope, source, dest, good)
+	basis, err := newMoveBasis(ctx, q, scope, source, dest, good)
+	if err != nil {
+		return moveBasis{}, err
+	}
+	if basis.routes, err = admitMoveRoutes(ctx, q, s.core, scope.target, source, dest, nil); err != nil {
+		return moveBasis{}, err
+	}
+	if err := checkMoveAccessApps(ctx, q, s.tunnel, basis.routes); err != nil {
+		return moveBasis{}, err
+	}
+	return basis, nil
 }
 
 // resume gives the open move the plan and job of this request. It needs the move's job to have ended, the same
@@ -186,6 +209,9 @@ func (s *AppMoves) resume(ctx context.Context, tx *database.Tx, by Caller, actor
 		scope.target.SpecRevision = open.CommittedRevision
 	} else if scope.target.NodeID != open.SourceNodeID {
 		return AppMoveResult{}, smerr.New(smerr.CodeConflict, "", "the target no longer runs on the move's source node")
+	}
+	if err := requireFrozenRoutes(ctx, tx, open); err != nil {
+		return AppMoveResult{}, err
 	}
 	b, err := movePlanOfRecord(ctx, tx, scope, open, by.ID)
 	if err != nil {
@@ -289,9 +315,12 @@ func (s *AppMoves) Abandon(ctx context.Context, by Caller, targetID domain.ID) (
 		if err != nil {
 			return Submission{}, err
 		}
-		if !m.Phase.Halted() || !strings.HasPrefix(string(m.HaltedPhase), "compensating_") {
+		if !m.Phase.Halted() || !compensating(m) {
 			return Submission{}, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
 				"the move is in phase %s: only a move halted in compensation can be abandoned", m.Phase))
+		}
+		if err := requireAbandonable(ctx, tx, m); err != nil {
+			return Submission{}, err
 		}
 		b, err := buildAbandonPlan(ctx, tx, scope, m, by.ID)
 		if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/autarquico/supermgmt/internal/audit"
@@ -38,6 +37,8 @@ type appMoveHandler struct {
 	// the health verifier and the sleeper.
 	dep  *deployHandler
 	conn Connector
+	// tunnel reads the Access applications of a routed move's routes; nil when no cloudflare: block is configured.
+	tunnel *tunnelEngine
 	// checkpoint, when set, runs after every durable write of a move run; a test returns an error from it to stop
 	// the run at that checkpoint, as a crash would.
 	checkpoint func() error
@@ -166,7 +167,7 @@ func (r *moveRun) run(ctx context.Context) error {
 			return err
 		}
 	}
-	if strings.HasPrefix(string(r.move.Phase), "compensating_") {
+	if compensating(r.move) {
 		return r.h.compensate(ctx, r, errCompensationResumed)
 	}
 	return r.settle(ctx, r.forward(ctx))

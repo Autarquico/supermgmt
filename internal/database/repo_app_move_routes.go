@@ -132,15 +132,31 @@ func IncomingMoveRoutes(ctx context.Context, q Querier, nodeID domain.ID) ([]App
 // committed, in any state, halted moves included, a move that never ran excepted. A committed row is a live route of
 // the node already and is counted with the node's routes.
 func IncomingReservations(ctx context.Context, q Querier, nodeID domain.ID) (int, error) {
+	return IncomingReservationsExcept(ctx, q, nodeID, "")
+}
+
+// IncomingReservationsExcept is IncomingReservations without the rows of the move except, which a move checking its
+// own admission adds back as the routes it is about to bring. An empty except leaves out nothing.
+func IncomingReservationsExcept(ctx context.Context, q Querier, nodeID, except domain.ID) (int, error) {
 	var n int
 	err := q.QueryRowContext(ctx, `
 		SELECT count(*) FROM app_move_routes r JOIN app_moves m ON m.id = r.move_id
 		WHERE m.dest_node_id = ? AND m.phase NOT IN ('done', 'rolled_back') AND NOT `+neverRanMove+`
-		  AND r.state NOT IN ('committed', 'source_cleaned')`, nodeID).Scan(&n)
+		  AND r.state NOT IN ('committed', 'source_cleaned') AND m.id <> ?`, nodeID, except).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count incoming route reservations: %w", err)
 	}
 	return n, nil
+}
+
+// OpenRoutedMoves returns the open moves that carry routes, halted ones included and a move that never ran excepted,
+// oldest first. They are the moves that keep the routes and tunnels of their two nodes still.
+func OpenRoutedMoves(ctx context.Context, q Querier) ([]AppMove, error) {
+	return list(ctx, q, "open routed moves", `
+		SELECT `+appMoveColumns+` FROM app_moves m
+		WHERE m.phase NOT IN ('done', 'rolled_back') AND NOT `+neverRanMove+`
+		  AND EXISTS (SELECT 1 FROM app_move_routes r WHERE r.move_id = m.id)
+		ORDER BY m.created_at, m.id`, scanAppMove)
 }
 
 // commitAppMoveRoutes writes the routes of the move to B as the commit's part (inside its savepoint): each route's
