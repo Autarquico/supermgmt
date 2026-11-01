@@ -9,24 +9,30 @@ ADR-0041 moves an app target between nodes but refuses targets with routes. A ro
 
 ## Decision
 
-### Routes are switched inside the move, per route, with a record of each
+### A routed move reserves what it will touch
 
-- A move accepts routes that are `active` or `waiting` with no open job; anything unfinished refuses it.
-- `app_move_routes` holds each route's from- and to-identity and its switch state. The intended DNS content is persisted before each repoint, and a lost answer is reconciled by reading the record by ID.
+- Only `active` or `waiting` routes with no open job can move. The move reserves B's route capacity in the same calculation ordinary exposes use, and freezes both tunnel identities.
+- While it is open, exposes, unexposes and tunnel setup/rotation/disable on either node are refused at request and claim time, so the frozen identities cannot drift and recovery never depends on forward revalidation.
 
-### Serve first, repoint, commit, then clean
+### Every Cloudflare change is an intent before it is a call
 
-- After the destination is healthy, its ingress gains the incoming rules: the ingress builder counts them for the destination node.
-- Each CNAME is repointed in place (a new `UpdateDNSRecord`) after the expose ownership check and, for owners routes, after revalidating the Access app. The Access app is kept.
-- The commit writes the routes' new identity in the same fenced transaction as the target's node. The identity trigger allows exactly the move's recorded from→to change and nothing else.
-- Only then does the source ingress lose the rules, so cached clients reach the source until it is parked.
+- `app_move_routes` holds each route's from/to identity and a state for every ingress inclusion, PUT, repoint and restore. Membership is persisted before each ingress PUT; PUTs are reconciled by reading the tunnel configuration.
+- Each PATCH is a ledger intent with direction and a not-before time. A lost answer is settled only after that time, by reading the record by ID through one validator (exact ID, no siblings, marker, CNAME, proxied, A or B content). Nothing opposite is sent, withdrawn or stopped while an outcome is unknown.
 
-### Undo routes before stopping the destination
+### Serve, repoint, commit, clean — and never compensate after commit
 
-- Compensation repoints every switched record back to the source tunnel and withdraws the destination rules before the destination is stopped, so no record points at a stopped node. A failed restore halts the move with the destination still running.
+- After B is healthy: B's ingress gains the rules; each owners route's Access app is revalidated; each CNAME is repointed in place, keeping its ID and comment.
+- A missing Access app halts the route itself, which takes it out of every ingress: fail closed.
+- The commit writes the routes' new identity with the target's node. The trigger allows exactly the recorded from→to tuple, for that move, in `routes_switched`, and nothing else.
+- Afterwards A's ingress loses the rules; waiting routes are scheduled for activation when the move is `done`. A post-commit move only goes forward.
+
+### Undo DNS before stopping B
+
+- Compensation settles every unknown intent, repoints switched records back to A, withdraws B's rules, and only then runs ADR-0041's compensation. A stateful rollback has an error window from the repoint back until A is healthy again, because A may not start while B can write.
 
 ## Consequences
 
-- A stateful move with routes has the same downtime as without them; the hostname never leaves DNS.
-- A record edited by someone else during a move halts it; nothing foreign is overwritten.
-- The relaxed trigger widens what the database accepts, but only to values the move recorded beforehand.
+- The hostname never leaves DNS during a move.
+- Tunnel maintenance on A or B waits for routed moves to finish.
+- A record or Access app edited by someone else during a move halts it; nothing foreign is overwritten, and an unprotected owners route is not served.
+- The relaxed trigger widens what the database accepts only to values the move recorded beforehand.
