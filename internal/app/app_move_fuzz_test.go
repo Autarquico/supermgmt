@@ -51,7 +51,6 @@ func FuzzVolumeMapOf(f *testing.F) {
 }
 
 func TestResourceLimitsRejectsCPULimitsThatAreNotFiniteNumbers(t *testing.T) {
-	t.Skip("BUG: limitCPUs (app_move_preflight.go) hands strconv.ParseFloat's NaN and Inf through: a NaN limit makes the 'cpus > NCPU' check pass; resourceLimits must fail closed")
 	for _, cpus := range []string{"NaN", "Inf", "1e999"} {
 		if _, _, err := resourceLimits(json.RawMessage(`{"services":{"web":{"cpus":"` + cpus + `"}}}`)); err == nil {
 			t.Errorf("cpus %q was accepted", cpus)
@@ -60,7 +59,6 @@ func TestResourceLimitsRejectsCPULimitsThatAreNotFiniteNumbers(t *testing.T) {
 }
 
 func TestVolumeMapOfRefusesAMountWithNoTarget(t *testing.T) {
-	t.Skip("BUG: volumeEntry (app_move_plan.go) accepts a named-volume mount whose target (or service name) is empty and plans docker cp <c>:/. for it; volumeMapOf must fail closed")
 	model := `{"services":{"web":{"volumes":[{"type":"volume","source":"data"}]}}}`
 	if volumes, err := volumeMapOf("shop", json.RawMessage(model)); err == nil {
 		t.Errorf("volume map = %+v, want a refusal", volumes)

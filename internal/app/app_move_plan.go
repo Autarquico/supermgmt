@@ -299,6 +299,9 @@ func volumeEntry(name string, mounts []volumeMount) (database.AppMoveVolume, err
 	slices.SortStableFunc(mounts, func(a, b volumeMount) int {
 		return strings.Compare(a.service+"\x00"+a.target, b.service+"\x00"+b.target)
 	})
+	if i := slices.IndexFunc(mounts, func(m volumeMount) bool { return m.service == "" || m.target == "" }); i >= 0 {
+		return database.AppMoveVolume{}, invalidArgument("the volume %s has a mount with no service name or no target path", name)
+	}
 	i := slices.IndexFunc(mounts, func(m volumeMount) bool { return m.writable })
 	if i < 0 {
 		return database.AppMoveVolume{}, invalidArgument("the volume %s is mounted by no service read-write: nothing could export or import it", name)

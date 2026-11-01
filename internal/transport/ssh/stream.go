@@ -337,7 +337,9 @@ func (st *stream) Close() error {
 
 func (st *stream) Wait() (int, string, error) {
 	<-st.done
-	return st.exit, sanitizeDiagnostic(st.tail.String()), st.waitErr
+	// The command can end before the caller has consumed or sent every byte, so
+	// an abort (the ceiling, typically) can land after supervise settled the result.
+	return st.exit, sanitizeDiagnostic(st.tail.String()), st.failure(st.waitErr)
 }
 
 var _ transport.Stream = (*stream)(nil)

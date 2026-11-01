@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -425,7 +426,7 @@ func limitCPUs(raw json.RawMessage) (float64, error) {
 		return 0, nil
 	}
 	n, err := strconv.ParseFloat(text, 64)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
 		return 0, fmt.Errorf("cpu limit %q is not a number", text)
 	}
 	return n, nil
