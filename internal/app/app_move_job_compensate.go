@@ -31,6 +31,8 @@ const (
 	causeMoveDestStillActive = "DEST_STILL_ACTIVE"
 
 	stepCompensateStopDest    = "compensate-stop-dest"
+	stepCompensateHoldDest    = "compensate-hold-dest-"
+	stepCompensateRestoreA    = "compensate-restore-restart-"
 	stepCompensateStartSource = "compensate-start-source"
 	stepCompensateDownDest    = "compensate-down-dest"
 	// stepCompensateRmPrefix is followed by the name of the volume, which is how the reconciler knows what to look for.
@@ -104,6 +106,13 @@ func (r *moveRun) stopDest(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if slices.ContainsFunc(containers, running) || r.move.BStartedAt != nil {
+			for _, c := range containers {
+				if err := r.setRestart(ctx, r.b, r.bDep.ID, stepCompensateHoldDest+c.Name, c, restartHeld); err != nil {
+					return err
+				}
+			}
+		}
 		if slices.ContainsFunc(containers, running) {
 			err := r.mustSend(ctx, r.b, r.bDep.ID, stepCompensateStopDest, "compose.stop", r.destJob().dir().args(), true)
 			if err != nil {
@@ -142,6 +151,9 @@ func (r *moveRun) restoreSource(ctx context.Context) error {
 	if len(containers) == 0 {
 		return preflightFailed(causeMoveSourceNotRunning, "node %s runs no container of the project", r.a.node.Name)
 	}
+	if err := r.restoreRestartPolicies(ctx, containers); err != nil {
+		return err
+	}
 	if slices.ContainsFunc(containers, func(c templates.ContainerState) bool { return c.State != "running" }) {
 		err := r.mustSend(ctx, r.a, r.good.deployment.ID, stepCompensateStartSource, "compose.start", r.sourceDir().args(), true)
 		if err != nil {
@@ -149,6 +161,30 @@ func (r *moveRun) restoreSource(ctx context.Context) error {
 		}
 	}
 	return r.advance(ctx, database.AppMoveCompensatingSourceStarted, "")
+}
+
+// restoreRestartPolicies gives A's containers back the restart policy of the frozen model, which the move held at
+// "no" while A was stopped. A is the authority again, so it comes back with its daemon as it always did. Only a stateful move held it.
+func (r *moveRun) restoreRestartPolicies(ctx context.Context, containers []templates.ContainerState) error {
+	if !r.move.Stateful {
+		return nil // only a stateful move stops A before the commit
+	}
+	fz, err := r.freeze(ctx)
+	if err != nil {
+		return err
+	}
+	policies, err := restartPolicies(fz.frozen.Effective)
+	if err != nil {
+		return smerr.New(smerr.CodeInternal, "", err.Error())
+	}
+	for _, c := range containers {
+		if policy, known := policies[c.Service]; known {
+			if err := r.setRestart(ctx, r.a, r.good.deployment.ID, stepCompensateRestoreA+c.Name, c, policy); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // verifySource runs the node-scope health checks of the known-good deployment against A.
@@ -217,8 +253,12 @@ func (r *moveRun) removeCreatedVolumes(ctx context.Context, volumes []database.A
 		return err
 	}
 	for _, name := range names {
-		if _, exists := found[name]; !exists {
+		existing, exists := found[name]
+		if !exists {
 			continue
+		}
+		if err := r.requireOwnedVolume(existing); err != nil {
+			return err
 		}
 		if err := r.mustSend(ctx, r.b, r.bDep.ID, stepCompensateRmPrefix+name, "docker.volume_rm", map[string]string{"volume": name}, false); err != nil {
 			return err
@@ -231,19 +271,29 @@ func (r *moveRun) removeCreatedVolumes(ctx context.Context, volumes []database.A
 func (r *moveRun) rollBack(ctx context.Context, cause error) error {
 	var kept []string
 	if r.move.BStartedAt != nil {
-		volumes, err := database.ListAppMoveVolumes(ctx, r.h.cfg.DB.Reader(), r.move.ID)
-		if err != nil {
+		var err error
+		if kept, err = r.createdVolumes(ctx, r.h.cfg.DB.Reader()); err != nil {
 			return err
-		}
-		for _, v := range volumes {
-			if v.CreatedByMove {
-				kept = append(kept, v.VolumeName)
-			}
 		}
 	}
 	return r.change(ctx, func(ctx context.Context, tx *database.Tx) (database.AppMove, error) {
 		return r.rolledBack(ctx, tx, map[string]any{"cause": recordedError(cause), "kept_volumes": kept})
 	})
+}
+
+// createdVolumes names the volumes the move created on B.
+func (r *moveRun) createdVolumes(ctx context.Context, q database.Querier) ([]string, error) {
+	volumes, err := database.ListAppMoveVolumes(ctx, q, r.move.ID)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, v := range volumes {
+		if v.CreatedByMove {
+			names = append(names, v.VolumeName)
+		}
+	}
+	return names, nil
 }
 
 // rolledBack, inside a fenced transaction, marks B's deployment failed, moves the move from its running phase to
@@ -297,7 +347,11 @@ func (h appMoveHandler) abandon(ctx context.Context, lease jobs.Lease, job jobs.
 			return err
 		}
 		r.move = resumed
-		_, err = r.rolledBack(ctx, tx, map[string]any{"abandoned": true, "halted_phase": string(current.HaltedPhase)})
+		kept, err := r.createdVolumes(ctx, tx)
+		if err != nil {
+			return err
+		}
+		_, err = r.rolledBack(ctx, tx, map[string]any{"abandoned": true, "halted_phase": string(current.HaltedPhase), "kept_volumes": kept})
 		return err
 	})
 }

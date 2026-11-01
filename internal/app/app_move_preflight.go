@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -232,7 +233,10 @@ func (r *moveRun) requireVolumeSpace(ctx context.Context, fz frozenDeployment) e
 	if err != nil {
 		return err
 	}
-	required := imageBytes + volumeBytes + volumeBytes/volumeSpaceMargin + preflightHeadroom
+	required, err := addBytes(imageBytes, volumeBytes, volumeBytes/volumeSpaceMargin, preflightHeadroom)
+	if err != nil {
+		return preflightFailed(causePreflightUnreadable, "the bytes B needs overflow: %v", err)
+	}
 	if free < required {
 		return preflightFailed(causePreflightDiskLow,
 			"%s has %d bytes free, %d are required for the images (manifest layer bytes, not unpacked size), the volumes and a margin", root, free, required)
@@ -332,9 +336,23 @@ func (r *moveRun) sourceSizes(ctx context.Context) (map[string]int64, int64, err
 			return nil, 0, preflightFailed(causeMoveVolumeMissing, "the size of volume %s on node %s is unknown", name, r.a.node.Name)
 		}
 		sizes[name] = size
-		total += size
+		if total, err = addBytes(total, size); err != nil {
+			return nil, 0, preflightFailed(causePreflightUnreadable, "the sizes of the volumes on node %s overflow: %v", r.a.node.Name, err)
+		}
 	}
 	return sizes, total, nil
+}
+
+// addBytes is the sum of non-negative byte counts, or an error when it does not fit in an int64.
+func addBytes(values ...int64) (int64, error) {
+	var sum int64
+	for _, v := range values {
+		if v < 0 || sum > math.MaxInt64-v {
+			return 0, errors.New("the sum does not fit in an int64")
+		}
+		sum += v
+	}
+	return sum, nil
 }
 
 // requireExited reads the project's containers on n and refuses unless there is at least one and every one has
@@ -387,7 +405,9 @@ func resourceLimits(effective json.RawMessage) (memory int64, cpus float64, err 
 			if err != nil {
 				return 0, 0, fmt.Errorf("service %s: %w", name, err)
 			}
-			memory += bytes
+			if memory, err = addBytes(memory, bytes); err != nil {
+				return 0, 0, fmt.Errorf("service %s: the memory limits overflow", name)
+			}
 			if bytes > 0 {
 				break // the two spell one limit
 			}

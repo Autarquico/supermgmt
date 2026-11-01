@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -272,7 +273,7 @@ func TestMove_APlanForTheSameStateIsTheSamePlan(t *testing.T) {
 	w := newMoveWorld(t)
 	w.seedGood(goodModel{effective: modelSharedVolume})
 	first := w.mustMove()
-	w.exec(`UPDATE jobs SET state = 'failed' WHERE id = ?`, first.Submission.Job.ID)
+	w.exec(`UPDATE jobs SET state = 'failed', started_at = created_at WHERE id = ?`, first.Submission.Job.ID)
 
 	second, err := w.move()
 
@@ -554,7 +555,7 @@ func TestMove_AnOpenMoveRefusesAnotherUnlessItsJobHasEnded(t *testing.T) {
 	_, err := w.move()
 	wantRefusal(t, err, smerr.CodeConflict, "in progress")
 
-	w.exec(`UPDATE jobs SET state = 'failed' WHERE id = ?`, first.Submission.Job.ID)
+	w.exec(`UPDATE jobs SET state = 'failed', started_at = created_at WHERE id = ?`, first.Submission.Job.ID)
 	resumed, err := w.move()
 	mustf(t, err, "resume")
 	if !resumed.Resumed || resumed.Move.ID != first.Move.ID || resumed.Move.JobID != resumed.Submission.Job.ID ||
@@ -570,7 +571,7 @@ func TestMove_AResumeNamesTheMovesDestination(t *testing.T) {
 	w := newMoveWorld(t)
 	w.seedGood(goodModel{})
 	first := w.mustMove()
-	w.exec(`UPDATE jobs SET state = 'cancelled' WHERE id = ?`, first.Submission.Job.ID)
+	w.exec(`UPDATE jobs SET state = 'cancelled', started_at = created_at WHERE id = ?`, first.Submission.Job.ID)
 
 	_, err := w.svc.Move(context.Background(), w.caller(w.admin), w.target.ID, w.node.ID)
 
@@ -677,7 +678,7 @@ func TestRevalidate_ASupersededPlanIsStale(t *testing.T) {
 	w.seedGood(goodModel{})
 	first := w.mustMove()
 	old := w.approved(first)
-	w.exec(`UPDATE jobs SET state = 'failed' WHERE id = ?`, first.Submission.Job.ID)
+	w.exec(`UPDATE jobs SET state = 'failed', started_at = created_at WHERE id = ?`, first.Submission.Job.ID)
 	w.mustMove()
 
 	wantError(t, w.revalidate(old), smerr.CodeConflict, smerr.ReasonPlanStale)
@@ -818,7 +819,7 @@ func TestCleanupSource_FreezesTheDoneMoveTheSourceAndItsDeployment(t *testing.T)
 
 	mustf(t, err, "CleanupSource")
 	p := w.planOfJob(sub.Job)
-	if sub.Job.Type != appMoveCleanupAction || sub.Job.Risk != domain.RiskOperational || p.Parameters["move_id"] != m.ID.String() {
+	if sub.Job.Type != appMoveCleanupAction || sub.Job.Risk != domain.RiskHigh || p.Parameters["move_id"] != m.ID.String() {
 		t.Fatalf("job %s risk %s params %v", sub.Job.Type, sub.Job.Risk, p.Parameters)
 	}
 	if rt := p.Content.RollbackTarget; rt == nil || rt.DeploymentID != good.ID.String() {
@@ -836,9 +837,11 @@ func TestCleanupSource_FreezesTheDoneMoveTheSourceAndItsDeployment(t *testing.T)
 	if got := w.locksOf(sub.Job); !slices.Equal(got, want) {
 		t.Errorf("locks = %v\nwant    %v", got, want)
 	}
-	if sub.Job.State != domain.JobQueued {
-		t.Fatalf("job state %s, want queued: a cleanup is operational", sub.Job.State)
+	if sub.Job.State != domain.JobAwaitingApproval {
+		t.Fatalf("job state %s, want awaiting approval: a cleanup is high risk, in every environment", sub.Job.State)
 	}
+	_, err = w.approve(w.bob, sub.Job)
+	mustf(t, err, "approve the cleanup")
 	mustf(t, w.revalidate(sub.Job), "Revalidate")
 }
 
@@ -899,6 +902,8 @@ func TestAbandon_OnlyAMoveHaltedInCompensation(t *testing.T) {
 	w.exec(`UPDATE app_moves SET halted_phase = 'compensating_source_started' WHERE id = ?`, res.Move.ID)
 	sub, err := w.svc.Abandon(ctx, w.caller(w.admin), w.target.ID)
 	mustf(t, err, "Abandon")
+	_, err = w.approve(w.bob, sub.Job)
+	mustf(t, err, "approve the abandon")
 	p := w.planOfJob(sub.Job)
 	if sub.Job.Type != appMoveAbandonAction || p.Parameters["move_id"] != res.Move.ID.String() || len(plannedNodes(p)) != 0 {
 		t.Errorf("job %s plan %+v, want an abandon of the move that names no node", sub.Job.Type, p)
@@ -964,5 +969,74 @@ func TestMove_AnApprovedMoveIsClaimedThroughRevalidationAndLocks(t *testing.T) {
 
 	if !ok || claimed.Job.ID != job.ID || claimed.Job.State != domain.JobRunning {
 		t.Fatalf("claimed %+v (found %v), want the approved move running", claimed.Job, ok)
+	}
+}
+
+// ---- the fixes of review round 1 -----------------------------------------------------------------------
+
+func TestMove_AMoveWhoseJobEndedBeforeItRanNeitherBlocksTheTargetNorTheNextRequest(t *testing.T) {
+	t.Run("the target is free for other work", func(t *testing.T) {
+		w := newMoveWorld(t)
+		w.seedGood(goodModel{})
+		first := w.mustMove()
+		w.exec(`UPDATE jobs SET state = 'cancelled' WHERE id = ?`, first.Submission.Job.ID)
+
+		if err := requireNoOpenMove(context.Background(), w.db.Reader(), w.target.ID); err != nil {
+			t.Errorf("a move that never ran blocks the target: %v", err)
+		}
+		if _, err := w.deployments.Create(context.Background(), w.caller(w.deployer), w.request()); err != nil && strings.Contains(err.Error(), "move") {
+			t.Errorf("deployment refused because of the move: %v", err)
+		}
+	})
+	t.Run("the next request settles it and starts a new move", func(t *testing.T) {
+		w := newMoveWorld(t)
+		w.seedGood(goodModel{})
+		first := w.mustMove()
+		w.exec(`UPDATE jobs SET state = 'cancelled' WHERE id = ?`, first.Submission.Job.ID)
+
+		second, err := w.move()
+
+		mustf(t, err, "Move")
+		if second.Resumed || second.Move.ID == first.Move.ID {
+			t.Errorf("second = %+v, want a new move", second.Move)
+		}
+		old, err := database.GetAppMove(context.Background(), w.db.Reader(), first.Move.ID)
+		mustf(t, err, "GetAppMove")
+		if old.Phase != database.AppMoveRolledBack {
+			t.Errorf("the first move is %s, want rolled_back", old.Phase)
+		}
+		if got := len(w.events("app_move.rolled_back")); got != 1 {
+			t.Errorf("rolled_back events = %d, want 1", got)
+		}
+	})
+}
+
+func TestRevalidate_AfterTheCommitTheNodesAreStillTheOnesThePlanPinned(t *testing.T) {
+	w := newMoveWorld(t)
+	w.seedGood(goodModel{})
+	res := w.mustMove()
+	job := w.approved(res)
+	w.commitBySQL(res.Move)
+	mustf(t, w.revalidate(job), "Revalidate before the endpoint changes")
+
+	w.exec(`UPDATE nodes SET endpoint_json = json_set(endpoint_json, '$.host', '203.0.113.9') WHERE id = ?`, w.node.ID)
+
+	wantError(t, w.revalidate(job), smerr.CodeConflict, smerr.ReasonPlanStale)
+}
+
+func TestAddBytes_FailsClosedWhereTheSumDoesNotFit(t *testing.T) {
+	if got, err := addBytes(1, 2, 3); err != nil || got != 6 {
+		t.Errorf("addBytes(1,2,3) = %d, %v", got, err)
+	}
+	for name, values := range map[string][]int64{
+		"two large": {math.MaxInt64 / 2, math.MaxInt64/2 + 2}, "negative": {1, -1}, "the maximum plus one": {math.MaxInt64, 1},
+	} {
+		if _, err := addBytes(values...); err == nil {
+			t.Errorf("%s: the sum was accepted", name)
+		}
+	}
+	model := json.RawMessage(`{"services":{"a":{"mem_limit":"4611686018427387904"},"b":{"mem_limit":"4611686018427387904"}}}`)
+	if _, _, err := resourceLimits(model); err == nil {
+		t.Error("memory limits that overflow together were accepted")
 	}
 }

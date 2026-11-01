@@ -198,14 +198,12 @@ func (r *moveRun) settle(ctx context.Context, err error) error {
 	return err
 }
 
-// ends reports whether err settles the move: a definite, typed refusal, or the failure of the job's last attempt.
-// A shutdown, a lost lease, an unknown outcome and a node that does not answer leave the move as it is for the retry.
+// ends reports whether err settles the move. Only a shutdown, a lost lease and an unknown outcome leave it for the
+// reconciler. The job is resumable and never requeued, so any other failure, a node that does not answer included,
+// ends the move: it compensates before the commit and halts after.
 func (r *moveRun) ends(ctx context.Context, err error) bool {
 	if ctx.Err() != nil || errors.Is(err, jobs.ErrOutcomeUnknown) || errors.Is(err, jobs.ErrLeaseLost) {
 		return false
-	}
-	if code := smerr.CodeOf(err); isTyped(err) && code != smerr.CodeNodeUnreachable && code != smerr.CodeTimeout {
-		return true
 	}
 	return r.job.RetryClass != domain.RetryIdempotent || r.job.Attempts >= r.job.MaxAttempts
 }

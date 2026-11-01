@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -127,7 +128,29 @@ func requireNoOtherOpenMove(ctx context.Context, q database.Querier, targetID do
 	case own != nil && open.ID == *own:
 		return nil
 	}
+	never, err := moveNeverRan(ctx, q, open)
+	if err != nil || never {
+		return err
+	}
 	return openMoveError(open)
+}
+
+// moveNeverRan reports an open move that no worker will ever run: still at preflight with no deployment on B, and
+// its job ended without having been claimed (its plan was rejected or expired, or the job was cancelled). It holds
+// nothing on any node, so it neither blocks the target nor needs a command to settle; the next move request
+// settles it.
+func moveNeverRan(ctx context.Context, q database.Querier, m database.AppMove) (bool, error) {
+	if m.Phase != database.AppMovePreflight || m.DestDeploymentID != nil {
+		return false, nil
+	}
+	var (
+		state   domain.JobState
+		started *int64
+	)
+	if err := q.QueryRowContext(ctx, `SELECT state, started_at FROM jobs WHERE id = ?`, m.JobID).Scan(&state, &started); err != nil {
+		return false, fmt.Errorf("read the job of move %s: %w", m.ID, err)
+	}
+	return state.Terminal() && started == nil, nil
 }
 
 // requireNoOpenMove is the refusal of every other path that would change a target while it is being moved.
@@ -554,9 +577,28 @@ func rebuildMove(ctx context.Context, q database.Querier, rec database.PlanRecor
 		return built{}, err
 	}
 	if pastCommit(m) {
-		return b, nil
+		return b, requireSameNodePins(b.plan, stored)
 	}
 	return b, requireSamePlan(b, rec)
+}
+
+// requireSameNodePins refuses a plan whose nodes are not reached at the endpoints and host keys it was approved with.
+// It is what stays of the plan hash once the commit has changed the target the rest of the plan describes.
+func requireSameNodePins(current, stored plan.Plan) error {
+	pins := func(p plan.Plan) map[string]plan.Input {
+		out := map[string]plan.Input{}
+		for _, in := range p.Inputs {
+			if in.Type == string(domain.ResourceNode) {
+				in.SpecRevision = nil
+				out[in.ID] = in
+			}
+		}
+		return out
+	}
+	if !reflect.DeepEqual(pins(current), pins(stored)) {
+		return planStale()
+	}
+	return nil
 }
 
 // requireCommittedMove checks a committed move against the world it wrote: the target runs on B at the revision

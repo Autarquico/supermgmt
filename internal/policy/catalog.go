@@ -279,9 +279,9 @@ func buildCatalog() []ActionSpec {
 
 	appMove := job(ActionAppTargetMove, domain.ResourceAppTarget, high, resume, "docker.compose.deploy", 3)
 	appMove.Params = []ParamSpec{{Name: ParamToNode, Type: ParamString, Required: true}}
-	appMoveCleanup := job(ActionAppTargetCleanup, domain.ResourceAppTarget, op, idem, "docker.compose.deploy", 3)
+	appMoveCleanup := job(ActionAppTargetCleanup, domain.ResourceAppTarget, high, idem, "docker.compose.deploy", 3)
 	appMoveCleanup.Params = []ParamSpec{{Name: ParamMoveID, Type: ParamString, Required: true}}
-	appMoveAbandon := job(ActionAppTargetAbandon, domain.ResourceAppTarget, op, idem, "", 3)
+	appMoveAbandon := job(ActionAppTargetAbandon, domain.ResourceAppTarget, high, idem, "", 3)
 	appMoveAbandon.Params = []ParamSpec{{Name: ParamMoveID, Type: ParamString, Required: true}}
 
 	return []ActionSpec{

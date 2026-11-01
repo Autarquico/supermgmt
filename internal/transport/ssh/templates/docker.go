@@ -16,8 +16,18 @@ func ValidateContainer(s string) error {
 	return nil
 }
 
+// ValidateRestartPolicy accepts the restart policies a Compose model can set.
+func ValidateRestartPolicy(s string) error {
+	switch s {
+	case "no", "always", "on-failure", "unless-stopped":
+		return nil
+	}
+	return fmt.Errorf("not a restart policy")
+}
+
 var (
 	paramContainer = Param{Name: "container", Validate: ValidateContainer}
+	paramRestart   = Param{Name: "policy", Validate: ValidateRestartPolicy}
 	paramVolume    = Param{Name: "volume", Validate: ValidateVolume}
 )
 
@@ -82,6 +92,13 @@ var dockerTemplates = []Template{
 		Name: "docker.volume_rm", Params: []Param{paramVolume}, Mutating: true,
 		Deadline: ActionDeadline, MaxBytes: 64 << 10,
 		Body: "docker volume rm -- {{volume}}",
+	},
+	{
+		// Sets the restart policy of one container, so a container stopped on purpose does not come back with the
+		// Docker daemon.
+		Name: "docker.update_restart", Params: []Param{paramContainer, paramRestart}, Mutating: true,
+		Deadline: ActionDeadline, MaxBytes: 64 << 10,
+		Body: "docker update --restart {{policy}} -- {{container}}",
 	},
 	{
 		Name: "docker.info_resources", MaxBytes: 1 << 10, MaxLines: 5,

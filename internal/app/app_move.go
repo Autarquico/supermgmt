@@ -65,7 +65,16 @@ func (s *AppMoves) Move(ctx context.Context, by Caller, targetID, to domain.ID) 
 		open, err := database.GetOpenAppMoveByTarget(ctx, tx, targetID)
 		switch {
 		case err == nil:
-			return s.resume(ctx, tx, by, actor, scope, open, to)
+			never, nerr := moveNeverRan(ctx, tx, open)
+			if nerr != nil {
+				return AppMoveResult{}, nerr
+			}
+			if !never {
+				return s.resume(ctx, tx, by, actor, scope, open, to)
+			}
+			if err := s.settleNeverRan(ctx, tx, actor, scope.target, open); err != nil {
+				return AppMoveResult{}, err
+			}
 		case smerr.CodeOf(err) != smerr.CodeNotFound:
 			return AppMoveResult{}, err
 		}
@@ -91,6 +100,20 @@ func (s *AppMoves) Move(ctx context.Context, by Caller, targetID, to domain.ID) 
 			return AppMoveResult{}, err
 		}
 		return s.viewOf(ctx, tx, created, submission, false)
+	})
+}
+
+// settleNeverRan ends a move whose plan or job ended before a worker claimed it (rejected or expired plan, cancelled
+// job) as rolled_back. It touched no node, so no command is needed, and the target is free again.
+func (s *AppMoves) settleNeverRan(ctx context.Context, tx *database.Tx, actor domain.Actor, target database.AppTarget, m database.AppMove) error {
+	rolled, err := database.AdvanceAppMovePhase(ctx, tx, m.ID, m.Phase, database.AppMoveRolledBack, s.cfg.Clock.Now())
+	if err != nil {
+		return err
+	}
+	return s.emit(ctx, tx, actor, eventAppMoveRolledBack, appTargetRef(target.ID), domain.ResultFailed, map[string]any{
+		"move_id": m.ID.String(), "job_id": m.JobID.String(), "phase": string(rolled.Phase),
+		"source_node_id": m.SourceNodeID.String(), "dest_node_id": m.DestNodeID.String(),
+		"cause": "the plan or job of the move ended before it ran",
 	})
 }
 

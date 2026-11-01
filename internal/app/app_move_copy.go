@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/database"
+	"github.com/autarquico/supermgmt/internal/deployments/compose"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
@@ -26,6 +27,9 @@ const (
 	moveMinCopyTime   = 10 * time.Minute
 	moveCopyRate      = 5 << 20 // bytes per second a deadline assumes
 	moveCeilingMargin = 64 << 20
+	// moveOpenBound is the most opening the import stream may take. The node-side timeout starts once the command
+	// does, so the recorded deadline includes it: "deadline passed" then proves the import command ended.
+	moveOpenBound = time.Minute
 )
 
 // copyBounds are the node-side deadline of one copy and the most bytes it may carry for a volume of size bytes.
@@ -110,12 +114,18 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 		return smerr.New(smerr.CodeInternal, "", "the volume import cannot be rendered for the node")
 	}
 	opts := transport.StreamOptions{Total: timeout + templates.KillAfter, Idle: moveStreamIdle, Ceiling: ceiling}
-	deadline := r.h.cfg.Clock.Now().Add(timeout + templates.KillAfter)
+	// The export is a read with no intent: if it cannot open, nothing has happened on B and no import is recorded.
+	exp, err := r.h.conn.OpenStream(ctx, r.a.node, r.a.setup, exportCmd, opts)
+	if err != nil {
+		return err
+	}
+	deadline := r.h.cfg.Clock.Now().Add(timeout + templates.KillAfter + moveOpenBound)
 	err = r.fenced(ctx, func(ctx context.Context, tx *database.Tx) error {
 		_, err := database.BeginAppMoveVolumeImport(ctx, tx, r.move.ID, v.VolumeName, v.Attempt, deadline, r.h.cfg.Clock.Now())
 		return err
 	})
 	if err != nil {
+		abortStream(exp)
 		return err
 	}
 	ledger := deployLedger{h: *r.h.dep, lease: r.lease}
@@ -127,25 +137,26 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 		TargetType: string(domain.ResourceDeployment), TargetID: r.bDep.ID.String(), PreState: pre, DeadlineAt: deadline,
 	})
 	if err != nil {
+		abortStream(exp)
 		return err
 	}
 	if err := ledger.MarkDispatched(ctx, intent); err != nil {
+		abortStream(exp)
 		return err
 	}
 
-	imp, err := r.h.conn.OpenStream(ctx, r.b.node, r.b.setup, importCmd, opts)
+	streamCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	giveUp := time.AfterFunc(moveOpenBound, stop)
+	imp, err := r.h.conn.OpenStream(streamCtx, r.b.node, r.b.setup, importCmd, opts)
+	giveUp.Stop()
 	if err != nil {
+		abortStream(exp)
 		// Nothing was opened, so nothing ran on B: the import never started.
 		if cerr := ledger.CompleteIntent(ctx, intent, jobs.OutcomeFailed, commandExitEvidence(jobs.OutcomeFailed, 0)); cerr != nil {
 			return cerr
 		}
 		return &volumeFailure{volume: v.VolumeName, cause: err, stopped: true}
-	}
-	exp, err := r.h.conn.OpenStream(ctx, r.a.node, r.a.setup, exportCmd, opts)
-	if err != nil {
-		imp.Abort()
-		_, _, werr := imp.Wait()
-		return &volumeFailure{volume: v.VolumeName, cause: err, stopped: werr == nil}
 	}
 
 	tee := newManifestTee(exp)
@@ -176,6 +187,11 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 		_, err := database.CompleteAppMoveVolumeImport(ctx, tx, r.move.ID, v.VolumeName, v.Attempt, manifest.Bytes, manifest.Digest, r.h.cfg.Clock.Now())
 		return err
 	})
+}
+
+func abortStream(st transport.Stream) {
+	st.Abort()
+	_, _, _ = st.Wait()
 }
 
 // importEnded reports whether a failed copy proves the import command ended: the importer's exit status is known and
@@ -213,13 +229,17 @@ func (r *moveRun) verifyVolume(ctx context.Context, v database.AppMoveVolume) er
 		st.Abort()
 	}
 	exit, tail, waitErr := st.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The export is a read and B's import has ended, so any failure of it fails the attempt and the volume is replaced.
 	switch {
-	case waitErr != nil:
-		return waitErr
-	case exit != 0:
-		return &volumeFailure{volume: v.VolumeName, cause: fmt.Errorf("the export from B exited %d (%s)", exit, tail), stopped: true}
 	case readErr != nil:
 		return &volumeFailure{volume: v.VolumeName, cause: fmt.Errorf("the archive from B cannot be read: %w", readErr), stopped: true}
+	case waitErr != nil:
+		return &volumeFailure{volume: v.VolumeName, cause: fmt.Errorf("the export from B failed: %w", waitErr), stopped: true}
+	case exit != 0:
+		return &volumeFailure{volume: v.VolumeName, cause: fmt.Errorf("the export from B exited %d (%s)", exit, tail), stopped: true}
 	case got.Digest != v.SourceDigest:
 		return &volumeFailure{volume: v.VolumeName, stopped: true, cause: fmt.Errorf(
 			"the destination holds %d bytes in %d entries that differ from the %d bytes the source exported", got.Bytes, got.Count, v.SourceBytes)}
@@ -254,7 +274,10 @@ func (r *moveRun) replaceVolume(ctx context.Context, failed *volumeFailure) erro
 	if err != nil {
 		return err
 	}
-	if _, exists := found[v.VolumeName]; exists {
+	if existing, exists := found[v.VolumeName]; exists {
+		if err := r.requireOwnedVolume(existing); err != nil {
+			return err
+		}
 		if err := r.mustSend(ctx, r.b, j.dep.ID, "replace-volume-rm", "docker.volume_rm", map[string]string{"volume": v.VolumeName}, false); err != nil {
 			return err
 		}
@@ -266,6 +289,15 @@ func (r *moveRun) replaceVolume(ctx context.Context, failed *volumeFailure) erro
 		_, err := database.ResetAppMoveVolume(ctx, tx, r.move.ID, v.VolumeName, v.Attempt, v.State, r.h.cfg.Clock.Now())
 		return err
 	})
+}
+
+// requireOwnedVolume refuses to remove a volume of B that does not bear this target's owner label: the row says this
+// move created it, but a volume that appeared by another hand under the same name is not the move's to delete.
+func (r *moveRun) requireOwnedVolume(v templates.Volume) error {
+	if v.Labels[compose.LabelOwner] != r.target.ID.String() {
+		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("volume %s on node %s does not bear this target's owner label and is not removed", v.Name, r.b.node.Name))
+	}
+	return nil
 }
 
 // awaitImportEnd leaves an import of unknown outcome alone until its deadline, which includes the kill margin, has

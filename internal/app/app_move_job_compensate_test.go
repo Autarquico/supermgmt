@@ -196,8 +196,17 @@ func TestCompensation_ASourceThatDoesNotComeBackHaltsWithBStoppedAndAbandonRecor
 
 	first, err := w.svc.Abandon(ctx, w.caller(w.admin), w.target.ID)
 	mustf(t, err, "Abandon")
+	if first.Job.State != domain.JobAwaitingApproval {
+		t.Errorf("abandon job is %s, want it awaiting approval in staging too", first.Job.State)
+	}
+	_, err = w.approve(w.bob, first.Job)
+	mustf(t, err, "approve the abandon")
 	second, err := w.svc.Abandon(ctx, w.caller(w.admin), w.target.ID)
 	mustf(t, err, "Abandon again")
+	if second.Job.ID != first.Job.ID {
+		_, err = w.approve(w.bob, second.Job)
+		mustf(t, err, "approve the second abandon")
+	}
 	mustf(t, w.runClaimed(first.Job), "abandon job")
 
 	m = w.moveRow()
@@ -210,8 +219,8 @@ func TestCompensation_ASourceThatDoesNotComeBackHaltsWithBStoppedAndAbandonRecor
 	if dep := w.row(*m.DestDeploymentID); dep.State != deployments.StateFailed {
 		t.Errorf("B's deployment = %s, want failed so the target is not blocked by it", dep.State)
 	}
-	if events := w.events("app_move.rolled_back"); len(events) != 1 || events[0].Data["abandoned"] != true {
-		t.Errorf("rolled_back events = %+v, want one marked abandoned", events)
+	if events := w.events("app_move.rolled_back"); len(events) != 1 || events[0].Data["abandoned"] != true || len(w.keptVolumes(events[0])) != 2 {
+		t.Errorf("rolled_back events = %+v, want one marked abandoned that lists the two volumes left on B", events)
 	}
 	w.endJob(nil)
 
@@ -460,7 +469,12 @@ func (w *runWorld) doneAndCleanupRequested(t *testing.T) jobs.Job {
 	w.endJob(nil)
 	sub, err := w.svc.CleanupSource(context.Background(), w.caller(w.admin), w.target.ID)
 	mustf(t, err, "CleanupSource")
-	return sub.Job
+	if sub.Job.State != domain.JobAwaitingApproval {
+		t.Errorf("cleanup job is %s, want it awaiting approval in staging too", sub.Job.State)
+	}
+	job, err := w.approve(w.bob, sub.Job)
+	mustf(t, err, "approve the cleanup")
+	return job
 }
 
 func TestCleanup_RemovesTheParkedSourceKeepsAndListsItsVolumesAndTouchesNothingOnB(t *testing.T) {
@@ -473,8 +487,8 @@ func TestCleanup_RemovesTheParkedSourceKeepsAndListsItsVolumesAndTouchesNothingO
 	if w.a.state != "none" {
 		t.Errorf("A is %s, want its containers removed", w.a.state)
 	}
-	if got := w.mutations(w.a); !slices.Equal(got, []string{"compose.stop", "compose.down"}) {
-		t.Errorf("A mutations = %v, want the stop of the move and then a down", got)
+	if got := w.mutations(w.a); !slices.Equal(got, []string{"docker.update_restart", "docker.update_restart", "compose.stop", "compose.down"}) {
+		t.Errorf("A mutations = %v, want the restart hold and stop of the move and then a down", got)
 	}
 	for _, name := range w.volumeNames() {
 		if _, present := w.a.volumeFiles(name); !present {
@@ -492,6 +506,8 @@ func TestCleanup_RemovesTheParkedSourceKeepsAndListsItsVolumesAndTouchesNothingO
 	w.endJob(nil)
 	again, err := w.svc.CleanupSource(context.Background(), w.caller(w.admin), w.target.ID)
 	mustf(t, err, "CleanupSource again")
+	_, err = w.approve(w.bob, again.Job)
+	mustf(t, err, "approve the cleanup again")
 	mustf(t, w.runClaimed(again.Job), "cleanup job when nothing is left")
 	if got := countOf(w.mutations(w.a), "compose.down"); got != 1 {
 		t.Errorf("compose down ran %d times, want the second cleanup to find nothing to remove", got)

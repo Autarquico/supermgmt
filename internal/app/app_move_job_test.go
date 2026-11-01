@@ -65,6 +65,8 @@ services:
 `
 )
 
+var simRestart = regexp.MustCompile(`--restart '([a-z-]+)' -- '([0-9a-f]+)'`)
+
 var simUUID = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 // moveSim is one node as a move sees it: Compose containers with a state, named volumes holding files, and the
@@ -82,15 +84,18 @@ type moveSim struct {
 	cpus       int
 	free       int64
 	noPlatform bool
-	marker     string         // the answer to marker.state; "" means the command finished with exit 0
-	imports    map[string]int // applied imports per volume
-	exports    map[string]int // export sessions opened per volume
+	marker     string            // the answer to marker.state; "" means the command finished with exit 0
+	imports    map[string]int    // applied imports per volume
+	exports    map[string]int    // export sessions opened per volume
+	restart    map[string]string // restart policy by container ID, as docker update --restart set it
+	foreign    map[string]bool   // volumes that bear no owner label
 }
 
 func newMoveSim(w *runWorld, label string, id domain.ID) *moveSim {
 	s := &moveSim{
 		w: w, label: label, node: newFakeNode(w.t), state: "none", volumes: map[string]map[string]string{},
 		memTotal: 8 << 30, cpus: 4, free: 1 << 40, imports: map[string]int{}, exports: map[string]int{},
+		restart: map[string]string{}, foreign: map[string]bool{},
 	}
 	s.node.fallback = s.handle
 	w.dialer.route(id, s.node)
@@ -187,6 +192,14 @@ func (s *moveSim) answer(c templates.Command) (transport.Result, error) {
 		return s.w.verifyReply(c)
 	case "compose.create":
 		s.create(c.Line)
+	case "docker.update_restart":
+		match := simRestart.FindStringSubmatch(c.Line)
+		if match == nil {
+			s.w.t.Errorf("node %s: update_restart with no policy and container: %s", s.label, c.Line)
+			return exited(2)
+		}
+		s.restart[match[2]] = match[1]
+		s.logf("restart %s", match[1])
 	case "compose.start":
 		if s.state != "none" {
 			s.state = "running"
@@ -244,6 +257,14 @@ func (s *moveSim) psState() string {
 	return out.String()
 }
 
+// restartOf is the restart policy docker update last set on the container of service, or "" when none did.
+func (s *moveSim) restartOf(service string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := sha256.Sum256([]byte(s.label + fmt.Sprintf("%s-%s-1", s.w.project(), service)))
+	return s.restart[hex.EncodeToString(id[:])]
+}
+
 func (s *moveSim) volumeSizes() string {
 	var rows []string
 	for name := range s.volumes {
@@ -257,7 +278,11 @@ func (s *moveSim) inspectVolumes(line string) string {
 	var rows []string
 	for _, name := range s.w.volumeNames() {
 		if _, present := s.volumes[name]; present && strings.Contains(line, name) {
-			rows = append(rows, fmt.Sprintf(`{"Name":%q,"Driver":"local","Labels":{}}`, name))
+			labels := fmt.Sprintf(`{%q:%q}`, compose.LabelOwner, s.w.target.ID)
+			if s.foreign[name] {
+				labels = "{}"
+			}
+			rows = append(rows, fmt.Sprintf(`{"Name":%q,"Driver":"local","Labels":%s}`, name, labels))
 		}
 	}
 	return "[" + strings.Join(rows, ",") + "]"
@@ -317,6 +342,9 @@ func (s *moveSim) openStream(c templates.Command) (transport.Stream, error) {
 			files = map[string]string{}
 		}
 		st.reader = bytes.NewReader(simTar(files))
+		if st.mode == "garbage" {
+			st.reader = bytes.NewReader(bytes.Repeat([]byte{'x'}, 2048))
+		}
 		return st, nil
 	}
 	s.logf("import %s", mount)
@@ -344,6 +372,9 @@ func (st *simStream) Wait() (int, string, error) {
 		return 0, "", transport.ErrStreamAborted
 	}
 	if st.kind == templates.StreamExport {
+		if st.s.label == "B" && st.s.w.afterVerify != nil {
+			st.s.w.afterVerify()
+		}
 		if st.mode == "exit1" {
 			return 1, "docker cp failed", nil
 		}
@@ -410,8 +441,16 @@ type runDialer struct {
 	w *runWorld
 }
 
-func (d runDialer) OpenStream(_ context.Context, t ssh.Target, c templates.Command, _ transport.StreamOptions) (transport.Stream, error) {
-	return d.w.simOf(t.NodeID).openStream(c)
+func (d runDialer) OpenStream(ctx context.Context, t ssh.Target, c templates.Command, _ transport.StreamOptions) (transport.Stream, error) {
+	sim := d.w.simOf(t.NodeID)
+	if d.w.openFail[fmt.Sprintf("%s/%d", sim.label, c.Stream)] {
+		return nil, smerr.New(smerr.CodeNodeUnreachable, "", "no session could be opened")
+	}
+	if c.Stream == templates.StreamImport {
+		d.w.clock.Advance(d.w.openDelay)
+		d.w.extendLease(ctx)
+	}
+	return sim.openStream(c)
 }
 
 // ---- the world -------------------------------------------------------------------------------------------------
@@ -432,17 +471,20 @@ type runWorld struct {
 	lease    jobs.Lease
 	mounts   map[string]string // mount target -> volume name
 
-	mu        sync.Mutex
-	log       []string
-	faults    []streamFault
-	seen      map[string]int
-	crash     map[string]int // kind -> the tick to stop at
-	ticks     map[string]int
-	unhealthy bool
-	healthyA  bool // the source answers its health checks even when unhealthy is set
-	stuck     bool // sleeping does not move the clock
-	before    func(label string, c templates.Command)
-	hook      func() // runs when B's health check is asked
+	mu          sync.Mutex
+	log         []string
+	faults      []streamFault
+	seen        map[string]int
+	crash       map[string]int // kind -> the tick to stop at
+	ticks       map[string]int
+	unhealthy   bool
+	healthyA    bool // the source answers its health checks even when unhealthy is set
+	stuck       bool // sleeping does not move the clock
+	before      func(label string, c templates.Command)
+	hook        func()          // runs when B's health check is asked
+	afterVerify func()          // runs when the export that verifies a volume ends on B
+	openDelay   time.Duration   // how long opening an import stream takes
+	openFail    map[string]bool // "A/<kind>" or "B/<kind>": opening that kind of stream fails
 }
 
 func newRunWorld(t *testing.T, o runOptions) *runWorld {
@@ -721,8 +763,11 @@ func TestMoveRun_AStatelessAppMovesAndASourceKeepsServingUntilBIsHealthy(t *test
 	if volumes := w.exportsAndImports(); len(volumes) != 0 {
 		t.Errorf("a stateless move copied data: %v", volumes)
 	}
-	if got := w.mutations(w.a); !slices.Equal(got, []string{"compose.stop"}) {
-		t.Errorf("mutations on A = %v, want the park only", got)
+	if got := w.mutations(w.a); !slices.Equal(got, []string{"docker.update_restart", "compose.stop"}) {
+		t.Errorf("mutations on A = %v, want the restart hold and the park only", got)
+	}
+	if got := w.a.restartOf("web"); got != "no" {
+		t.Errorf("A's restart policy = %q, want it held at no so the parked source cannot come back", got)
 	}
 	want := []string{"compose.pull", "compose.materialize", "compose.create", "compose.start"}
 	if got := w.mutations(w.b); !slices.Equal(got, want) {
@@ -1328,4 +1373,169 @@ func TestResourceLimits(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---- the fixes of review round 1 -----------------------------------------------------------------------------------
+
+func TestMoveRun_TheRecordedImportDeadlineCoversTheTimeOpeningTheStreamTook(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.fail("B", templates.StreamImport, "/data", 1, "lost")
+	w.stuck = true
+	w.openDelay = 30 * time.Second
+
+	err := w.run()
+
+	if !errors.Is(err, jobs.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want an unknown outcome", err)
+	}
+	timeout, _ := copyBounds(1 << 20)
+	opened := w.clock.Now() // the clock moved only while the stream opened
+	v := w.volumeRow(w.mounts["/data"])
+	if v.ImportDeadlineAt == nil || v.ImportDeadlineAt.Before(opened.Add(timeout+templates.KillAfter)) {
+		t.Errorf("import deadline %v is before the node-side timeout can end: opened %v + %s + %s", v.ImportDeadlineAt, opened, timeout, templates.KillAfter)
+	}
+}
+
+func TestMoveRun_AnExportThatCannotOpenRecordsNoImportAndWaitsForNone(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.openFail = map[string]bool{fmt.Sprintf("A/%d", templates.StreamExport): true}
+	start := w.clock.Now()
+
+	err := w.run()
+
+	if err == nil {
+		t.Fatal("Run succeeded")
+	}
+	if got := countOf(w.logged(), "B import /data"); got != 0 {
+		t.Errorf("imports opened = %d, want none: the export failed first", got)
+	}
+	if v := w.volumeRow(w.mounts["/data"]); v.State != database.AppMoveVolumePending || v.ImportDeadlineAt != nil {
+		t.Errorf("volume = %+v, want pending with no import in doubt", v)
+	}
+	if waited := w.clock.Now().Sub(start); waited >= 10*time.Minute {
+		t.Errorf("the run waited %s for an import that never started", waited)
+	}
+	if m := w.moveRow(); m.Phase != database.AppMoveRolledBack {
+		t.Errorf("move = %+v, want rolled back", m)
+	}
+}
+
+func TestMoveRun_AnUnreadableVerificationExportReplacesTheVolumeInsteadOfEndingTheMove(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.fail("B", templates.StreamExport, "/data", 1, "garbage")
+
+	mustf(t, w.run(), "Run")
+
+	data := w.mounts["/data"]
+	if v := w.volumeRow(data); v.State != database.AppMoveVolumeVerified || v.Attempt != 2 {
+		t.Errorf("volume = %+v, want verified at the second attempt", v)
+	}
+	a, _ := w.a.volumeFiles(data)
+	if b, _ := w.b.volumeFiles(data); !maps_equal(a, b) {
+		t.Errorf("B holds %v, want exactly A's %v", b, a)
+	}
+}
+
+func TestMoveRun_AVolumeThatBearsNoOwnerLabelIsNeverRemovedOnReplacement(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	data := w.mounts["/data"]
+	w.b.foreign[data] = true
+	w.fail("B", templates.StreamImport, "/data", 1, "exit1")
+
+	err := w.run()
+
+	wantAppsCode(t, err, smerr.CodeConflict)
+	if _, present := w.b.volumeFiles(data); !present {
+		t.Error("the foreign volume is gone from B")
+	}
+}
+
+const moveRestartCompose = `
+services:
+  web:
+    image: ghcr.io/acme/web:placeholder
+    restart: always
+    environment:
+      DATABASE_URL: ${secret:db}
+    ports:
+      - {target: 8080, published: 8080, host_ip: 127.0.0.1}
+    volumes:
+      - {type: volume, source: data, target: /data}
+  redis:
+    image: docker.io/library/redis@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    restart: unless-stopped
+    volumes:
+      - {type: volume, source: data, target: /data, read_only: true}
+volumes:
+  data: {}
+`
+
+func TestMoveRun_AStoppedSourceIsHeldAtNoRestartAndGetsItsFrozenPolicyBackOnRollback(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveRestartCompose})
+	w.started()
+	w.unhealthy = true
+
+	if err := w.run(); err == nil {
+		t.Fatal("Run succeeded")
+	}
+
+	log := w.logged()
+	held, stop := logIndex(log, "A restart no", 0), logIndex(log, "A compose.stop", 0)
+	if held < 0 || stop < 0 || held > stop {
+		t.Errorf("hold at %d, stop at %d: A must be held at no restart before it is stopped\n%s", held, stop, strings.Join(log, "\n"))
+	}
+	if got := [2]string{w.a.restartOf("web"), w.a.restartOf("redis")}; got != [2]string{"always", "unless-stopped"} {
+		t.Errorf("A's restart policies after the rollback = %v, want the frozen ones", got)
+	}
+	if got := w.b.restartOf("web"); got != "no" {
+		t.Errorf("B's restart policy = %q, want a stopped B held at no", got)
+	}
+	w.wantSourceRunning()
+}
+
+func TestMoveRun_ASourceThatCameBackBeforeBStartsOrBeforeTheCommitEndsTheMoveInsteadOfCommitting(t *testing.T) {
+	t.Run("before B starts", func(t *testing.T) {
+		w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+		w.started()
+		w.afterVerify = func() { w.a.mu.Lock(); w.a.state = "running"; w.a.mu.Unlock() }
+
+		if err := w.run(); err == nil {
+			t.Fatal("Run succeeded")
+		}
+
+		if slices.Contains(w.mutations(w.b), "compose.start") {
+			t.Error("B was started next to a running A")
+		}
+		if m := w.moveRow(); m.Phase != database.AppMoveRolledBack {
+			t.Errorf("move = %+v, want rolled back", m)
+		}
+	})
+	t.Run("before the commit", func(t *testing.T) {
+		w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+		w.started()
+		once := false
+		w.hook = func() {
+			if !once {
+				once = true
+				w.a.mu.Lock()
+				w.a.state = "running"
+				w.a.mu.Unlock()
+			}
+		}
+
+		if err := w.run(); err == nil {
+			t.Fatal("Run succeeded")
+		}
+
+		if m := w.moveRow(); m.Phase != database.AppMoveRolledBack || m.CommittedRevision != 0 {
+			t.Errorf("move = %+v, want rolled back and never committed", m)
+		}
+		if got := w.targetRow().NodeID; got != w.node.ID {
+			t.Errorf("target on %s, want it left on A", got)
+		}
+	})
 }

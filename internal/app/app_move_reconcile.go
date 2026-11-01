@@ -29,6 +29,7 @@ const (
 	operationComposeDown   = "compose.down"
 	operationVolumeRm      = "docker.volume_rm"
 	operationVolumeImport  = "docker.volume_import"
+	operationUpdateRestart = "docker.update_restart"
 
 	// proofImportDeadline names the proof of an import, which has no marker: its deadline plus the kill margin has
 	// passed, so the node-side timeout has ended it.
@@ -37,7 +38,7 @@ const (
 
 var moveOperations = []string{
 	operationComposeCreate, operationComposeStart, operationComposeStop, operationComposeDown, operationVolumeRm,
-	operationVolumeImport,
+	operationVolumeImport, operationUpdateRestart,
 }
 
 // MovePolicy is the jobs.TypePolicy of the three move job types. It never weakens the fixed rule that every
@@ -102,6 +103,7 @@ func (MovePolicy) Reconcile(_ context.Context, _ *database.Tx, job jobs.Job, _ [
 //	compose.stop    no container runs
 //	compose.down    no container is left
 //	docker.volume_rm  the volume is gone (when the step names it)
+//	docker.update_restart  nothing (its marker alone proves it)
 //	docker.volume_import  no marker: its deadline plus the kill margin has passed, so the node's timeout ended it
 //
 // Anything the node cannot answer is an error, which the reconciler reads as no evidence yet.
@@ -212,8 +214,11 @@ func (e *MoveEvidence) observed(ctx context.Context, ex transport.Executor, proj
 
 // effectOf judges what the finished command left on the node, and describes it for the fingerprint.
 func effectOf(ctx context.Context, ex transport.Executor, project string, intent jobs.Intent) (jobs.Classification, string, error) {
-	if intent.Operation == operationVolumeRm {
+	switch intent.Operation {
+	case operationVolumeRm:
 		return volumeRmEffect(ctx, ex, intent)
+	case operationUpdateRestart:
+		return jobs.ClassComplete, "", nil
 	}
 	out, err := preflightRead(ctx, ex, "compose.ps_state", map[string]string{"project": project})
 	if err != nil {

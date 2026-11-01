@@ -55,3 +55,25 @@ func TestDockerLogsMergeStreamsAndBoundLines(t *testing.T) {
 		t.Error("10001 lines accepted")
 	}
 }
+
+func TestUpdateRestartTemplateTakesOnlyAContainerAndAPolicy(t *testing.T) {
+	c, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": "shop-web-1", "policy": "no"})
+	if err != nil || !strings.Contains(c.Line, "docker update --restart 'no' -- 'shop-web-1'; rc=$?") {
+		t.Fatalf("update_restart = %q, %v", c.Line, err)
+	}
+	for _, policy := range []string{"always", "on-failure", "unless-stopped"} {
+		if _, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": "c", "policy": policy}); err != nil {
+			t.Errorf("policy %q refused: %v", policy, err)
+		}
+	}
+	for _, bad := range append([]string{"", "No", "on-failure:3", "-x", "never"}, injectionPayloads...) {
+		if _, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": "c", "policy": bad}); err == nil {
+			t.Errorf("policy %q accepted", bad)
+		}
+	}
+	for _, bad := range append([]string{"", "-x", "a b"}, injectionPayloads...) {
+		if _, err := RenderMutating("docker.update_restart", "m1", map[string]string{"container": bad, "policy": "no"}); err == nil {
+			t.Errorf("container %q accepted", bad)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -257,6 +258,9 @@ func (r *moveRun) sourceDir() deployDir {
 // stopSource stops A, verifies every project container exited, and checks B's space again with fresh sizes.
 // Downtime starts here.
 func (r *moveRun) stopSource(ctx context.Context) error {
+	if err := r.holdRestart(ctx, r.a, r.good.deployment.ID, "hold-source"); err != nil {
+		return err
+	}
 	if err := r.mustSend(ctx, r.a, r.good.deployment.ID, "stop-source", "compose.stop", r.sourceDir().args(), true); err != nil {
 		return err
 	}
@@ -278,6 +282,9 @@ func (r *moveRun) stopSource(ctx context.Context) error {
 // startDest re-checks under the locks, records the first start of B, then starts it.
 func (r *moveRun) startDest(ctx context.Context) error {
 	if err := r.recheck(ctx); err != nil {
+		return err
+	}
+	if err := r.requireSourceStillStopped(ctx); err != nil {
 		return err
 	}
 	j := r.destJob()
@@ -325,6 +332,9 @@ func (r *moveRun) commit(ctx context.Context) error {
 	if r.move.DestDeploymentID == nil {
 		return smerr.New(smerr.CodeInternal, "", "the move reached its commit without a deployment on the destination")
 	}
+	if err := r.requireSourceStillStopped(ctx); err != nil {
+		return err
+	}
 	revision, err := r.plannedRevision(ctx)
 	if err != nil {
 		return err
@@ -360,6 +370,9 @@ func (r *moveRun) plannedRevision(ctx context.Context) (int64, error) {
 // parkSource leaves A stopped, never removed. A stateful A was stopped for the copy already.
 func (r *moveRun) parkSource(ctx context.Context) error {
 	if !r.move.Stateful {
+		if err := r.holdRestart(ctx, r.a, r.good.deployment.ID, "hold-parked"); err != nil {
+			return err
+		}
 		if err := r.mustSend(ctx, r.a, r.good.deployment.ID, "park-source", "compose.stop", r.sourceDir().args(), true); err != nil {
 			return err
 		}
@@ -368,4 +381,60 @@ func (r *moveRun) parkSource(ctx context.Context) error {
 		}
 	}
 	return r.advance(ctx, database.AppMoveSourceParked, "")
+}
+
+// ---- restart policies (spec §5, §8) --------------------------------------------------------------------------------
+
+// restartHeld is the policy a container stopped by the move is held at: Docker does not start such a container again
+// when its daemon restarts, so a stopped A (or a stopped B) never comes back as a second writer.
+const restartHeld = "no"
+
+// holdRestart sets the restart policy of every project container on n to restartHeld, one command per container,
+// before the containers are stopped.
+func (r *moveRun) holdRestart(ctx context.Context, n moveNode, dep domain.ID, stepPrefix string) error {
+	containers, err := r.containers(ctx, n)
+	if err != nil {
+		return err
+	}
+	for _, c := range containers {
+		if err := r.setRestart(ctx, n, dep, stepPrefix+"-"+c.Name, c, restartHeld); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *moveRun) setRestart(ctx context.Context, n moveNode, dep domain.ID, step string, c templates.ContainerState, policy string) error {
+	return r.mustSend(ctx, n, dep, step, "docker.update_restart", map[string]string{"container": c.ID, "policy": policy}, false)
+}
+
+// requireSourceStillStopped reads A again: a stateful move holds A stopped from the copy to the commit, and a
+// container that came back would be a second writer next to B.
+func (r *moveRun) requireSourceStillStopped(ctx context.Context) error {
+	if !r.move.Stateful {
+		return nil
+	}
+	return r.requireExited(ctx, r.a)
+}
+
+// restartPolicies are the restart policies the frozen Compose model sets, by service; a service that sets none has
+// Compose's default, no.
+func restartPolicies(effective json.RawMessage) (map[string]string, error) {
+	var model struct {
+		Services map[string]struct {
+			Restart string `json:"restart"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(effective, &model); err != nil {
+		return nil, fmt.Errorf("the model's restart policies are unreadable: %w", err)
+	}
+	out := make(map[string]string, len(model.Services))
+	for name, s := range model.Services {
+		policy := cmp.Or(s.Restart, "no")
+		if templates.ValidateRestartPolicy(policy) != nil {
+			return nil, fmt.Errorf("service %s: restart policy %q is not known", name, policy)
+		}
+		out[name] = policy
+	}
+	return out, nil
 }
