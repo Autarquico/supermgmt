@@ -377,13 +377,9 @@ func preflightImageSize(ctx context.Context, ex transport.Executor, image string
 // preflightDisk requires free space of at least the images plus 1 GiB on the
 // Docker root directory and on the deploy root (equal passes).
 func preflightDisk(ctx context.Context, ex transport.Executor, deployRoot string, imageBytes int64) error {
-	root, err := preflightRead(ctx, ex, "compose.docker_root", nil)
+	dockerRoot, err := preflightDockerRoot(ctx, ex)
 	if err != nil {
 		return err
-	}
-	dockerRoot := strings.TrimSpace(string(root))
-	if templates.ValidateCleanPath(dockerRoot) != nil {
-		return preflightFailed(causePreflightDiskUnknown, "the Docker root directory could not be established")
 	}
 	required := imageBytes + preflightHeadroom
 	for _, dir := range preflightDistinct([]string{dockerRoot, deployRoot}) {
@@ -396,6 +392,19 @@ func preflightDisk(ctx context.Context, ex transport.Executor, deployRoot string
 		}
 	}
 	return nil
+}
+
+// preflightDockerRoot reads the node's Docker root directory.
+func preflightDockerRoot(ctx context.Context, ex transport.Executor) (string, error) {
+	root, err := preflightRead(ctx, ex, "compose.docker_root", nil)
+	if err != nil {
+		return "", err
+	}
+	dockerRoot := strings.TrimSpace(string(root))
+	if templates.ValidateCleanPath(dockerRoot) != nil {
+		return "", preflightFailed(causePreflightDiskUnknown, "the Docker root directory could not be established")
+	}
+	return dockerRoot, nil
 }
 
 // preflightDiskFree reads the available bytes of `df -PB1 <dir>`: the third column

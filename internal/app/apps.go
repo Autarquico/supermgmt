@@ -1246,6 +1246,9 @@ func (a *Apps) UpdateTarget(ctx context.Context, by Caller, id domain.ID, ifMatc
 		if row.SpecRevision != ifMatch {
 			return DirectResult[AppTargetView]{}, staleRevision("app target", ifMatch, row.SpecRevision)
 		}
+		if err := requireNoOpenMove(ctx, tx, id); err != nil {
+			return DirectResult[AppTargetView]{}, err
+		}
 		if patch.DeploymentPolicy == nil {
 			return DirectResult[AppTargetView]{}, invalidArgument("the patch changes nothing")
 		}
@@ -1296,6 +1299,9 @@ func (a *Apps) applyUpdateTarget(ctx context.Context, q database.Querier, actor 
 	}
 	if row.SpecRevision != p.ExpectedRevision {
 		return database.AppTarget{}, staleRevision("app target", p.ExpectedRevision, row.SpecRevision)
+	}
+	if err := requireNoOpenMove(ctx, q, p.TargetID); err != nil {
+		return database.AppTarget{}, err
 	}
 	policy := p.Policy
 	if _, _, err := a.prepareTargetUpdate(ctx, q, row, &policy); err != nil {
