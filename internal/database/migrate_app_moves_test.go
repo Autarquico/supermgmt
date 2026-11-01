@@ -13,9 +13,9 @@ import (
 )
 
 // dumpTable returns every row of the table, ordered by id, as text.
-func dumpTable(t *testing.T, q Querier, table, orderBy string) []string {
+func dumpTable(ctx context.Context, t *testing.T, q Querier, table, orderBy string) []string {
 	t.Helper()
-	rows, err := q.QueryContext(context.Background(), "SELECT * FROM "+table+" ORDER BY "+orderBy)
+	rows, err := q.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY "+orderBy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,10 +128,10 @@ func TestMigration000010RebuildsDeploymentsKeepingEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rowsBefore := dumpTable(t, db.Reader(), "deployments", "id")
-	stepsBefore := dumpTable(t, db.Reader(), "deployment_steps", "id")
+	rowsBefore := dumpTable(ctx, t, db.Reader(), "deployments", "id")
+	stepsBefore := dumpTable(ctx, t, db.Reader(), "deployment_steps", "id")
 	indexesBefore := schemaOf(t, db.Reader(), "tbl_name = 'deployments' AND type IN ('index', 'trigger') AND sql IS NOT NULL")
-	triggersBefore := schemaOf(t, db.Reader(), "type = 'trigger'")
+	triggersBefore := schemaOf(t, db.Reader(), "type = 'trigger' AND name <> 'app_routes_ids_once'")
 	fkBefore := scalar[string](t, db.Reader(), `SELECT group_concat("table" || '.' || "from" || '>' || "to" || ':' || on_delete, ' ')
 		FROM pragma_foreign_key_list('deployments')`)
 	stepFKBefore := scalar[string](t, db.Reader(), `SELECT group_concat("table" || '.' || "from" || '>' || "to", ' ') FROM pragma_foreign_key_list('deployment_steps')`)
@@ -143,19 +143,19 @@ func TestMigration000010RebuildsDeploymentsKeepingEverything(t *testing.T) {
 		t.Fatalf("Migrate from version 9: %v", err)
 	}
 
-	if got := dumpTable(t, db.Reader(), "deployments", "id"); !reflect.DeepEqual(got, rowsBefore) {
+	if got := dumpTable(ctx, t, db.Reader(), "deployments", "id"); !reflect.DeepEqual(got, rowsBefore) {
 		t.Errorf("deployments changed\nbefore %v\nafter  %v", rowsBefore, got)
 	}
-	if got := dumpTable(t, db.Reader(), "deployment_steps", "id"); !reflect.DeepEqual(got, stepsBefore) {
+	if got := dumpTable(ctx, t, db.Reader(), "deployment_steps", "id"); !reflect.DeepEqual(got, stepsBefore) {
 		t.Errorf("deployment_steps changed\nbefore %v\nafter  %v", stepsBefore, got)
 	}
 	if got := schemaOf(t, db.Reader(), "tbl_name = 'deployments' AND type IN ('index', 'trigger') AND sql IS NOT NULL"); !reflect.DeepEqual(got, indexesBefore) {
 		t.Errorf("indexes changed\nbefore %v\nafter  %v", indexesBefore, got)
 	}
-	// the triggers of every table survive, and the move tables add their own
+	// the triggers of every table survive, and the move tables add their own; 000011 replaces app_routes_ids_once
 	var surviving []string
 	for _, s := range schemaOf(t, db.Reader(), "type = 'trigger'") {
-		if !strings.Contains(s, "app_move") {
+		if !strings.Contains(s, "app_move") && !strings.HasPrefix(s, "trigger app_routes_ids_once") {
 			surviving = append(surviving, s)
 		}
 	}

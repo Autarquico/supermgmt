@@ -1,6 +1,9 @@
 -- index api_tokens_by_identity
 CREATE INDEX api_tokens_by_identity ON api_tokens (identity_id);
 
+-- index app_move_routes_by_route
+CREATE INDEX app_move_routes_by_route ON app_move_routes (route_id);
+
 -- index app_moves_by_job
 CREATE INDEX app_moves_by_job ON app_moves (job_id);
 
@@ -145,6 +148,32 @@ CREATE TABLE api_tokens (
     UNIQUE (identity_id, name)
 ) STRICT;
 
+-- table app_move_routes
+CREATE TABLE app_move_routes (
+    move_id          TEXT NOT NULL REFERENCES app_moves (id),
+    route_id         TEXT NOT NULL REFERENCES app_routes (id),
+    frozen_phase     TEXT NOT NULL CHECK (frozen_phase IN ('active', 'waiting')), -- the route's phase when the plan froze it
+    from_node_id     TEXT NOT NULL REFERENCES nodes (id),
+    from_tunnel_id   TEXT NOT NULL CHECK (from_tunnel_id <> ''),
+    from_generation  INTEGER NOT NULL CHECK (from_generation >= 1),
+    to_node_id       TEXT NOT NULL REFERENCES nodes (id),
+    to_tunnel_id     TEXT NOT NULL CHECK (to_tunnel_id <> ''),
+    to_generation    INTEGER NOT NULL CHECK (to_generation >= 1),
+    dns_record_id    TEXT NOT NULL DEFAULT '',                  -- the route's record when frozen; '' for a waiting route
+    state            TEXT NOT NULL DEFAULT 'pending' CHECK (state IN (
+                         'pending',
+                         'dest_included', 'dest_published',     -- B's ingress carries the rule: intent, then reconciled
+                         'dns_switching', 'dns_switched',       -- forward PATCH: intent, then applied
+                         'committed', 'source_cleaned',         -- after the commit
+                         'dns_restoring', 'dns_restored',       -- reverse PATCH: intent, then applied
+                         'dest_excluded', 'dest_withdrawn')),   -- B's ingress drops the rule on compensation: intent, then reconciled
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    PRIMARY KEY (move_id, route_id),
+    CHECK (from_node_id <> to_node_id),
+    CHECK (created_at <= updated_at)
+) STRICT;
+
 -- table app_move_volumes
 CREATE TABLE app_move_volumes (
     move_id             TEXT NOT NULL REFERENCES app_moves (id),
@@ -181,13 +210,17 @@ CREATE TABLE app_moves (
     b_started_at            INTEGER,                                -- NULL until B starts for the first time; set once. From then on B may hold newer data
     phase                   TEXT NOT NULL CHECK (phase IN (
                                 'preflight', 'staged', 'source_stopped', 'data_copied',         -- forward, in order (source_stopped and data_copied: stateful only)
-                                'started', 'verified', 'committed', 'source_parked', 'done',
+                                'started', 'verified', 'routes_dest_included', 'routes_switched', -- the two routes phases before the commit: a routed move only
+                                'committed', 'routes_source_cleaned', 'source_parked', 'done', -- routes_source_cleaned: a routed move only
+                                'compensating_routes_restored', 'compensating_routes_withdrawn', -- before committed only, a routed move only; they come first
                                 'compensating_b_stopped', 'compensating_source_started',        -- before committed only, in order
                                 'compensating_source_verified', 'compensating_b_removed', 'rolled_back',
                                 'failed', 'conflict')),             -- halted: see halted_phase
     halted_phase            TEXT CHECK (halted_phase IS NULL OR halted_phase IN (
                                 'preflight', 'staged', 'source_stopped', 'data_copied',
-                                'started', 'verified', 'committed', 'source_parked', 'done',
+                                'started', 'verified', 'routes_dest_included', 'routes_switched',
+                                'committed', 'routes_source_cleaned', 'source_parked', 'done',
+                                'compensating_routes_restored', 'compensating_routes_withdrawn',
                                 'compensating_b_stopped', 'compensating_source_started',
                                 'compensating_source_verified', 'compensating_b_removed', 'rolled_back')), -- phase held when the move halted; NULL otherwise
     phase_started_at        INTEGER NOT NULL,
@@ -961,6 +994,15 @@ CREATE TABLE webhook_deliveries (
     UNIQUE (provider, delivery_id)
 ) STRICT;
 
+-- trigger app_move_routes_ids_once
+CREATE TRIGGER app_move_routes_ids_once BEFORE UPDATE OF move_id, route_id, frozen_phase, from_node_id, from_tunnel_id,
+        from_generation, to_node_id, to_tunnel_id, to_generation, dns_record_id, created_at ON app_move_routes
+WHEN NEW.move_id <> OLD.move_id OR NEW.route_id <> OLD.route_id OR NEW.frozen_phase <> OLD.frozen_phase
+  OR NEW.from_node_id <> OLD.from_node_id OR NEW.from_tunnel_id <> OLD.from_tunnel_id OR NEW.from_generation <> OLD.from_generation
+  OR NEW.to_node_id <> OLD.to_node_id OR NEW.to_tunnel_id <> OLD.to_tunnel_id OR NEW.to_generation <> OLD.to_generation
+  OR NEW.dns_record_id <> OLD.dns_record_id OR NEW.created_at <> OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'an app move route keeps its frozen identity'); END;
+
 -- trigger app_move_volumes_ids_once
 CREATE TRIGGER app_move_volumes_ids_once BEFORE UPDATE OF move_id, volume_name, service, mount_target, other_services_json,
         created_by_move, created_at ON app_move_volumes
@@ -995,11 +1037,20 @@ CREATE TRIGGER app_routes_ids_once BEFORE UPDATE OF id, app_target_id, node_id, 
         instance_id, tunnel_id, tunnel_generation, dns_record_id, access_app_id, plan_id, created_by, created_at ON app_routes
 WHEN (OLD.dns_record_id <> '' AND NEW.dns_record_id <> OLD.dns_record_id)
   OR (OLD.access_app_id <> '' AND NEW.access_app_id <> OLD.access_app_id)
-  OR NEW.id <> OLD.id OR NEW.app_target_id <> OLD.app_target_id OR NEW.node_id <> OLD.node_id
+  OR NEW.id <> OLD.id OR NEW.app_target_id <> OLD.app_target_id
   OR NEW.hostname <> OLD.hostname OR NEW.service <> OLD.service OR NEW.port <> OLD.port OR NEW.access <> OLD.access
   OR NEW.account_id <> OLD.account_id OR NEW.zone <> OLD.zone OR NEW.instance_id <> OLD.instance_id
-  OR NEW.tunnel_id <> OLD.tunnel_id OR NEW.tunnel_generation <> OLD.tunnel_generation
   OR (OLD.plan_id IS NOT NULL AND NEW.plan_id IS NOT OLD.plan_id) OR NEW.created_by <> OLD.created_by OR NEW.created_at <> OLD.created_at
+  OR ((NEW.node_id <> OLD.node_id OR NEW.tunnel_id <> OLD.tunnel_id OR NEW.tunnel_generation <> OLD.tunnel_generation)
+      AND NOT EXISTS (
+        SELECT 1 FROM app_move_routes r JOIN app_moves m ON m.id = r.move_id
+        WHERE r.route_id = OLD.id AND m.app_target_id = OLD.app_target_id AND m.phase = 'routes_switched'
+          AND m.source_node_id = r.from_node_id AND r.from_node_id = OLD.node_id
+          AND m.dest_node_id = r.to_node_id AND r.to_node_id = NEW.node_id
+          AND r.from_tunnel_id = OLD.tunnel_id AND r.to_tunnel_id = NEW.tunnel_id
+          AND r.from_generation = OLD.tunnel_generation AND r.to_generation = NEW.tunnel_generation
+          AND ((r.state = 'dns_switched' AND r.frozen_phase = 'active' AND OLD.phase = 'active')
+            OR (r.state = 'pending' AND r.frozen_phase = 'waiting' AND OLD.phase = 'waiting'))))
 BEGIN SELECT RAISE(ABORT, 'an app route keeps its identity and recorded object IDs'); END;
 
 -- trigger app_routes_node_matches_target
