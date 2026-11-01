@@ -5,45 +5,47 @@
 
 ## Context
 
-An app target names one node for life: the API refuses to change it, deployments, locks and routes all read `target.node_id`, and nothing copies a volume. Moving an app means recreating it by hand and copying data outside SuperMgmt.
+An app target names one node for life: the API refuses to change it, deployments, locks and health all read `target.node_id`, and nothing copies a volume. Moving an app means recreating it by hand and copying data outside SuperMgmt.
 
 ## Decision
 
 ### A move is one resumable, approved job with its own record
 
-- `sm apps move <app> <env> --to <node>` plans `app_target.move`, a high-risk job on the app target. The plan freezes both nodes, the known-good deployment and its content, the named volumes and the routes.
-- An `app_moves` row records the phase. The job resumes from it; a halt keeps the phase and needs a new command; at most one open move per target.
+- `sm apps move <app> <env> --to <node>` plans `app_target.move`, a high-risk job on the app target. The plan freezes both nodes, the known-good deployment and its content, and a volume map (one export/import container and mount per distinct named volume).
+- `app_moves` records the phase and `app_move_volumes` each volume's attempt, state, sizes and manifest digests. At most one open move per target; deployments, rollbacks, exposes and same-project targets on the destination are refused while it is open.
+- Targets with routes are refused. Moving routes is a separate decision (`app-move-routes`).
 
 ### The destination is proven before the source is touched
 
-- Request time: managed destination in the same environment, no Compose project clash, a tunnel when routes exist, loopback or unspecified binds only.
-- Preflight on the destination: the deploy preflight plus platform, memory, CPU, image and volume bytes, and no pre-existing target volumes.
-- Nothing runs on the source before preflight passes.
+- Request time and again under the claim locks: managed destination in the same environment, no Compose project clash (open moves count), loopback or unspecified binds only, every volume writable by some service, node-scope health checks only.
+- Preflight reads both nodes and changes neither: the deploy preflight plus platform, memory, CPU, image and volume bytes on the destination, no pre-existing target volumes there, and the source running the known-good deployment.
 
 ### Same content, redeployed like a rollback
 
-- The destination gets a deployment of kind `move` with the known-good digests, model and secret versions. It is pulled, materialised, verified and created without starting while the source still serves.
+- The destination gets a deployment of kind `move` with the known-good digests, model and secret versions, pulled, materialised, verified and created without starting.
 
 ### Data is a stopped-container file copy streamed through the daemon
 
-- A stateful move stops the source, then streams each named volume as tar from `docker cp <c>:<mount> -` on the source into `docker cp - <c>:<parent>` on the destination. No helper image, no node-to-node connectivity: the daemon is the only path.
-- The transport gains a streaming SSH session with an exit status. A copy counts only when both ends exit 0 and the byte counts match; otherwise it is redone from scratch.
-- Stateless moves keep the source running until the destination is healthy.
+- A stateful move stops the source and verifies every container exited, then streams each volume as tar from `docker cp <c>:<mount>/. -` into `docker cp - <c>:<mount>` on the destination's created container. The daemon is the only path; nothing is written to its disk.
+- The transport gains a streaming SSH session with an exit status, deadlines, a byte ceiling and guaranteed session release. Both node commands run under `timeout`, so neither can outlive its deadline.
+- The import is a mutating intent. An unknown outcome is settled only once its deadline has passed. A copy counts only when both ends exit 0 and a second export from the destination has the same manifest (paths, types, modes, owners, sizes, links, hashes).
+- A retry replaces the volume: it is removed (only if this move created it) and recreated empty before copying again.
 
-### Commit last; undo everything before it
+### Authority moves at the destination's first start
 
-- Until the commit the source is the truth. A failure removes the destination's containers and the volumes the move created there, restarts and health-checks the source, and ends `rolled_back`.
-- Routes switch before the commit: the destination ingress serves the rule, then the CNAME is repointed (a new `UpdateDNSRecord`), with the expose ownership check. The Access app is kept.
-- One transaction then writes the target's node, each route's node and tunnel identity, and the destination deployment as known-good. The route identity trigger allows that change only during the target's move. The plan's revision pin accepts the move's own +1, as tunnel disable does.
-- After the commit the source tunnel's rules are removed and the source is left stopped. It is removed only by `sm apps move --cleanup-source`, which never deletes volumes.
+- Before the destination ever starts, the source holds the only data, so a failure may remove what the move created on the destination.
+- Once the destination has started it may hold writes, so its volumes are never removed automatically. Compensation stops it, restarts and health-checks the source, and keeps both copies.
+- Compensation is persisted phase by phase. If the source does not come back healthy, the move halts with the destination stopped and intact, and the target stays blocked until the operator resumes or abandons it.
 
-### Locks come from the plan, not the live target
+### Commit last, in one fenced transaction
 
-- The job holds the target lock, project and port locks on both frozen nodes, shared node locks, and the instance Cloudflare lock when routes exist.
+- The commit compares-and-sets the target's revision and node, settles the destination deployment as known-good and advances the move, asserting every row count.
+- Before the commit, claims revalidate by rebuilding the plan against the frozen nodes. After it, claims validate against the move record, because a moved target's rebuild always differs from its plan. Locks always come from the frozen nodes.
+- After the commit the source is left stopped. `sm apps move --cleanup-source` removes its containers only while they still carry the parked deployment's label and the target is elsewhere; volumes are never deleted.
 
 ## Consequences
 
-- Stateful moves have downtime from the stop until the destination is healthy.
-- Data in transit crosses the daemon over two SSH sessions; nothing is stored on the daemon's disk.
-- A consistent copy depends on the app tolerating a cold file copy of a stopped container. Database-aware dumps stay out of scope.
-- Source volumes are never deleted by SuperMgmt; reclaiming that space is the operator's call.
+- Stateful moves have downtime from the source stop until the destination is healthy.
+- A consistent copy depends on the app tolerating a cold file copy of stopped containers. Database-aware dumps stay out of scope.
+- A failed move after the destination started can leave a second copy of the data on the destination; reclaiming it is the operator's call, and a new move to that node refuses it until then.
+- Source volumes are never deleted by SuperMgmt.
