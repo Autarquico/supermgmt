@@ -516,6 +516,68 @@
    }
   },
   {
+   "route": "GET /api/v1/app-targets/{id}/moves",
+   "class": "query",
+   "path": "/api/v1/app-targets/{route_target}/moves",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "POST /api/v1/app-targets/{id}/moves",
+   "class": "write",
+   "path": "/api/v1/app-targets/{route_target}/moves",
+   "body": "{\"to_node\":\"{node_api}\"}",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 422
+   },
+   "note": "The rig's tunnel node has no docker.compose.deploy capability, which policy requires on both nodes of a move, so the request ends at the capability check before any plan is stored."
+  },
+  {
+   "route": "POST /api/v1/app-targets/{id}/moves/cleanup-source",
+   "class": "write",
+   "path": "/api/v1/app-targets/{route_target}/moves/cleanup-source",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 422
+   },
+   "note": "The move's cleanup needs docker.compose.deploy on the source node, which the rig's node lacks; the capability check refuses it before a plan is stored."
+  },
+  {
+   "route": "POST /api/v1/app-targets/{id}/moves/abandon",
+   "class": "write",
+   "path": "/api/v1/app-targets/{route_target}/moves/abandon",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_WRITES_DISABLED"
+   },
+   "on": {
+    "status": 400
+   },
+   "note": "The rig's target has no open move, and abandon needs a move halted in compensation, so nothing is stored."
+  },
+  {
    "route": "GET /api/v1/deployments",
    "class": "query",
    "path": "/api/v1/deployments",

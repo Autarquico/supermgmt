@@ -275,6 +275,56 @@ func ViewRoute(r wire.AppRoute) RouteView {
 	}
 }
 
+// ---- app moves ---------------------------------------------------------------
+
+type MoveView struct {
+	ID           domain.ID        `json:"id"`
+	AppTargetID  domain.ID        `json:"app_target_id"`
+	SourceNodeID domain.ID        `json:"source_node_id"`
+	DestNodeID   domain.ID        `json:"dest_node_id"`
+	Phase        string           `json:"phase"`
+	HaltedPhase  string           `json:"halted_phase,omitempty"`
+	Stateful     bool             `json:"stateful"`
+	Volumes      []MoveVolumeView `json:"volumes"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+	Remote       MoveRemote       `json:"remote"`
+}
+
+// MoveVolumeView names a volume of the move's volume map, as the app's Compose model declares it.
+type MoveVolumeView struct {
+	Name          string `json:"name"`
+	Service       string `json:"service"`
+	Mount         string `json:"mount"`
+	State         string `json:"state"`
+	Attempt       int    `json:"attempt"`
+	CreatedByMove bool   `json:"created_by_move"`
+}
+
+// MoveRemote is why a halted move is not moving, which the nodes' answers can shape.
+type MoveRemote struct {
+	remoteMark
+	LastError string `json:"last_error"`
+}
+
+func ViewMove(m wire.AppMove) MoveView {
+	var b remoteBuilder
+	remote := MoveRemote{LastError: b.scalar(m.LastError)}
+	remote.remoteMark = b.mark()
+	volumes := make([]MoveVolumeView, len(m.Volumes))
+	for i, v := range m.Volumes {
+		volumes[i] = MoveVolumeView{
+			Name: operatorLine(v.Name), Service: operatorLine(v.Service), Mount: operatorLine(v.Mount),
+			State: v.State, Attempt: v.Attempt, CreatedByMove: v.CreatedByMove,
+		}
+	}
+	return MoveView{
+		ID: m.ID, AppTargetID: m.AppTargetID, SourceNodeID: m.SourceNodeID, DestNodeID: m.DestNodeID,
+		Phase: m.Phase, HaltedPhase: m.HaltedPhase, Stateful: m.Stateful, Volumes: volumes,
+		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Remote: remote,
+	}
+}
+
 // ---- deployments -------------------------------------------------------------
 
 type DeploymentView struct {

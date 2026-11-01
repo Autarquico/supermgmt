@@ -220,13 +220,45 @@ Old deployment directories on the node are collected after a deployment ends `su
 
 A job interrupted mid-deployment is never re-run blind. Reconciliation needs proof that each dispatched command completed (exit status recorded) and two matching container samples at least 30 seconds apart. Without proof the job is held with its locks (`TestReconcileDeploy_KilledCLIHeldDespiteStableSamples`, `TestFixtures_KilledComposeUpHasNoProof`). Depending on the evidence it is failed as `INTERRUPTED_BEFORE_DEPLOY`, resumed forward after re-running claim-time revalidation, or, after a partial update, recovered by restoring the plan's frozen rollback target. That safety recovery runs as the `system` actor, skips requester, policy and quorum revalidation, never waits for approval, and dispatches only restore steps (`TestReconcileDeploy_ForwardResumeAfterDeployingOnlyRollsBack`, `TestClaimRecovery_StalePlanRevokedRequesterLostQuorum`, `TestClaimRecovery_KeepsLocksNeverAwaitingApproval`, `TestDeployStage_ForwardStepsRefuseUnderSafetyRecovery`). Restoring a backup neutralizes deployments like jobs (`TestRestoreNeutralizesDeployments`).
 
+## Moving an app to another node
+
+**Experimental: tested against fakes and fixture daemons only.** `sm apps move <app> <env> --to <node>` moves an app target to another managed node of the same environment ([status](project-status.md)). Routes are not moved yet: a target with a route that is not removed is refused, so unexpose first. Moving routes is a later spec.
+
+The request is the plan of a high-risk job. It needs `docker.compose.deploy` on both nodes and waits for approval when policy asks. It is refused before any node is touched when the destination is the source, is unmanaged, is in another environment or already hosts the Compose project (an open move's destination counts); when the target has no known-good deployment, an open deployment, rollback or move; or when the known-good model binds a port to an address other than `127.0.0.1` or `0.0.0.0`, has a named volume no service mounts read-write, or has a control-plane health check. The CLI prints, as soon as the move is planned and before it is approved, whether it stops the app and which volumes it copies. `sm apps moves <app> <env>` lists the moves with their phase, nodes and volumes.
+
+### Phases
+
+`preflight`, `staged`, then for an app with volumes `source_stopped` and `data_copied`, then `started`, `verified`, `committed`, `source_parked` and `done`. A move that fails before `committed` compensates through `compensating_b_stopped`, `compensating_source_started`, `compensating_source_verified` and `compensating_b_removed` and ends `rolled_back`. A move that cannot continue is `failed` or `conflict` and names the phase it holds (`halted_phase`) and why (`last_error`).
+
+- **Preflight changes nothing.** It reads both nodes: the deploy preflight on the destination (ownership, ports, disk) plus platform, memory, CPU, image and volume space with a margin, and that none of the volumes exists there. On the source it checks that the known-good deployment is the one running.
+- **Staged.** The destination gets a deployment of kind `move` with the known-good digests, Compose model and secret versions. It is pulled, materialised, verified and created, not started. The source keeps serving.
+- **Downtime.** An app with no named volume does not stop: the source keeps running until the destination passes its node-scope health checks. An app with volumes (or a target marked stateful) is stopped, every container is verified exited, and it stays down until the destination is healthy.
+- **What is copied.** Each distinct named volume once, even when several services mount it, as a tar stream from the stopped source container into the destination container. Nothing else: images are pulled on the destination, secrets are materialised from the frozen versions, and bind mounts do not exist (Compose pipeline). After each import the daemon exports the volume again from the destination and compares a manifest of both sides (path, type, mode, owner, size, link target, SHA-256). A failed or unproven copy is replaced, never merged: the destination containers are removed, the volume this move created is removed and recreated empty, and the import starts over.
+- **Consistency.** The copy is a cold file copy of stopped containers. An app that cannot be restored from a plain copy of its files needs its own dump and restore; that is out of scope.
+
+### Compensation and who holds the data
+
+Before the destination ever starts, the source holds the only data. A failure then stops the destination, restarts the source and checks its health, and removes only what the move created on the destination (containers and the volumes recorded as created by this move). **From the destination's first start on, it may hold writes, so its volumes are never removed automatically.** Compensation stops it, restarts and health-checks the source and keeps both copies; the destination's volumes are listed in the audit event as kept. A later move to that node is refused while those volumes exist, until you remove them.
+
+If the source does not come back healthy, the move halts in its compensation phase with the destination stopped and intact. The target stays blocked (no deployment, rollback, expose or edit of its policy) until you run the same `sm apps move ... --to <node>` again, which resumes it, or `sm apps move <app> <env> --abandon`, which records the move as `rolled_back` and leaves both nodes exactly as they are. Only a move halted in compensation can be abandoned.
+
+### Commit and the new authority
+
+The commit is one fenced transaction that moves the target to the destination, makes the destination's deployment the known-good one and advances the move to `committed`; if any row does not match, nothing is written and the move compensates. From `committed` the move only goes forward: a crash resumes to `done`, and a failure after the commit halts the move instead of undoing it. The source is parked: stopped, its containers and volumes left in place.
+
+### Cleanup
+
+`sm apps move <app> <env> --cleanup-source` is its own approval-gated job. It removes the containers a `done` move parked on the old node and keeps its volumes, which it lists. It is refused when the target runs on that node again, when another target uses the Compose project there, or when a project container carries another deployment's label. Volumes on the old node are never deleted by SuperMgmt.
+
+The audit events are `app_move.started`, `app_move.committed`, `app_move.rolled_back` (with the kept volumes and the cause), `app_move.halted` and `app_move.source_cleaned`. Manual checks: [Moving an app](manual-checks/app-move.md).
+
 ## Secrets
 
 Secrets referenced by apps live under `apps/` (`secret://apps/...`). `secret.write` on that prefix rejects NUL, CR, LF and invalid UTF-8. The values are written to `secrets/<service>.env` on the node as `NAME=value` with `format: raw` (byte-exact; corpus test `TestEnvFile_CorpusRoundTrip`). Plans bind `{secret name, version}`; a new deployment takes the newest version at finalization; a missing version fails the deployment (`TestFinalize_BindsTheNewestSecretVersion`, `TestFinalize_AMissingSecretFailsTheDeployment`). Secret values are never in plans, API views, events, logs or backup archives of the control plane (`TestM4_SecretNeverOnControlPlane`, e2e). That scan excludes the node side and CLI stdout.
 
 ## Known limits of this version
 
-- Compose CLI **5.5.1 only**; one node per target; one target per (app, environment).
+- Compose CLI **5.5.1 only**; one node per target at a time (a move changes it); one target per (app, environment).
 - `repository` Compose source refused in production environments.
 - Health bounds (30s / 1m / 60) are a decision of this version, not spec text. Health types limited to `http`, `tcp`, `docker-health` on the node and `http`/`https` from the control plane.
 - No environment-claim requirement for Actions tokens.

@@ -29,7 +29,7 @@ var (
 	planToolName = "infra_plan_action"
 
 	writeToolNames = []string{
-		"infra_create_deployment", "infra_expose_app", "infra_reboot_node", "infra_restart_service",
+		"infra_create_deployment", "infra_expose_app", "infra_move_app", "infra_reboot_node", "infra_restart_service",
 		"infra_rollback_deployment", "infra_submit_plan", "infra_unexpose_app",
 	}
 )
@@ -63,6 +63,8 @@ type serverFakeAPI struct {
 	rollbacks          []rollbackCall
 	exposes            []exposeCall
 	unexposes          []unexposeCall
+	moveCalls          []moveCall
+	moveSubmission     wire.AppMoveSubmission
 	routeSubmission    wire.AppRouteSubmission
 }
 
@@ -70,6 +72,11 @@ type serverFakeAPI struct {
 type exposeCall struct {
 	target  domain.ID
 	request wire.ExposeAppRouteRequest
+}
+
+// moveCall is one MoveApp call seen by serverFakeAPI.
+type moveCall struct {
+	target, to domain.ID
 }
 
 // unexposeCall is one UnexposeAppRoute call seen by serverFakeAPI.
@@ -108,8 +115,13 @@ func (f *serverFakeAPI) UnexposeAppRoute(_ context.Context, target domain.ID, ho
 	return f.routeSubmission, f.submitErr
 }
 
+func (f *serverFakeAPI) MoveApp(_ context.Context, target, to domain.ID) (wire.AppMoveSubmission, error) {
+	f.moveCalls = append(f.moveCalls, moveCall{target, to})
+	return f.moveSubmission, f.submitErr
+}
+
 func (f *serverFakeAPI) wrote() bool {
-	return len(f.planRequests)+len(f.submits)+len(f.deploymentRequests)+len(f.rollbacks)+len(f.exposes)+len(f.unexposes) > 0
+	return len(f.planRequests)+len(f.submits)+len(f.deploymentRequests)+len(f.rollbacks)+len(f.exposes)+len(f.unexposes)+len(f.moveCalls) > 0
 }
 
 // newServerFakeAPI serves the nodes, services and apps of readTestAPI and a
@@ -137,6 +149,10 @@ func newServerFakeAPI() *serverFakeAPI {
 		},
 		Policy: api.plan.Policy,
 	}}
+	api.moveSubmission = wire.AppMoveSubmission{
+		Move:       wire.AppMove{DestNodeID: readNodeID},
+		Submission: api.routeSubmission.Submission,
+	}
 	return api
 }
 

@@ -361,6 +361,8 @@ func (rig *mcpRig) startServer(ctx context.Context, cfg app.Config) *api.Server 
 	mcpRigMust(t, err)
 	svc.Repositories, err = app.NewRepositories(cfg, mcpRigGitHub{})
 	mcpRigMust(t, err)
+	svc.AppMoves, err = app.NewAppMoves(cfg, svc.Plans)
+	mcpRigMust(t, err)
 	deployments, err := app.NewDeployments(cfg, svc.Governance, app.CIPolling{})
 	mcpRigMust(t, err)
 	svc.Deployments, err = app.NewDeploymentFinalizer(deployments, app.FinalizerDeps{Clients: mcpRigGitHub{}, Jobs: store})

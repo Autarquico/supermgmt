@@ -224,7 +224,7 @@ type builder struct {
 	governance *app.Governance
 	apps       *app.Apps
 	repos      *app.Repositories
-	moves      *app.AppMoves            // exposed by the API in the surfaces task
+	moves      *app.AppMoves
 	finalizer  *app.DeploymentFinalizer // the deployments service of the API and the Finalizer of the CI watcher
 	ci         app.CIWatcher
 
@@ -621,7 +621,7 @@ func (b *builder) apiServices() (api.Services, error) {
 		MCPClients: mcpClients,
 		Plans:      b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
-		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer,
+		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer, AppMoves: b.moves,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments, TunnelEnrollments: b.enrollments,
 	}, nil
 }

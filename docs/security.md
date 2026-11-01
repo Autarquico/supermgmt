@@ -358,6 +358,16 @@ A deployment runs `docker compose up` as the `supermgmt` user, which is in the `
 - `deploy_root` is owned by the `supermgmt` user (0750) so the dedicated user can create project directories; it is not root-owned. It must be outside `/var/lib/supermgmt`, and a symlink there is refused.
 - Nothing is pulled by tag: the node pulls `<repository>@<digest>`, and a digest must be bound to the commit by an attestation, verified Actions claims, or the app's pinned list.
 
+### Moving an app between nodes
+
+**Experimental, tested against fakes and fixture daemons only.** `sm apps move` copies volume data from one node to another ([Moving an app](deployments.md#moving-an-app-to-another-node)).
+
+- **The data crosses the daemon in memory, over two SSH sessions.** One session exports the volume from the source and one imports it on the destination. The daemon copies between them with a 32 KiB buffer and never writes the data to its disk, to a backup or to the database. Both sessions count against `max_sessions`, run under a `timeout` rendered on the node, and have a total deadline, an idle deadline and a byte ceiling. The nodes' stderr is bounded and sanitised before it is recorded.
+- **Volumes are never deleted on the source.** Parking and `--cleanup-source` remove containers only.
+- **On the destination, a volume is removed only before the destination's first start, and only if this move created it.** The record of which volumes the move created is written before the containers are created, from a preflight that proved they did not exist. After the first start the destination may hold writes, so compensation keeps its volumes and lists them (`TestCompensation_AnUnhealthyBIsStoppedFirstThenAIsRestartedAndBKeepsItsVolumes`, `TestCompensation_AFailureBeforeBStartedRemovesOnlyWhatTheMoveCreated`).
+- **Every mutation on a node is bound to the frozen plan.** Both nodes, their pinned host keys and the known-good content are frozen in the plan; the claim takes locks on both nodes; an import whose outcome is unknown is not touched again until its deadline has passed.
+- **The MCP tool only plans.** `infra_move_app` exists only when write tools are enabled, and its job is high risk. Cleaning up the source and abandoning a move are not offered to MCP.
+
 ### GitHub connector
 
 - **Token scope.** The provider token is read-only. It is attached only to requests whose origin equals `api_url`; a redirect to any other origin, scheme or port is refused before a request is made, at most three hops (`TestRedirect_OriginPinned`, `TestClient_TokenNeverOffOrigin`, `TestTokenNeverAppearsInErrors`). File contents are read through the JSON contents API, so no content host is contacted. How real GitHub redirects is **not verified**.

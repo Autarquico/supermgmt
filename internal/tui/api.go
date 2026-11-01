@@ -82,3 +82,8 @@ type AppRoutesAPI interface {
 	ExposeAppRoute(ctx context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error)
 	UnexposeAppRoute(ctx context.Context, target domain.ID, hostname string) (wire.AppRouteSubmission, error)
 }
+
+// AppMovesAPI moves an app target to another node (ADR-0041). It is optional like AppRoutesAPI.
+type AppMovesAPI interface {
+	MoveApp(ctx context.Context, target, to domain.ID) (wire.AppMoveSubmission, error)
+}
