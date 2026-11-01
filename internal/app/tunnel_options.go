@@ -39,6 +39,8 @@ type CloudflareAPI interface {
 	CreateTunnelCNAME(ctx context.Context, zoneID, hostname, tunnelID, comment string) (cloudflare.DNSRecord, error)
 	FindDNSRecords(ctx context.Context, zoneID, hostname string) ([]cloudflare.DNSRecord, error)
 	DeleteDNSRecord(ctx context.Context, zoneID, recordID string) error
+	GetDNSRecord(ctx context.Context, zoneID, recordID string) (cloudflare.DNSRecord, error)
+	UpdateDNSRecord(ctx context.Context, zoneID, recordID, content string) (cloudflare.DNSRecord, error)
 
 	CreateServiceToken(ctx context.Context, name string) (cloudflare.NewServiceToken, error)
 	FindServiceTokens(ctx context.Context, name string) ([]cloudflare.ServiceToken, error)

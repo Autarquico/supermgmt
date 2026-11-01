@@ -112,6 +112,13 @@ func (g holdGatedAPI) DeleteDNSRecord(ctx context.Context, zoneID, recordID stri
 	return g.CloudflareAPI.DeleteDNSRecord(ctx, zoneID, recordID)
 }
 
+func (g holdGatedAPI) UpdateDNSRecord(ctx context.Context, zoneID, recordID, content string) (cloudflare.DNSRecord, error) {
+	if err := g.open(ctx); err != nil {
+		return cloudflare.DNSRecord{}, err
+	}
+	return g.CloudflareAPI.UpdateDNSRecord(ctx, zoneID, recordID, content)
+}
+
 func (g holdGatedAPI) CreateServiceToken(ctx context.Context, name string) (cloudflare.NewServiceToken, error) {
 	if err := g.open(ctx); err != nil {
 		return cloudflare.NewServiceToken{}, err
