@@ -6,13 +6,11 @@ status: active
 priority: P1
 size: XL
 issue: 52
-prs: []
+prs: [55]
 related_issues: [52]
 depends_on: []
 supersedes: []
-related_specs:
-  - m4-apps-deployments
-  - app-expose-tunnel
+related_specs: [m4-apps-deployments, app-expose-tunnel]
 created: 2026-10-31
 updated: 2026-11-01
 ---
