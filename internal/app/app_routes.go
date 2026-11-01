@@ -244,6 +244,9 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 	case smerr.CodeOf(err) != smerr.CodeNotFound:
 		return nil, nil, err
 	}
+	if err := requireNoOpenMove(ctx, q, targetID); err != nil {
+		return nil, nil, err
+	}
 	target, err := database.GetAppTarget(ctx, q, targetID)
 	if err != nil {
 		return nil, nil, err

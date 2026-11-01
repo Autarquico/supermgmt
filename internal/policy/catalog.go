@@ -73,6 +73,16 @@ const (
 	ActionCloudflareRotate      = "cloudflare.access_token.rotate"
 	ActionAppRouteExpose        = "app_route.expose"
 	ActionAppRouteUnexpose      = "app_route.unexpose"
+	ActionAppTargetMove         = "app_target.move"
+	ActionAppTargetCleanup      = "app_target.cleanup_source"
+	ActionAppTargetAbandon      = "app_target.abandon_move"
+)
+
+// app_target.move parameters (ADR-0041). to_node is the destination node's id. The other two actions name the
+// move they act on, so the approved plan says which one.
+const (
+	ParamToNode = "to_node"
+	ParamMoveID = "move_id"
 )
 
 // app_route.expose parameters (ADR-0040). access is normalised to public before evaluation, so the risk
@@ -267,6 +277,13 @@ func buildCatalog() []ActionSpec {
 		{Name: ParamRouteID, Type: ParamString},
 	}
 
+	appMove := job(ActionAppTargetMove, domain.ResourceAppTarget, high, resume, "docker.compose.deploy", 3)
+	appMove.Params = []ParamSpec{{Name: ParamToNode, Type: ParamString, Required: true}}
+	appMoveCleanup := job(ActionAppTargetCleanup, domain.ResourceAppTarget, op, idem, "docker.compose.deploy", 3)
+	appMoveCleanup.Params = []ParamSpec{{Name: ParamMoveID, Type: ParamString, Required: true}}
+	appMoveAbandon := job(ActionAppTargetAbandon, domain.ResourceAppTarget, op, idem, "", 3)
+	appMoveAbandon.Params = []ParamSpec{{Name: ParamMoveID, Type: ParamString, Required: true}}
+
 	return []ActionSpec{
 		query("node.read", domain.ResourceNode, ""),
 		query("service.read", domain.ResourceService, "service.read"),
@@ -299,6 +316,9 @@ func buildCatalog() []ActionSpec {
 		{Name: ActionNodeBackupTemplateRun, Resource: domain.ResourceNode, Risk: op, Mode: ModeSubAction, Capability: "node.exec.template"},
 		job("deployment.create", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
 		job("deployment.rollback", domain.ResourceAppTarget, op, resume, "docker.compose.deploy", 3),
+		appMove,
+		appMoveCleanup,
+		appMoveAbandon,
 		setup,
 		job(ActionNodeTunnelDisable, domain.ResourceNode, high, idem, "node.ssh", 3),
 		job(ActionCloudflareRotate, domain.ResourceInstance, high, idem, "", 3),

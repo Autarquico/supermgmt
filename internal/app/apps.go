@@ -1193,6 +1193,14 @@ func (a *Apps) requireFreeSlot(ctx context.Context, q database.Querier, p appTar
 			return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("compose project %s is already in use on that node", project))
 		}
 	}
+	// An open move will host its project on its destination.
+	destinations, err := database.OpenMoveDestinations(ctx, q, project)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(destinations, p.NodeID) {
+		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("compose project %s is the destination of a move to that node", project))
+	}
 	return nil
 }
 

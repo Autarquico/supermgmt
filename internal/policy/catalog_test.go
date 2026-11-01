@@ -43,6 +43,9 @@ proxmox.backup.create      node        operational  job         non_retryable  p
 node.backup_template.run   node        operational  sub-action  -              node.exec.template       -
 deployment.create          app_target  operational  job         resumable      docker.compose.deploy    3
 deployment.rollback        app_target  operational  job         resumable      docker.compose.deploy    3
+app_target.move            app_target  high         job         resumable      docker.compose.deploy    3
+app_target.cleanup_source  app_target  operational  job         idempotent     docker.compose.deploy    3
+app_target.abandon_move    app_target  operational  job         idempotent     -                        3
 node.setup                 node        high         job         idempotent     node.ssh                 3
 node.tunnel.disable        node        high         job         idempotent     node.ssh                 3
 cloudflare.access_token.rotate instance high        job         idempotent     -                        3
@@ -166,6 +169,14 @@ func TestRiskFor(t *testing.T) {
 		{"setup_docker_access_not_boolean_text", ActionNodeSetup, setupParams("yes", "broker", nil), "", true},
 		{"setup_unknown_logs_mode", ActionNodeSetup, setupParams("true", "syslog", nil), "", true},
 		{"setup_grants_not_a_list", ActionNodeSetup, setupParams("true", "broker", "restart a.service"), "", true},
+		{"move_is_high", ActionAppTargetMove, map[string]any{ParamToNode: "n1"}, domain.RiskHigh, false},
+		{"move_needs_its_destination", ActionAppTargetMove, nil, "", true},
+		{"move_destination_not_a_string", ActionAppTargetMove, map[string]any{ParamToNode: 1}, "", true},
+		{"move_extra_param", ActionAppTargetMove, map[string]any{ParamToNode: "n1", "force": "yes"}, "", true},
+		{"cleanup_names_its_move", ActionAppTargetCleanup, map[string]any{ParamMoveID: "m1"}, domain.RiskOperational, false},
+		{"cleanup_without_move", ActionAppTargetCleanup, nil, "", true},
+		{"abandon_names_its_move", ActionAppTargetAbandon, map[string]any{ParamMoveID: "m1"}, domain.RiskOperational, false},
+		{"abandon_without_move", ActionAppTargetAbandon, map[string]any{}, "", true},
 		{"setup_grants_with_a_number", ActionNodeSetup, setupParams("true", "broker", []any{"restart a.service", 1}), "", true},
 	}
 	for _, tc := range cases {
