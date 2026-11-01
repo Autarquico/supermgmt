@@ -746,3 +746,37 @@ func TestCompensation_AnAbandonedMoveListsTheContainersOfAItLeftAtRestartNo(t *t
 		t.Errorf("restart_held = %v, want the 2 containers of A that were never given their policy back", events[0].Data["restart_held"])
 	}
 }
+
+func TestCompensation_AnAbandonedMoveListsOnlyTheRestoresThatFailedOrNeverRan(t *testing.T) {
+	for name, tc := range map[string]struct {
+		tamper string
+		want   int
+	}{
+		"restores succeeded": {"", 0},
+		"restores failed":    {`UPDATE operation_intents SET outcome = 'failed' WHERE step LIKE 'compensate-restore-restart-%'`, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newStatefulWorld(t)
+			w.unhealthy = true
+			ctx := context.Background()
+			w.endJob(w.run())
+			if tc.tamper != "" {
+				w.exec(tc.tamper)
+			}
+
+			first, err := w.svc.Abandon(ctx, w.caller(w.admin), w.target.ID)
+			mustf(t, err, "Abandon")
+			_, err = w.approve(w.bob, first.Job)
+			mustf(t, err, "approve the abandon")
+			mustf(t, w.runClaimed(first.Job), "abandon job")
+
+			events := w.events("app_move.rolled_back")
+			if len(events) != 1 {
+				t.Fatalf("rolled_back events = %d, want 1", len(events))
+			}
+			if held, _ := events[0].Data["restart_held"].([]any); len(held) != tc.want {
+				t.Errorf("restart_held = %v, want %d", events[0].Data["restart_held"], tc.want)
+			}
+		})
+	}
+}

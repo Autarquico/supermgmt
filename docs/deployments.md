@@ -242,6 +242,8 @@ Before the destination ever starts, the source holds the only data. A failure th
 
 If the source does not come back healthy, the move halts in its compensation phase with the destination stopped and intact. The target stays blocked (no deployment, rollback, expose or edit of its policy) until you run the same `sm apps move ... --to <node>` again, which resumes it, or `sm apps move <app> <env> --abandon`, which records the move as `rolled_back` and leaves both nodes exactly as they are. Only a move halted in compensation can be abandoned.
 
+Abandoning touches no node. A stateful move holds the source's containers at `restart=no` before it stops them, and compensation gives the policy back only as it runs; after an abandon, the containers whose policy was not restored stay at `restart=no` and do not come back after a reboot of the node. They are listed as `restart_held` in the `app_move.rolled_back` audit event (a restore that was sent but failed on the node stays listed). Run `docker update --restart <policy> <container>` on the source, or deploy the target again, which recreates its containers.
+
 ### Commit and the new authority
 
 The commit is one fenced transaction that moves the target to the destination, makes the destination's deployment the known-good one and advances the move to `committed`; if any row does not match, nothing is written and the move compensates. From `committed` the move only goes forward: a crash resumes to `done`, and a failure after the commit halts the move instead of undoing it. The source is parked: stopped, its containers and volumes left in place.

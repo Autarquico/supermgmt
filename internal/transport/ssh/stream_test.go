@@ -290,6 +290,39 @@ func TestAStreamCountsAgainstTheSessionLimitUntilItEnds(t *testing.T) {
 	r.freeSlot(t)
 }
 
+func TestAnOpenThatEndsWhileWaitingForASlotIsNotStarted(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	r := newRelayRig(t, oneSession(), func(_ string, ch cryptossh.Channel) { <-release })
+	r.openStream(t, exportCmd(), streamOpts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, err := r.pool.OpenStream(ctx, r.target(), exportCmd(), streamOpts)
+
+	if !errors.Is(err, transport.ErrNotStarted) {
+		t.Fatalf("err = %v, want ErrNotStarted: no command was sent", err)
+	}
+	if n := len(r.server.seen()); n != 1 {
+		t.Errorf("%d commands reached the node, want only the first stream's", n)
+	}
+}
+
+func TestAnOpenThatEndsWhileTheCommandIsBeingSentIsNotMarkedNotStarted(t *testing.T) {
+	gate := make(chan struct{})
+	r := newRelayRig(t, oneSession(), func(_ string, ch cryptossh.Channel) { exitStatus(ch, 0) })
+	r.server.execGate = gate
+	t.Cleanup(func() { close(gate) })
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := r.pool.OpenStream(ctx, r.target(), exportCmd(), streamOpts)
+
+	if err == nil || errors.Is(err, transport.ErrNotStarted) {
+		t.Fatalf("err = %v, want an error that is not ErrNotStarted: the node may have run the command", err)
+	}
+}
+
 func TestWrongDirectionAndBadOptionsAreRefused(t *testing.T) {
 	r := newRelayRig(t, oneSession(), func(_ string, ch cryptossh.Channel) { exitStatus(ch, 0) })
 	exp := r.openStream(t, exportCmd(), streamOpts)

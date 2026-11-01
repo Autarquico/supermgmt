@@ -325,12 +325,34 @@ func (r *moveRun) failDestDeployment(ctx context.Context, tx *database.Tx) error
 	return r.h.dep.moveTo(ctx, tx, dep.ID, deployments.StateFailed, failure)
 }
 
+// succeededRestoreSteps are the restore steps of the move whose command ended with outcome succeeded: a restore that
+// was dispatched and failed on the node has not given the policy back.
+func succeededRestoreSteps(ctx context.Context, q database.Querier, moveID domain.ID) (map[string]bool, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT step FROM operation_intents
+		WHERE operation = 'docker.update_restart' AND state = 'completed' AND outcome = ? AND json_extract(pre_state_json, '$.move') = ?`,
+		jobs.OutcomeSucceeded, moveID)
+	if err != nil {
+		return nil, smerr.Wrap(err, smerr.CodeInternal, "", "list the restored restart policies")
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var step string
+		if err := rows.Scan(&step); err != nil {
+			return nil, smerr.Wrap(err, smerr.CodeInternal, "", "list the restored restart policies")
+		}
+		out[step] = true
+	}
+	return out, rows.Err()
+}
+
 // unrestoredContainers are the containers of A that the move held at restart "no" and did not give back, by name: an
 // abandoned move leaves them so, and the operator has to restore their policy.
-func unrestoredContainers(steps map[string]bool) []string {
+func unrestoredContainers(held, restored map[string]bool) []string {
 	var out []string
-	for step := range steps {
-		if name, ok := strings.CutPrefix(step, stepHoldSource+"-"); ok && !steps[stepCompensateRestoreA+name] {
+	for step := range held {
+		if name, ok := strings.CutPrefix(step, stepHoldSource+"-"); ok && !restored[stepCompensateRestoreA+name] {
 			out = append(out, name)
 		}
 	}
@@ -371,8 +393,12 @@ func (h appMoveHandler) abandon(ctx context.Context, lease jobs.Lease, job jobs.
 		if err != nil {
 			return err
 		}
+		restored, err := succeededRestoreSteps(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
 		_, err = r.rolledBack(ctx, tx, map[string]any{
-			"abandoned": true, "halted_phase": string(current.HaltedPhase), "kept_volumes": kept, "restart_held": unrestoredContainers(held),
+			"abandoned": true, "halted_phase": string(current.HaltedPhase), "kept_volumes": kept, "restart_held": unrestoredContainers(held, restored),
 		})
 		return err
 	})
