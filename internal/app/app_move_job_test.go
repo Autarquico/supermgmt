@@ -317,9 +317,13 @@ type simStream struct {
 	buf     bytes.Buffer
 	aborted bool
 	closed  bool
+	// bounded is set on a stream whose lifetime context carries a deadline; moving a byte past it fails.
+	bounded bool
+	// transfer is how long moving data takes on the fake clock.
+	transfer time.Duration
 }
 
-func (s *moveSim) openStream(c templates.Command) (transport.Stream, error) {
+func (s *moveSim) openStream(ctx context.Context, c templates.Command) (transport.Stream, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	volume := ""
@@ -332,7 +336,8 @@ func (s *moveSim) openStream(c templates.Command) (transport.Stream, error) {
 	if volume == "" {
 		s.w.t.Errorf("node %s: stream %s names no known mount: %s", s.label, c.Template, c.Line)
 	}
-	st := &simStream{s: s, kind: c.Stream, volume: volume}
+	st := &simStream{s: s, kind: c.Stream, volume: volume, transfer: s.w.transferTime}
+	_, st.bounded = ctx.Deadline()
 	if c.Stream == templates.StreamExport {
 		s.exports[volume]++
 		s.logf("export %s", mount)
@@ -358,7 +363,17 @@ func (s *moveSim) openStream(c templates.Command) (transport.Stream, error) {
 
 func (st *simStream) Read(p []byte) (int, error) { return st.reader.Read(p) }
 
-func (st *simStream) Write(p []byte) (int, error) { return st.buf.Write(p) }
+func (st *simStream) Write(p []byte) (int, error) {
+	if st.transfer > 0 {
+		st.s.w.clock.Advance(st.transfer)
+		st.s.w.extendLease(context.Background())
+		st.transfer = 0
+	}
+	if st.bounded && st.s.w.transferTime > 0 {
+		return 0, context.DeadlineExceeded
+	}
+	return st.buf.Write(p)
+}
 
 func (st *simStream) Close() error {
 	st.closed = true
@@ -441,7 +456,7 @@ type runDialer struct {
 	w *runWorld
 }
 
-func (d runDialer) OpenStream(ctx context.Context, t ssh.Target, c templates.Command, _ transport.StreamOptions) (transport.Stream, error) {
+func (d runDialer) OpenStream(ctx context.Context, t ssh.Target, c templates.Command, o transport.StreamOptions) (transport.Stream, error) {
 	sim := d.w.simOf(t.NodeID)
 	if d.w.openFail[fmt.Sprintf("%s/%d", sim.label, c.Stream)] {
 		return nil, smerr.New(smerr.CodeNodeUnreachable, "", "no session could be opened")
@@ -455,8 +470,11 @@ func (d runDialer) OpenStream(ctx context.Context, t ssh.Target, c templates.Com
 		d.w.clock.Advance(d.w.openDelay + d.w.openDelayOnce)
 		d.w.openDelayOnce = 0
 		d.w.extendLease(ctx)
+		if o.OpenBy.IsZero() {
+			d.w.t.Error("the import stream was opened with no bound on its opening")
+		}
 	}
-	return sim.openStream(c)
+	return sim.openStream(ctx, c)
 }
 
 // ---- the world -------------------------------------------------------------------------------------------------
@@ -491,6 +509,7 @@ type runWorld struct {
 	afterVerify   func()           // runs when the export that verifies a volume ends on B
 	openDelay     time.Duration    // how long opening an import stream takes
 	openFail      map[string]bool  // "A/<kind>" or "B/<kind>": opening that kind of stream fails
+	transferTime  time.Duration    // how long moving an import's data takes
 	openDelayOnce time.Duration    // an extra delay of the next import open only
 	openFailOnce  map[string]error // the same, once, with the error to return
 }
@@ -1402,6 +1421,19 @@ func TestMoveRun_TheRecordedImportDeadlineCoversTheTimeOpeningTheStreamTook(t *t
 	v := w.volumeRow(w.mounts["/data"])
 	if v.ImportDeadlineAt == nil || v.ImportDeadlineAt.Before(opened.Add(timeout+templates.KillAfter)) {
 		t.Errorf("import deadline %v is before the node-side timeout can end: opened %v + %s + %s", v.ImportDeadlineAt, opened, timeout, templates.KillAfter)
+	}
+}
+
+func TestMoveRun_AnImportThatKeepsTransferringPastTheOpenBoundStillSucceeds(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.transferTime = 2 * moveOpenBound // within the transfer deadline, past the window for opening
+
+	if err := w.run(); err != nil {
+		t.Fatalf("Run = %v, want the long import to complete", err)
+	}
+	if got := countOf(w.logged(), "B import /data"); got != 1 {
+		t.Errorf("imported %d times, want once", got)
 	}
 }
 

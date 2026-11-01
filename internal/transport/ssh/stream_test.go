@@ -323,6 +323,51 @@ func TestAnOpenThatEndsWhileTheCommandIsBeingSentIsNotMarkedNotStarted(t *testin
 	}
 }
 
+func TestOpenByBoundsOnlyTheOpenNotTheTransfer(t *testing.T) {
+	release := make(chan struct{})
+	r := newRelayRig(t, oneSession(), func(_ string, ch cryptossh.Channel) {
+		_, _ = ch.Write([]byte("early"))
+		<-release
+		_, _ = ch.Write([]byte("late"))
+		exitStatus(ch, 0)
+	})
+	o := streamOpts
+	o.OpenBy = time.Now().Add(300 * time.Millisecond) //nolint:forbidigo // a real deadline on a real connection
+	st := r.openStream(t, exportCmd(), o)
+
+	time.Sleep(500 * time.Millisecond) // the open bound passes while the stream is live
+	close(release)
+	got, err := io.ReadAll(st)
+	if err != nil || string(got) != "earlylate" {
+		t.Fatalf("read %q, %v; want the whole transfer", got, err)
+	}
+	if exit, _, err := st.Wait(); exit != 0 || err != nil {
+		t.Fatalf("Wait = %d, %v; want a normal end", exit, err)
+	}
+}
+
+func TestAnOpenThatCannotCompleteBeforeOpenByIsNotStartedWhenNothingWasSent(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	r := newRelayRig(t, oneSession(), func(_ string, ch cryptossh.Channel) { <-release })
+	r.openStream(t, exportCmd(), streamOpts) // holds the only slot
+	o := streamOpts
+	o.OpenBy = time.Now().Add(150 * time.Millisecond) //nolint:forbidigo // a real deadline on a real connection
+	start := time.Now()                               //nolint:forbidigo // measures a real wait
+
+	_, err := r.pool.OpenStream(context.Background(), r.target(), exportCmd(), o)
+
+	if !errors.Is(err, transport.ErrNotStarted) {
+		t.Fatalf("err = %v, want ErrNotStarted", err)
+	}
+	if waited := time.Since(start); waited > 2*time.Second {
+		t.Errorf("the open waited %s, want it ended at OpenBy", waited)
+	}
+	if n := len(r.server.seen()); n != 1 {
+		t.Errorf("%d commands reached the node, want only the first stream's", n)
+	}
+}
+
 func TestWrongDirectionAndBadOptionsAreRefused(t *testing.T) {
 	r := newRelayRig(t, oneSession(), func(_ string, ch cryptossh.Channel) { exitStatus(ch, 0) })
 	exp := r.openStream(t, exportCmd(), streamOpts)

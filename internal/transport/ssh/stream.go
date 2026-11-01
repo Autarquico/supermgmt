@@ -20,7 +20,7 @@ import (
 // returns its stdout (an export) or stdin (an import) as a transport.Stream.
 // The session counts against max_sessions_per_connection and holds its
 // connection's lease until the command has ended or was aborted. Only opening
-// is bounded by ssh.connect_timeout; afterwards o.Total, o.Idle, o.Ceiling and
+// is bounded, by ssh.connect_timeout and o.OpenBy; afterwards o.Total, o.Idle, o.Ceiling and
 // ctx end the stream.
 func (p *Pool) OpenStream(ctx context.Context, t Target, c templates.Command, o transport.StreamOptions) (transport.Stream, error) {
 	if c.Stream == templates.StreamNone {
@@ -33,6 +33,11 @@ func (p *Pool) OpenStream(ctx context.Context, t Target, c templates.Command, o 
 	if p.cfg.ConnectTimeout > 0 {
 		var cancel context.CancelFunc
 		openCtx, cancel = context.WithTimeout(ctx, p.cfg.ConnectTimeout)
+		defer cancel()
+	}
+	if !o.OpenBy.IsZero() {
+		var cancel context.CancelFunc
+		openCtx, cancel = context.WithDeadline(openCtx, o.OpenBy)
 		defer cancel()
 	}
 	for attempt := 0; ; attempt++ {

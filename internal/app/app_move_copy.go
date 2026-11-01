@@ -147,13 +147,12 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 		return err
 	}
 
-	remaining := openBy.Sub(r.h.cfg.Clock.Now())
-	if remaining <= 0 {
+	if !openBy.After(r.h.cfg.Clock.Now()) {
 		return r.importNeverOpened(ctx, ledger, intent, exp, v, errors.New("the time to open the import ran out before it was opened"))
 	}
-	openCtx, stop := context.WithTimeout(ctx, remaining)
-	defer stop()
-	imp, err := r.h.conn.OpenStream(openCtx, r.b.node, r.b.setup, importCmd, opts)
+	// openBy bounds only the opening: the established stream is supervised by ctx and its own deadlines.
+	opts.OpenBy = openBy
+	imp, err := r.h.conn.OpenStream(ctx, r.b.node, r.b.setup, importCmd, opts)
 	if err != nil {
 		if !errors.Is(err, transport.ErrNotStarted) {
 			// The command may have been sent: it ends by the recorded deadline, which the replacement waits for.

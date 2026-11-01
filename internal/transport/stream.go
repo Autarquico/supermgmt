@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// StreamOptions bound one stream. All three are required: a stream that may
+// StreamOptions bound one stream. Total, Idle and Ceiling are required: a stream that may
 // run forever, or move without limit, is refused at open.
 type StreamOptions struct {
 	// Total ends the stream however much it still moves.
@@ -18,6 +18,9 @@ type StreamOptions struct {
 	// Ceiling is the most bytes the stream may carry in its direction; the
 	// byte after it aborts the stream.
 	Ceiling int64
+	// OpenBy, when set, is the latest moment the session may still be being established; it bounds only the open.
+	// Once the stream is open, Total, Idle, Ceiling and the caller's context supervise it.
+	OpenBy time.Time
 }
 
 // Valid reports why the options cannot bound a stream, or nil.
