@@ -38,6 +38,9 @@ var (
 	ErrStreamIdle      = errors.New("stream: idle deadline exceeded")
 	ErrStreamCeiling   = errors.New("stream: byte ceiling exceeded")
 	ErrStreamAborted   = errors.New("stream: aborted")
+	// ErrNotStarted marks an open that failed before the command was sent to the node: it did not and will not run.
+	// An open error without it leaves that unknown.
+	ErrNotStarted = errors.New("stream: the command was not started")
 )
 
 // Stream is one remote command whose stdout (an export) or stdin (an import)

@@ -65,12 +65,12 @@ func (s *AppMoves) Move(ctx context.Context, by Caller, targetID, to domain.ID) 
 		open, err := database.GetOpenAppMoveByTarget(ctx, tx, targetID)
 		switch {
 		case err == nil:
-			never, nerr := moveNeverRan(ctx, tx, open)
-			if nerr != nil {
-				return AppMoveResult{}, nerr
-			}
-			if !never {
+			_, lerr := database.GetLiveAppMoveByTarget(ctx, tx, targetID)
+			if lerr == nil {
 				return s.resume(ctx, tx, by, actor, scope, open, to)
+			}
+			if smerr.CodeOf(lerr) != smerr.CodeNotFound {
+				return AppMoveResult{}, lerr
 			}
 			if err := s.settleNeverRan(ctx, tx, actor, scope.target, open); err != nil {
 				return AppMoveResult{}, err

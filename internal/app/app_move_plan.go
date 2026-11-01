@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -119,7 +118,7 @@ func requireNoOpenDeployment(ctx context.Context, q database.Querier, targetID d
 }
 
 func requireNoOtherOpenMove(ctx context.Context, q database.Querier, targetID domain.ID, own *domain.ID) error {
-	open, err := database.GetOpenAppMoveByTarget(ctx, q, targetID)
+	open, err := database.GetLiveAppMoveByTarget(ctx, q, targetID)
 	switch {
 	case smerr.CodeOf(err) == smerr.CodeNotFound:
 		return nil
@@ -128,29 +127,7 @@ func requireNoOtherOpenMove(ctx context.Context, q database.Querier, targetID do
 	case own != nil && open.ID == *own:
 		return nil
 	}
-	never, err := moveNeverRan(ctx, q, open)
-	if err != nil || never {
-		return err
-	}
 	return openMoveError(open)
-}
-
-// moveNeverRan reports an open move that no worker will ever run: still at preflight with no deployment on B, and
-// its job ended without having been claimed (its plan was rejected or expired, or the job was cancelled). It holds
-// nothing on any node, so it neither blocks the target nor needs a command to settle; the next move request
-// settles it.
-func moveNeverRan(ctx context.Context, q database.Querier, m database.AppMove) (bool, error) {
-	if m.Phase != database.AppMovePreflight || m.DestDeploymentID != nil {
-		return false, nil
-	}
-	var (
-		state   domain.JobState
-		started *int64
-	)
-	if err := q.QueryRowContext(ctx, `SELECT state, started_at FROM jobs WHERE id = ?`, m.JobID).Scan(&state, &started); err != nil {
-		return false, fmt.Errorf("read the job of move %s: %w", m.ID, err)
-	}
-	return state.Terminal() && started == nil, nil
 }
 
 // requireNoOpenMove is the refusal of every other path that would change a target while it is being moved.
@@ -177,7 +154,7 @@ func requireProjectFreeOn(ctx context.Context, q database.Querier, target databa
 		}
 		onDest := other.NodeID == dest.ID
 		if !onDest {
-			open, err := database.GetOpenAppMoveByTarget(ctx, q, other.ID)
+			open, err := database.GetLiveAppMoveByTarget(ctx, q, other.ID)
 			if err != nil && smerr.CodeOf(err) != smerr.CodeNotFound {
 				return err
 			}
@@ -585,20 +562,32 @@ func rebuildMove(ctx context.Context, q database.Querier, rec database.PlanRecor
 // requireSameNodePins refuses a plan whose nodes are not reached at the endpoints and host keys it was approved with.
 // It is what stays of the plan hash once the commit has changed the target the rest of the plan describes.
 func requireSameNodePins(current, stored plan.Plan) error {
-	pins := func(p plan.Plan) map[string]plan.Input {
+	nodes := func(p plan.Plan) map[string]plan.Input {
 		out := map[string]plan.Input{}
 		for _, in := range p.Inputs {
 			if in.Type == string(domain.ResourceNode) {
-				in.SpecRevision = nil
 				out[in.ID] = in
 			}
 		}
 		return out
 	}
-	if !reflect.DeepEqual(pins(current), pins(stored)) {
+	now, then := nodes(current), nodes(stored)
+	if len(now) != len(then) {
 		return planStale()
 	}
+	for id, in := range then {
+		if got, ok := now[id]; !ok || !samePin(got, in) {
+			return planStale()
+		}
+	}
 	return nil
+}
+
+// samePin reports whether two inputs of one node have the same endpoint and host key, as requirePinnedNode compares
+// them.
+func samePin(a, b plan.Input) bool {
+	return a.Endpoint != nil && b.Endpoint != nil && *a.Endpoint == *b.Endpoint &&
+		a.HostPublicKeySHA256 != nil && b.HostPublicKeySHA256 != nil && *a.HostPublicKeySHA256 == *b.HostPublicKeySHA256
 }
 
 // requireCommittedMove checks a committed move against the world it wrote: the target runs on B at the revision

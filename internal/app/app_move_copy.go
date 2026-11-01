@@ -119,7 +119,9 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 	if err != nil {
 		return err
 	}
-	deadline := r.h.cfg.Clock.Now().Add(timeout + templates.KillAfter + moveOpenBound)
+	// The node-side timeout starts when the command does, and the command is not opened after openBy.
+	openBy := r.h.cfg.Clock.Now().Add(moveOpenBound)
+	deadline := openBy.Add(timeout + templates.KillAfter)
 	err = r.fenced(ctx, func(ctx context.Context, tx *database.Tx) error {
 		_, err := database.BeginAppMoveVolumeImport(ctx, tx, r.move.ID, v.VolumeName, v.Attempt, deadline, r.h.cfg.Clock.Now())
 		return err
@@ -145,18 +147,26 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 		return err
 	}
 
-	streamCtx, stop := context.WithCancel(ctx)
+	remaining := openBy.Sub(r.h.cfg.Clock.Now())
+	if remaining <= 0 {
+		return r.importNeverOpened(ctx, ledger, intent, exp, v, errors.New("the time to open the import ran out before it was opened"))
+	}
+	openCtx, stop := context.WithTimeout(ctx, remaining)
 	defer stop()
-	giveUp := time.AfterFunc(moveOpenBound, stop)
-	imp, err := r.h.conn.OpenStream(streamCtx, r.b.node, r.b.setup, importCmd, opts)
-	giveUp.Stop()
+	imp, err := r.h.conn.OpenStream(openCtx, r.b.node, r.b.setup, importCmd, opts)
 	if err != nil {
-		abortStream(exp)
-		// Nothing was opened, so nothing ran on B: the import never started.
-		if cerr := ledger.CompleteIntent(ctx, intent, jobs.OutcomeFailed, commandExitEvidence(jobs.OutcomeFailed, 0)); cerr != nil {
-			return cerr
+		if !errors.Is(err, transport.ErrNotStarted) {
+			// The command may have been sent: it ends by the recorded deadline, which the replacement waits for.
+			abortStream(exp)
+			return &volumeFailure{volume: v.VolumeName, cause: err}
 		}
-		return &volumeFailure{volume: v.VolumeName, cause: err, stopped: true}
+		return r.importNeverOpened(ctx, ledger, intent, exp, v, err)
+	}
+	if r.h.cfg.Clock.Now().After(openBy) {
+		// Opened too late for the recorded deadline to cover the node-side timeout: end it, and wait for the deadline.
+		abortStream(exp)
+		abortStream(imp)
+		return &volumeFailure{volume: v.VolumeName, cause: errors.New("the import stream opened after the time allowed for it")}
 	}
 
 	tee := newManifestTee(exp)
@@ -187,6 +197,15 @@ func (r *moveRun) importVolume(ctx context.Context, v database.AppMoveVolume) er
 		_, err := database.CompleteAppMoveVolumeImport(ctx, tx, r.move.ID, v.VolumeName, v.Attempt, manifest.Bytes, manifest.Digest, r.h.cfg.Clock.Now())
 		return err
 	})
+}
+
+// importNeverOpened settles an import whose command is proven not to have been sent.
+func (r *moveRun) importNeverOpened(ctx context.Context, ledger deployLedger, intent domain.ID, exp transport.Stream, v database.AppMoveVolume, cause error) error {
+	abortStream(exp)
+	if err := ledger.CompleteIntent(ctx, intent, jobs.OutcomeFailed, commandExitEvidence(jobs.OutcomeFailed, 0)); err != nil {
+		return err
+	}
+	return &volumeFailure{volume: v.VolumeName, cause: cause, stopped: true}
 }
 
 func abortStream(st transport.Stream) {

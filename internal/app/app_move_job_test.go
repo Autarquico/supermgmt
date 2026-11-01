@@ -446,8 +446,14 @@ func (d runDialer) OpenStream(ctx context.Context, t ssh.Target, c templates.Com
 	if d.w.openFail[fmt.Sprintf("%s/%d", sim.label, c.Stream)] {
 		return nil, smerr.New(smerr.CodeNodeUnreachable, "", "no session could be opened")
 	}
+	if key := fmt.Sprintf("%s/%d", sim.label, c.Stream); d.w.openFailOnce[key] != nil {
+		err := d.w.openFailOnce[key]
+		delete(d.w.openFailOnce, key)
+		return nil, err
+	}
 	if c.Stream == templates.StreamImport {
-		d.w.clock.Advance(d.w.openDelay)
+		d.w.clock.Advance(d.w.openDelay + d.w.openDelayOnce)
+		d.w.openDelayOnce = 0
 		d.w.extendLease(ctx)
 	}
 	return sim.openStream(c)
@@ -471,20 +477,22 @@ type runWorld struct {
 	lease    jobs.Lease
 	mounts   map[string]string // mount target -> volume name
 
-	mu          sync.Mutex
-	log         []string
-	faults      []streamFault
-	seen        map[string]int
-	crash       map[string]int // kind -> the tick to stop at
-	ticks       map[string]int
-	unhealthy   bool
-	healthyA    bool // the source answers its health checks even when unhealthy is set
-	stuck       bool // sleeping does not move the clock
-	before      func(label string, c templates.Command)
-	hook        func()          // runs when B's health check is asked
-	afterVerify func()          // runs when the export that verifies a volume ends on B
-	openDelay   time.Duration   // how long opening an import stream takes
-	openFail    map[string]bool // "A/<kind>" or "B/<kind>": opening that kind of stream fails
+	mu            sync.Mutex
+	log           []string
+	faults        []streamFault
+	seen          map[string]int
+	crash         map[string]int // kind -> the tick to stop at
+	ticks         map[string]int
+	unhealthy     bool
+	healthyA      bool // the source answers its health checks even when unhealthy is set
+	stuck         bool // sleeping does not move the clock
+	before        func(label string, c templates.Command)
+	hook          func()           // runs when B's health check is asked
+	afterVerify   func()           // runs when the export that verifies a volume ends on B
+	openDelay     time.Duration    // how long opening an import stream takes
+	openFail      map[string]bool  // "A/<kind>" or "B/<kind>": opening that kind of stream fails
+	openDelayOnce time.Duration    // an extra delay of the next import open only
+	openFailOnce  map[string]error // the same, once, with the error to return
 }
 
 func newRunWorld(t *testing.T, o runOptions) *runWorld {
@@ -1538,4 +1546,51 @@ func TestMoveRun_ASourceThatCameBackBeforeBStartsOrBeforeTheCommitEndsTheMoveIns
 			t.Errorf("target on %s, want it left on A", got)
 		}
 	})
+}
+
+func TestMoveRun_AnImportOpenedAfterTheTimeAllowedIsEndedAndWaitedFor(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.openDelayOnce = 2 * moveOpenBound // the first open outlasts the bound, whatever it returns
+
+	mustf(t, w.run(), "Run")
+
+	late := 0
+	for mount, volume := range w.mounts {
+		if v := w.volumeRow(volume); v.State != database.AppMoveVolumeVerified {
+			t.Errorf("volume %s = %+v, want verified", mount, v)
+		} else if v.Attempt == 2 {
+			late++
+		}
+	}
+	if late != 1 {
+		t.Errorf("volumes copied twice = %d, want 1: the late open is replaced, not used", late)
+	}
+}
+
+func TestMoveRun_AnImportOpenThatFailsAfterTheSessionStartedWaitsForTheDeadline(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.openFailOnce = map[string]error{fmt.Sprintf("B/%d", templates.StreamImport): smerr.New(smerr.CodeTimeout, "", "the open was cut")}
+	start := w.clock.Now()
+
+	mustf(t, w.run(), "Run")
+
+	timeout, _ := copyBounds(1 << 20)
+	if waited := w.clock.Now().Sub(start); waited < timeout+templates.KillAfter {
+		t.Errorf("the run waited %s, want at least the import deadline %s: the command may have started", waited, timeout+templates.KillAfter)
+	}
+}
+
+func TestMoveRun_AnImportOpenThatProvablyNeverStartedIsReplacedAtOnce(t *testing.T) {
+	w := newRunWorld(t, runOptions{stateful: true, compose: moveStatefulCompose})
+	w.started()
+	w.openFailOnce = map[string]error{fmt.Sprintf("B/%d", templates.StreamImport): fmt.Errorf("%w: no slot", transport.ErrNotStarted)}
+	start := w.clock.Now()
+
+	mustf(t, w.run(), "Run")
+
+	if waited := w.clock.Now().Sub(start); waited >= moveMinCopyTime {
+		t.Errorf("the run waited %s for an import that never started", waited)
+	}
 }

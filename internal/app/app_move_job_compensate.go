@@ -163,11 +163,13 @@ func (r *moveRun) restoreSource(ctx context.Context) error {
 	return r.advance(ctx, database.AppMoveCompensatingSourceStarted, "")
 }
 
-// restoreRestartPolicies gives A's containers back the restart policy of the frozen model, which the move held at
-// "no" while A was stopped. A is the authority again, so it comes back with its daemon as it always did. Only a stateful move held it.
+// restoreRestartPolicies gives A's containers back the restart policy of the frozen model, but only those the move
+// held at "no" while A was stopped (a stateful move holds them before it stops A, and a move that failed earlier
+// held nothing). A is the authority again, so it comes back with its daemon as it always did.
 func (r *moveRun) restoreRestartPolicies(ctx context.Context, containers []templates.ContainerState) error {
-	if !r.move.Stateful {
-		return nil // only a stateful move stops A before the commit
+	held, err := database.AppMoveRestartSteps(ctx, r.h.cfg.DB.Reader(), r.move.ID)
+	if err != nil {
+		return err
 	}
 	fz, err := r.freeze(ctx)
 	if err != nil {
@@ -178,7 +180,7 @@ func (r *moveRun) restoreRestartPolicies(ctx context.Context, containers []templ
 		return smerr.New(smerr.CodeInternal, "", err.Error())
 	}
 	for _, c := range containers {
-		if policy, known := policies[c.Service]; known {
+		if policy, known := policies[c.Service]; known && held[stepHoldSource+"-"+c.Name] {
 			if err := r.setRestart(ctx, r.a, r.good.deployment.ID, stepCompensateRestoreA+c.Name, c, policy); err != nil {
 				return err
 			}
@@ -323,9 +325,23 @@ func (r *moveRun) failDestDeployment(ctx context.Context, tx *database.Tx) error
 	return r.h.dep.moveTo(ctx, tx, dep.ID, deployments.StateFailed, failure)
 }
 
+// unrestoredContainers are the containers of A that the move held at restart "no" and did not give back, by name: an
+// abandoned move leaves them so, and the operator has to restore their policy.
+func unrestoredContainers(steps map[string]bool) []string {
+	var out []string
+	for step := range steps {
+		if name, ok := strings.CutPrefix(step, stepHoldSource+"-"); ok && !steps[stepCompensateRestoreA+name] {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // ---- abandon (spec §12) --------------------------------------------------------------------------------------------
 
-// abandon records the operator's decision to leave a move that halted in compensation as it is: no node is touched.
+// abandon records the operator's decision to leave a move that halted in compensation as it is: no node is touched,
+// so A's containers still held at restart "no" are listed in the event.
 // The target lock serialises it against a resumed move, so the move is read again under the fence and refused unless
 // it still is halted in compensation.
 func (h appMoveHandler) abandon(ctx context.Context, lease jobs.Lease, job jobs.Job) error {
@@ -351,7 +367,13 @@ func (h appMoveHandler) abandon(ctx context.Context, lease jobs.Lease, job jobs.
 		if err != nil {
 			return err
 		}
-		_, err = r.rolledBack(ctx, tx, map[string]any{"abandoned": true, "halted_phase": string(current.HaltedPhase), "kept_volumes": kept})
+		held, err := database.AppMoveRestartSteps(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
+		_, err = r.rolledBack(ctx, tx, map[string]any{
+			"abandoned": true, "halted_phase": string(current.HaltedPhase), "kept_volumes": kept, "restart_held": unrestoredContainers(held),
+		})
 		return err
 	})
 }

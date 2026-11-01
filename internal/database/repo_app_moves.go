@@ -202,6 +202,22 @@ func GetOpenAppMoveByTarget(ctx context.Context, q Querier, targetID domain.ID) 
 	return m, nil
 }
 
+// neverRanMove selects (as alias m) an open move that no worker will ever run: still at preflight with no
+// deployment on B, and its job ended without having been claimed (plan rejected or expired, job cancelled). It holds
+// nothing on any node, so it blocks nothing.
+const neverRanMove = `(m.phase = 'preflight' AND m.dest_deployment_id IS NULL AND EXISTS (
+	SELECT 1 FROM jobs j WHERE j.id = m.job_id AND j.started_at IS NULL AND j.state IN ('succeeded', 'failed', 'cancelled')))`
+
+// GetLiveAppMoveByTarget is GetOpenAppMoveByTarget without a move that never ran: the one that blocks the target.
+func GetLiveAppMoveByTarget(ctx context.Context, q Querier, targetID domain.ID) (AppMove, error) {
+	m, err := scanAppMove(q.QueryRowContext(ctx,
+		`SELECT `+appMoveColumns+` FROM app_moves m WHERE m.app_target_id = ? AND m.phase NOT IN ('done', 'rolled_back') AND NOT `+neverRanMove, targetID))
+	if err != nil {
+		return AppMove{}, getErr(err, "open app move")
+	}
+	return m, nil
+}
+
 // ListAppMovesByTarget returns every move of the target, newest first.
 func ListAppMovesByTarget(ctx context.Context, q Querier, targetID domain.ID) ([]AppMove, error) {
 	return list(ctx, q, "app moves",
@@ -214,7 +230,7 @@ func ListAppMovesByTarget(ctx context.Context, q Querier, targetID domain.ID) ([
 func OpenMoveDestinations(ctx context.Context, q Querier, project string) ([]domain.ID, error) {
 	return list(ctx, q, "open move destinations", `
 		SELECT DISTINCT m.dest_node_id FROM app_moves m JOIN app_targets t ON t.id = m.app_target_id
-		WHERE t.compose_project = ? AND m.phase NOT IN ('done', 'rolled_back') ORDER BY m.dest_node_id`,
+		WHERE t.compose_project = ? AND m.phase NOT IN ('done', 'rolled_back') AND NOT `+neverRanMove+` ORDER BY m.dest_node_id`,
 		func(s scanner) (domain.ID, error) {
 			var id domain.ID
 			return id, s.Scan(&id)
@@ -507,4 +523,24 @@ func updateAppMoveVolumeWhere(ctx context.Context, q Querier, moveID domain.ID, 
 		"expected_state": string(from), "current_state": string(current.State),
 	}
 	return AppMoveVolume{}, e
+}
+
+// AppMoveRestartSteps returns the steps of the restart-policy commands of the move that were dispatched, across every
+// job that worked on it: what the move changed on a node's containers.
+func AppMoveRestartSteps(ctx context.Context, q Querier, moveID domain.ID) (map[string]bool, error) {
+	steps, err := list(ctx, q, "move restart steps", `
+		SELECT step FROM operation_intents
+		WHERE operation = 'docker.update_restart' AND dispatched_at IS NOT NULL AND json_extract(pre_state_json, '$.move') = ?`,
+		func(s scanner) (string, error) {
+			var step string
+			return step, s.Scan(&step)
+		}, moveID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(steps))
+	for _, step := range steps {
+		out[step] = true
+	}
+	return out, nil
 }

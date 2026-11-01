@@ -255,10 +255,12 @@ func (r *moveRun) sourceDir() deployDir {
 
 // ---- data (spec §5) ----------------------------------------------------------------------------------------------
 
+const stepHoldSource = "hold-source"
+
 // stopSource stops A, verifies every project container exited, and checks B's space again with fresh sizes.
 // Downtime starts here.
 func (r *moveRun) stopSource(ctx context.Context) error {
-	if err := r.holdRestart(ctx, r.a, r.good.deployment.ID, "hold-source"); err != nil {
+	if err := r.holdRestart(ctx, r.a, r.good.deployment.ID, stepHoldSource); err != nil {
 		return err
 	}
 	if err := r.mustSend(ctx, r.a, r.good.deployment.ID, "stop-source", "compose.stop", r.sourceDir().args(), true); err != nil {

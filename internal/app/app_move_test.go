@@ -984,6 +984,13 @@ func TestMove_AMoveWhoseJobEndedBeforeItRanNeitherBlocksTheTargetNorTheNextReque
 		if err := requireNoOpenMove(context.Background(), w.db.Reader(), w.target.ID); err != nil {
 			t.Errorf("a move that never ran blocks the target: %v", err)
 		}
+		other := database.AppTarget{ID: "other-target", ComposeProject: w.project()}
+		if err := requireProjectFreeOn(context.Background(), w.db.Reader(), other, w.dest); err != nil {
+			t.Errorf("a move that never ran keeps the destination from a target of the same project: %v", err)
+		}
+		if got, err := database.OpenMoveDestinations(context.Background(), w.db.Reader(), w.project()); err != nil || len(got) != 0 {
+			t.Errorf("open move destinations = %v, %v; want none", got, err)
+		}
 		if _, err := w.deployments.Create(context.Background(), w.caller(w.deployer), w.request()); err != nil && strings.Contains(err.Error(), "move") {
 			t.Errorf("deployment refused because of the move: %v", err)
 		}

@@ -48,16 +48,16 @@ func (p *Pool) OpenStream(ctx context.Context, t Target, c templates.Command, o 
 func (p *Pool) openStreamOnce(openCtx, ctx context.Context, t Target, c templates.Command, o transport.StreamOptions) (transport.Stream, bool, error) {
 	lc, err := p.acquire(openCtx, t)
 	if err != nil {
-		return nil, false, err
+		return nil, false, notStarted(err)
 	}
 	select {
 	case lc.sessions <- struct{}{}:
 	case <-lc.closed:
 		p.release(lc)
-		return nil, true, unreachable("ssh connection closed", io.ErrClosedPipe)
+		return nil, true, notStarted(unreachable("ssh connection closed", io.ErrClosedPipe))
 	case <-openCtx.Done():
 		p.release(lc)
-		return nil, false, ctxError("ssh stream", openCtx.Err())
+		return nil, false, notStarted(ctxError("ssh stream", openCtx.Err()))
 	}
 
 	st := &stream{pool: p, lc: lc, kind: c.Stream, opts: o, ctx: ctx, done: make(chan struct{})}
@@ -85,6 +85,9 @@ func (p *Pool) openStreamOnce(openCtx, ctx context.Context, t Target, c template
 		return nil, false, ctxError("ssh stream", openCtx.Err())
 	}
 }
+
+// notStarted marks an open error that happened before the command was sent.
+func notStarted(err error) error { return fmt.Errorf("%w: %w", transport.ErrNotStarted, err) }
 
 type stream struct {
 	pool *Pool
@@ -125,7 +128,7 @@ func (st *stream) start(line string) startOutcome {
 	s, err := st.lc.client.NewSession()
 	if err != nil {
 		st.lc.close() // the connection is presumed dead, as in runSession
-		return startOutcome{stale: true, err: unreachable("open ssh session", err)}
+		return startOutcome{stale: true, err: notStarted(unreachable("open ssh session", err))}
 	}
 	st.mu.Lock()
 	st.session = s

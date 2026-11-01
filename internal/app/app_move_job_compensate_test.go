@@ -701,3 +701,48 @@ func TestMovePolicy_AdmitsWhatAMoveProducesAndRequeuesWhileItHasAttempts(t *test
 		}
 	}
 }
+
+// ---- the fixes of review round 3 -----------------------------------------------------------------------------------
+
+func TestCompensation_ASourceTheMoveNeverHeldKeepsItsRestartPolicy(t *testing.T) {
+	w := newStatefulWorld(t)
+	w.before = func(label string, c templates.Command) {
+		if label == "A" && c.Template == "compose.stop" {
+			// the holds of this move are gone from the ledger, as if the move failed before it held anything
+			w.exec(`DELETE FROM operation_intents WHERE operation = 'docker.update_restart'`)
+			w.disableDest()
+		}
+	}
+
+	err := w.run()
+
+	if err == nil {
+		t.Fatal("Run succeeded")
+	}
+	if got := countOf(w.mutations(w.a), "docker.update_restart"); got != 2 {
+		t.Errorf("restart commands on A = %d, want only the 2 holds: nothing recorded as held is restored", got)
+	}
+}
+
+func TestCompensation_AnAbandonedMoveListsTheContainersOfAItLeftAtRestartNo(t *testing.T) {
+	w := newStatefulWorld(t)
+	w.unhealthy = true
+	ctx := context.Background()
+	err := w.run()
+	w.endJob(err)
+	w.exec(`DELETE FROM operation_intents WHERE step LIKE 'compensate-restore-restart-%'`)
+
+	first, err := w.svc.Abandon(ctx, w.caller(w.admin), w.target.ID)
+	mustf(t, err, "Abandon")
+	_, err = w.approve(w.bob, first.Job)
+	mustf(t, err, "approve the abandon")
+	mustf(t, w.runClaimed(first.Job), "abandon job")
+
+	events := w.events("app_move.rolled_back")
+	if len(events) != 1 {
+		t.Fatalf("rolled_back events = %d, want 1", len(events))
+	}
+	if held, _ := events[0].Data["restart_held"].([]any); len(held) != 2 {
+		t.Errorf("restart_held = %v, want the 2 containers of A that were never given their policy back", events[0].Data["restart_held"])
+	}
+}
