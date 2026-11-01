@@ -69,6 +69,7 @@ github.com/autarquico/supermgmt/internal/app.requestedFromRefs  exempt: loads or
 github.com/autarquico/supermgmt/internal/app.requestedImagesOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.requireEntitled  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.resourceLimits  FuzzResourceLimits
+github.com/autarquico/supermgmt/internal/app.restartPolicies  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.routeHostname  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.setupCapability  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.setupOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
