@@ -107,7 +107,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		if h.deploy, err = newDeployHandler(c, o.Store, o.Connector, *o.Deploy); err != nil {
 			return nil, err
 		}
-		h.move = &appMoveHandler{core: c, dep: h.deploy, conn: o.Connector}
+		h.move = &appMoveHandler{core: c, dep: h.deploy, conn: o.Connector, tunnel: tunnel}
 	}
 	return h, nil
 }

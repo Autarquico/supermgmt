@@ -87,6 +87,10 @@ type moveRun struct {
 	a, b   moveNode
 	bDep   database.Deployment // B's deployment; zero until staged
 	frozen *frozenDeployment
+	// routed is set when the move carries routes; cf is the Cloudflare client of the instance, built when the first
+	// route step needs it.
+	routed bool
+	cf     *tunnelRun
 }
 
 func (h appMoveHandler) load(ctx context.Context, lease jobs.Lease, job jobs.Job) (*moveRun, error) {
@@ -121,6 +125,11 @@ func (h appMoveHandler) load(ctx context.Context, lease jobs.Lease, job jobs.Job
 	if r.b, err = h.dial(ctx, q, move.DestNodeID); err != nil {
 		return nil, err
 	}
+	rows, err := database.ListAppMoveRoutes(ctx, q, move.ID)
+	if err != nil {
+		return nil, err
+	}
+	r.routed = len(rows) > 0
 	if move.DestDeploymentID != nil {
 		r.bDep, err = database.GetDeployment(ctx, q, *move.DestDeploymentID)
 	}
@@ -167,7 +176,11 @@ func (r *moveRun) run(ctx context.Context) error {
 			return err
 		}
 	}
-	if compensating(r.move) {
+	began, err := r.routesCompensating(ctx)
+	if err != nil {
+		return err
+	}
+	if compensating(r.move) || began {
 		return r.h.compensate(ctx, r, errCompensationResumed)
 	}
 	return r.settle(ctx, r.forward(ctx))
