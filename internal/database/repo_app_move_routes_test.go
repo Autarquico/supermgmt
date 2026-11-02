@@ -152,6 +152,12 @@ func TestAppRoutesTriggerAcceptsOnlyTheExactTuple(t *testing.T) {
 		} {
 			refused("tuple with "+col, tuple+", "+col)
 		}
+		// the columns the old trigger never listed, changed together with the exact tuple
+		for _, col := range []string{
+			"phase = 'removing'", "phase = 'failed', halted_phase = 'active'", "last_error = 'x'", "access_app_id = 'x'", "plan_id = 'x'",
+		} {
+			refused("tuple with "+col, tuple+", "+col)
+		}
 		// other to-values, partial tuples, a third node
 		for what, set := range map[string]string{
 			"other tunnel":      `node_id = '` + rw.b.ID.String() + `', tunnel_id = 'tun-x', tunnel_generation = 2`,

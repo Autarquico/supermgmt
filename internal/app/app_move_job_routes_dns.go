@@ -252,8 +252,8 @@ func (r *moveRun) awaitNotBefore(ctx context.Context, m moveRoute, in dnsIntent)
 }
 
 // settleUpdate decides, for a row whose leg is pending, whether its update applied. An intent that was never
-// dispatched did not. One that completed says so. An open one is reconciled only after its not-before time, by
-// reading the record through the validator: content at the leg's target means applied, at the other end not applied,
+// dispatched did not. One the move itself closed as succeeded, from Cloudflare's answer, did. Any other, open or
+// closed by the jobs reconciler, is settled only after its not-before time, by reading the record through the validator: content at the leg's target means applied, at the other end not applied,
 // and anything else is a recordFault. A read that fails leaves the outcome unknown.
 func (r *moveRun) settleUpdate(ctx context.Context, l dnsLeg, m moveRoute) (bool, error) {
 	in, found, err := r.lastDNSIntent(ctx, m)
@@ -261,8 +261,8 @@ func (r *moveRun) settleUpdate(ctx context.Context, l dnsLeg, m moveRoute) (bool
 		return false, err
 	}
 	sent := found && in.Direction == l.dir && in.Dispatched
-	if sent && in.Settled {
-		return in.Outcome == jobs.OutcomeSucceeded, nil
+	if sent && in.Settled && in.Outcome == jobs.OutcomeSucceeded {
+		return true, nil
 	}
 	if sent {
 		if err := r.awaitNotBefore(ctx, m, in); err != nil {
@@ -280,7 +280,7 @@ func (r *moveRun) settleUpdate(ctx context.Context, l dnsLeg, m moveRoute) (bool
 		return false, err
 	}
 	applied := rec.Content == l.content(m.row)
-	if sent && in.JobID == r.lease.JobID {
+	if sent && !in.Settled && in.JobID == r.lease.JobID {
 		outcome := jobs.OutcomeFailed
 		if applied {
 			outcome = jobs.OutcomeSucceeded

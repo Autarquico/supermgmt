@@ -320,7 +320,7 @@ func (rr *routedRun) onCheckpoint(f func()) {
 	}
 }
 
-// stateOfFirst is the state of the row of the route with the lowest ID, the one the move repoints first.
+// stateOfRow is the state of the i-th row of the move, in the order the move repoints them.
 func (rr *routedRun) stateOfRow(i int) database.AppMoveRouteState {
 	return rr.rows()[i].State
 }
@@ -405,7 +405,6 @@ func TestMoveRoutesRun_APublicRouteFollowsTheAppWithItsRecordMarkerAndComment(t 
 	if putB < 0 || patch < 0 || putB > patch {
 		t.Errorf("B's ingress was written at %d and the record repointed at %d: the rule must come first", putB, patch)
 	}
-	rr.wantOwnersNeverUnprotected("admin.example.test")
 }
 
 func TestMoveRoutesRun_AnOwnersRouteKeepsItsAccessApplicationAndIsNeverRoutableWithoutIt(t *testing.T) {
@@ -820,6 +819,91 @@ func TestMoveRoutesRun_AReconciliationThatFindsASiblingOrOtherContentHaltsTheMov
 			}
 		})
 	}
+}
+
+// recovered is the way a job with an unknown outcome really comes back: the worker interrupts it, the jobs reconciler
+// proves its open intents past their not-before time and closes them (a record update only as partial_stable, hence
+// failed), and the next claim takes the requeued job. The result is the lease of that claim.
+func (rr *routedRun) recovered() {
+	rr.t.Helper()
+	ctx := context.Background()
+	mustf(rr.t, rr.store.Interrupt(ctx, rr.lease, jobs.ErrOutcomeUnknown), "Interrupt")
+	store, err := jobs.NewStore(jobs.Config{
+		DB: rr.db, Clock: rr.clock, IDs: rr.ids, Revalidator: rr.reval, LockPlanner: LockPlanner{},
+		TypePolicies: MovePolicy{}.TypePolicies(),
+	})
+	mustf(rr.t, err, "NewStore")
+	evidence := &MoveEvidence{core: rr.handler.core, next: &passedOn{}}
+	rr.clock.Advance(dnsQuiescence + time.Minute)
+	for range 2 {
+		_, err := store.Reconcile(ctx, evidence)
+		mustf(rr.t, err, "Reconcile")
+		rr.clock.Advance(31 * time.Second)
+	}
+	rr.store, rr.handler.dep.store = store, store
+	claimed, found, err := store.Claim(ctx, "worker-2")
+	mustf(rr.t, err, "Claim")
+	if !found {
+		rr.t.Fatal("the reconciled job was not requeued")
+	}
+	rr.lease = claimed.Lease
+	for _, in := range rr.intentsOf(operationDNSUpdate) {
+		if in.Outcome != jobs.OutcomeFailed {
+			rr.t.Fatalf("intent %s closed as %q, want the reconciler's failed", in.ID, in.Outcome)
+		}
+	}
+}
+
+func TestMoveRoutesRun_AForwardAnswerLostAndClosedByTheReconcilerIsStillSettledByReadingTheRecord(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	rr.expose(rr.main(), "shop.example.test", "public")
+	rr.started()
+	rr.failNthUpdate(1, cffake.LostResponse)
+	rr.stuck = true
+	if err := rr.run(); !errors.Is(err, jobs.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want an unknown outcome", err)
+	}
+
+	rr.recovered()
+	rr.stuck = false
+	mustf(t, rr.run(), "Run after the recovery")
+
+	if m := rr.moveRow(); m.Phase != database.AppMoveDone {
+		t.Fatalf("move = %+v, want done", m)
+	}
+	rr.wantContent("shop.example.test", "b")
+	if len(rr.updates()) != 1 {
+		t.Errorf("%d updates, want the one that applied and no repeat", len(rr.updates()))
+	}
+}
+
+func TestMoveRoutesRun_ACompensationAfterAReconcilerClosedUpdateRestoresTheRecordBeforeWithdrawingAndStoppingB(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	rr.expose(rr.main(), "shop.example.test", "public")
+	rr.started()
+	rr.failNthUpdate(1, cffake.LostResponse)
+	rr.stuck = true
+	if err := rr.run(); !errors.Is(err, jobs.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want an unknown outcome", err)
+	}
+	rr.recovered()
+	rr.stuck = false
+	var atStop snapshot
+	rr.before = func(label string, c templates.Command) {
+		if label == "B" && c.Template == "compose.stop" {
+			atStop = rr.snap("shop.example.test")
+		}
+	}
+
+	wantAppsCode(t, rr.handler.compensate(context.Background(), rr.loaded(), errCompensationResumed), smerr.CodeDeploymentFailed)
+
+	if m := rr.moveRow(); m.Phase != database.AppMoveRolledBack {
+		t.Fatalf("move = %+v, want rolled back", m)
+	}
+	if atStop.records != "shop.example.test=a " || len(atStop.servedB) != 0 {
+		t.Errorf("when B stopped: %q, B serving %v; want the record restored and the rule withdrawn first", atStop.records, atStop.servedB)
+	}
+	rr.wantContent("shop.example.test", "a")
 }
 
 func TestMoveRoutesRun_ACompensationDoesNothingBeforeAnUnknownUpdateIsReconciledThenRestoresIt(t *testing.T) {

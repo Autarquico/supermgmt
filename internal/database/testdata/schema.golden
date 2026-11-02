@@ -1042,6 +1042,9 @@ WHEN (OLD.dns_record_id <> '' AND NEW.dns_record_id <> OLD.dns_record_id)
   OR NEW.account_id <> OLD.account_id OR NEW.zone <> OLD.zone OR NEW.instance_id <> OLD.instance_id
   OR (OLD.plan_id IS NOT NULL AND NEW.plan_id IS NOT OLD.plan_id) OR NEW.created_by <> OLD.created_by OR NEW.created_at <> OLD.created_at
   OR ((NEW.node_id <> OLD.node_id OR NEW.tunnel_id <> OLD.tunnel_id OR NEW.tunnel_generation <> OLD.tunnel_generation)
+      AND (NEW.phase <> OLD.phase OR NEW.halted_phase IS NOT OLD.halted_phase OR NEW.last_error <> OLD.last_error
+        OR NEW.dns_record_id <> OLD.dns_record_id OR NEW.access_app_id <> OLD.access_app_id OR NEW.plan_id IS NOT OLD.plan_id))
+  OR ((NEW.node_id <> OLD.node_id OR NEW.tunnel_id <> OLD.tunnel_id OR NEW.tunnel_generation <> OLD.tunnel_generation)
       AND NOT EXISTS (
         SELECT 1 FROM app_move_routes r JOIN app_moves m ON m.id = r.move_id
         WHERE r.route_id = OLD.id AND m.app_target_id = OLD.app_target_id AND m.phase = 'routes_switched'
