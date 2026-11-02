@@ -6,13 +6,13 @@ status: active
 priority: P1
 size: XL
 issue: 56
-prs: []
+prs: [57]
 related_issues: [56]
 depends_on: []
 supersedes: []
 related_specs: [app-move, app-expose-tunnel]
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 
 # Move an app target's Cloudflare routes with it
