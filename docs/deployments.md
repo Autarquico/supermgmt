@@ -256,7 +256,7 @@ The audit events are `app_move.started`, `app_move.committed`, `app_move.rolled_
 
 ### Moving a target with routes
 
-**Experimental: tested against the Cloudflare fake only.** A target whose routes are `active` or `waiting` moves with its routes in the same move ([ADR-0042](adr/0042-app-move-routes.md)). The request prints the hostnames that will be repointed; for a stateful app it also warns about the rollback window below.
+**Experimental: tested against the Cloudflare fake only.** A target whose routes are `active` or `waiting` moves with its routes in the same move. The request prints the hostnames that will be repointed; for a stateful app it also warns about the rollback window below.
 
 **Order.** The destination is staged and verified as for any move. Then, per route and holding the instance Cloudflare lock: the destination's tunnel ingress gets the route's rule (`routes_dest_included`); for an `owners` route the Access application is checked again; the proxied CNAME is repointed from the source's tunnel to the destination's (`routes_switched`); the commit moves the target and every route to the destination in one transaction (`committed`); the source's ingress is cleaned (`routes_source_cleaned`); the source is parked and the move is `done`. A `waiting` route has no DNS record: it is activated on the destination when the move is `done`. `sm apps moves` shows each route's state.
 
@@ -273,7 +273,7 @@ The audit events are `app_move.started`, `app_move.committed`, `app_move.rolled_
 
 **After the commit the move only goes forward.** A failure in `routes_source_cleaned`, `source_parked` or the activation of waiting routes halts the move; running `sm apps move ... --to <node>` again resumes it. Nothing is rolled back to the source.
 
-**Abandon.** Spec ADR-0042 says `--abandon` is refused while a route is switching, switched, restoring or has its destination rule included, published or being withdrawn. That refusal is not implemented yet (not found in `internal/app/app_move.go`): do not abandon a routed move; resume it instead, so no hostname is left pointing at a destination that is not running.
+**Abandon.** `--abandon` is refused while a route is switching, switched, restoring or has its destination rule included, published or being withdrawn; the refusal names those routes. Resume such a move with `sm apps move` instead, so no hostname is left pointing at a destination that is not running.
 
 The audit events for routes are `app_move.route_switched`, `app_move.route_restored` and `app_move.route_halted`. Manual checks: [Moving a target with routes](manual-checks/app-move.md#5-routes).
 

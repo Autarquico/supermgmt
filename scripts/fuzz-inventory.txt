@@ -50,6 +50,7 @@ github.com/autarquico/supermgmt/internal/app.loadSetup  exempt: loads or convert
 github.com/autarquico/supermgmt/internal/app.loadStoredDeployment  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.manifestTee.Read  exempt: pass-through tee into TarManifest (FuzzTarManifest); no grammar of its own
 github.com/autarquico/supermgmt/internal/app.metadataOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.moveRun.lastDNSIntent  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.oidcBinding  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.parseGrants  exempt: decodes parameters or version strings the daemon stored itself
 github.com/autarquico/supermgmt/internal/app.parsePreflightListeners  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task

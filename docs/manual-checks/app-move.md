@@ -84,5 +84,5 @@ Needs a real Cloudflare account with a zone, and tunnel nodes `old` and `new` ([
 | 5.9 | Make `new` fail its health check after the repoint (stateless app) | The records return to `old`'s tunnel, `new`'s rules are withdrawn, `old` serves throughout |
 | 5.10 | Same with a stateful app; request the hostname every second during the rollback | Errors from the repoint until `old` is healthy again; then normal. Record the length of the window |
 | 5.11 | Block the DNS call so its answer is lost (for example cut the daemon's network right after the PATCH) | Nothing else happens for 2 minutes; then the record is read and the move continues or rolls back from what it shows |
-| 5.12 | Resume (`sm apps move blog prod --to new`) a routed move halted with a route in `dns_switched` | It completes or rolls back; do not abandon it (the refusal is not implemented yet) |
+| 5.12 | Resume (`sm apps move blog prod --to new`) a routed move halted with a route in `dns_switched` | It completes or rolls back; `sm apps move blog prod --abandon` is refused naming the route |
 | 5.13 | A target with a waiting route (no known-good deployment on a copy) | The route has no DNS during the move; it activates on `new` when the move is `done` |
