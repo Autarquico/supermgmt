@@ -906,6 +906,70 @@ func TestMoveRoutesRun_ACompensationAfterAReconcilerClosedUpdateRestoresTheRecor
 	rr.wantContent("shop.example.test", "a")
 }
 
+// resolvedSucceeded is the operator's way out of an interrupted job: job.resolve with outcome succeeded and
+// assume_quiescent closes every dispatched intent as succeeded, with no evidence. The job is then put back under a
+// live lease, as the next job of the move would hold one.
+func (rr *routedRun) resolvedSucceeded() {
+	rr.t.Helper()
+	ctx := context.Background()
+	mustf(rr.t, rr.store.Interrupt(ctx, rr.lease, jobs.ErrOutcomeUnknown), "Interrupt")
+	job, err := rr.store.Get(ctx, rr.db.Reader(), rr.lease.JobID)
+	mustf(rr.t, err, "Get the job")
+	rr.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := rr.store.Resolve(ctx, tx, jobs.ResolveRequest{
+			JobID: job.ID, PlanHash: job.PlanHash, Outcome: jobs.ResolveSucceeded, AssumeQuiescent: true,
+			By: domain.Actor{ID: rr.admin, Type: domain.ActorHuman},
+		})
+		return err
+	})
+	rr.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'running', lease_until = ? WHERE id = ?`,
+			domain.UnixMillis(rr.clock.Now().Add(time.Hour)), job.ID)
+		return err
+	})
+	rr.lease.Generation = job.LeaseGeneration
+	for _, in := range rr.intentsOf(operationDNSUpdate) {
+		if in.Outcome != jobs.OutcomeSucceeded {
+			rr.t.Fatalf("intent %s closed as %q, want the operator's succeeded", in.ID, in.Outcome)
+		}
+	}
+}
+
+func TestMoveRoutesRun_AnOperatorResolvedUpdateThatDidNotApplyIsStillSettledByReadingTheRecord(t *testing.T) {
+	for _, tc := range []string{"forward", "compensation"} {
+		t.Run(tc, func(t *testing.T) {
+			rr := newRoutedRun(t, runOptions{})
+			rr.expose(rr.main(), "shop.example.test", "public")
+			rr.started()
+			rr.holdFirstUpdate()
+			rr.resolvedSucceeded()
+			var atStop snapshot
+			rr.before = func(label string, c templates.Command) {
+				if label == "B" && c.Template == "compose.stop" {
+					atStop = rr.snap("shop.example.test")
+				}
+			}
+
+			if tc == "forward" {
+				mustf(t, rr.run(), "Run after the resolve")
+				if m := rr.moveRow(); m.Phase != database.AppMoveDone {
+					t.Fatalf("move = %+v, want done", m)
+				}
+				rr.wantContent("shop.example.test", "b")
+				return
+			}
+			wantAppsCode(t, rr.handler.compensate(context.Background(), rr.loaded(), errCompensationResumed), smerr.CodeDeploymentFailed)
+			if m := rr.moveRow(); m.Phase != database.AppMoveRolledBack {
+				t.Fatalf("move = %+v, want rolled back", m)
+			}
+			if atStop.records != "shop.example.test=a " || len(atStop.servedB) != 0 {
+				t.Errorf("when B stopped: %q, B serving %v; want the record at A and the rule withdrawn first", atStop.records, atStop.servedB)
+			}
+			rr.wantContent("shop.example.test", "a")
+		})
+	}
+}
+
 func TestMoveRoutesRun_ACompensationDoesNothingBeforeAnUnknownUpdateIsReconciledThenRestoresIt(t *testing.T) {
 	rr := newRoutedRun(t, runOptions{})
 	rr.expose(rr.main(), "shop.example.test", "public")

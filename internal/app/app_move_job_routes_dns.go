@@ -132,6 +132,7 @@ type dnsIntent struct {
 	JobID      domain.ID
 	Settled    bool
 	Outcome    string
+	Evidence   string
 	Dispatched bool
 	NotBefore  time.Time
 	dnsPreState
@@ -140,7 +141,7 @@ type dnsIntent struct {
 // lastDNSIntent is the newest update intent of the route's record, whichever job recorded it.
 func (r *moveRun) lastDNSIntent(ctx context.Context, m moveRoute) (dnsIntent, bool, error) {
 	rows, err := r.h.cfg.DB.Reader().QueryContext(ctx, `
-		SELECT id, job_id, state, outcome, dispatched_at, deadline_at, pre_state_json FROM operation_intents
+		SELECT id, job_id, state, outcome, evidence_json, dispatched_at, deadline_at, pre_state_json FROM operation_intents
 		WHERE operation = ? AND json_extract(pre_state_json, '$.move') = ? AND json_extract(pre_state_json, '$.route') = ?
 		ORDER BY CAST(json_extract(pre_state_json, '$.seq') AS INTEGER) DESC LIMIT 1`,
 		operationDNSUpdate, r.move.ID, m.row.RouteID)
@@ -155,10 +156,11 @@ func (r *moveRun) lastDNSIntent(ctx context.Context, m moveRoute) (dnsIntent, bo
 		in          dnsIntent
 		pre, state  string
 		outcome     *string
+		evidence    *string
 		dispatched  *int64
 		notBeforeMs int64
 	)
-	if err := rows.Scan(&in.ID, &in.JobID, &state, &outcome, &dispatched, &notBeforeMs, &pre); err != nil {
+	if err := rows.Scan(&in.ID, &in.JobID, &state, &outcome, &evidence, &dispatched, &notBeforeMs, &pre); err != nil {
 		return dnsIntent{}, false, fmt.Errorf("read the record updates of route %s: %w", m.route.Hostname, err)
 	}
 	if err := json.Unmarshal([]byte(pre), &in.dnsPreState); err != nil {
@@ -167,6 +169,9 @@ func (r *moveRun) lastDNSIntent(ctx context.Context, m moveRoute) (dnsIntent, bo
 	in.Settled, in.Dispatched = state == string(jobs.IntentCompleted), dispatched != nil
 	if outcome != nil {
 		in.Outcome = *outcome
+	}
+	if evidence != nil {
+		in.Evidence = *evidence
 	}
 	in.NotBefore = domain.FromUnixMillis(notBeforeMs)
 	return in, true, nil
@@ -261,7 +266,7 @@ func (r *moveRun) settleUpdate(ctx context.Context, l dnsLeg, m moveRoute) (bool
 		return false, err
 	}
 	sent := found && in.Direction == l.dir && in.Dispatched
-	if sent && in.Settled && in.Outcome == jobs.OutcomeSucceeded {
+	if sent && in.Settled && in.Outcome == jobs.OutcomeSucceeded && in.Evidence == string(dnsEvidence(jobs.OutcomeSucceeded)) {
 		return true, nil
 	}
 	if sent {

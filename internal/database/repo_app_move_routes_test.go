@@ -155,6 +155,7 @@ func TestAppRoutesTriggerAcceptsOnlyTheExactTuple(t *testing.T) {
 		// the columns the old trigger never listed, changed together with the exact tuple
 		for _, col := range []string{
 			"phase = 'removing'", "phase = 'failed', halted_phase = 'active'", "last_error = 'x'", "access_app_id = 'x'", "plan_id = 'x'",
+			"phase_started_at = phase_started_at - 1",
 		} {
 			refused("tuple with "+col, tuple+", "+col)
 		}

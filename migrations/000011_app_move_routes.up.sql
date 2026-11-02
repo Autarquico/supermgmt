@@ -114,7 +114,7 @@ BEGIN SELECT RAISE(ABORT, 'an app move route keeps its frozen identity'); END;
 -- changes alone, apart from the timestamp.
 DROP TRIGGER app_routes_ids_once;
 CREATE TRIGGER app_routes_ids_once BEFORE UPDATE OF id, app_target_id, node_id, hostname, service, port, access, account_id, zone,
-        instance_id, tunnel_id, tunnel_generation, dns_record_id, access_app_id, plan_id, created_by, created_at ON app_routes
+        instance_id, tunnel_id, tunnel_generation, dns_record_id, access_app_id, plan_id, phase_started_at, created_by, created_at ON app_routes
 WHEN (OLD.dns_record_id <> '' AND NEW.dns_record_id <> OLD.dns_record_id)
   OR (OLD.access_app_id <> '' AND NEW.access_app_id <> OLD.access_app_id)
   OR NEW.id <> OLD.id OR NEW.app_target_id <> OLD.app_target_id
@@ -123,7 +123,8 @@ WHEN (OLD.dns_record_id <> '' AND NEW.dns_record_id <> OLD.dns_record_id)
   OR (OLD.plan_id IS NOT NULL AND NEW.plan_id IS NOT OLD.plan_id) OR NEW.created_by <> OLD.created_by OR NEW.created_at <> OLD.created_at
   OR ((NEW.node_id <> OLD.node_id OR NEW.tunnel_id <> OLD.tunnel_id OR NEW.tunnel_generation <> OLD.tunnel_generation)
       AND (NEW.phase <> OLD.phase OR NEW.halted_phase IS NOT OLD.halted_phase OR NEW.last_error <> OLD.last_error
-        OR NEW.dns_record_id <> OLD.dns_record_id OR NEW.access_app_id <> OLD.access_app_id OR NEW.plan_id IS NOT OLD.plan_id))
+        OR NEW.dns_record_id <> OLD.dns_record_id OR NEW.access_app_id <> OLD.access_app_id OR NEW.plan_id IS NOT OLD.plan_id
+        OR NEW.phase_started_at <> OLD.phase_started_at))
   OR ((NEW.node_id <> OLD.node_id OR NEW.tunnel_id <> OLD.tunnel_id OR NEW.tunnel_generation <> OLD.tunnel_generation)
       AND NOT EXISTS (
         SELECT 1 FROM app_move_routes r JOIN app_moves m ON m.id = r.move_id
