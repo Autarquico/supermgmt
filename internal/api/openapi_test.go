@@ -106,6 +106,7 @@ var schemaTypes = map[string]reflect.Type{
 	"PageOfAppRoute":        reflect.TypeFor[wire.Page[wire.AppRoute]](),
 	"AppMove":               reflect.TypeFor[wire.AppMove](),
 	"AppMoveVolume":         reflect.TypeFor[wire.AppMoveVolume](),
+	"AppMoveRoute":          reflect.TypeFor[wire.AppMoveRoute](),
 	"MoveAppRequest":        reflect.TypeFor[wire.MoveAppRequest](),
 	"AppMoveSubmission":     reflect.TypeFor[wire.AppMoveSubmission](),
 	"PageOfAppMove":         reflect.TypeFor[wire.Page[wire.AppMove]](),

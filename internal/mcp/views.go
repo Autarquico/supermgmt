@@ -286,6 +286,7 @@ type MoveView struct {
 	HaltedPhase  string           `json:"halted_phase,omitempty"`
 	Stateful     bool             `json:"stateful"`
 	Volumes      []MoveVolumeView `json:"volumes"`
+	Routes       []MoveRouteView  `json:"routes"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 	Remote       MoveRemote       `json:"remote"`
@@ -299,6 +300,15 @@ type MoveVolumeView struct {
 	State         string `json:"state"`
 	Attempt       int    `json:"attempt"`
 	CreatedByMove bool   `json:"created_by_move"`
+}
+
+// MoveRouteView is a route frozen into the move and where it stands in the switch.
+type MoveRouteView struct {
+	RouteID     domain.ID `json:"route_id"`
+	Hostname    string    `json:"hostname"`
+	Access      string    `json:"access"`
+	FrozenPhase string    `json:"frozen_phase"`
+	State       string    `json:"state"`
 }
 
 // MoveRemote is why a halted move is not moving, which the nodes' answers can shape.
@@ -318,9 +328,13 @@ func ViewMove(m wire.AppMove) MoveView {
 			State: v.State, Attempt: v.Attempt, CreatedByMove: v.CreatedByMove,
 		}
 	}
+	routes := make([]MoveRouteView, len(m.Routes))
+	for i, r := range m.Routes {
+		routes[i] = MoveRouteView{RouteID: r.RouteID, Hostname: operatorLine(r.Hostname), Access: r.Access, FrozenPhase: r.FrozenPhase, State: r.State}
+	}
 	return MoveView{
 		ID: m.ID, AppTargetID: m.AppTargetID, SourceNodeID: m.SourceNodeID, DestNodeID: m.DestNodeID,
-		Phase: m.Phase, HaltedPhase: m.HaltedPhase, Stateful: m.Stateful, Volumes: volumes,
+		Phase: m.Phase, HaltedPhase: m.HaltedPhase, Stateful: m.Stateful, Volumes: volumes, Routes: routes,
 		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Remote: remote,
 	}
 }

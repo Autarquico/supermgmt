@@ -13,12 +13,18 @@ import (
 
 func movesAPI(t *testing.T, web wire.App, nodes []wire.Node, stateful bool, moves ...wire.AppMove) *fakeAPI {
 	t.Helper()
+	return routedMovesAPI(t, web, nodes, stateful, nil, moves...)
+}
+
+// routedMovesAPI answers a move request with a move that has frozen the given routes.
+func routedMovesAPI(t *testing.T, web wire.App, nodes []wire.Node, stateful bool, routes []wire.AppMoveRoute, moves ...wire.AppMove) *fakeAPI {
+	t.Helper()
 	target := web.Targets[0].ID
 	submission := wire.Submission{
 		Job:    wire.Job{ID: newTestID(), Type: "control_plane.apply", State: domain.JobAwaitingApproval},
 		Policy: wire.Policy{ApprovalRequired: true, Quorum: 1},
 	}
-	started := wire.AppMove{ID: newTestID(), AppTargetID: target, Phase: "preflight", Stateful: stateful}
+	started := wire.AppMove{ID: newTestID(), AppTargetID: target, Phase: "preflight", Stateful: stateful, Routes: routes}
 	if stateful {
 		started.Volumes = []wire.AppMoveVolume{{Name: "sm-web-prod_data", Service: "db", Mount: "/var/lib/db", State: "pending", Attempt: 1}}
 	}
@@ -108,6 +114,7 @@ func TestAppsMovesShowsPhaseNodesAndVolumes(t *testing.T) {
 		ID: newTestID(), AppTargetID: web.Targets[0].ID, SourceNodeID: web.Targets[0].NodeID, DestNodeID: node.ID,
 		Phase: "failed", HaltedPhase: "compensating_source_started", LastError: "source did not become healthy", Stateful: true,
 		Volumes:   []wire.AppMoveVolume{{Name: "sm-web-prod_data", State: "verified"}},
+		Routes:    []wire.AppMoveRoute{{RouteID: newTestID(), Hostname: "web.example.com", Access: "public", FrozenPhase: "active", State: "dns_switched"}},
 		UpdatedAt: time.Date(2026, 11, 1, 10, 30, 0, 0, time.UTC),
 	}
 	f := movesAPI(t, web, []wire.Node{node}, true, move)
@@ -117,9 +124,28 @@ func TestAppsMovesShowsPhaseNodesAndVolumes(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("code=%d err=%q", r.code, r.stderr)
 	}
-	for _, want := range []string{"PHASE", "failed in compensating_source_started: source did not become healthy", "edge-1", "sm-web-prod_data:verified"} {
+	for _, want := range []string{"PHASE", "failed in compensating_source_started: source did not become healthy", "edge-1", "sm-web-prod_data:verified", "ROUTES", "web.example.com:dns_switched"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("output lacks %q:\n%s", want, r.stdout)
+		}
+	}
+}
+
+func TestAppsMoveListsTheHostnamesItRepointsAndWarnsAboutTheRollbackWindowOnlyWhenStateful(t *testing.T) {
+	web, _, node := appsFixture()
+	for _, stateful := range []bool{false, true} {
+		f := routedMovesAPI(t, web, []wire.Node{node}, stateful, []wire.AppMoveRoute{
+			{RouteID: newTestID(), Hostname: "web.example.com", FrozenPhase: "active", State: "pending"},
+			{RouteID: newTestID(), Hostname: "beta.example.com", FrozenPhase: "waiting", State: "pending"},
+		})
+
+		r := f.run("apps", "move", "web", "prod", "--to", "edge-1")
+
+		if r.code != 0 || !strings.Contains(r.stderr, "web.example.com, beta.example.com (waiting") {
+			t.Fatalf("stateful=%v code=%d err=%q", stateful, r.code, r.stderr)
+		}
+		if got := strings.Contains(r.stderr, "serve errors"); got != stateful {
+			t.Errorf("stateful=%v: rollback window warning = %v in %q", stateful, got, r.stderr)
 		}
 	}
 }

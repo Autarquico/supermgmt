@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
@@ -17,7 +18,7 @@ type movesAPI struct {
 func (f *movesAPI) MoveApp(_ context.Context, target, to domain.ID) (wire.AppMoveSubmission, error) {
 	f.moved, f.movedTo = append(f.moved, target), append(f.movedTo, to)
 	return wire.AppMoveSubmission{
-		Move:       wire.AppMove{Stateful: true},
+		Move:       wire.AppMove{Stateful: true, Routes: []wire.AppMoveRoute{{Hostname: "shop.example.com", State: "pending"}}},
 		Submission: wire.Submission{Job: wire.Job{ID: idJob, State: domain.JobAwaitingApproval}},
 	}, nil
 }
@@ -32,6 +33,7 @@ func TestMoveViaPaletteAsksFirstAndSubmitsTheResolvedNode(t *testing.T) {
 	h.press("enter")
 
 	contains(t, h.view(), "stops while their data is copied")
+	contains(t, h.view(), "repointed to the new node")
 	if len(api.moved) != 0 {
 		t.Fatalf("moved before the confirmation: %v", api.moved)
 	}
@@ -63,4 +65,14 @@ func TestMoveCommandValidatesItsWordsAndTheDaemon(t *testing.T) {
 	bare.typeText("move shop production db-1")
 	bare.press("enter")
 	contains(t, bare.view(), unavailableMoves)
+}
+
+func TestMoveHostnamesListsEachRepointedHostnameAsOneSafeLine(t *testing.T) {
+	m := wire.AppMove{Routes: []wire.AppMoveRoute{{Hostname: "a.example.com"}, {Hostname: "b.example.com\x1b[2J"}}}
+
+	got := moveHostnames(m)
+
+	if !strings.HasPrefix(got, "a.example.com, b.example.com") || strings.ContainsRune(got, 0x1b) {
+		t.Errorf("hostnames = %q", got)
+	}
 }

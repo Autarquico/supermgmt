@@ -166,8 +166,9 @@ Move an application to another node (experimental)
 Request the move of the target to a destination node. The destination is checked first and the target keeps
 running on its node until the destination passes its health checks, except that a move of an app with
 volumes stops the app while their data is copied. The request prints whether the app stops and which
-volumes are copied, and waits for approval when policy asks. Routes are not moved: a target with a route
-must be unexposed first.
+volumes are copied, and waits for approval when policy asks. The routes of the target are repointed to the
+new node inside the move; the request lists their hostnames. While a routed move is open the target cannot
+be exposed or unexposed, and tunnel setup, rotation and disable are refused on both nodes.
 
 --cleanup-source removes the containers a finished move left stopped on the old node; volumes are never
 removed. --abandon records a move that halted while it was undoing itself as rolled back, leaving both

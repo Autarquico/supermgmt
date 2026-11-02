@@ -49,10 +49,38 @@ func (s *AppMoves) UseTunnel(opts *TunnelOptions) error {
 	return err
 }
 
-// AppMoveView is a move with its volume map.
+// AppMoveRouteView is a route frozen into a move, with the hostname and access mode of the route itself.
+type AppMoveRouteView struct {
+	database.AppMoveRoute
+	Hostname string
+	Access   string
+}
+
+// AppMoveView is a move with its volume map and the routes frozen into it.
 type AppMoveView struct {
 	Move    database.AppMove
 	Volumes []database.AppMoveVolume
+	Routes  []AppMoveRouteView
+}
+
+func moveViewOf(ctx context.Context, q database.Querier, m database.AppMove) (AppMoveView, error) {
+	volumes, err := database.ListAppMoveVolumes(ctx, q, m.ID)
+	if err != nil {
+		return AppMoveView{}, err
+	}
+	frozen, err := database.ListAppMoveRoutes(ctx, q, m.ID)
+	if err != nil {
+		return AppMoveView{}, err
+	}
+	routes := make([]AppMoveRouteView, len(frozen))
+	for i, f := range frozen {
+		route, err := database.GetAppRoute(ctx, q, f.RouteID)
+		if err != nil {
+			return AppMoveView{}, err
+		}
+		routes[i] = AppMoveRouteView{AppMoveRoute: f, Hostname: route.Hostname, Access: route.Access}
+	}
+	return AppMoveView{Move: m, Volumes: volumes, Routes: routes}, nil
 }
 
 // AppMoveResult is the outcome of a move request. Resumed says that the request continued an open move whose job
@@ -237,8 +265,8 @@ func (s *AppMoves) submit(ctx context.Context, tx *database.Tx, by Caller, actor
 }
 
 func (s *AppMoves) viewOf(ctx context.Context, q database.Querier, m database.AppMove, submission Submission, resumed bool) (AppMoveResult, error) {
-	volumes, err := database.ListAppMoveVolumes(ctx, q, m.ID)
-	return AppMoveResult{AppMoveView: AppMoveView{Move: m, Volumes: volumes}, Submission: submission, Resumed: resumed}, err
+	view, err := moveViewOf(ctx, q, m)
+	return AppMoveResult{AppMoveView: view, Submission: submission, Resumed: resumed}, err
 }
 
 // CleanupSource requests the removal of the containers a done move left parked on its source node (action
@@ -330,7 +358,7 @@ func (s *AppMoves) Abandon(ctx context.Context, by Caller, targetID domain.ID) (
 	})
 }
 
-// List returns the target's moves, newest first, with their volumes, if the caller may read the target.
+// List returns the target's moves, newest first, with their volumes and routes, if the caller may read the target.
 func (s *AppMoves) List(ctx context.Context, by Caller, targetID domain.ID) ([]AppMoveView, error) {
 	q := s.cfg.DB.Reader()
 	actor, err := s.beginRequest(ctx, q, by)
@@ -350,11 +378,9 @@ func (s *AppMoves) List(ctx context.Context, by Caller, targetID domain.ID) ([]A
 	}
 	out := make([]AppMoveView, len(moves))
 	for i, m := range moves {
-		volumes, err := database.ListAppMoveVolumes(ctx, q, m.ID)
-		if err != nil {
+		if out[i], err = moveViewOf(ctx, q, m); err != nil {
 			return nil, err
 		}
-		out[i] = AppMoveView{Move: m, Volumes: volumes}
 	}
 	return out, nil
 }

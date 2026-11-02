@@ -2675,19 +2675,30 @@ components:
         state: {type: string, enum: [pending, importing, imported, verified]}
         attempt: {type: integer}
         created_by_move: {type: boolean, description: The move created the volume on the destination; only such a volume may be removed there.}
+    AppMoveRoute:
+      type: object
+      description: One route frozen into a move, repointed to the destination node by it.
+      required: [route_id, hostname, access, frozen_phase, state]
+      properties:
+        route_id: {$ref: '#/components/schemas/ID'}
+        hostname: {type: string}
+        access: {type: string, enum: [public, owners]}
+        frozen_phase: {type: string, enum: [active, waiting], description: The route's phase when the move began; a waiting route has no DNS and is activated on the destination when the move is done.}
+        state: {type: string, enum: [pending, dest_included, dest_published, dns_switching, dns_switched, committed, source_cleaned, dns_restoring, dns_restored, dest_excluded, dest_withdrawn], description: Where the route stands in the switch.}
     AppMove:
       type: object
       description: One move of an application target from its source node to a destination node.
-      required: [id, app_target_id, source_node_id, dest_node_id, phase, stateful, volumes, created_at, updated_at]
+      required: [id, app_target_id, source_node_id, dest_node_id, phase, stateful, volumes, routes, created_at, updated_at]
       properties:
         id: {$ref: '#/components/schemas/ID'}
         app_target_id: {$ref: '#/components/schemas/ID'}
         source_node_id: {$ref: '#/components/schemas/ID'}
         dest_node_id: {$ref: '#/components/schemas/ID'}
-        phase: {type: string, description: 'preflight, staged, source_stopped, data_copied, started, verified, committed, source_parked, done; compensating_b_stopped, compensating_source_started, compensating_source_verified, compensating_b_removed, rolled_back; failed and conflict when halted.'}
+        phase: {type: string, description: 'preflight, staged, source_stopped, data_copied, started, verified, routes_dest_included, routes_switched, committed, routes_source_cleaned, source_parked, done; compensating_routes_restored, compensating_routes_withdrawn, compensating_b_stopped, compensating_source_started, compensating_source_verified, compensating_b_removed, rolled_back; failed and conflict when halted.'}
         halted_phase: {type: string, description: The phase a failed or conflicting move holds.}
         stateful: {type: boolean, description: A stateful move stops the app while its volumes are copied.}
         volumes: {type: array, items: {$ref: '#/components/schemas/AppMoveVolume'}}
+        routes: {type: array, items: {$ref: '#/components/schemas/AppMoveRoute'}, description: The routes of the target frozen into the move.}
         last_error: {type: string, description: Why a halted move is not moving.}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}

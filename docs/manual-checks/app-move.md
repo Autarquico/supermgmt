@@ -32,7 +32,7 @@ You need two managed SSH nodes with Docker and Compose 5.5.1 in the same environ
 | # | Check | Expected |
 |---|---|---|
 | 3.1 | Move to the node the app already runs on, to an unmanaged node, to a node in another environment | Each is refused with the cause. Both nodes untouched |
-| 3.2 | Move a target that has a route (`sm apps expose`, approve) | Refused, saying to unexpose first and that routes are not moved yet |
+| 3.2 | Move a target that has a route in `provisioning`, `failed` or being removed | Refused, naming the route. Nothing changed on either node or in Cloudflare |
 | 3.3 | Create a volume on `new` named like the target's (`<project>_data`), then move | Preflight refuses it as a leftover volume. The volume is not adopted or deleted |
 | 3.4 | Fill `new`'s Docker root so it cannot hold the volume, then move | Preflight refuses it for space. `old` keeps running |
 | 3.5 | Request a deployment or a rollback while a move is open | Refused until the move ends |
@@ -66,3 +66,23 @@ You need two managed SSH nodes with Docker and Compose 5.5.1 in the same environ
 | 6.1 | From a real MCP client with write tools enabled, call `infra_move_app` for `blog` | The result is `approval_required` with risk `high` and says that the app stops while its volumes are copied. Nothing runs until a person approves |
 | 6.2 | Approve, then call `infra_list_app_moves` | The move is listed with its phase, nodes and volumes |
 | 6.3 | List the client's tools | No tool cleans up the source or abandons a move |
+
+## 5. Routes
+
+Needs a real Cloudflare account with a zone, and tunnel nodes `old` and `new` ([Expose an app](app-expose-tunnel.md)). Use a throwaway hostname. The target has a public route and an `owners` route.
+
+| # | Check | Expected |
+|---|---|---|
+| 5.1 | `sm apps move blog prod --to new`, read the plan output | It lists both hostnames and, for a stateful app, the rollback window warning |
+| 5.2 | While the move is open, run `sm apps unexpose` and `sm apps expose` on the target, and `sm nodes setup old --tunnel`, rotation and disable on `old` and `new` | Each is refused naming the move |
+| 5.3 | Approve and watch `sm apps moves blog prod` | Route states advance `dest_published`, `dns_switched`, `committed`, `source_cleaned`; the move ends `done` |
+| 5.4 | In the Cloudflare dashboard, read each DNS record | Same record ID, CNAME to `new`'s tunnel, still proxied, comment unchanged |
+| 5.5 | Open both hostnames from outside | Both serve from `new`; the `owners` route still asks for the Access login |
+| 5.6 | Read `old`'s tunnel ingress | The rules of the moved routes are gone; rules you added by hand are gone too |
+| 5.7 | Delete the `owners` route's Access application before a new move, then move | Refused at request time naming the route |
+| 5.8 | Delete the Access application while the move runs, before the repoint | The route is halted, its rule leaves both ingresses, the hostname is not served, the move halts |
+| 5.9 | Make `new` fail its health check after the repoint (stateless app) | The records return to `old`'s tunnel, `new`'s rules are withdrawn, `old` serves throughout |
+| 5.10 | Same with a stateful app; request the hostname every second during the rollback | Errors from the repoint until `old` is healthy again; then normal. Record the length of the window |
+| 5.11 | Block the DNS call so its answer is lost (for example cut the daemon's network right after the PATCH) | Nothing else happens for 2 minutes; then the record is read and the move continues or rolls back from what it shows |
+| 5.12 | Resume (`sm apps move blog prod --to new`) a routed move halted with a route in `dns_switched` | It completes or rolls back; do not abandon it (the refusal is not implemented yet) |
+| 5.13 | A target with a waiting route (no known-good deployment on a copy) | The route has no DNS during the move; it activates on `new` when the move is `done` |
