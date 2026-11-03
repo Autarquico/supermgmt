@@ -102,7 +102,7 @@ This spec covers the part of feature 4 that the 2026-11-01 split set aside, whic
    - **Withdraw.** The rows move to `dest_excluded` first. Then B's ingress is built and PUT, and reconciled the same way. Only then do the rows move to `dest_withdrawn`.
    - **Other writers.** Every other writer of B's ingress takes the same lock and uses the same builder, so it keeps or drops the incoming rules according to the rows.
 7. **Switch.** It runs per `active` route, holding the instance Cloudflare lock. A `waiting` route has no DNS and skips this step.
-   1. **Access first.** For an owners route, the Access app is revalidated. If it is missing or cannot be repaired, the **route** is halted with the existing route halt (`internal/app/app_routes_job.go:368-388`), and the move is halted too. A halted route is not served by any builder (`servesIngress`), so its rule leaves both A's and B's ingress on their next PUT. The move then PUTs both. This is fail-closed: a missing Access app is never served. A read can't stop someone else from deleting the app later. `docs/security.md` says so.
+   1. **Access first.** For an owners route, the Access app is revalidated. If it is missing or cannot be repaired, the **route** is halted with the existing route halt (`internal/app/app_routes_job.go:368-388`), and the move rolls back (§11). The same applies when the worker's re-checks before `staged` and before `started` find it missing. A halted route is not served by any builder (`servesIngress`), so its rule leaves both A's and B's ingress on their next PUT. The move then PUTs both. This is fail-closed: a missing Access app is never served. A read can't stop someone else from deleting the app later. `docs/security.md` says so.
    2. **One move-aware DNS validator.** It is used for the forward switch, for reconciliation and for restore. It requires:
       - exactly one record for the hostname, with the frozen ID;
       - the route's marker;
@@ -189,7 +189,7 @@ This spec covers the part of feature 4 that the 2026-11-01 split set aside, whic
 - **Given** an `active` owners route
 - **When** it moves
 - **Then** the Access app is the same object, revalidated before B's ingress is published and before the repoint
-- **And** if the app is missing at either point, the route halts, neither A's nor B's ingress serves it, the move halts, and no record was repointed by that step
+- **And** if the app is missing at either point, the route halts, neither A's nor B's ingress serves it, the move rolls back, and no record was repointed by that step (amended 2026-11-03 after the external review)
 
 ### Scenario: a waiting route moves without Cloudflare and activates on B
 - **Given** a `waiting` route whose port the known-good deployment publishes
