@@ -273,7 +273,7 @@ func routesChanged(format string, args ...any) error {
 
 // recheckRoutes repeats the admission of the routes under the locks the job holds (spec §1): the target has the
 // routes the plan froze, they are movable, B holds them together with the other reservations, and their Access
-// applications are in place. The move calls it before staged and before routes_dest_included.
+// applications are guarded or the route is halted. The move calls it before staged and before routes_dest_included.
 func (r *moveRun) recheckRoutes(ctx context.Context) error {
 	q := r.h.cfg.DB.Reader()
 	source, dest := r.a.node, r.b.node
@@ -288,7 +288,23 @@ func (r *moveRun) recheckRoutes(ctx context.Context) error {
 	if !slices.EqualFunc(frozen, rows, sameFrozenRoute) {
 		return routesChanged("the routes or the tunnels differ from what the plan froze")
 	}
-	return checkMoveAccessApps(ctx, q, r.h.tunnel, rows)
+	return r.guardAccess(ctx)
+}
+
+// guardAccess is the Access check of the worker's re-checks: an active owners route whose application is missing or
+// cannot be repaired is halted and withdrawn from both ingresses, and the move ends (accessFirst). Request-time
+// admission only refuses (checkMoveAccessApps).
+func (r *moveRun) guardAccess(ctx context.Context) error {
+	active, err := r.activeMoveRoutes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range active {
+		if err := r.accessFirst(ctx, m, active); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func sameFrozenRoute(a, b database.AppMoveRoute) bool {

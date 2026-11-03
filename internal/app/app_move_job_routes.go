@@ -191,13 +191,6 @@ func (r *moveRun) publishRoutes(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// The Access check with repair comes before the read-only re-check, which would refuse a missing application
-	// without halting its route.
-	for _, m := range active {
-		if err := r.accessFirst(ctx, m, active); err != nil {
-			return err
-		}
-	}
 	if err := r.recheck(ctx); err != nil {
 		return err
 	}

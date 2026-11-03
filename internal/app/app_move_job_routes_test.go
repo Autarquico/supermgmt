@@ -531,6 +531,65 @@ func TestMoveRoutesRun_AnOwnersRouteWhoseAccessApplicationIsGoneAtPublishHaltsAn
 	}
 }
 
+// wantHaltedAndWithdrawn checks what a missing Access application at a worker re-check leaves: the owners route halted
+// and in neither ingress, no record changed and the move rolled back.
+func (rr *routedRun) wantHaltedAndWithdrawn(err error, route database.AppRoute) {
+	rr.t.Helper()
+	if err == nil {
+		rr.t.Fatal("Run succeeded without the Access application")
+	}
+	if got := rr.route(route.ID); got.Phase != database.AppRouteFailed || got.HaltedPhase != database.AppRouteActive {
+		rr.t.Errorf("route = %+v, want it halted as failed while active", got)
+	}
+	rr.wantServed(rr.tunA, "A", "shop.example.test")
+	rr.wantServed(rr.tunB, "B")
+	if n := len(rr.updates()); n != 0 {
+		rr.t.Errorf("%d record updates, want none", n)
+	}
+	rr.wantContent("admin.example.test", "a")
+	rr.wantContent("shop.example.test", "a")
+	if m := rr.moveRow(); m.Phase != database.AppMoveRolledBack {
+		rr.t.Errorf("move = %+v, want rolled back", m)
+	}
+}
+
+func TestMoveRoutesRun_AnOwnersRouteWhoseAccessApplicationIsGoneBeforeStagingHaltsAndNoIngressServesIt(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	route := rr.expose(rr.main(), "admin.example.test", "owners")
+	rr.expose(rr.main(), "shop.example.test", "public")
+	rr.started()
+	rr.cf.RemoveApp(rr.cf.Apps()[0].ID)
+
+	err := rr.run()
+
+	rr.wantHaltedAndWithdrawn(err, route)
+	if len(rr.events(eventAppMoveRouteHalted)) != 1 {
+		t.Errorf("%d route_halted events, want 1", len(rr.events(eventAppMoveRouteHalted)))
+	}
+}
+
+func TestMoveRoutesRun_AnOwnersRouteWhoseAccessApplicationIsGoneBeforeTheDestinationStartsHaltsAndNoIngressServesIt(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	route := rr.expose(rr.main(), "admin.example.test", "owners")
+	rr.expose(rr.main(), "shop.example.test", "public")
+	rr.started()
+	appID := rr.cf.Apps()[0].ID
+	removed := false
+	rr.onCheckpoint(func() {
+		if !removed && rr.moveRow().Phase == database.AppMoveStaged {
+			removed = true
+			rr.cf.RemoveApp(appID)
+		}
+	})
+
+	err := rr.run()
+
+	rr.wantHaltedAndWithdrawn(err, route)
+	if len(rr.events(eventAppMoveRouteHalted)) != 1 {
+		t.Errorf("%d route_halted events, want 1", len(rr.events(eventAppMoveRouteHalted)))
+	}
+}
+
 func TestMoveRoutesRun_AnAccessApplicationLostBetweenTwoSwitchesHaltsThatRouteAndRestoresTheFirst(t *testing.T) {
 	rr := newRoutedRun(t, runOptions{})
 	rr.expose(rr.main(), "admin.example.test", "owners")
