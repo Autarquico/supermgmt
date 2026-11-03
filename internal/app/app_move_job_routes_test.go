@@ -590,6 +590,78 @@ func TestMoveRoutesRun_AnOwnersRouteWhoseAccessApplicationIsGoneBeforeTheDestina
 	}
 }
 
+// driftApp moves the Access application of a route to another domain, as an edit in the dashboard would, then makes
+// every update of an Access application suffer fault.
+func (rr *routedRun) driftApp(fault cffake.Fault) {
+	rr.t.Helper()
+	app := rr.cf.Apps()[0]
+	_, err := rr.api.UpdateAccessApp(context.Background(), app.ID, cloudflare.AppSpec{
+		Name: app.Name, Domain: "elsewhere.example.test", PolicyIDs: app.PolicyIDs, AllowedIdPs: app.AllowedIdPs,
+	})
+	mustf(rr.t, err, "UpdateAccessApp")
+	rr.cf.Plan(func(m cffake.Mutation) cffake.Fault {
+		if m.Op == cffake.OpAppUpdate {
+			return fault
+		}
+		return cffake.NoFault
+	})
+}
+
+func TestMoveRoutesRun_AnAccessApplicationThatDriftedAndCannotBeRepairedBeforeStagingHaltsAndNoIngressServesIt(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	route := rr.expose(rr.main(), "admin.example.test", "owners")
+	rr.expose(rr.main(), "shop.example.test", "public")
+	rr.started()
+	rr.driftApp(cffake.Forbidden)
+
+	err := rr.run()
+
+	rr.wantHaltedAndWithdrawn(err, route)
+	if len(rr.events(eventAppMoveRouteHalted)) != 1 {
+		t.Errorf("%d route_halted events, want 1", len(rr.events(eventAppMoveRouteHalted)))
+	}
+}
+
+func TestMoveRoutesRun_AnAccessApplicationThatDriftedAndCannotBeRepairedBeforeTheDestinationStartsHaltsAndNoIngressServesIt(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	route := rr.expose(rr.main(), "admin.example.test", "owners")
+	rr.expose(rr.main(), "shop.example.test", "public")
+	rr.started()
+	drifted := false
+	rr.onCheckpoint(func() {
+		if !drifted && rr.moveRow().Phase == database.AppMoveStaged {
+			drifted = true
+			rr.driftApp(cffake.Forbidden)
+		}
+	})
+
+	err := rr.run()
+
+	rr.wantHaltedAndWithdrawn(err, route)
+	if len(rr.events(eventAppMoveRouteHalted)) != 1 {
+		t.Errorf("%d route_halted events, want 1", len(rr.events(eventAppMoveRouteHalted)))
+	}
+}
+
+func TestMoveRoutesRun_AnAccessApplicationWhoseRepairFailsTransientlyDoesNotHaltTheRoute(t *testing.T) {
+	rr := newRoutedRun(t, runOptions{})
+	route := rr.expose(rr.main(), "admin.example.test", "owners")
+	rr.started()
+	rr.driftApp(cffake.FailBefore)
+
+	err := rr.run()
+
+	if err == nil {
+		t.Fatal("Run succeeded although the repair failed")
+	}
+	if got := rr.route(route.ID); got.Phase != database.AppRouteActive {
+		t.Errorf("route = %+v, want it still active", got)
+	}
+	if n := len(rr.events(eventAppMoveRouteHalted)); n != 0 {
+		t.Errorf("%d route_halted events, want none", n)
+	}
+}
+
 func TestMoveRoutesRun_AnAccessApplicationLostBetweenTwoSwitchesHaltsThatRouteAndRestoresTheFirst(t *testing.T) {
 	rr := newRoutedRun(t, runOptions{})
 	rr.expose(rr.main(), "admin.example.test", "owners")

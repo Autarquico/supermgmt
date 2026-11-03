@@ -10,6 +10,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare"
 )
 
@@ -223,7 +224,10 @@ func (r *moveRun) accessFirst(ctx context.Context, m moveRoute, all []moveRoute)
 	err = rr.requireAccessApp(ctx)
 	var halt *routeHalt
 	if !errors.As(err, &halt) {
-		return err
+		if !repairRefused(ctx, err) {
+			return err
+		}
+		halt = failedHalt(fmt.Sprintf("the Access application of %s drifted and Cloudflare refused to repair it; resolve it in Cloudflare and expose the route again", m.route.Hostname))
 	}
 	if err := rr.halt(ctx, halt.halt, halt); err != nil {
 		return err
@@ -238,6 +242,16 @@ func (r *moveRun) accessFirst(ctx context.Context, m moveRoute, all []moveRoute)
 	}
 	// The route is halted now, so the shared builder leaves its rule out of both ingresses.
 	return errors.Join(cause, r.syncIngresses(ctx, all))
+}
+
+// repairRefused reports that Cloudflare definitively refused to repair a drifted Access application: a refusal that
+// retrying does not change, not a cancelled run, a lost lease, or an answer that may have been lost.
+func repairRefused(ctx context.Context, err error) bool {
+	var repair *accessRepairError
+	var api *cloudflare.APIError
+	return errors.As(err, &repair) && errors.As(err, &api) && ctx.Err() == nil &&
+		!api.Retryable() && !cloudflare.IsAmbiguous(err) &&
+		!errors.Is(err, jobs.ErrLeaseLost) && !errors.Is(err, jobs.ErrOutcomeUnknown)
 }
 
 // ---- switch (spec §7.3) ----------------------------------------------------------------------------------------------

@@ -144,6 +144,12 @@ func (r *routeRun) accessSpec(ctx context.Context) (cloudflare.AppSpec, error) {
 	}, nil
 }
 
+// accessRepairError is a failed update of a drifted Access application. It reads and unwraps as the update's error.
+type accessRepairError struct{ err error }
+
+func (e *accessRepairError) Error() string { return e.err.Error() }
+func (e *accessRepairError) Unwrap() error { return e.err }
+
 // repairAccessApp brings an Access application that drifted from spec (domain, policies, identity providers)
 // back to it, under the guard.
 func (r *routeRun) repairAccessApp(ctx context.Context, app cloudflare.AccessApp, spec cloudflare.AppSpec) error {
@@ -157,7 +163,7 @@ func (r *routeRun) repairAccessApp(ctx context.Context, app cloudflare.AccessApp
 		return err
 	}
 	if _, err := r.tun.api.UpdateAccessApp(ctx, app.ID, spec); err != nil {
-		return err
+		return &accessRepairError{err}
 	}
 	return r.audit(ctx, eventAccessAppUpdated, map[string]any{"access_app_id": app.ID, "name": spec.Name})
 }
