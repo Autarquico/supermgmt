@@ -21,7 +21,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-_(nada)_
+- #56 Move an app target's Cloudflare routes with it
 <!-- /pm-sync:in-progress -->
 
 ---
