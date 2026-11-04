@@ -92,12 +92,14 @@ test('no page loads a resource from another origin', async ({ page, baseURL }) =
 
 test('search opens from the keyboard and finds a docs page', async ({ page }) => {
   await open(page, '/supermgmt/getting-started/', 'dark', 1280, 800);
+  // Starlight focuses the input only when the dialog opens, and Pagefind mounts that input on idle
+  // after DOMContentLoaded: a shortcut pressed before the mount opens a dialog without focus.
+  await page.locator('#starlight__search .pagefind-ui__search-input').waitFor({ state: 'attached', timeout: 15_000 });
   await page.keyboard.press('Control+k');
   const dialog = page.locator('dialog[open]');
   await expect(dialog).toBeVisible();
-  // Pagefind loads its index on first use; on a cold CI runner that can take a few seconds.
   const input = dialog.getByRole('textbox', { name: 'Search' });
-  await expect(input).toBeFocused({ timeout: 15_000 });
+  await expect(input).toBeFocused();
   await input.pressSequentially('approvals');
   await expect(dialog.locator('.pagefind-ui__result-link').first()).toBeVisible({ timeout: 15_000 });
   await page.keyboard.press('Escape');
