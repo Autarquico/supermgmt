@@ -54,6 +54,9 @@ func ParseACLs(out []byte) ([]ACL, error) {
 	}
 	var acls []ACL
 	for _, r := range rows {
+		if (r.Type == "user" || r.Type == "token") && r.UGID == "" {
+			return nil, ErrUnreadable // pveum always names who an entry is for
+		}
 		switch r.Type {
 		case "user":
 			acls = append(acls, ACL{Path: r.Path, Role: r.RoleID, User: r.UGID})
