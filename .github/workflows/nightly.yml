@@ -152,6 +152,7 @@ jobs:
       - name: brew audit --strict in a throwaway tap
         run: |
           brew tap-new local/audit
+          brew trust local/audit
           cp "$RUNNER_TEMP/supermgmt.rb" "$(brew --repository local/audit)/Formula/supermgmt.rb"
           brew audit --strict local/audit/supermgmt
 
