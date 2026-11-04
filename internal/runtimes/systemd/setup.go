@@ -230,7 +230,7 @@ func (s stepper) systemctlPath(ctx context.Context, p SetupParams) (string, erro
 	res, err := read(ctx, s.ex, "setup.systemctl_path", nil)
 	switch {
 	case err != nil:
-		return "", err // the node was not reached: nothing is known about systemctl
+		return "", err // the command never ran: nothing is known about systemctl
 	case res.ExitStatus != 0:
 		return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "systemctl was not found on the node")
 	case res.Truncated:
