@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Move an app target's Cloudflare routes with it
 type: epic
-status: active
+status: shipped
 priority: P1
 size: XL
 issue: 56
@@ -12,7 +12,7 @@ depends_on: []
 supersedes: []
 related_specs: [app-move, app-expose-tunnel]
 created: 2026-11-01
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Move an app target's Cloudflare routes with it
