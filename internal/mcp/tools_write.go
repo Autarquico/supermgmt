@@ -59,7 +59,7 @@ func addWriteTools(s *sdk.Server, api API) {
 		"Remove the route of a hostname from an app target. It removes the DNS record, then the ingress rule, then the Access app, and waits for approval where policy requires.",
 		func(ctx context.Context, in unexposeAppInput) (WriteResult, error) { return unexposeApp(ctx, api, in) })
 	actionTool(s, "infra_move_app",
-		"Move an app target to another node (id or exact name). The destination is checked first; an app with volume data stops while it is copied, which the result's summary states. Routes are not moved. High risk: it waits for approval where policy requires, and nothing runs until then. Removing the old node's containers and abandoning a halted move are not available here.",
+		"Move an app target to another node (id or exact name). The destination is checked first; an app with volume data stops while it is copied, which the result's summary states. The target's routes are repointed to the new node inside the move; the listed moves show each route's state. High risk: it waits for approval where policy requires, and nothing runs until then. Removing the old node's containers and abandoning a halted move are not available here.",
 		func(ctx context.Context, in moveAppInput) (WriteResult, error) { return moveApp(ctx, api, in) })
 	actionTool(s, "infra_rollback_deployment",
 		"Roll a deployment back to the newest known-good one, or to to_deployment_id. It waits for approval where policy requires.",

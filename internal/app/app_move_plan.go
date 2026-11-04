@@ -29,6 +29,7 @@ type moveBasis struct {
 	dest   domain.Node
 	kg     knownGood
 	facts  moveFacts
+	routes []database.AppMoveRoute // the target's routes as the plan froze them; none for an unrouted move
 }
 
 // moveFacts are derived from the frozen known-good model and policy.
@@ -83,8 +84,9 @@ func sameNodeEnvironment(a, b *domain.ID) bool {
 
 // requireNoMoveConflicts is the part of admission that depends on what else is going on: open deployments,
 // rollbacks and moves of the target, another target that uses the Compose project on the destination (an open
-// move counts as using it) and routes. A move runs it at request time and again under its claim locks, so it
-// reads the database only and never excludes the target's own open move: that one is the move being checked.
+// move counts as using it). A move runs it at request time and again under its claim locks, so it reads the
+// database only and never excludes the target's own open move: that one is the move being checked. The target's
+// routes are the business of requireMovableRoutes.
 func requireNoMoveConflicts(ctx context.Context, q database.Querier, target database.AppTarget, dest domain.Node, own *domain.ID) error {
 	if err := requireNoOpenDeployment(ctx, q, target.ID); err != nil {
 		return err
@@ -92,10 +94,7 @@ func requireNoMoveConflicts(ctx context.Context, q database.Querier, target data
 	if err := requireNoOtherOpenMove(ctx, q, target.ID, own); err != nil {
 		return err
 	}
-	if err := requireProjectFreeOn(ctx, q, target, dest); err != nil {
-		return err
-	}
-	return requireNoTargetRoutes(ctx, q, target.ID)
+	return requireProjectFreeOn(ctx, q, target, dest)
 }
 
 // requireNoOpenDeployment refuses a target with a deployment or rollback that has not ended, provisional ones
@@ -166,17 +165,6 @@ func requireProjectFreeOn(ctx context.Context, q database.Querier, target databa
 		}
 	}
 	return nil
-}
-
-// requireNoTargetRoutes refuses a target that has a route that is not removed: moving routes comes with
-// app-move-routes.
-func requireNoTargetRoutes(ctx context.Context, q database.Querier, targetID domain.ID) error {
-	routes, err := database.ListAppRoutes(ctx, q, database.AppRouteFilter{TargetID: targetID})
-	if err != nil || len(routes) == 0 {
-		return err
-	}
-	return smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
-		"the target has a route (%s): unexpose it first, moving routes is not supported yet", routes[0].Hostname))
 }
 
 // requireMovableBinds refuses a model that publishes a port on an address other than loopback or every IPv4
@@ -325,16 +313,14 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// moveSteps is the plan's step list: the forward phases in order, the stateful ones only for a stateful move.
-func moveSteps(stateful bool) []string {
-	phases := []database.AppMovePhase{database.AppMovePreflight, database.AppMoveStaged}
-	if stateful {
-		phases = append(phases, database.AppMoveSourceStop, database.AppMoveDataCopied)
-	}
-	phases = append(phases, database.AppMoveStarted, database.AppMoveVerified, database.AppMoveCommitted, database.AppMoveSourceParked)
-	steps := make([]string, len(phases))
-	for i, p := range phases {
-		steps[i] = string(p)
+// moveSteps is the plan's step list: the forward phases in order, without done. The stateful ones are only for a
+// stateful move and the routes ones only for a routed move.
+func moveSteps(stateful, routed bool) []string {
+	var steps []string
+	for _, p := range forwardPhases(routed, stateful) {
+		if p != database.AppMoveDone {
+			steps = append(steps, string(p))
+		}
 	}
 	return steps
 }
@@ -383,6 +369,7 @@ func buildMovePlan(ctx context.Context, q database.Querier, b moveBasis, request
 	content.RollbackTarget = &plan.RollbackTarget{DeploymentID: b.kg.deployment.ID.String(), ComposeHash: b.kg.deployment.ComposeHash}
 	inputs := append([]plan.Input{revisionInput(domain.ResourceEnvironment, b.scope.env.ID, b.scope.env.SpecRevision), sourcePin, destPin},
 		secretInputsOf(b.kg.plan.Content.SecretBindings)...)
+	inputs = append(inputs, moveRouteInputs(b.routes)...)
 	revision := b.scope.target.SpecRevision
 	return built{
 		spec: action, target: target,
@@ -393,7 +380,7 @@ func buildMovePlan(ctx context.Context, q database.Querier, b moveBasis, request
 			Inputs:     inputs,
 			Content:    content,
 			SubActions: []plan.SubAction{{Action: appMoveAction, Target: plan.SubTarget{Type: string(domain.ResourceNode), ID: b.dest.ID.String()}}},
-			Parameters: params, Steps: moveSteps(b.facts.stateful), Risk: risk,
+			Parameters: params, Steps: moveSteps(b.facts.stateful, len(b.routes) > 0), Risk: risk,
 		},
 	}, nil
 }
@@ -483,16 +470,6 @@ func isMoveAction(action string) bool {
 	return action == appMoveAction || action == appMoveCleanupAction || action == appMoveAbandonAction
 }
 
-// pastCommit reports whether the move's target node already is the destination: the move is committed, parking
-// the source or done. A halted move counts by the phase it held.
-func pastCommit(m database.AppMove) bool {
-	phase := m.Phase
-	if phase.Halted() {
-		phase = m.HaltedPhase
-	}
-	return phase == database.AppMoveCommitted || phase == database.AppMoveSourceParked || phase == database.AppMoveDone
-}
-
 // rebuildMoveAction recomputes the plan of a move action at a claim (spec §9).
 func rebuildMoveAction(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
 	stored, scope, err := loadStoredDeployment(ctx, q, rec)
@@ -548,6 +525,9 @@ func rebuildMove(ctx context.Context, q database.Querier, rec database.PlanRecor
 		scope.target.SpecRevision = *stored.Targets[0].SpecRevision
 	} else if scope.target.NodeID != m.SourceNodeID {
 		return built{}, planStale()
+	}
+	if err := requireFrozenRoutes(ctx, q, m); err != nil {
+		return built{}, err
 	}
 	b, err := movePlanOfRecord(ctx, q, scope, m, rec.ActorID)
 	if err != nil {
@@ -625,6 +605,9 @@ func movePlanOfRecord(ctx context.Context, q database.Querier, scope deploymentS
 	if err != nil {
 		return built{}, err
 	}
+	if basis.routes, err = database.ListAppMoveRoutes(ctx, q, m.ID); err != nil {
+		return built{}, err
+	}
 	return buildMovePlan(ctx, q, basis, requester)
 }
 
@@ -643,6 +626,9 @@ func rebuildCleanup(ctx context.Context, q database.Querier, rec database.PlanRe
 func rebuildAbandon(ctx context.Context, q database.Querier, rec database.PlanRecord, stored plan.Plan, scope deploymentScope) (built, error) {
 	m, err := movePlanned(ctx, q, scope.target.ID, stored)
 	if err != nil {
+		return built{}, err
+	}
+	if err := requireAbandonable(ctx, q, m); err != nil {
 		return built{}, err
 	}
 	b, err := buildAbandonPlan(ctx, q, scope, m, rec.ActorID)

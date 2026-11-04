@@ -99,6 +99,9 @@ func (s *AppRoutes) Unexpose(ctx context.Context, by Caller, targetID domain.ID,
 		if err != nil {
 			return AppRouteResult{}, err
 		}
+		if err := requireNoRoutedMove(ctx, tx, targetID, "an unexpose"); err != nil {
+			return AppRouteResult{}, err
+		}
 		p.RouteID = route.ID.String()
 		b, err := s.planOf(ctx, tx, by, appRouteUnexposeAction, targetID, p)
 		if err != nil {
@@ -231,6 +234,9 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 		return nil, nil, requireTunnelAllowed(false, domain.Node{})
 	}
 	port, _ := strconv.Atoi(p.Port) // validated by exposeParams and by the plan's target
+	if err := requireNoRoutedMove(ctx, q, targetID, "an expose"); err != nil {
+		return nil, nil, err // the existing-route path too: a route of the target does not change while it moves
+	}
 	existing, err := database.GetLiveAppRouteByHostname(ctx, q, p.Hostname)
 	switch {
 	case err == nil:
@@ -263,13 +269,8 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 	if err != nil {
 		return nil, nil, err
 	}
-	live, err := database.CountLiveAppRoutesByNode(ctx, q, node.ID)
-	if err != nil {
+	if err := requireRouteCapacity(ctx, q, node, 1, ""); err != nil {
 		return nil, nil, err
-	}
-	if live >= maxRoutesPerNode {
-		return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
-			"the node %s already has %d routes, the limit of its tunnel", node.Name, maxRoutesPerNode))
 	}
 	if err := requireKnownGoodServes(ctx, q, targetID, p.Service, port); err != nil {
 		return nil, nil, err
@@ -281,6 +282,27 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 	return &admission{
 		node: node, tunnelID: tunnelID, generation: generation, instanceID: instance.ID.String(),
 	}, nil, nil
+}
+
+// requireRouteCapacity is the one transactional capacity check of a node's tunnel, shared by the admission of an
+// expose and of a move into the node: the node's live routes, the routes that open moves into it hold (halted ones
+// included, except the rows of the move except, which is the one asking) and the routes being added must fit in the
+// tunnel's ingress.
+func requireRouteCapacity(ctx context.Context, q database.Querier, node domain.Node, adding int, except domain.ID) error {
+	live, err := database.CountLiveAppRoutesByNode(ctx, q, node.ID)
+	if err != nil {
+		return err
+	}
+	reserved, err := database.IncomingReservationsExcept(ctx, q, node.ID, except)
+	if err != nil {
+		return err
+	}
+	if live+reserved+adding > maxRoutesPerNode {
+		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+			"the node %s has %d routes and %d reserved by moves: %d more would pass the limit of %d of its tunnel",
+			node.Name, live, reserved, adding, maxRoutesPerNode))
+	}
+	return nil
 }
 
 // admission is what an accepted route freezes and how it starts.

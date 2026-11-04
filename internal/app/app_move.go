@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -25,6 +24,8 @@ const (
 type AppMoves struct {
 	core
 	plans *Plans
+	// tunnel reads the Access applications of the routes a move carries; nil until UseTunnel.
+	tunnel *tunnelEngine
 }
 
 // NewAppMoves validates cfg. plans must have been built with the job store the moves run on.
@@ -39,10 +40,47 @@ func NewAppMoves(cfg Config, plans *Plans) (*AppMoves, error) {
 	return &AppMoves{core: c, plans: plans}, nil
 }
 
-// AppMoveView is a move with its volume map.
+// UseTunnel gives the service the Cloudflare options with which admission reads the Access applications of the
+// routes of a target (ADR-0042). Without them a target with an owners route is refused: an unchecked Access
+// application is never assumed to be there.
+func (s *AppMoves) UseTunnel(opts *TunnelOptions) error {
+	engine, err := newTunnelEngine(s.core, opts)
+	s.tunnel = engine
+	return err
+}
+
+// AppMoveRouteView is a route frozen into a move, with the hostname and access mode of the route itself.
+type AppMoveRouteView struct {
+	database.AppMoveRoute
+	Hostname string
+	Access   string
+}
+
+// AppMoveView is a move with its volume map and the routes frozen into it.
 type AppMoveView struct {
 	Move    database.AppMove
 	Volumes []database.AppMoveVolume
+	Routes  []AppMoveRouteView
+}
+
+func moveViewOf(ctx context.Context, q database.Querier, m database.AppMove) (AppMoveView, error) {
+	volumes, err := database.ListAppMoveVolumes(ctx, q, m.ID)
+	if err != nil {
+		return AppMoveView{}, err
+	}
+	frozen, err := database.ListAppMoveRoutes(ctx, q, m.ID)
+	if err != nil {
+		return AppMoveView{}, err
+	}
+	routes := make([]AppMoveRouteView, len(frozen))
+	for i, f := range frozen {
+		route, err := database.GetAppRoute(ctx, q, f.RouteID)
+		if err != nil {
+			return AppMoveView{}, err
+		}
+		routes[i] = AppMoveRouteView{AppMoveRoute: f, Hostname: route.Hostname, Access: route.Access}
+	}
+	return AppMoveView{Move: m, Volumes: volumes, Routes: routes}, nil
 }
 
 // AppMoveResult is the outcome of a move request. Resumed says that the request continued an open move whose job
@@ -97,6 +135,9 @@ func (s *AppMoves) Move(ctx context.Context, by Caller, targetID, to domain.ID) 
 			Stateful: basis.facts.stateful, CreatedBy: actor.ID, CreatedAt: now,
 		}, basis.facts.volumes)
 		if err != nil {
+			return AppMoveResult{}, err
+		}
+		if _, err := database.InsertAppMoveRoutes(ctx, tx, created.ID, basis.routes, now); err != nil {
 			return AppMoveResult{}, err
 		}
 		return s.viewOf(ctx, tx, created, submission, false)
@@ -165,7 +206,17 @@ func (s *AppMoves) admit(ctx context.Context, q database.Querier, scope deployme
 	if err := requireNoMoveConflicts(ctx, q, scope.target, dest, nil); err != nil {
 		return moveBasis{}, err
 	}
-	return newMoveBasis(ctx, q, scope, source, dest, good)
+	basis, err := newMoveBasis(ctx, q, scope, source, dest, good)
+	if err != nil {
+		return moveBasis{}, err
+	}
+	if basis.routes, err = admitMoveRoutes(ctx, q, s.core, scope.target, source, dest, nil); err != nil {
+		return moveBasis{}, err
+	}
+	if err := checkMoveAccessApps(ctx, q, s.tunnel, basis.routes); err != nil {
+		return moveBasis{}, err
+	}
+	return basis, nil
 }
 
 // resume gives the open move the plan and job of this request. It needs the move's job to have ended, the same
@@ -186,6 +237,9 @@ func (s *AppMoves) resume(ctx context.Context, tx *database.Tx, by Caller, actor
 		scope.target.SpecRevision = open.CommittedRevision
 	} else if scope.target.NodeID != open.SourceNodeID {
 		return AppMoveResult{}, smerr.New(smerr.CodeConflict, "", "the target no longer runs on the move's source node")
+	}
+	if err := requireFrozenRoutes(ctx, tx, open); err != nil {
+		return AppMoveResult{}, err
 	}
 	b, err := movePlanOfRecord(ctx, tx, scope, open, by.ID)
 	if err != nil {
@@ -211,8 +265,8 @@ func (s *AppMoves) submit(ctx context.Context, tx *database.Tx, by Caller, actor
 }
 
 func (s *AppMoves) viewOf(ctx context.Context, q database.Querier, m database.AppMove, submission Submission, resumed bool) (AppMoveResult, error) {
-	volumes, err := database.ListAppMoveVolumes(ctx, q, m.ID)
-	return AppMoveResult{AppMoveView: AppMoveView{Move: m, Volumes: volumes}, Submission: submission, Resumed: resumed}, err
+	view, err := moveViewOf(ctx, q, m)
+	return AppMoveResult{AppMoveView: view, Submission: submission, Resumed: resumed}, err
 }
 
 // CleanupSource requests the removal of the containers a done move left parked on its source node (action
@@ -289,9 +343,12 @@ func (s *AppMoves) Abandon(ctx context.Context, by Caller, targetID domain.ID) (
 		if err != nil {
 			return Submission{}, err
 		}
-		if !m.Phase.Halted() || !strings.HasPrefix(string(m.HaltedPhase), "compensating_") {
+		if !m.Phase.Halted() || !compensating(m) {
 			return Submission{}, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
 				"the move is in phase %s: only a move halted in compensation can be abandoned", m.Phase))
+		}
+		if err := requireAbandonable(ctx, tx, m); err != nil {
+			return Submission{}, err
 		}
 		b, err := buildAbandonPlan(ctx, tx, scope, m, by.ID)
 		if err != nil {
@@ -301,7 +358,7 @@ func (s *AppMoves) Abandon(ctx context.Context, by Caller, targetID domain.ID) (
 	})
 }
 
-// List returns the target's moves, newest first, with their volumes, if the caller may read the target.
+// List returns the target's moves, newest first, with their volumes and routes, if the caller may read the target.
 func (s *AppMoves) List(ctx context.Context, by Caller, targetID domain.ID) ([]AppMoveView, error) {
 	q := s.cfg.DB.Reader()
 	actor, err := s.beginRequest(ctx, q, by)
@@ -321,11 +378,9 @@ func (s *AppMoves) List(ctx context.Context, by Caller, targetID domain.ID) ([]A
 	}
 	out := make([]AppMoveView, len(moves))
 	for i, m := range moves {
-		volumes, err := database.ListAppMoveVolumes(ctx, q, m.ID)
-		if err != nil {
+		if out[i], err = moveViewOf(ctx, q, m); err != nil {
 			return nil, err
 		}
-		out[i] = AppMoveView{Move: m, Volumes: volumes}
 	}
 	return out, nil
 }

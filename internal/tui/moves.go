@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -71,17 +72,32 @@ func (m *Model) onMoveStart(msg moveStartMsg) tea.Cmd {
 		title: "Move " + textsafe.Line(app.Name+"/"+target.Environment) + " to " + textsafe.Line(dest.Name),
 		lines: []string{
 			"The destination is checked first; the app keeps running until it is healthy there.",
-			"Routes are not moved.",
+			"Routes of the app are repointed to the new node inside the move.",
 		},
-		warnings: []string{"an app with volumes stops while their data is copied"},
+		warnings: []string{
+			"an app with volumes stops while their data is copied",
+			"a routed app that is rolled back serves errors on its hostnames until it is healthy on the old node again",
+		},
 		run: func(ctx context.Context) (string, error) {
 			res, err := api.MoveApp(ctx, target.ID, dest.ID)
 			out := submissionNotice(res.Submission)
 			if res.Move.Stateful {
 				out += "; the app stops while its data is copied"
 			}
+			if hosts := moveHostnames(res.Move); hosts != "" {
+				out += "; repoints " + hosts
+			}
 			return out, err
 		},
 	}
 	return nil
+}
+
+// moveHostnames lists the hostnames the move repoints, as one safe line.
+func moveHostnames(m wire.AppMove) string {
+	names := make([]string, len(m.Routes))
+	for i, r := range m.Routes {
+		names[i] = textsafe.Line(r.Hostname)
+	}
+	return strings.Join(names, ", ")
 }

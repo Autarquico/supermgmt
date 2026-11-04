@@ -34,6 +34,8 @@ func (f *Fake) routes() {
 	zone := BasePath + "/zones/{zone}/dns_records"
 	f.handle(OpDNSCreate, "POST "+zone, nil, f.dnsCreate)
 	f.handle(OpDNSList, "GET "+zone, append([]string{"name", "type"}, paging...), f.dnsList)
+	f.handle(OpDNSGet, "GET "+zone+"/{id}", nil, f.dnsGet)
+	f.handle(OpDNSUpdate, "PATCH "+zone+"/{id}", nil, f.dnsUpdate)
 	f.handle(OpDNSDelete, "DELETE "+zone+"/{id}", nil, f.dnsDelete)
 
 	access := acct + "/access"
@@ -321,6 +323,57 @@ func (f *Fake) dnsList(c *call) reply {
 		}
 	}
 	return listed(c, items, func(r DNSRecord) any { return dnsJSON(f.zoneID, f.zone, r) })
+}
+
+func (f *Fake) dnsGet(c *call) reply {
+	if bad := f.zoneMissing(c); bad != nil {
+		return *bad
+	}
+	for _, r := range f.dns {
+		if r.ID == c.path("id") {
+			return ok(dnsJSON(f.zoneID, f.zone, r))
+		}
+	}
+	return notFound(81044, "record")
+}
+
+// dnsUpdate changes the content of a record and nothing else; any other field
+// is outside the fake's contract.
+func (f *Fake) dnsUpdate(c *call) reply {
+	if bad := f.zoneMissing(c); bad != nil {
+		return *bad
+	}
+	var in struct {
+		Content string `json:"content"`
+	}
+	if bad := c.decode(&in); bad != nil {
+		return *bad
+	}
+	if in.Content == "" {
+		return fail(http.StatusBadRequest, 9005, "invalid DNS record")
+	}
+	id, content := c.path("id"), strings.ToLower(in.Content)
+	i := slices.IndexFunc(f.dns, func(r DNSRecord) bool { return r.ID == id })
+	if i < 0 {
+		return notFound(81044, "record")
+	}
+	apply := func() bool {
+		j := slices.IndexFunc(f.dns, func(r DNSRecord) bool { return r.ID == id })
+		if j < 0 {
+			return false
+		}
+		f.dns[j].Content = content
+		return true
+	}
+	updated := f.dns[i]
+	updated.Content = content
+	rep := ok(dnsJSON(f.zoneID, f.zone, updated))
+	if c.deferring {
+		rep.later = apply
+	} else {
+		apply()
+	}
+	return rep
 }
 
 func (f *Fake) dnsDelete(c *call) reply {

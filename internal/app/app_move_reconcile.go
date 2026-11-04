@@ -38,7 +38,7 @@ const (
 
 var moveOperations = []string{
 	operationComposeCreate, operationComposeStart, operationComposeStop, operationComposeDown, operationVolumeRm,
-	operationVolumeImport, operationUpdateRestart,
+	operationVolumeImport, operationUpdateRestart, operationDNSUpdate,
 }
 
 // MovePolicy is the jobs.TypePolicy of the three move job types. It never weakens the fixed rule that every
@@ -135,8 +135,11 @@ func (e *MoveEvidence) Collect(ctx context.Context, intent jobs.Intent) (jobs.Ev
 	if intent.DispatchedAt == nil {
 		return jobs.Evidence{}, fmt.Errorf("intent %s was never dispatched", intent.ID)
 	}
-	if intent.Operation == operationVolumeImport {
+	switch intent.Operation {
+	case operationVolumeImport:
 		return e.importEvidence(intent)
+	case operationDNSUpdate:
+		return e.dnsEvidence(intent)
 	}
 	q := e.cfg.DB.Reader()
 	dep, err := database.GetDeployment(ctx, q, domain.ID(intent.TargetID))
@@ -182,6 +185,19 @@ func (e *MoveEvidence) importEvidence(intent jobs.Intent) (jobs.Evidence, error)
 	return withFingerprint(jobs.Evidence{
 		Done: true, Proof: proofImportDeadline, Classification: jobs.ClassPartialStable,
 		Fingerprint: json.RawMessage(`{"import":"deadline_elapsed"}`),
+	}, intent)
+}
+
+// dnsEvidence is the proof of a record update: it has no marker, so only its not-before time proves that it cannot
+// apply any more. What the record holds is unknown to the reconciler, so the evidence is partial_stable: the next run
+// of the move reads the record and decides.
+func (e *MoveEvidence) dnsEvidence(intent jobs.Intent) (jobs.Evidence, error) {
+	if e.cfg.Clock.Now().Before(intent.DeadlineAt) {
+		return jobs.Evidence{}, fmt.Errorf("the record update %s may still apply until %s", intent.ID, intent.DeadlineAt.UTC().Format("2006-01-02T15:04:05Z"))
+	}
+	return withFingerprint(jobs.Evidence{
+		Done: true, Proof: proofDNSNotBefore, Classification: jobs.ClassPartialStable,
+		Fingerprint: json.RawMessage(`{"dns_update":"not_before_elapsed"}`),
 	}, intent)
 }
 

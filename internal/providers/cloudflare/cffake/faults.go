@@ -18,6 +18,15 @@ const (
 	Forbidden
 	// RateLimited answers 429 with Retry-After.
 	RateLimited
+	// ApplyLater answers as if the mutation were applied but holds it back
+	// until ReleaseDeferred: the late write of a request the caller already
+	// saw succeed. Endpoints that cannot defer (reads, refused mutations,
+	// all but dns.update) serve normally.
+	ApplyLater
+	// HangApplyLater keeps the request open without answering until the caller
+	// cancels it, then holds the mutation back until ReleaseDeferred: a write
+	// that lands after the client gave up. Same endpoint limits as ApplyLater.
+	HangApplyLater
 )
 
 // Mutation identifies one mutating request attempt. Seq counts every mutating
@@ -85,6 +94,26 @@ func (f *Fake) CommittedMutations() int {
 		}
 	}
 	return n
+}
+
+// ReleaseDeferred applies, in arrival order, the mutations ApplyLater and
+// HangApplyLater held back, and returns how many changed state. One whose
+// object is gone by then changes nothing.
+func (f *Fake) ReleaseDeferred() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	applied := 0
+	for _, d := range f.deferred {
+		if d.apply() {
+			f.mutations[d.mutation].Committed = true
+			applied++
+		}
+	}
+	f.deferred = nil
+	if applied > 0 {
+		f.checkInvariant()
+	}
+	return applied
 }
 
 func (f *Fake) faultFor(m Mutation, mutation bool) Fault {

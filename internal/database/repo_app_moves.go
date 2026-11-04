@@ -28,13 +28,21 @@ const (
 	AppMoveSourceParked AppMovePhase = "source_parked"
 	AppMoveDone         AppMovePhase = "done"
 
-	AppMoveCompensatingBStopped       AppMovePhase = "compensating_b_stopped"
-	AppMoveCompensatingSourceStarted  AppMovePhase = "compensating_source_started"
-	AppMoveCompensatingSourceVerified AppMovePhase = "compensating_source_verified"
-	AppMoveCompensatingBRemoved       AppMovePhase = "compensating_b_removed"
-	AppMoveRolledBack                 AppMovePhase = "rolled_back"
-	AppMoveFailed                     AppMovePhase = "failed"
-	AppMoveConflict                   AppMovePhase = "conflict"
+	// A routed move (ADR-0042) only: B's ingress carries the routes, then their records point at B, and the commit
+	// runs from routes_switched; after it A's ingress is cleaned. Compensation undoes the routes before anything else.
+	AppMoveRoutesDestIncluded  AppMovePhase = "routes_dest_included"
+	AppMoveRoutesSwitched      AppMovePhase = "routes_switched"
+	AppMoveRoutesSourceCleaned AppMovePhase = "routes_source_cleaned"
+
+	AppMoveCompensatingRoutesRestored  AppMovePhase = "compensating_routes_restored"
+	AppMoveCompensatingRoutesWithdrawn AppMovePhase = "compensating_routes_withdrawn"
+	AppMoveCompensatingBStopped        AppMovePhase = "compensating_b_stopped"
+	AppMoveCompensatingSourceStarted   AppMovePhase = "compensating_source_started"
+	AppMoveCompensatingSourceVerified  AppMovePhase = "compensating_source_verified"
+	AppMoveCompensatingBRemoved        AppMovePhase = "compensating_b_removed"
+	AppMoveRolledBack                  AppMovePhase = "rolled_back"
+	AppMoveFailed                      AppMovePhase = "failed"
+	AppMoveConflict                    AppMovePhase = "conflict"
 )
 
 // Halted reports whether the move stopped and waits for an operator or a reconcile.
@@ -333,7 +341,10 @@ func finishAppMoveUpdate(ctx context.Context, q Querier, res sql.Result, err err
 //   - points the target at the destination node, but only while its revision is expectedRevision and its node is
 //     sourceNode (the revision then becomes expectedRevision+1);
 //   - settles B's deployment as succeeded and known good, provided it is the move's deployment on destNode;
-//   - records the written revision and advances the move from verified to committed.
+//   - writes the routes of a routed move to the destination (node, tunnel and generation as one tuple, fenced on
+//     the frozen values) and their rows to committed;
+//   - records the written revision and advances the move to committed, from routes_switched when it carries routes
+//     and from verified when it does not.
 //
 // Every statement must change exactly one row. Any mismatch rolls the whole commit back and yields CONFLICT.
 func CommitAppMove(ctx context.Context, q Querier, moveID, targetID domain.ID, expectedRevision int64,
@@ -362,12 +373,20 @@ func CommitAppMove(ctx context.Context, q Querier, moveID, targetID domain.ID, e
 	if err := settleMoveDeployment(ctx, q, targetID, destNode, destDeploymentID, now); err != nil {
 		return AppMove{}, err
 	}
-	if err := requireOneRow(ctx, q, "the move is not verified on its recorded nodes and deployment", `
+	routes, err := commitAppMoveRoutes(ctx, q, moveID, targetID, now)
+	if err != nil {
+		return AppMove{}, err
+	}
+	fromPhase := AppMoveVerified
+	if routes > 0 {
+		fromPhase = AppMoveRoutesSwitched
+	}
+	if err := requireOneRow(ctx, q, "the move is not "+string(fromPhase)+" on its recorded nodes and deployment", `
 		UPDATE app_moves SET phase = 'committed', halted_phase = NULL, phase_started_at = ?, updated_at = ?,
 		       last_error = '', committed_revision = ?
-		WHERE id = ? AND phase = 'verified' AND app_target_id = ? AND source_node_id = ? AND dest_node_id = ?
+		WHERE id = ? AND phase = ? AND app_target_id = ? AND source_node_id = ? AND dest_node_id = ?
 		  AND dest_deployment_id = ?`,
-		millis(now), millis(now), expectedRevision+1, moveID, targetID, sourceNode, destNode, destDeploymentID); err != nil {
+		millis(now), millis(now), expectedRevision+1, moveID, fromPhase, targetID, sourceNode, destNode, destDeploymentID); err != nil {
 		return AppMove{}, err
 	}
 	return GetAppMove(ctx, q, moveID)

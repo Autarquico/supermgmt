@@ -456,6 +456,17 @@ type runDialer struct {
 	w *runWorld
 }
 
+// For reaches a node's simulation whatever its transport: a routed move runs on nodes that are reached through a tunnel.
+func (d runDialer) For(t ssh.Target) transport.Executor {
+	d.mu.Lock()
+	routed := d.routes[t.NodeID]
+	d.mu.Unlock()
+	if routed != nil {
+		return routed
+	}
+	return d.fakeDialer.For(t)
+}
+
 func (d runDialer) OpenStream(ctx context.Context, t ssh.Target, c templates.Command, o transport.StreamOptions) (transport.Stream, error) {
 	sim := d.w.simOf(t.NodeID)
 	if d.w.openFail[fmt.Sprintf("%s/%d", sim.label, c.Stream)] {

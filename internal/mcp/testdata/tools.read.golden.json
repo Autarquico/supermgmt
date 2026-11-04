@@ -761,6 +761,40 @@
                 ],
                 "type": "object"
               },
+              "routes": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "access": {
+                      "type": "string"
+                    },
+                    "frozen_phase": {
+                      "type": "string"
+                    },
+                    "hostname": {
+                      "type": "string"
+                    },
+                    "route_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "route_id",
+                    "hostname",
+                    "access",
+                    "frozen_phase",
+                    "state"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
               "source_node_id": {
                 "type": "string"
               },
@@ -817,6 +851,7 @@
               "phase",
               "stateful",
               "volumes",
+              "routes",
               "created_at",
               "updated_at",
               "remote"

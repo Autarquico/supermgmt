@@ -71,6 +71,16 @@ func (r *moveRun) compensation(ctx context.Context, cause error) error {
 	for r.move.Phase != database.AppMoveRolledBack {
 		var err error
 		switch r.move.Phase {
+		case database.AppMoveVerified, database.AppMoveRoutesDestIncluded, database.AppMoveRoutesSwitched:
+			if r.routedCompensation() {
+				err = r.restoreRoutes(ctx)
+			} else {
+				err = r.stopDest(ctx)
+			}
+		case database.AppMoveCompensatingRoutesRestored:
+			err = r.withdrawRoutes(ctx)
+		case database.AppMoveCompensatingRoutesWithdrawn:
+			err = r.stopDest(ctx)
 		case database.AppMoveCompensatingBStopped:
 			err = r.restoreSource(ctx)
 		case database.AppMoveCompensatingSourceStarted:
@@ -80,10 +90,10 @@ func (r *moveRun) compensation(ctx context.Context, cause error) error {
 		case database.AppMoveCompensatingBRemoved:
 			err = r.rollBack(ctx, cause)
 		case database.AppMovePreflight, database.AppMoveStaged, database.AppMoveSourceStop, database.AppMoveDataCopied,
-			database.AppMoveStarted, database.AppMoveVerified:
+			database.AppMoveStarted:
 			err = r.stopDest(ctx)
-		case database.AppMoveCommitted, database.AppMoveSourceParked, database.AppMoveDone, database.AppMoveRolledBack,
-			database.AppMoveFailed, database.AppMoveConflict:
+		case database.AppMoveCommitted, database.AppMoveRoutesSourceCleaned, database.AppMoveSourceParked, database.AppMoveDone,
+			database.AppMoveRolledBack, database.AppMoveFailed, database.AppMoveConflict:
 			err = smerr.New(smerr.CodeInternal, "", fmt.Sprintf("a move in phase %s cannot be compensated", r.move.Phase))
 		}
 		if err != nil {

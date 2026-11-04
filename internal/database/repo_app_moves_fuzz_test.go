@@ -3,6 +3,8 @@ package database
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/autarquico/supermgmt/internal/domain"
 )
 
 func FuzzScanAppMove(f *testing.F) {
@@ -43,6 +45,25 @@ func FuzzScanAppMoveVolume(f *testing.F) {
 		}
 		if v.VolumeName != text || v.SourceBytes != number || (v.ImportDeadlineAt != nil) != (number != 0) || v.CreatedByMove != (number == 1) {
 			t.Errorf("columns not carried over: %+v", v)
+		}
+	})
+}
+
+func FuzzScanAppMoveRoute(f *testing.F) {
+	f.Add("route-1", int64(1_700_000_000_000))
+	f.Add("", int64(0))
+	f.Add("\x00\xff", int64(-1))
+	f.Add("dns_switched", int64(1<<63-1))
+	f.Fuzz(func(t *testing.T, text string, number int64) {
+		r, err := scanAppMoveRoute(rowOf{text: text, number: number})
+		if err != nil {
+			t.Fatalf("scanAppMoveRoute: %v", err)
+		}
+		if r.RouteID.String() != text || string(r.State) != text || r.FromGeneration != number || r.ToGeneration != number {
+			t.Errorf("columns not carried over: %+v", r)
+		}
+		if !r.CreatedAt.Equal(domain.FromUnixMillis(number)) || !r.UpdatedAt.Equal(domain.FromUnixMillis(number)) {
+			t.Errorf("timestamps: %v, %v", r.CreatedAt, r.UpdatedAt)
 		}
 	})
 }

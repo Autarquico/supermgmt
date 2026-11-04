@@ -44,16 +44,25 @@ func (r *moveRun) forward(ctx context.Context) error {
 		case database.AppMoveStarted:
 			err = r.verifyDest(ctx)
 		case database.AppMoveVerified:
+			err = r.afterVerified(ctx)
+		case database.AppMoveRoutesDestIncluded:
+			err = r.switchRoutes(ctx)
+		case database.AppMoveRoutesSwitched:
 			err = r.commit(ctx)
 		case database.AppMoveCommitted:
+			if r.routed {
+				err = r.cleanSource(ctx)
+			} else {
+				err = r.parkSource(ctx)
+			}
+		case database.AppMoveRoutesSourceCleaned:
 			err = r.parkSource(ctx)
 		case database.AppMoveSourceParked:
-			err = r.advance(ctx, database.AppMoveDone, "")
+			err = r.finish(ctx)
 		case database.AppMoveDone, database.AppMoveRolledBack, database.AppMoveFailed, database.AppMoveConflict,
+			database.AppMoveCompensatingRoutesRestored, database.AppMoveCompensatingRoutesWithdrawn,
 			database.AppMoveCompensatingBStopped, database.AppMoveCompensatingSourceStarted,
 			database.AppMoveCompensatingSourceVerified, database.AppMoveCompensatingBRemoved:
-			err = smerr.New(smerr.CodeInternal, "", fmt.Sprintf("the forward path has no work for phase %s", r.move.Phase))
-		default:
 			err = smerr.New(smerr.CodeInternal, "", fmt.Sprintf("the forward path has no work for phase %s", r.move.Phase))
 		}
 		if err != nil {
@@ -61,6 +70,14 @@ func (r *moveRun) forward(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// afterVerified is the step out of verified: the commit for an unrouted move, the routes for a routed one.
+func (r *moveRun) afterVerified(ctx context.Context) error {
+	if !r.routed {
+		return r.commit(ctx)
+	}
+	return r.publishRoutes(ctx)
 }
 
 // ---- stage (spec §4) ---------------------------------------------------------------------------------------------

@@ -15,6 +15,7 @@ func movesFake() *serverFakeAPI {
 			ID: "0190a5c3-7b1e-7c3a-9d2e-1a2b3c4d5e51", AppTargetID: readTargetID, DestNodeID: readNodeID, Phase: "failed",
 			HaltedPhase: "compensating_source_started", Stateful: true, LastError: "token=hunter2 source not healthy",
 			Volumes: []wire.AppMoveVolume{{Name: "shop_data", Service: "db", Mount: "/var/lib/db", State: "verified", Attempt: 2, CreatedByMove: true}},
+			Routes:  []wire.AppMoveRoute{{RouteID: "0190a5c3-7b1e-7c3a-9d2e-1a2b3c4d5e60", Hostname: "shop.example.com", Access: "owners", FrozenPhase: "active", State: "dns_switched"}},
 		},
 		{ID: "0190a5c3-7b1e-7c3a-9d2e-1a2b3c4d5e52", AppTargetID: routeStagingT, Phase: "done"},
 	}
@@ -35,6 +36,10 @@ func TestListAppMoves_ListsTheMovesOfTheResolvedTargetOnly(t *testing.T) {
 	move := items[0].(map[string]any)
 	volume := move["volumes"].([]any)[0].(map[string]any)
 	remote := move["remote"].(map[string]any)
+	route := move["routes"].([]any)[0].(map[string]any)
+	if route["hostname"] != "shop.example.com" || route["state"] != "dns_switched" || route["access"] != "owners" || route["frozen_phase"] != "active" {
+		t.Errorf("route = %v", route)
+	}
 	if move["phase"] != "failed" || move["halted_phase"] != "compensating_source_started" || move["stateful"] != true || volume["name"] != "shop_data" {
 		t.Errorf("move = %v", move)
 	}

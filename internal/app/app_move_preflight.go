@@ -35,7 +35,7 @@ const volumeSpaceMargin = 10
 
 // recheck repeats the request-time admission under the locks the job holds (spec §3): the target still runs on A,
 // both nodes are still the planned kind of node, no other work is open for the target, nobody else uses the project
-// on B and both nodes can still deploy. The move's own deployment on B is the one open deployment allowed.
+// on B, the routes are the ones the plan froze and fit B, and both nodes can still deploy. The move's own deployment on B is the one open deployment allowed.
 func (r *moveRun) recheck(ctx context.Context) error {
 	q := r.h.cfg.DB.Reader()
 	target, err := database.GetAppTarget(ctx, q, r.target.ID)
@@ -65,7 +65,7 @@ func (r *moveRun) recheck(ctx context.Context) error {
 	if err := requireProjectFreeOn(ctx, q, target, dest); err != nil {
 		return err
 	}
-	if err := requireNoTargetRoutes(ctx, q, target.ID); err != nil {
+	if err := r.recheckRoutes(ctx); err != nil {
 		return err
 	}
 	for _, node := range []domain.Node{source, dest} {

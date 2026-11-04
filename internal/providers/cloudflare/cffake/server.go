@@ -77,6 +77,8 @@ const (
 	OpTunnelToken      Op = "tunnel.token"
 	OpDNSCreate        Op = "dns.create"
 	OpDNSList          Op = "dns.list"
+	OpDNSGet           Op = "dns.get"
+	OpDNSUpdate        Op = "dns.update"
 	OpDNSDelete        Op = "dns.delete"
 	OpPolicyCreate     Op = "policy.create"
 	OpPolicyList       Op = "policy.list"
@@ -154,6 +156,7 @@ type Fake struct {
 	plan       func(Mutation) Fault
 	mutations  []Applied
 	mutSeq     int
+	deferred   []deferredApply
 	violations []string
 
 	tunnels  []Tunnel
@@ -250,9 +253,10 @@ func (f *Fake) notFound(w http.ResponseWriter, r *http.Request) {
 
 // call is one request under the fake's lock.
 type call struct {
-	f    *Fake
-	r    *http.Request
-	body []byte
+	f         *Fake
+	r         *http.Request
+	body      []byte
+	deferring bool // the handler must return its change as reply.later instead of applying it
 }
 
 func (c *call) path(name string) string { return c.r.PathValue(name) }
@@ -283,8 +287,16 @@ type resultInfo struct {
 	TotalPages int `json:"total_pages"`
 }
 
+// deferredApply is a mutation held back by ApplyLater or HangApplyLater;
+// apply reports whether it changed state.
+type deferredApply struct {
+	mutation int // index in Fake.mutations
+	apply    func() bool
+}
+
 type reply struct {
 	status int
+	later  func() bool // set by a deferrable handler that was asked to hold back
 	result any
 	info   *resultInfo
 	errs   []wireError
@@ -356,7 +368,7 @@ func (f *Fake) handle(op Op, pattern string, params []string, h handler) {
 			}
 		}
 		switch fault {
-		case NoFault, LostResponse:
+		case NoFault, LostResponse, ApplyLater, HangApplyLater:
 			// served below; a lost response is dropped after the commit
 		case Forbidden:
 			finish(http.StatusForbidden, false)
@@ -373,9 +385,20 @@ func (f *Fake) handle(op Op, pattern string, params []string, h handler) {
 			f.out(w, r, fail(http.StatusInternalServerError, 1000, "Internal server error"))
 			return
 		}
-		rep := h(&call{f: f, r: r, body: body})
-		committed := mutation && rep.status/100 == 2
+		holding := fault == ApplyLater || fault == HangApplyLater
+		rep := h(&call{f: f, r: r, body: body, deferring: holding})
+		held := holding && rep.later != nil
+		committed := mutation && rep.status/100 == 2 && !held
 		finish(rep.status, committed)
+		if held {
+			f.deferred = append(f.deferred, deferredApply{mutation: len(f.mutations) - 1, apply: rep.later})
+			if fault == HangApplyLater {
+				f.mu.Unlock()
+				<-r.Context().Done()
+				f.mu.Lock()
+				return
+			}
+		}
 		if committed {
 			f.checkInvariant()
 		}

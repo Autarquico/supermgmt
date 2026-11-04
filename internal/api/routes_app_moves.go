@@ -78,9 +78,15 @@ func appMoveView(v app.AppMoveView) wire.AppMove {
 	for i, vol := range v.Volumes {
 		volumes[i] = appMoveVolumeView(vol)
 	}
+	routes := make([]wire.AppMoveRoute, len(v.Routes))
+	for i, r := range v.Routes {
+		routes[i] = wire.AppMoveRoute{
+			RouteID: r.RouteID, Hostname: r.Hostname, Access: r.Access, FrozenPhase: string(r.FrozenPhase), State: string(r.State),
+		}
+	}
 	return wire.AppMove{
 		ID: m.ID, AppTargetID: m.AppTargetID, SourceNodeID: m.SourceNodeID, DestNodeID: m.DestNodeID,
-		Phase: string(m.Phase), HaltedPhase: string(m.HaltedPhase), Stateful: m.Stateful, Volumes: volumes,
+		Phase: string(m.Phase), HaltedPhase: string(m.HaltedPhase), Stateful: m.Stateful, Volumes: volumes, Routes: routes,
 		LastError: m.LastError, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt,
 	}
 }

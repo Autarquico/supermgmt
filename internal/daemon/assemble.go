@@ -410,6 +410,9 @@ func (b *builder) deploymentServices() error {
 	if b.moves, err = app.NewAppMoves(b.app, b.plans); err != nil {
 		return err
 	}
+	if err = b.moves.UseTunnel(b.tunnelOptions()); err != nil {
+		return err
+	}
 	attestations, err := b.attestations()
 	if err != nil {
 		return err
