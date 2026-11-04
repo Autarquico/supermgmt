@@ -227,11 +227,16 @@ func (s stepper) systemctlPath(ctx context.Context, p SetupParams) (string, erro
 	if p.SystemctlPath != "" {
 		return p.SystemctlPath, nil
 	}
-	out, err := succeeded(ctx, s.ex, "setup.systemctl_path", nil)
-	if err != nil {
+	res, err := read(ctx, s.ex, "setup.systemctl_path", nil)
+	switch {
+	case err != nil:
+		return "", err // the node was not reached: nothing is known about systemctl
+	case res.ExitStatus != 0:
 		return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "systemctl was not found on the node")
+	case res.Truncated:
+		return "", smerr.New(smerr.CodeInternal, "", "setup.systemctl_path: output exceeds the template limit")
 	}
-	path := strings.TrimSpace(out)
+	path := strings.TrimSpace(string(res.Stdout))
 	if err := templates.ValidateSystemctlPath(path); err != nil {
 		return "", smerr.New(smerr.CodeCapabilityUnavailable, "", "systemctl path is not usable in sudoers: "+err.Error())
 	}
