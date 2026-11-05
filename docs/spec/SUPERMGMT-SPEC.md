@@ -129,7 +129,7 @@ swap_mib: 512
 disk_gib: 16
 network: dhcp
 unprivileged: true
-nesting: false
+nesting: true   # systemd in the container needs it (ADR-0026, amended 2026-11-05)
 keyctl: false
 ```
 

@@ -159,6 +159,9 @@ func TestM6_ApplianceLifecycleAcrossAReleaseBoundary(t *testing.T) {
 	w.seedHost()
 	before := w.state()
 	ctx := context.Background()
+	// The N-1 installer looks for pveam in /usr/sbin only; the simulated host keeps it in /usr/bin
+	// as PVE 9.1 does. The link lets that older build install, as an operator would have to.
+	w.Host.MustExec(ctx, "ln", "-s", "/usr/local/lib/pvesim/shim", "/usr/sbin/pveam")
 
 	w.Host.CopyRoot(ctx, lifecyclePreviousBuild(t, prev), lifecycleHostPrev)
 	w.Host.MustExec(ctx, "chmod", "0755", lifecycleHostPrev)

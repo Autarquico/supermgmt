@@ -118,6 +118,23 @@ func TestPlainCommandsStillStreamStderr(t *testing.T) {
 	}
 }
 
+func TestQuietCommandsShowNoStderrButKeepItInTheirError(t *testing.T) {
+	var shown bytes.Buffer
+	r := execRunner{stderr: &shown}
+	_, err := r.Run(context.Background(), Command{Name: "/bin/sh", Args: []string{"-c", "echo VM 900 already exists >&2; exit 255"}, Quiet: true})
+	var status *ExitStatus
+	if !errors.As(err, &status) || status.Code != 255 || !strings.Contains(status.Stderr, "already exists") {
+		t.Fatalf("err = %#v, want exit 255 carrying the stderr", err)
+	}
+	if shown.Len() != 0 {
+		t.Errorf("a quiet command showed %q", shown.String())
+	}
+	_, err = r.Run(context.Background(), Command{Name: "/bin/sh", Args: []string{"-c", "echo STDERR-SECRET >&2; exit 1"}, Quiet: true, Sensitive: true})
+	if !errors.As(err, &status) || status.Stderr != "" || strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("a sensitive command's stderr reached its error: %v", err)
+	}
+}
+
 func TestStoppedState(t *testing.T) {
 	for show, want := range map[string]bool{
 		"ActiveState=inactive\nMainPID=0\n":     true,

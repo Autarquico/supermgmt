@@ -92,15 +92,15 @@ Tests: `TestVersionIsSupportedOnlyForPVE9` (`internal/providers/proxmox/client_t
 
 ### Host CLI (installer, `internal/installer`)
 
-Every tool runs by absolute path with a clean environment, never through a shell: `TestPVE_RunsToolsByAbsolutePathWithACleanEnvironment`, `TestPVE_ExecNeverUsesAShellAndSeparatesOptions`, `TestPVE_ArgvValidation`.
+Every tool runs by name through `env` with a fixed `PATH` and a clean environment, never through a shell: `TestPVE_RunsToolsByNameThroughAFixedPathWithACleanEnvironment`, `TestPVE_MissingToolsAreNamedBeforeAnythingRuns`, `TestPVE_ToolLookupFindsAnExecutableInAnyListedDirectory`, `TestPVE_ExecNeverUsesAShellAndSeparatesOptions`, `TestPVE_ArgvValidation`.
 
 | Row | Used as | Test | Fake | Real host |
 |---|---|---|---|---|
 | `pveversion` | Version string `pve-manager/9.x.y/...` | `TestPVE_VersionAndTemplatesAndNextID` | verified | not verified |
-| `pct create` options | `--hostname --cores --memory --swap --rootfs --net0 --unprivileged 1 --features nesting=0,keyctl=0 --onboot 1 --tags --description [--nameserver]` | `TestPVE_CreateArgvIsTheFrozenShape` | verified | not verified |
+| `pct create` options | `--hostname --cores --memory --swap --rootfs --net0 --unprivileged 1 --features nesting=1,keyctl=0 --onboot 1 --tags --description [--nameserver]` | `TestPVE_CreateArgvIsTheFrozenShape` | verified | not verified |
 | `pct config` | Readback of `unprivileged`, `features`, `tags`, `description`, `lock`, mounts, raw `lxc.*` keys | `TestPVE_Parsers` | verified | not verified |
 | `pct list` columns | `VMID Status [Lock] Name`; the lock column is blank when unlocked | `TestPVE_Parsers` | verified | not verified |
-| `pct start`, `stop`, `destroy` | Container lifecycle | `TestPVE_RunsToolsByAbsolutePathWithACleanEnvironment` | verified | not verified |
+| `pct start`, `stop`, `destroy` | Container lifecycle | `TestPVE_RunsToolsByNameThroughAFixedPathWithACleanEnvironment` | verified | not verified |
 | `pct exec <vmid> -- runuser -u <user> --` | Run as the service user inside the container; `runuser` assumed present in the Debian 13 template | `TestPVE_ExecNeverUsesAShellAndSeparatesOptions` | verified | not verified |
 | `pct push --user --group --perms` | File transfer into the container; uid/gid mapping in an unprivileged container is unconfirmed | `TestPVE_ArgvValidation`, `TestProxmoxLXC_NoTokenBeforeBootstrapDirIsVerified` | verified | not verified |
 | `/run` is tmpfs in the container | Token staged under `/run/supermgmt-bootstrap`; a stop clears it | `TestProxmoxLXC_NoTokenBeforeBootstrapDirIsVerified` | verified | not verified |

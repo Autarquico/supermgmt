@@ -173,7 +173,8 @@ func (w *pveWorld) startHost(engine pvesim.DockerEngine) {
 	c.CopyRoot(ctx, shim, "/usr/local/lib/pvesim/shim")
 	c.MustExec(ctx, "chmod", "0755", "/usr/local/lib/pvesim/shim")
 	for path := range map[string]bool{
-		"/usr/sbin/pct": true, "/usr/sbin/pveam": true, "/usr/sbin/pveum": true, "/usr/sbin/pvesm": true,
+		// pveam lives in /usr/bin as on PVE 9.1, the others in /usr/sbin: the installer must find each by name.
+		"/usr/sbin/pct": true, "/usr/bin/pveam": true, "/usr/sbin/pveum": true, "/usr/sbin/pvesm": true,
 		"/usr/bin/pvesh": true, "/usr/bin/pveversion": true,
 	} {
 		c.MustExec(ctx, "ln", "-s", "/usr/local/lib/pvesim/shim", path)
@@ -200,15 +201,11 @@ func (w *pveWorld) serveSim(token string) string {
 	return fmt.Sprintf("http://host.docker.internal:%d", ln.Addr().(*net.TCPAddr).Port)
 }
 
-// pve runs a Proxmox tool on the host the way the installer does: by absolute path with a clean
-// environment.
+// pve runs a Proxmox tool on the host the way the installer does: by name, through env with a
+// fixed PATH and a clean environment.
 func (w *pveWorld) pve(tool string, args ...string) harness.Result {
 	w.t.Helper()
-	path := map[string]string{
-		"pct": "/usr/sbin/pct", "pveam": "/usr/sbin/pveam", "pveum": "/usr/sbin/pveum", "pvesm": "/usr/sbin/pvesm",
-		"pvesh": "/usr/bin/pvesh", "pveversion": "/usr/bin/pveversion",
-	}[tool]
-	argv := append([]string{"env", "-i", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", path}, args...)
+	argv := append([]string{"env", "-i", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", tool}, args...)
 	return w.Host.Exec(context.Background(), "", argv...)
 }
 
@@ -263,10 +260,10 @@ func TestM3_ApplianceHarnessGuestIsADockerContainer(t *testing.T) {
 	w.mustPVE("pveam", "download", "local", debianTemplate)
 	w.mustPVE("pct", "create", "900", "local:vztmpl/"+debianTemplate,
 		"--hostname", "supermgmt", "--cores", "2", "--memory", "2048", "--swap", "512", "--rootfs", "local-lvm:16",
-		"--net0", "name=eth0,bridge=vmbr0,ip=dhcp", "--unprivileged", "1", "--features", "nesting=0,keyctl=0", "--onboot", "1",
+		"--net0", "name=eth0,bridge=vmbr0,ip=dhcp", "--unprivileged", "1", "--features", "nesting=1,keyctl=0", "--onboot", "1",
 		"--tags", "supermgmt;appliance", "--description", "SuperMgmt appliance")
 	conf := w.mustPVE("pct", "config", "900")
-	for _, want := range []string{"unprivileged: 1", "features: nesting=0,keyctl=0", "tags: supermgmt;appliance"} {
+	for _, want := range []string{"unprivileged: 1", "features: nesting=1,keyctl=0", "tags: supermgmt;appliance"} {
 		if !strings.Contains(conf, want) {
 			t.Errorf("pct config lacks %q:\n%s", want, conf)
 		}

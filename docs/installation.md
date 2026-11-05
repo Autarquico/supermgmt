@@ -180,7 +180,7 @@ Refused otherwise (`internal/installer/proxmox.go`): `pveversion` present and re
 | `SUPERMGMT_PVE_ENDPOINT` | `https://<host address on the bridge>:8006`. Must be `https://host[:port]`. |
 | `SUPERMGMT_PVE_CA_FILE` | `/etc/pve/pve-root-ca.pem` |
 
-Storage and bridge names are checked against what the host reports, and every value is validated before use (`TestPVE_ArgvValidation`). Proxmox tools run by absolute path with a clean environment, never through a shell.
+Storage and bridge names are checked against what the host reports, and every value is validated before use (`TestPVE_ArgvValidation`). Proxmox tools run by name through `env` with a fixed `PATH` of system directories and a clean environment, never through a shell. Every tool is looked for in those directories before the plan; a missing one is named and nothing is changed.
 
 ### The plan
 
@@ -192,7 +192,7 @@ The order is the failure matrix (`internal/installer/proxmox_steps.go`).
 
 1. Fix an `install_id` (8 hex digits) and create a write-ahead journal `/var/lib/supermgmt-installer/journals/<id>/journal.jsonl` (root-only directories, 0700; file 0600) before any side effect. Journals that earlier builds left in `/var/tmp/supermgmt-installer-<id>/` are still found and recovered.
 2. Download the Debian 13 `standard` template with `pveam` if none is on the template storage (highest version wins). **A downloaded template is never rolled back or deleted** (shared cache); it is reported.
-3. `pct create`: unprivileged, `nesting=0,keyctl=0`, no mount points, no raw `lxc.*` keys, start on boot, tag `supermgmt`, description `supermgmt install <id>`. The configuration is read back; any mismatch rolls back.
+3. `pct create`: unprivileged, `nesting=1,keyctl=0` (systemd in the container needs nesting), no mount points, no raw `lxc.*` keys, start on boot, tag `supermgmt`, description `supermgmt install <id>`. The configuration is read back; any mismatch rolls back.
 4. Start it and wait up to 120 s for an IPv4 address.
 5. Push the **running** `sm` into the container and compare its SHA-256 with the host's copy.
 6. Inside, as root: `sm install server --no-start --tls self-signed --public-url https://<container address>:8443`. The unit is written but **not enabled**.
@@ -226,6 +226,8 @@ Save the printed CA certificate to a file on your workstation and run:
 sm profile add supermgmt --url https://<container address>:8443 --ca-file supermgmt-ca.pem --use
 sm login --bootstrap
 ```
+
+A server does not let the person who asked for a plan approve it (`security.allow_self_approval` is `false` there, [Policies](policies.md#approving-your-own-plans)), so with a single administrator every high-risk plan, such as stopping a guest, waits forever. Add a second administrator, or, on an appliance you run alone, set `security.allow_self_approval: true` in `/etc/supermgmt/config.yaml` inside the container and restart the service.
 
 The certificate is valid for the address the container had at install time. With DHCP, reserve that lease, or the certificate no longer matches after the address changes (there is no renewal flow, see [TLS](#tls-proxy-or-direct)). Then back up the instance ([operations.md](operations.md#backups)) and keep the key export somewhere safe. Discovery and power actions: [providers.md](providers.md#proxmox).
 

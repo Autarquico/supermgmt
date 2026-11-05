@@ -231,7 +231,7 @@ func TestM3_ApplianceInstallDiscoversAndLogsIn(t *testing.T) {
 
 	t.Run("the container is unprivileged, unmounted and tagged", func(t *testing.T) {
 		conf := w.mustPVE("pct", "config", "900")
-		for _, want := range []string{"unprivileged: 1", "features: nesting=0,keyctl=0", "onboot: 1", "tags: supermgmt"} {
+		for _, want := range []string{"unprivileged: 1", "features: nesting=1,keyctl=0", "onboot: 1", "tags: supermgmt"} {
 			if !strings.Contains(conf, want) {
 				t.Errorf("pct config lacks %q:\n%s", want, conf)
 			}

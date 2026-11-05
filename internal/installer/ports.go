@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -82,6 +83,7 @@ type Command struct {
 	User      string
 	Stdin     io.Reader
 	Sensitive bool
+	Quiet     bool // stderr is expected noise (a probe), never shown
 }
 
 // Runner runs subprocesses and returns their stdout. A non-zero exit is an *ExitStatus.
@@ -93,10 +95,15 @@ type Runner interface {
 type ExitStatus struct {
 	Command string
 	Code    int
+	Stderr  string // set for a Quiet command only: its stderr is shown nowhere else
 }
 
 func (e *ExitStatus) Error() string {
-	return e.Command + " exited with status " + strconv.Itoa(e.Code)
+	msg := e.Command + " exited with status " + strconv.Itoa(e.Code)
+	if s := strings.TrimSpace(e.Stderr); s != "" {
+		msg += ": " + s
+	}
+	return msg
 }
 
 // Probe says where and how to ask for readiness.

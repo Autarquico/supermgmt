@@ -216,7 +216,7 @@ func TestProxmoxLXC_CreateIsUnprivilegedWithoutMounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := " " + strings.Join(args, " ") + " "
-	for _, want := range []string{" --unprivileged 1 ", " --features nesting=0,keyctl=0 ", " --onboot 1 ", " --tags supermgmt ", " --net0 name=eth0,bridge=vmbr0,ip=dhcp "} {
+	for _, want := range []string{" --unprivileged 1 ", " --features nesting=1,keyctl=0 ", " --onboot 1 ", " --tags supermgmt ", " --net0 name=eth0,bridge=vmbr0,ip=dhcp "} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("create argv lacks %q: %s", want, joined)
 		}
@@ -231,7 +231,8 @@ func TestProxmoxLXC_CreateIsUnprivilegedWithoutMounts(t *testing.T) {
 func TestProxmoxLXC_ReadbackMismatchRollsBack(t *testing.T) {
 	shapes := map[string]func(*fakeGuest){
 		"privileged": func(g *fakeGuest) { g.unpriv = false },
-		"nesting":    func(g *fakeGuest) { g.features["nesting"] = "1" },
+		"nesting":    func(g *fakeGuest) { g.features["nesting"] = "0" },
+		"keyctl":     func(g *fakeGuest) { g.features["keyctl"] = "1" },
 		"mount":      func(g *fakeGuest) { g.mounts = []string{"mp0"} },
 		"raw lxc":    func(g *fakeGuest) { g.raw = []string{"lxc.cgroup2.devices.allow"} },
 		"no tag":     func(g *fakeGuest) { g.tags = nil },
@@ -311,8 +312,15 @@ func TestProxmoxLXC_UntrustedEndpointRefusesBeforeAnyToken(t *testing.T) {
 	w := newAW(t)
 	w.pveTrusted = false
 	err := w.install(fastHooks())
-	if exitCodeOf(t, err) != ExitConnectivity || !strings.Contains(err.Error(), "8006") {
+	if exitCodeOf(t, err) != ExitConnectivity {
 		t.Fatalf("err = %v", err)
+	}
+	// The cause cannot be told apart from inside the check, so the message names what to verify:
+	// the endpoint actually configured and the CA it must chain to.
+	for _, want := range []string{":8006 reachable from the container", "signed by " + defaultPVECAFile} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %q", err, want)
+		}
 	}
 	if w.opIndex("pve.addtoken") >= 0 || w.opIndex("pve.createuser") >= 0 {
 		t.Error("identities were created before the endpoint was trusted")

@@ -19,7 +19,7 @@ type GuestNetwork struct {
 }
 
 // GuestSpec is everything `pct create` receives (ADR-0026 "Container shape").
-// The fixed flags (--unprivileged 1, --features nesting=0,keyctl=0, --onboot 1)
+// The fixed flags (--unprivileged 1, --features nesting=1,keyctl=0, --onboot 1)
 // are not fields: the implementation always passes them.
 type GuestSpec struct {
 	VMID        int
