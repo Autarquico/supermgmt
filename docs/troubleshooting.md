@@ -204,7 +204,7 @@ Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, hal
 
 ### The account has no one-time PIN login method
 
-With `access_identity_providers` empty, SuperMgmt allows exactly the account's One-time PIN provider. If there is none, setup stops before it creates the application with `CAPABILITY_UNAVAILABLE` (`TestAccess_NoOneTimePINFailsBeforeTheApplicationIsCreated`). Enable One-time PIN in Zero Trust (Settings, Authentication), or list the provider IDs you use in `access_identity_providers`, then run setup again.
+With `access_identity_providers` empty, SuperMgmt allows exactly the account's One-time PIN provider. If there is none, setup stops before it creates the application with `CAPABILITY_UNAVAILABLE` (`TestAccess_NoOneTimePINFailsBeforeTheApplicationIsCreated`). Add One-time PIN in Zero Trust (Integrations, Identity providers), or list the provider IDs you use in `access_identity_providers`, then run setup again.
 
 ### `sm doctor` warns that the API token is not available
 

@@ -226,7 +226,7 @@ func (c *Client) ResolveAllowedIdPs(ctx context.Context, configured []string) ([
 		}
 	}
 	return nil, smerr.New(smerr.CodeCapabilityUnavailable, "",
-		"cloudflare: the account has no one-time PIN login method: enable One-time PIN in Zero Trust -> Settings -> Authentication, or set access_identity_providers")
+		"cloudflare: the account has no one-time PIN login method: add One-time PIN in Zero Trust -> Integrations -> Identity providers, or set access_identity_providers")
 }
 
 func appOf(env envelope) (AccessApp, error) {

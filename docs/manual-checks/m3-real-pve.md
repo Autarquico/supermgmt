@@ -1,6 +1,6 @@
 # M3 manual checks: a real Proxmox VE 9.x host
 
-**Status: DEFERRED. Nothing on this page has been run.** Every Proxmox interaction in M3 was verified against fakes: a fake HTTP API (`internal/providers/proxmox/pvefake`), fake `pct`/`pveam`/`pvesm`/`pvesh`/`pveum` commands in the installer tests, and a simulated Proxmox host in the end-to-end tests (`TestM3_Appliance*`, CI job `e2e-appliance`, where each container is a Docker container). The fakes were written from the Proxmox documentation, not recorded from a host ([test/fixtures/pve/PROVENANCE.md](../../test/fixtures/pve/PROVENANCE.md)), so every row of [compatibility.md](../compatibility.md) is "not verified" in its real-host column until this list runs. "Proxmox auto-LXC install works" (SPEC Appendix E) stays unchecked until sections 1 to 6 pass.
+**Status: PARTLY RUN** on a real Proxmox VE 9.1.1 host, 2026-11-05 ([results of 2026-11-05](results-2026-11-05-rc4.md)); defects are open, and the rows not listed there are still not run. Every Proxmox interaction in M3 was verified against fakes: a fake HTTP API (`internal/providers/proxmox/pvefake`), fake `pct`/`pveam`/`pvesm`/`pvesh`/`pveum` commands in the installer tests, and a simulated Proxmox host in the end-to-end tests (`TestM3_Appliance*`, CI job `e2e-appliance`, where each container is a Docker container). The fakes were written from the Proxmox documentation, not recorded from a host ([test/fixtures/pve/PROVENANCE.md](../../test/fixtures/pve/PROVENANCE.md)), so every row of [compatibility.md](../compatibility.md) is "not verified" in its real-host column until this list runs. "Proxmox auto-LXC install works" (SPEC Appendix E) stays unchecked until sections 1 to 6 pass.
 
 Run it on a **lab** Proxmox VE 9.x host (amd64; a nested VM is fine), not on a production cluster: section 5 creates and destroys containers and Proxmox users. Record the Proxmox version (`pveversion -v`), the `sm version` commit and the date of each check. Fill in the results table at the end; a skipped check stays "not verified" in the README and ROADMAP. Where a check says the **fake needs fixing**, change the fake and the matrix row, not the expectation.
 
@@ -19,7 +19,7 @@ These feed the parsers in `internal/installer/pve.go`. For each, compare the rea
 |---|---|---|---|
 | 1.1 | `pveversion` | One line starting `pve-manager/9.x.y/...` | `pveversion` |
 | 1.2 | `pct list` (with one locked guest, for example during a backup or `pct snapshot`) | Header `VMID Status [Lock] Name`; the Lock column is blank when unlocked, so the column count differs per row | `pct list` columns |
-| 1.3 | `pvesm status --output-format json` | JSON rows with `storage`, `type`, `content` (a comma-separated string) and `active` (`1`, `true` or their quoted forms) | `pvesm status` JSON |
+| 1.3 | `pvesh get /nodes/$NODE/storage --output-format json` (`pvesm status` has no JSON output on PVE 9.1: it rejects `--output-format`) | JSON rows with `storage`, `type`, `content` (a comma-separated string) and `active` (`1`, `true` or their quoted forms) | storage listing |
 | 1.4 | `pvesh get /nodes/$NODE/network --type any_bridge --output-format json` | Rows with the bridge in `iface` and its host address in `address`; `$NODE` equals `hostname -s`, which the installer uses as the node name | bridge discovery |
 | 1.5 | `pvesh get /cluster/nextid --vmid $USED` and `--vmid $FREE` | A VMID in use: non-zero exit. A free one: exit 0. (The installer uses the exit code, not the text.) | free-VMID probe |
 | 1.6 | `pveam update`, `pveam available --section system \| grep debian-13`, `pveam list $TST` | A template named exactly `debian-13-standard_<version>_amd64.tar.zst`; the installer chooses the highest version | template pattern, `pveam` |
@@ -42,18 +42,18 @@ Create a throwaway token first (section 3 shows the privileges), then call the A
 
 ## 3. Permissions and the deeper-ACL rule
 
-The central assumption of the privilege design (ADR-0023). Use a throwaway user, token and roles, then remove them.
+The central assumption of the privilege design (ADR-0023). Use a throwaway user, token and roles, then remove them. A token ID needs at least two characters (PVE rejects `t`).
 
 ```bash
 pveum user add sm-check@pve
 pveum role add SMCheckAudit --privs "VM.Audit,Sys.Audit,Datastore.Audit,Pool.Audit"
 pveum role add SMCheckPower --privs "VM.Audit,VM.PowerMgmt"
-pveum user token add sm-check@pve t --privsep 1 --output-format json    # keep the secret
+pveum user token add sm-check@pve tk --privsep 1 --output-format json    # keep the secret
 pveum acl modify / --roles SMCheckAudit --users sm-check@pve
-pveum acl modify / --roles SMCheckAudit --tokens 'sm-check@pve!t'
+pveum acl modify / --roles SMCheckAudit --tokens 'sm-check@pve!tk'
 ```
 
-For each case, read `GET /access/permissions` as the token (and `pveum user permissions 'sm-check@pve!t'`) and `GET /cluster/resources`, and write down what each path returns.
+For each case, read `GET /access/permissions` as the token (and `pveum user permissions 'sm-check@pve!tk'`) and `GET /cluster/resources`, and write down what each path returns.
 
 | # | Setup | Expected by the code |
 |---|---|---|
@@ -63,7 +63,7 @@ For each case, read `GET /access/permissions` as the token (and `pveum user perm
 | 3.4 | Grant on `/vms/<id>` with `--propagate 0` | Applies to that path only; `/access/permissions` lists it without descendants. |
 | 3.5 | A grant whose value is `0` or a path that appears with an empty map | How `/access/permissions` encodes a 0-valued, non-propagating grant (the client asks `GET /access/permissions?path=` for the exact path and reads that answer as the path's effective privileges, SEC-13; `decodePathPrivileges`). Record the exact JSON. If the value semantics differ, **the fake and `decodePathPrivileges` need fixing**. |
 | 3.6 | Token privilege separation | With `--privsep 1` the token's rights are the intersection with the user's: remove a privilege from the user only and confirm the token loses it. |
-| 3.7 | Revoke the `/` ACL for the token while `sm` is syncing (section 6) | Guests become `inaccessible` after the next sync (not `absent`), capabilities are dropped, rows stay. Restore the ACL and see them return. |
+| 3.7 | Revoke both the `/` and the `/vms` ACL for the token while `sm` is syncing (section 6). Revoking `/` alone changes nothing visible: `SMPower-<id>` on `/vms` repeats `VM.Audit` | Guests become `inaccessible` after the next sync (not `absent`), capabilities are dropped, rows stay. Restore the ACL and see them return. |
 
 Clean up: `pveum user token remove`, `pveum acl delete`, `pveum role delete`, `pveum user delete`.
 
@@ -132,7 +132,7 @@ With the appliance from section 5 and a lab guest:
 
 | # | Check | Expected |
 |---|---|---|
-| 7.1 | Build a newer `sm` (any version bump), then on the host `./sm-new install upgrade` | Delegates into the appliance after the record and tag check; backup taken; version changes; data intact; `upgrade.json` gone. |
+| 7.1 | Build a newer `sm` (any version bump), then on the host `./sm-new install upgrade` | Delegates into the appliance after the record and tag check; backup taken; version changes; data intact; `upgrade.json` records phase `done` (it is kept on purpose, `internal/installer/upgrade.go`). |
 | 7.2 | The same with two appliances installed | Refused without `--vmid`; works with it; the other appliance is untouched. |
 | 7.3 | Upgrade from the previous milestone's build (a server installed by M2) to this one | The backup has the old schema; the migration to the current schema runs; the service is ready. |
 | 7.4 | Kill the upgrade at each phase (`kill -9` during stop, backup, swap, start) and rerun | It converges; `/usr/local/bin/sm` exists at every moment. |

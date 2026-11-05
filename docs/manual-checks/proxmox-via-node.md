@@ -1,6 +1,6 @@
 # Manual checks: Proxmox through its SSH node, on a real host
 
-**Status: NOT RUN.** Proxmox through a node was verified only against fakes: an in-process SSH relay to `pvefake` and fake PVE tools. The feature stays **experimental** until every row below is done and the results are written in [Project status](../project-status.md). Where a row says "record", write what you saw, even when it differs from the expectation, and fix the code or the docs.
+**Status: PARTLY RUN** on a real Proxmox VE 9.1.1 host, 2026-11-05 ([results of 2026-11-05](results-2026-11-05-rc4.md)); defects are open. Proxmox through a node was verified only against fakes: an in-process SSH relay to `pvefake` and fake PVE tools. The feature stays **experimental** until every row below is done and the results are written in [Project status](../project-status.md). Where a row says "record", write what you saw, even when it differs from the expectation, and fix the code or the docs.
 
 You need a Proxmox VE 9 host that you can SSH into as root, and a SuperMgmt instance in local mode. For section 4 you also need the `cloudflare:` block from [Cloudflare](../cloudflare.md).
 
