@@ -12,7 +12,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/go-containerregistry v0.21.7
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/secure-systems-lab/go-securesystemslib v0.11.0
 	github.com/sigstore/protobuf-specs v0.5.1
