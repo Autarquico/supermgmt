@@ -206,6 +206,10 @@ func FuzzDecodeDoH(f *testing.F) {
 	f.Add([]byte(`{"Status":3,"Answer":[{"type":1}]}`))
 	f.Add([]byte(`{"Status":2}`))
 	f.Add([]byte(`<html></html>`))
+	f.Add([]byte(`{"Answer":[]}`))
+	f.Add([]byte(`{"Status":null}`))
+	f.Add([]byte(`{"error":"authentication required"}`))
+	f.Add([]byte(`{"Status":0,"Answer":[{"type":1,"data":"2606::1"},{"type":28,"data":"1.2.3.4"},{"type":1}]}`))
 	addSeeds(f)
 	f.Fuzz(func(t *testing.T, body []byte) {
 		r, err := decodeDoH(body)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -155,19 +156,41 @@ type dohReply struct {
 
 func (r dohReply) answers(qtype int) bool {
 	for _, rr := range r.Answer {
-		if rr.Type == qtype {
+		if rr.Type == qtype && rr.hasAddress() {
 			return true
 		}
 	}
 	return false
 }
 
-// decodeDoH reads a JSON DNS answer. Only NOERROR and NXDOMAIN are usable.
+// hasAddress reports whether an A or AAAA record carries an address of its
+// own family; other types are taken as they come.
+func (rr dohRecord) hasAddress() bool {
+	addr, err := netip.ParseAddr(rr.Data)
+	switch rr.Type {
+	case dnsTypeA:
+		return err == nil && addr.Is4()
+	case dnsTypeAAAA:
+		return err == nil && addr.Is6() && !addr.Is4In6()
+	}
+	return true
+}
+
+// decodeDoH reads a JSON DNS answer. Only NOERROR and NXDOMAIN are usable, and
+// a reply without a Status (null, an error object) is not a DNS reply at all.
 func decodeDoH(data []byte) (dohReply, error) {
-	var r dohReply
-	if err := json.Unmarshal(data, &r); err != nil {
+	var wire struct {
+		dohReply
+		Status *int `json:"Status"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return dohReply{}, fmt.Errorf("malformed reply: %w", err)
 	}
+	if wire.Status == nil {
+		return dohReply{}, errors.New("malformed reply: no status")
+	}
+	r := wire.dohReply
+	r.Status = *wire.Status
 	if r.Status != dnsStatusOK && r.Status != dnsStatusNXDomain {
 		return dohReply{}, fmt.Errorf("resolver status %d", r.Status)
 	}

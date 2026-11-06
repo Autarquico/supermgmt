@@ -232,7 +232,7 @@ func (s *TunnelEnrollments) scan(ctx context.Context, lease jobs.Lease, job jobs
 	if err := s.ensureToken(ctx, lease, job, row); err != nil {
 		return err
 	}
-	budget := &waitBudget{e: s.engine, left: enrollmentPublicationBudget}
+	budget := s.engine.newBudget(enrollmentPublicationBudget)
 	waiting, err := s.engine.awaitPublication(ctx, row.Hostname, func(context.Context) time.Time { return row.PhaseStartedAt }, budget)
 	if err != nil || waiting != "" {
 		if err != nil {

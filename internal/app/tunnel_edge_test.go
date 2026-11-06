@@ -27,12 +27,17 @@ type fakeEdge struct {
 	unavailable bool
 	asked       int
 	diagnosed   bool // a NXDOMAIN from the system resolver is named as a cached negative answer
+	slow        time.Duration
+	pass        func(time.Duration)
 }
 
 func (e *fakeEdge) Published(context.Context, string) (bool, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.asked++
+	if e.slow > 0 {
+		e.pass(e.slow)
+	}
 	switch {
 	case e.unavailable:
 		return false, fmt.Errorf("%w: proxy authentication required", cloudflare.ErrResolverUnavailable)
@@ -67,14 +72,22 @@ func noSuchHost(host string) error {
 	return fmt.Errorf("netguard: resolve %s: %w", host, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true})
 }
 
-// useEdge makes the engine ask edge and record its waits instead of taking them. The fake clock stays
-// still: moving it past the lease would lose the job.
+// useEdge makes the engine ask edge and record its waits instead of taking them. A wait moves the fake
+// clock, as the deadlines of the waits are measured on it.
 func (ts *tunnelSetting) useEdge(edge *fakeEdge) {
 	engine := ts.handler.tunnel
 	engine.opts.Edge = edge
-	engine.opts.Sleep = func(_ context.Context, d time.Duration) {
+	edge.pass = func(d time.Duration) { ts.pass(context.Background(), d) }
+	engine.opts.Sleep = func(ctx context.Context, d time.Duration) {
 		ts.slept = append(ts.slept, d)
+		ts.pass(ctx, d)
 	}
+}
+
+// pass moves the fake clock and keeps the job's lease alive, as the engine's heartbeat does.
+func (ts *tunnelSetting) pass(ctx context.Context, d time.Duration) {
+	ts.clock.Advance(d)
+	_ = ts.store.Heartbeat(ctx, ts.lease)
 }
 
 func (ts *tunnelSetting) sleptTotal() time.Duration {
@@ -251,9 +264,20 @@ type flakyEdgeDialer struct {
 	failures int
 	err      error
 	firstAt  int // questions asked of Cloudflare when the tunnel was first dialled; -1 before
+	// anyFirstAt is firstAt for a connection of any user through the tunnel, the admin session included.
+	anyFirstAt int
+	cost       time.Duration // what a failing dial takes, on the fake clock
+	pass       func(time.Duration)
 }
 
 func (d *flakyEdgeDialer) For(t ssh.Target) transport.Executor {
+	if t.Transport == "cloudflare" {
+		d.mu.Lock()
+		if d.anyFirstAt < 0 {
+			d.anyFirstAt = d.edge.questions()
+		}
+		d.mu.Unlock()
+	}
 	if t.Transport == "cloudflare" && t.User == "supermgmt" {
 		d.mu.Lock()
 		if d.firstAt < 0 {
@@ -270,7 +294,7 @@ func (d *flakyEdgeDialer) For(t ssh.Target) transport.Executor {
 }
 
 func (ts *tunnelSetting) flakyTunnel(edge *fakeEdge, failures int, err error) *flakyEdgeDialer {
-	d := &flakyEdgeDialer{fakeDialer: ts.dialer, edge: edge, failures: failures, err: err, firstAt: -1}
+	d := &flakyEdgeDialer{fakeDialer: ts.dialer, edge: edge, failures: failures, err: err, firstAt: -1, anyFirstAt: -1, pass: func(d time.Duration) { ts.pass(context.Background(), d) }}
 	ts.handler.conn = Connector{Remote: d}
 	return d
 }
@@ -400,7 +424,7 @@ func TestTheFallbackWaitCountsFromTheLatestInstantAPersistedCreationTimeCanStand
 	ts.useEdge(&fakeEdge{})
 	engine := ts.handler.tunnel
 	persisted := ts.clock.Now().Add(-resolverFallbackWait)
-	budget := &waitBudget{e: engine, left: setupStepBudget}
+	budget := engine.newBudget(setupStepBudget)
 
 	note, err := engine.waitOutFallback(context.Background(), persisted, errors.New("resolver down"), budget)
 
@@ -409,5 +433,90 @@ func TestTheFallbackWaitCountsFromTheLatestInstantAPersistedCreationTimeCanStand
 	}
 	if got := ts.sleptTotal(); got != persistedInstantResolution {
 		t.Errorf("waited %s, want %s: a creation time rounded down to the millisecond can be that much too early", got, persistedInstantResolution)
+	}
+}
+
+// ---- elapsed deadlines ------------------------------------------------------------------------
+
+func TestSlowAnswersFromCloudflareDoNotStretchAnEnrollmentJobPastItsBudget(t *testing.T) {
+	es := newEnrollSetting(t)
+	es.useEdge(&fakeEdge{notYet: 1 << 20, slow: 4 * time.Second})
+	es.start()
+	begun := es.clock.Now()
+
+	es.work()
+
+	if got := es.clock.Now().Sub(begun); got > enrollmentPublicationBudget+4*time.Second {
+		t.Errorf("the job took %s, want about its %s budget (one answer may end after it)", got, enrollmentPublicationBudget)
+	}
+}
+
+func TestSlowFailingDialsDoNotStretchTheSetupStepPastItsDeadline(t *testing.T) {
+	ts := newTunnelSetting(t)
+	edge := &fakeEdge{}
+	ts.useEdge(edge)
+	dialer := ts.flakyTunnel(edge, 1<<20, smerr.New(smerr.CodeNodeUnreachable, "", "cloudflare access preflight: connection refused"))
+	dialer.cost = 20 * time.Second
+	ts.plan()
+	begun := ts.clock.Now()
+
+	err := ts.attempt()
+
+	if err == nil {
+		t.Fatal("verification over a tunnel that never carries a stream succeeded")
+	}
+	if got := ts.clock.Now().Sub(begun); got > setupStepBudget+dialer.cost {
+		t.Errorf("the step took %s, want its %s deadline (one attempt may end after it)", got, setupStepBudget)
+	}
+}
+
+func TestSlowAnswersFromCloudflareDoNotStretchTheSetupWaitPastItsDeadline(t *testing.T) {
+	ts := newTunnelSetting(t)
+	edge := &fakeEdge{notYet: 1 << 20, slow: 4 * time.Second}
+	ts.useEdge(edge)
+	ts.flakyTunnel(edge, 0, nil)
+	ts.plan()
+	begun := ts.clock.Now()
+
+	err := ts.attempt()
+
+	if err == nil || !strings.Contains(err.Error(), "waiting for Cloudflare to publish") {
+		t.Fatalf("error = %v, want the wait for publication", err)
+	}
+	if got := ts.clock.Now().Sub(begun); got > setupStepBudget+edge.slow {
+		t.Errorf("the wait took %s, want its %s deadline", got, setupStepBudget)
+	}
+}
+
+// ---- repair ----------------------------------------------------------------------------------
+
+func TestARepairThatRecreatesTheRecordConnectsOnlyOnceCloudflareServesIt(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	edge := &fakeEdge{notYet: 20}
+	ts.useEdge(edge)
+	dialer := ts.flakyTunnel(edge, 0, nil)
+	old := ts.operations()[0].Objects
+	mustf(t, ts.chaos.CloudflareAPI.DeleteDNSRecord(context.Background(), ts.zoneID(), old.DNSRecordID), "delete DNS record")
+	ts.plan()
+
+	mustf(t, ts.attempt(), "repair")
+
+	if dialer.anyFirstAt <= 20 {
+		t.Errorf("the hostname was used after %d questions to Cloudflare, want it only once it was served", dialer.anyFirstAt)
+	}
+	ts.wantOneOfEach()
+}
+
+func TestARepairThatLeavesTheRecordAloneDoesNotWaitForCloudflare(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	edge := &fakeEdge{notYet: 1 << 20}
+	ts.useEdge(edge)
+	ts.flakyTunnel(edge, 0, nil)
+	ts.plan()
+
+	mustf(t, ts.attempt(), "rerun")
+
+	if got := edge.questions(); got != 0 {
+		t.Errorf("%d questions to Cloudflare about a record nobody touched, want none", got)
 	}
 }

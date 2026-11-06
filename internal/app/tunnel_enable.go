@@ -101,6 +101,10 @@ type tunnelRun struct {
 	// foreign. Zero when there are none.
 	lastEnabled database.TunnelOperation
 	disabling   bool // names the failing step as a disable's
+	// served: this attempt has waited for Cloudflare to serve the hostname. fallback is why its resolver
+	// could not be asked, when the wait fell back to a fixed time.
+	served   bool
+	fallback error
 	// keepToken stores the connector token before the DNS record is recorded, so a record that waits for its
 	// node always has the token; nil for a setup, which hands the token to the node install.
 	keepToken func(context.Context, audit.Secret) error

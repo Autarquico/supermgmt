@@ -53,20 +53,31 @@ type EdgePublication interface {
 
 var _ EdgePublication = (*cloudflare.PublicationChecker)(nil)
 
-// waitBudget is an amount of waiting that is spent by pausing, so a step has one deadline for all its waits.
+// waitBudget is a deadline on the injected clock that all the waits of a step share: the questions to
+// Cloudflare's resolver, the attempts of the verification and the pauses between them all spend it, however
+// slow each of them is.
 type waitBudget struct {
-	e    *tunnelEngine
-	left time.Duration
+	e        *tunnelEngine
+	deadline time.Time
 	// fallback is why the resolver could not be asked, once the wait fell back to a fixed time.
 	fallback error
 }
 
-func (b *waitBudget) spent() bool { return b.left <= 0 }
+func (e *tunnelEngine) newBudget(d time.Duration) *waitBudget {
+	return &waitBudget{e: e, deadline: e.cfg.Clock.Now().Add(d)}
+}
+
+func (b *waitBudget) left() time.Duration { return max(b.deadline.Sub(b.e.cfg.Clock.Now()), 0) }
+
+func (b *waitBudget) spent() bool { return b.left() == 0 }
 
 func (b *waitBudget) pause(ctx context.Context, d time.Duration) error {
-	d = min(d, b.left)
-	b.left -= d
-	return b.e.opts.sleep(ctx, d)
+	return b.e.opts.sleep(ctx, min(d, b.left()))
+}
+
+// bound limits one request or attempt to the time that is left.
+func (b *waitBudget) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, b.left())
 }
 
 // awaitPublication waits, within budget, until Cloudflare serves host. It returns an empty note when the
@@ -77,7 +88,9 @@ func (e *tunnelEngine) awaitPublication(ctx context.Context, host string, create
 		return "", nil
 	}
 	for {
-		published, err := e.opts.Edge.Published(ctx, host)
+		asked, cancel := budget.bound(ctx)
+		published, err := e.opts.Edge.Published(asked, host)
+		cancel()
 		switch {
 		case ctx.Err() != nil:
 			return "", ctx.Err()
@@ -90,6 +103,9 @@ func (e *tunnelEngine) awaitPublication(ctx context.Context, host string, create
 		}
 		if err := budget.pause(ctx, publicationPoll); err != nil {
 			return "", err
+		}
+		if budget.spent() { // no time is left to ask again
+			return "waiting for Cloudflare to publish " + host, nil
 		}
 	}
 }
@@ -105,7 +121,7 @@ func (e *tunnelEngine) waitOutFallback(ctx context.Context, createdAt time.Time,
 	if remaining <= 0 {
 		return "", nil
 	}
-	wait := min(remaining, budget.left)
+	wait := min(remaining, budget.left())
 	if err := budget.pause(ctx, wait); err != nil {
 		return "", err
 	}
@@ -144,6 +160,33 @@ func (e *tunnelEngine) diagnose(ctx context.Context, host string, err error) err
 	return e.opts.Edge.DiagnoseNegativeCache(ctx, host, err)
 }
 
+// recordIsNew says whether this operation put the node's DNS record in place (created, adopted, recreated or
+// repointed it), so the hostname may not be served yet. It is derived from the persisted objects: the record
+// the operation holds is not the one of the committed enable.
+func (r *tunnelRun) recordIsNew() bool {
+	id := r.record().Objects().DNSRecordID
+	return id != "" && id != r.lastEnabled.Objects.DNSRecordID
+}
+
+// awaitServed holds the first connection through the hostname until Cloudflare serves it, once per attempt.
+// Whether it applies comes from the persisted operation, so a restart or a takeover applies it again; a
+// hostname whose record this operation did not touch is not waited for.
+func (r *tunnelRun) awaitServed(ctx context.Context, budget *waitBudget) error {
+	if r.served || !r.recordIsNew() || phaseIndex(r.record().Phase()) >= phaseIndex(database.PhaseVerified) {
+		return nil
+	}
+	note, err := r.awaitPublication(ctx, r.hostname, r.dnsCreatedAt, budget)
+	r.fallback = budget.fallback
+	switch {
+	case err != nil:
+		return err
+	case note != "":
+		return smerr.New(smerr.CodeNodeUnreachable, "", fmt.Sprintf("%s: not published after %s", note, setupStepBudget))
+	}
+	r.served = true
+	return nil
+}
+
 // verifyWhenServed runs the verification over the tunnel (verify) once Cloudflare serves the hostname, and
 // retries it with backoff until the step's deadline while the failure is a dial failure: edge and connector
 // latency must not use up the job's attempts. Other failures end it at once.
@@ -151,17 +194,16 @@ func (r *tunnelRun) verifyWhenServed(ctx context.Context, verify func(context.Co
 	if phaseIndex(r.record().Phase()) >= phaseIndex(database.PhaseVerified) {
 		return verify(ctx) // the hostname was served when it was verified
 	}
-	budget := &waitBudget{e: r.tunnelEngine, left: setupStepBudget}
-	note, err := r.awaitPublication(ctx, r.hostname, r.dnsCreatedAt, budget)
-	switch {
-	case err != nil:
+	budget := r.newBudget(setupStepBudget)
+	if err := r.awaitServed(ctx, budget); err != nil {
 		return err
-	case note != "":
-		return smerr.New(smerr.CodeNodeUnreachable, "", fmt.Sprintf("%s: not published after %s", note, setupStepBudget))
 	}
 	backoff := tunnelRetryBase
+	var err error
 	for {
-		err = verify(ctx)
+		attempt, cancel := budget.bound(ctx)
+		err = verify(attempt)
+		cancel()
 		if err == nil || !retryableDial(err) || ctx.Err() != nil || budget.spent() {
 			break
 		}
@@ -171,7 +213,7 @@ func (r *tunnelRun) verifyWhenServed(ctx context.Context, verify func(context.Co
 		backoff = min(backoff*2, tunnelRetryLimit)
 	}
 	if err != nil {
-		err = withFallbackNote(r.diagnose(ctx, r.hostname, err), budget.fallback)
+		err = withFallbackNote(r.diagnose(ctx, r.hostname, err), r.fallback)
 	}
 	return err
 }
