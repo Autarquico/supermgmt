@@ -6,7 +6,7 @@ status: draft
 priority: P0
 size: M
 issue: 69
-prs: []
+prs: [74]
 related_issues: [69]
 depends_on: []
 supersedes: []
