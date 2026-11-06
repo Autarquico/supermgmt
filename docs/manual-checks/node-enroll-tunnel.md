@@ -1,6 +1,6 @@
 # Manual checks: adding a node through Cloudflare Tunnel, on a real account
 
-**Status: NOT RUN.** Enrollment through the tunnel was verified only against fakes: a hand-written Cloudflare API fake, a fake `cloudflared` and an in-process SSH server. The feature stays **experimental** until every row below is done and the results are written in [Project status](../project-status.md). Where a row says "record", write what you saw, even when it differs from the expectation, and fix the code or the docs.
+**Status: PARTLY RUN** on a real account, 2026-11-05 ([results of 2026-11-05](results-2026-11-05-rc4.md)); defects are open. Enrollment through the tunnel was verified only against fakes: a hand-written Cloudflare API fake, a fake `cloudflared` and an in-process SSH server. The feature stays **experimental** until every row below is done and the results are written in [Project status](../project-status.md). Where a row says "record", write what you saw, even when it differs from the expectation, and fix the code or the docs.
 
 You need a Cloudflare account with the `cloudflare:` block from [Cloudflare](../cloudflare.md) configured, a SuperMgmt instance in local mode on a laptop with `cloudflared`, and a fresh Debian 13 or Ubuntu 24.04 VPS whose firewall drops every inbound connection (SSH included) and allows outbound HTTPS.
 
