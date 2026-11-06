@@ -156,7 +156,7 @@ type dohReply struct {
 
 func (r dohReply) answers(qtype int) bool {
 	for _, rr := range r.Answer {
-		if rr.Type == qtype && rr.hasAddress() {
+		if rr.Type == qtype {
 			return true
 		}
 	}
@@ -178,6 +178,8 @@ func (rr dohRecord) hasAddress() bool {
 
 // decodeDoH reads a JSON DNS answer. Only NOERROR and NXDOMAIN are usable, and
 // a reply without a Status (null, an error object) is not a DNS reply at all.
+// An A or AAAA record without an address of its family makes the reply
+// malformed, whichever type was asked; other record types are ignored.
 func decodeDoH(data []byte) (dohReply, error) {
 	var wire struct {
 		dohReply
@@ -196,6 +198,11 @@ func decodeDoH(data []byte) (dohReply, error) {
 	}
 	if r.Status == dnsStatusNXDomain {
 		r.Answer = nil
+	}
+	for _, rr := range r.Answer {
+		if !rr.hasAddress() {
+			return dohReply{}, fmt.Errorf("malformed reply: bad data %q in type %d record", rr.Data, rr.Type)
+		}
 	}
 	return r, nil
 }
