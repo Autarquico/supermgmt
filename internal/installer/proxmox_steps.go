@@ -186,14 +186,15 @@ func (p *provision) createGuest(ctx context.Context) error {
 	return nil
 }
 
-// guestShapeProblem is the post-create readback: unprivileged, no mounts, no
-// raw lxc keys, tagged, and carrying this install's id.
+// guestShapeProblem is the post-create readback: unprivileged, nesting on (the
+// container's systemd needs it), keyctl off, no mounts, no raw lxc keys,
+// tagged, and carrying this install's id.
 func guestShapeProblem(c GuestConfig, id string) string {
 	switch {
 	case !c.Unprivileged:
 		return "it is privileged"
-	case c.Features["nesting"] != "0" || c.Features["keyctl"] != "0":
-		return "nesting or keyctl is enabled"
+	case c.Features["nesting"] != "1" || c.Features["keyctl"] != "0":
+		return "its features are not nesting=1,keyctl=0"
 	case len(c.Mounts) > 0:
 		return "it has mount points " + strings.Join(c.Mounts, ",")
 	case len(c.RawLXC) > 0:
@@ -336,18 +337,19 @@ func (p *provision) checkEndpointTrust(ctx context.Context) error {
 	}
 	_, err := p.sm(ctx, false, "providers", "check", "--offline", "--tls-only",
 		"--endpoint", p.plan.Endpoint, "--ca-file", pveCAInContainer)
-	return p.checkFailure("the Proxmox endpoint's certificate chain is not trusted from the container", err)
+	return p.checkFailure("the Proxmox endpoint could not be verified from the container", err)
 }
 
 // checkFailure maps `sm providers check` results: exit 8 is a connectivity
-// failure, anything else a configuration one.
+// failure (unreachable, or a certificate the CA does not sign), anything else a
+// configuration one.
 func (p *provision) checkFailure(what string, err error) error {
 	if err == nil {
 		return nil
 	}
 	var status *ExitStatus
 	if errors.As(err, &status) && status.Code == ExitConnectivity {
-		return failWrap(ExitConnectivity, what+" (is port "+pveAPIPort+" on the host reachable from the container?)", err)
+		return failWrap(ExitConnectivity, what+": is "+p.plan.Endpoint+" reachable from the container, and does it serve a certificate signed by "+p.plan.CAFile+"?", err)
 	}
 	return failWrap(ExitConfiguration, what, err)
 }

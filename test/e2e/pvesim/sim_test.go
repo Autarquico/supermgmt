@@ -114,7 +114,7 @@ func createArgs(vmid string, extra ...string) []string {
 		"create", vmid, "local:vztmpl/" + debian,
 		"--hostname", "supermgmt", "--cores", "2", "--memory", "2048", "--swap", "512",
 		"--rootfs", "local-lvm:16", "--net0", "name=eth0,bridge=vmbr0,ip=dhcp",
-		"--unprivileged", "1", "--features", "nesting=0,keyctl=0", "--onboot", "1",
+		"--unprivileged", "1", "--features", "nesting=1,keyctl=0", "--onboot", "1",
 		"--tags", "supermgmt;appliance", "--description", "SuperMgmt appliance",
 	}, extra...)
 }
@@ -260,7 +260,7 @@ func TestPctConfigReadbackShowsWhatWasCreated(t *testing.T) {
 	r := newRig()
 	r.createGuest(t, "900")
 	conf := r.mustRun(t, "pct", "config", "900")
-	for _, want := range []string{"unprivileged: 1", "features: nesting=0,keyctl=0", "onboot: 1", "tags: supermgmt;appliance", "hostname: supermgmt", "description: SuperMgmt appliance"} {
+	for _, want := range []string{"unprivileged: 1", "features: nesting=1,keyctl=0", "onboot: 1", "tags: supermgmt;appliance", "hostname: supermgmt", "description: SuperMgmt appliance"} {
 		if !strings.Contains(conf, want) {
 			t.Errorf("pct config lacks %q:\n%s", want, conf)
 		}

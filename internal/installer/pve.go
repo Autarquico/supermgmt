@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,15 +18,17 @@ import (
 	"github.com/autarquico/supermgmt/internal/pveid"
 )
 
-// The Proxmox tools are run by absolute path with an empty environment plus
-// the two variables below, so neither PATH nor the caller's locale can
-// redirect or reshape them (ADR-0026).
+// The Proxmox tools are run by name through env with an empty environment, a
+// fixed PATH of system directories and LC_ALL=C, so neither the caller's PATH
+// nor its locale can redirect or reshape them (ADR-0026). They are not pinned
+// to one directory because Proxmox releases move them: pveam is in /usr/bin on
+// PVE 9.1, pct in /usr/sbin.
 const (
-	pveVersionTool = "/usr/bin/pveversion"
-	pctTool        = "/usr/sbin/pct"
-	pveamTool      = "/usr/sbin/pveam"
-	pveumTool      = "/usr/sbin/pveum"
-	pveshTool      = "/usr/bin/pvesh"
+	pveVersionTool = "pveversion"
+	pctTool        = "pct"
+	pveamTool      = "pveam"
+	pveumTool      = "pveum"
+	pveshTool      = "pvesh"
 	hostnameTool   = "/usr/bin/hostname"
 	runuserTool    = "/usr/sbin/runuser"
 	envTool        = "/usr/bin/env"
@@ -92,14 +95,48 @@ func validTemplateVolume(v string) error {
 	return nil
 }
 
-// execPVE implements PVE over the Proxmox command-line tools.
-type execPVE struct{ runner Runner }
+// execPVE implements PVE over the Proxmox command-line tools. look reports
+// whether a tool is installed where env will search for it.
+type execPVE struct {
+	runner Runner
+	look   func(tool string) bool
+}
 
-func newExecPVE(r Runner) execPVE { return execPVE{runner: r} }
+func newExecPVE(r Runner) execPVE { return execPVE{runner: r, look: lookPVETool} }
+
+// hostTools are every tool the installer runs on the host.
+var hostTools = []string{pveVersionTool, pctTool, pveamTool, pveumTool, pveshTool}
 
 func (p execPVE) run(ctx context.Context, sensitive bool, stdin io.Reader, tool string, args ...string) ([]byte, error) {
-	argv := append([]string{"-i", "PATH=" + pveToolPath, "LC_ALL=C", tool}, args...)
-	return p.runner.Run(ctx, Command{Name: envTool, Args: argv, Stdin: stdin, Sensitive: sensitive})
+	return p.exec(ctx, Command{Stdin: stdin, Sensitive: sensitive}, tool, args...)
+}
+
+func (p execPVE) exec(ctx context.Context, c Command, tool string, args ...string) ([]byte, error) {
+	c.Name, c.Args = envTool, append([]string{"-i", "PATH=" + pveToolPath, "LC_ALL=C", tool}, args...)
+	return p.runner.Run(ctx, c)
+}
+
+// lookPVETool reports whether tool is an executable in one of the directories
+// of pveToolPath, the same lookup env performs.
+func lookPVETool(tool string) bool { return lookIn(strings.Split(pveToolPath, ":"), tool) }
+
+func lookIn(dirs []string, tool string) bool {
+	return slices.ContainsFunc(dirs, func(dir string) bool { return fileExecutable(path.Join(dir, tool)) })
+}
+
+// missingTools names the host tools env would not find, so a host that lacks
+// one is refused before the plan rather than halfway through the install.
+func (p execPVE) missingTools() error {
+	var missing []string
+	for _, tool := range hostTools {
+		if !p.look(tool) {
+			missing = append(missing, tool)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the Proxmox tools %s were not found in %s", strings.Join(missing, ", "), pveToolPath)
+	}
+	return nil
 }
 
 func (p execPVE) text(ctx context.Context, tool string, args ...string) (string, error) {
@@ -124,6 +161,9 @@ func (p execPVE) do(ctx context.Context, tool string, args ...string) error {
 }
 
 func (p execPVE) Version(ctx context.Context) (string, error) {
+	if err := p.missingTools(); err != nil {
+		return "", err
+	}
 	out, err := p.text(ctx, pveVersionTool)
 	if err != nil {
 		return "", err
@@ -141,13 +181,15 @@ func (p execPVE) NextID(ctx context.Context, from int) (int, error) {
 		if err := validVMID(id); err != nil {
 			return 0, err
 		}
-		err := p.do(ctx, pveshTool, "get", "/cluster/nextid", "--vmid", strconv.Itoa(id))
+		// A VMID in use makes pvesh exit non-zero with "VM <id> already exists" and
+		// a usage text: expected, so not shown. Any other failure is reported.
+		_, err := p.exec(ctx, Command{Quiet: true}, pveshTool, "get", "/cluster/nextid", "--vmid", strconv.Itoa(id))
 		var status *ExitStatus
 		switch {
 		case err == nil:
 			return id, nil
-		case !errors.As(err, &status):
-			return 0, err
+		case !errors.As(err, &status) || !strings.Contains(status.Stderr, "already exists"):
+			return 0, fmt.Errorf("find a free VMID: %w", err)
 		}
 	}
 	return 0, fmt.Errorf("no free VMID in %d-%d", from, from+maxNextIDs-1)
@@ -299,7 +341,7 @@ func createArgs(s GuestSpec) ([]string, error) {
 		"--cores", strconv.Itoa(s.Cores), "--memory", strconv.Itoa(s.MemoryMiB), "--swap", strconv.Itoa(s.SwapMiB),
 		"--rootfs", s.Storage + ":" + strconv.Itoa(s.DiskGiB),
 		"--net0", net0,
-		"--unprivileged", "1", "--features", "nesting=0,keyctl=0", "--onboot", "1",
+		"--unprivileged", "1", "--features", "nesting=1,keyctl=0", "--onboot", "1",
 		"--tags", strings.Join(s.Tags, ";"), "--description", s.Description,
 	}
 	if len(s.Network.DNS) > 0 {

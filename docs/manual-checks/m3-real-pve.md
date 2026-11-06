@@ -73,19 +73,20 @@ On a scratch container created by hand with the same options the installer uses 
 
 ```bash
 pct create $VMID $TST:vztmpl/debian-13-standard_<ver>_amd64.tar.zst --hostname t --cores 2 --memory 2048 --swap 512 \
-  --rootfs $ST:16 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=0,keyctl=0 \
+  --rootfs $ST:16 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1,keyctl=0 \
   --onboot 1 --tags supermgmt --description "supermgmt install test"
 ```
 
 | # | Check | Expected |
 |---|---|---|
 | 4.1 | The create above is accepted by PVE 9 | Exit 0. Note any option PVE 9 rejects or renames. |
-| 4.2 | `pct config $VMID` | Shows `unprivileged: 1`, `features: nesting=0,keyctl=0`, `tags: supermgmt`, the description, no `mpN`, no `lxc.*`. The installer reads these back and rolls back on any mismatch; a different format breaks the readback. |
+| 4.2 | `pct config $VMID` | Shows `unprivileged: 1`, `features: nesting=1,keyctl=0`, `tags: supermgmt`, the description, no `mpN`, no `lxc.*`. The installer reads these back and rolls back on any mismatch; a different format breaks the readback. |
 | 4.3 | `pct start $VMID`, then `pct exec $VMID -- /usr/bin/hostname -I` | A non-loopback IPv4 address within 120 s (DHCP). |
 | 4.4 | `pct exec $VMID -- /usr/bin/false; echo $?` and a command that exits 3 | The exit code passes through (1 and 3). The installer relies on it (`providers check` exit 8, `test -x`). |
 | 4.5 | `pct exec $VMID -- runuser -u root -- /usr/bin/id` in the Debian 13 template | `runuser` exists there. If not, the offline steps cannot run as `supermgmt` and the installer needs another mechanism. |
 | 4.6 | `pct push $VMID /tmp/x /tmp/x --user root --group root --perms 0755` | Accepted. Then `pct push` a file into a directory owned by an unprivileged-mapped user with `--user <name> --group <name> --perms 0600`. Expected: owner and mode as given. If the uid mapping makes `--user` ineffective, the installer falls back to `chown`/`chmod` in the container; confirm the fallback works, and record which path ran. |
 | 4.7 | `pct exec $VMID -- stat -f -c %T /run` | `tmpfs`. A stop and start leaves `/run` empty. |
+| 4.7b | `pct exec $VMID -- systemctl is-system-running` and `systemctl --failed` | `running` and no failed unit, `systemd-journald` active. With `nesting=0` a Debian 13 container reports `degraded` with journald, tmpfiles and networkd failed (seen on PVE 9.1.1) |
 | 4.8 | `pct stop $VMID`, `pct destroy $VMID` | Succeed; `pct config` then fails. |
 
 ## 5. Appliance install on the real host

@@ -109,6 +109,7 @@ type appliancePlan struct {
 	SwapMiB         int
 	DiskGiB         int
 	Endpoint        string
+	CAFile          string // where CAPEM was read on the host
 	CAPEM           []byte
 	Power           bool
 }
@@ -181,7 +182,7 @@ func (p *provision) say(format string, args ...any) { p.in.say(format, args...) 
 func (p *provision) resolvePlan(ctx context.Context) error {
 	version, err := p.pve.Version(ctx)
 	if err != nil {
-		return failWrap(ExitPrerequisite, "read the Proxmox VE version", err)
+		return failWrap(ExitPrerequisite, "check the Proxmox VE tools and version", err)
 	}
 	major, _, _ := strings.Cut(version, ".")
 	if major != strconv.Itoa(supportedPVEMajor) {
@@ -434,7 +435,7 @@ func (p *provision) pickEndpoint(ctx context.Context, plan *appliancePlan) error
 	if _, err := parseCertificates(pemBytes); err != nil {
 		return failWrap(ExitInvalid, "Proxmox CA "+caFile, err)
 	}
-	plan.CAPEM = pemBytes
+	plan.CAFile, plan.CAPEM = caFile, pemBytes
 	return nil
 }
 
@@ -486,7 +487,7 @@ func (p *provision) confirmPlan() error {
 		"Will NOT:\n- open router ports\n- install Docker on the Proxmox host\n- mount the host filesystem into the LXC\n- create a privileged container\n- delete the template cache or any pre-existing resource",
 		pl.PVEVersion, pl.VMID, pl.Hostname, pl.Template, map[bool]string{true: " (will be downloaded)", false: ""}[pl.Download != ""],
 		pl.Storage, pl.Bridge, describeNetwork(pl.Network), pl.Cores, pl.MemoryMiB, pl.DiskGiB,
-		pl.Endpoint, firstNonEmpty(p.o.Appliance.PVECAFile, defaultPVECAFile), power, pl.VMID)
+		pl.Endpoint, pl.CAFile, power, pl.VMID)
 	return p.in.confirmPlan(p.o)
 }
 

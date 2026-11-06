@@ -54,7 +54,7 @@ func SystemDeps(out io.Writer, prompts io.Reader, env []string) Deps {
 	} else {
 		d.UserServices = systemd{runner: runner, user: true}
 	}
-	if fileExecutable(pveVersionTool) {
+	if lookPVETool(pveVersionTool) {
 		d.PVE = newExecPVE(runner)
 	}
 	if prompts != nil {
@@ -450,8 +450,8 @@ func (r execRunner) Run(ctx context.Context, c Command) ([]byte, error) {
 	cmd.Stdin = c.Stdin
 	var stdout, hidden bytes.Buffer
 	cmd.Stdout = &stdout
-	if c.Sensitive {
-		cmd.Stderr = &hidden // may carry a secret: kept in memory, never shown
+	if c.Sensitive || c.Quiet {
+		cmd.Stderr = &hidden // a secret or expected noise: kept in memory, never shown
 	} else {
 		cmd.Stderr = r.stderr
 	}
@@ -470,7 +470,11 @@ func (r execRunner) Run(ctx context.Context, c Command) ([]byte, error) {
 		if c.Sensitive {
 			out = nil
 		}
-		return out, &ExitStatus{Command: c.Name, Code: exit.ExitCode()}
+		status := &ExitStatus{Command: c.Name, Code: exit.ExitCode()}
+		if c.Quiet && !c.Sensitive {
+			status.Stderr = hidden.String()
+		}
+		return out, status
 	case err != nil && c.Sensitive:
 		return nil, errors.New(c.Name + " could not run")
 	}

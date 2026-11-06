@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io/fs"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,7 +26,9 @@ func (r *recordingRunner) Run(_ context.Context, c Command) ([]byte, error) {
 
 func newRecordedPVE() (execPVE, *recordingRunner) {
 	r := &recordingRunner{}
-	return newExecPVE(r), r
+	p := newExecPVE(r)
+	p.look = func(string) bool { return true } // every tool installed
+	return p, r
 }
 
 var bg = context.Background()
@@ -107,7 +111,7 @@ func TestPVE_ArgvValidation(t *testing.T) {
 	}
 }
 
-func TestPVE_RunsToolsByAbsolutePathWithACleanEnvironment(t *testing.T) {
+func TestPVE_RunsToolsByNameThroughAFixedPathWithACleanEnvironment(t *testing.T) {
 	t.Setenv("PATH", "/tmp/evil")
 	p, r := newRecordedPVE()
 	_ = p.Start(bg, 900)
@@ -118,12 +122,78 @@ func TestPVE_RunsToolsByAbsolutePathWithACleanEnvironment(t *testing.T) {
 		if c.Name != "/usr/bin/env" || len(c.Args) < 4 || c.Args[0] != "-i" || c.Args[1] != "PATH=/usr/sbin:/usr/bin:/sbin:/bin" || c.Args[2] != "LC_ALL=C" {
 			t.Fatalf("not run with a clean environment: %v %v", c.Name, c.Args)
 		}
-		if !strings.HasPrefix(c.Args[3], "/usr/") {
-			t.Errorf("tool %q is not an absolute path", c.Args[3])
+		if strings.Contains(c.Args[3], "/") {
+			t.Errorf("tool %q is pinned to a directory; env must find it in the fixed PATH", c.Args[3])
 		}
 	}
-	if got := r.cmds[0].Args[3:]; strings.Join(got, " ") != "/usr/sbin/pct start 900" {
+	if got := r.cmds[0].Args[3:]; strings.Join(got, " ") != "pct start 900" {
 		t.Errorf("start argv = %v", got)
+	}
+}
+
+func TestPVE_MissingToolsAreNamedBeforeAnythingRuns(t *testing.T) {
+	p, r := newRecordedPVE()
+	p.look = func(tool string) bool { return tool != "pveam" && tool != "pct" }
+	_, err := p.Version(bg)
+	if err == nil || !strings.Contains(err.Error(), "the Proxmox tools pct, pveam were not found in /usr/sbin:/usr/bin:/sbin:/bin") {
+		t.Errorf("err = %v, want it to name pct and pveam and the directories searched", err)
+	}
+	if len(r.cmds) != 0 {
+		t.Errorf("a command ran on a host without its tools: %v", r.cmds)
+	}
+}
+
+func TestPVE_ToolLookupFindsAnExecutableInAnyListedDirectory(t *testing.T) {
+	sbin, bin := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "pveam"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sbin, "notes"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(sbin, "pct"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dirs := []string{sbin, bin}
+	if !lookIn(dirs, "pveam") {
+		t.Error("pveam in the second directory was not found")
+	}
+	for _, tool := range []string{"notes", "pct", "pvesh"} {
+		if lookIn(dirs, tool) {
+			t.Errorf("%s was found: not executable, a directory or absent", tool)
+		}
+	}
+}
+
+func TestPVE_TheFreeVMIDProbeSkipsVMIDsInUseOnly(t *testing.T) {
+	p, r := newRecordedPVE()
+	r.answer = func(c Command) ([]byte, error) {
+		if c.Args[7] == "900" {
+			return nil, &ExitStatus{Command: "pvesh", Code: 255, Stderr: "400 Parameter verification failed.\nvmid: VM 900 already exists\n"}
+		}
+		return nil, nil
+	}
+	if id, err := p.NextID(bg, 900); id != 901 || err != nil {
+		t.Fatalf("nextid = %d, %v", id, err)
+	}
+	for _, c := range r.cmds {
+		if !c.Quiet {
+			t.Errorf("probe %v is not quiet; a VMID in use is expected, not news", c.Args[3:])
+		}
+	}
+}
+
+func TestPVE_TheFreeVMIDProbeReportsAnyOtherFailure(t *testing.T) {
+	p, r := newRecordedPVE()
+	r.answer = func(Command) ([]byte, error) {
+		return nil, &ExitStatus{Command: "pvesh", Code: 255, Stderr: "ipcc_send_rec[1] failed: Connection refused\n"}
+	}
+	_, err := p.NextID(bg, 900)
+	if err == nil || !strings.Contains(err.Error(), "Connection refused") {
+		t.Errorf("err = %v, want the cause pvesh printed", err)
+	}
+	if len(r.cmds) != 1 {
+		t.Errorf("%d probes ran; a failure that is not a VMID in use must stop the search", len(r.cmds))
 	}
 }
 
@@ -132,7 +202,7 @@ func TestPVE_ExecNeverUsesAShellAndSeparatesOptions(t *testing.T) {
 	_, _ = p.Exec(bg, 900, ServiceUser, []string{"/usr/local/bin/sm", "server", "init", "--config", "/etc/x; rm -rf /"}, nil, true)
 	c := r.cmds[0]
 	got := strings.Join(c.Args[3:], "\x1f")
-	want := strings.Join([]string{"/usr/sbin/pct", "exec", "900", "--", "/usr/sbin/runuser", "-u", "supermgmt", "--", "/usr/local/bin/sm", "server", "init", "--config", "/etc/x; rm -rf /"}, "\x1f")
+	want := strings.Join([]string{"pct", "exec", "900", "--", "/usr/sbin/runuser", "-u", "supermgmt", "--", "/usr/local/bin/sm", "server", "init", "--config", "/etc/x; rm -rf /"}, "\x1f")
 	if got != want || !c.Sensitive {
 		t.Errorf("argv = %q (sensitive %t)", got, c.Sensitive)
 	}
@@ -176,8 +246,8 @@ func TestPVE_CreateArgvIsTheFrozenShape(t *testing.T) {
 	if err := p.Create(bg, spec); err != nil {
 		t.Fatal(err)
 	}
-	want := "/usr/sbin/pct create 901 local:vztmpl/debian-13-standard_13.1-1_amd64.tar.zst --hostname mgmt --cores 1 --memory 1024 --swap 0 " +
-		"--rootfs tank:8 --net0 name=eth0,bridge=vmbr1,ip=10.0.0.5/24,gw=10.0.0.1 --unprivileged 1 --features nesting=0,keyctl=0 --onboot 1 " +
+	want := "pct create 901 local:vztmpl/debian-13-standard_13.1-1_amd64.tar.zst --hostname mgmt --cores 1 --memory 1024 --swap 0 " +
+		"--rootfs tank:8 --net0 name=eth0,bridge=vmbr1,ip=10.0.0.5/24,gw=10.0.0.1 --unprivileged 1 --features nesting=1,keyctl=0 --onboot 1 " +
 		"--tags supermgmt --description supermgmt install ab12cd34 --nameserver 1.1.1.1 9.9.9.9"
 	if got := strings.Join(r.cmds[0].Args[3:], " "); got != want {
 		t.Errorf("argv:\n got %s\nwant %s", got, want)
@@ -192,7 +262,7 @@ func TestPVE_Parsers(t *testing.T) {
 		}
 		switch c.Args[4] {
 		case "list":
-			if c.Args[3] == "/usr/sbin/pct" {
+			if c.Args[3] == "pct" {
 				return []byte("VMID       Status     Lock         Name\n900        running                 supermgmt\n901        stopped    create       other\n"), nil
 			}
 		case "config":
@@ -217,7 +287,7 @@ func TestPVE_Parsers(t *testing.T) {
 	}
 	stores, _ := p.Storages(bg)
 	last := r.cmds[len(r.cmds)-1]
-	if got := strings.Join(last.Args[3:], " "); got != "/usr/bin/pvesh get /nodes/pve/storage --output-format json" {
+	if got := strings.Join(last.Args[3:], " "); got != "pvesh get /nodes/pve/storage --output-format json" {
 		t.Errorf("storages ran %q; pvesm status has no JSON output", got)
 	}
 	if len(stores) != 2 || !stores[0].Active || stores[1].Active || stores[0].Content[0] != "vztmpl" {
@@ -229,16 +299,16 @@ func TestPVE_VersionAndTemplatesAndNextID(t *testing.T) {
 	p, r := newRecordedPVE()
 	r.answer = func(c Command) ([]byte, error) {
 		switch c.Args[3] {
-		case "/usr/bin/pveversion":
+		case "pveversion":
 			return []byte("pve-manager/9.0.3/025864202ebb6109 (running kernel: 6.14.8-2-pve)\n"), nil
-		case "/usr/sbin/pveam":
+		case "pveam":
 			if c.Args[4] == "list" {
 				return []byte("NAME                                                         SIZE\nlocal:vztmpl/debian-13-standard_13.1-1_amd64.tar.zst         120.00MB\n"), nil
 			}
 			return []byte("system          debian-13-standard_13.1-1_amd64.tar.zst\nsystem          debian-12-standard_12.7-1_amd64.tar.zst\nturnkeylinux    x\n"), nil
-		case "/usr/bin/pvesh":
+		case "pvesh":
 			if c.Args[7] == "900" || c.Args[7] == "901" {
-				return nil, &ExitStatus{Command: "pvesh", Code: 255}
+				return nil, &ExitStatus{Command: "pvesh", Code: 255, Stderr: "vmid: VM " + c.Args[7] + " already exists\n"}
 			}
 		}
 		return nil, nil

@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net/netip"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -419,9 +420,11 @@ func (w *aw) DownloadTemplate(_ context.Context, storage, name string) error {
 }
 
 func (w *aw) Create(_ context.Context, s GuestSpec) error {
-	if _, err := createArgs(s); err != nil { // the real argv builder validates the spec
+	args, err := createArgs(s) // the real argv builder validates the spec and fixes the features
+	if err != nil {
 		return err
 	}
+	features := parseGuestConfig("features: " + args[slices.Index(args, "--features")+1]).Features
 	return w.mutate("pve.create "+strconv.Itoa(s.VMID), func() error {
 		if w.raceAtCreate {
 			w.guests[s.VMID] = &fakeGuest{desc: "somebody else's", status: "stopped", foreign: true, tags: []string{"other"}}
@@ -430,7 +433,7 @@ func (w *aw) Create(_ context.Context, s GuestSpec) error {
 			return errors.New("CT already exists")
 		}
 		g := &fakeGuest{
-			desc: s.Description, status: "stopped", unpriv: true, features: map[string]string{"nesting": "0", "keyctl": "0"},
+			desc: s.Description, status: "stopped", unpriv: true, features: features,
 			tags: append([]string(nil), s.Tags...),
 		}
 		if w.createShape != nil {

@@ -11,13 +11,13 @@
 
 ### Execution safety
 
-- PVE tools run by absolute path (`/usr/sbin/pct`, `/usr/sbin/pveam`, `/usr/bin/pvesh`, `/usr/sbin/pveum`, `/usr/bin/pveversion`) with a clean environment (`PATH=/usr/sbin:/usr/bin:/sbin:/bin`, `LC_ALL=C`). `pct exec <vmid> -- argv…` never goes through a shell.
+- PVE tools (`pct`, `pveam`, `pvesh`, `pveum`, `pveversion`) run by name through `/usr/bin/env` with a clean environment (`PATH=/usr/sbin:/usr/bin:/sbin:/bin`, `LC_ALL=C`): `env` finds each in that fixed list of system directories, never in the caller's `PATH`. *Amended 2026-11-05:* they were pinned to one directory each until PVE 9.1 turned out to ship `pveam` in `/usr/bin`, not `/usr/sbin`. `pct exec <vmid> -- argv…` never goes through a shell.
 - Typed validation before use: VMID 100–999999999; storage and bridge `^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$` and present in the discovered list; hostname RFC 1123; addresses parsed with `net/netip`; paths absolute and clean, no `..`, no leading `-`.
 - Commands that carry the token run in `Sensitive` mode: stdout and stderr are captured in memory and errors are sanitized.
 
 ### Container shape
 
-`pct create` gets a fixed argument set: `--unprivileged 1 --features nesting=0,keyctl=0 --onboot 1 --tags supermgmt --description "supermgmt install <install_id>"`, sizing from §2.3, no `mpN` and no raw `lxc.*` keys. A `pct config` readback after creation must match, or the install rolls back.
+`pct create` gets a fixed argument set: `--unprivileged 1 --features nesting=1,keyctl=0 --onboot 1 --tags supermgmt --description "supermgmt install <install_id>"`, sizing from §2.3, no `mpN` and no raw `lxc.*` keys. A `pct config` readback after creation must match, or the install rolls back. *Amended 2026-11-05:* `nesting` is on. With `nesting=0` the systemd of a Debian 13 container on PVE 9.1 runs degraded (journald, tmpfiles, networkd and several mounts fail), so the appliance had no logs; the same container with `nesting=1` runs with no failed unit. The Proxmox web interface turns nesting on by default for new unprivileged containers (`pct create` does not). The cost applies inside the container, before any escape: a process in it that gains the container's root (for example a compromised server process) can mount `procfs` and `sysfs` and read host-wide contents LXC otherwise masks, and the nesting AppArmor profile allows mount operations the default profile denies. That widens the kernel surface available to an escape attempt, and an escape on this host means Proxmox root, which reaches the instance master key and the API token kept in the container. Accepted because without nesting the container has no working journal, so nothing the appliance does can be diagnosed or audited from its logs; the container stays unprivileged (its root is an unprivileged host user), with keyctl off, no mounts and no raw `lxc.*` keys.
 
 ### Steps
 
