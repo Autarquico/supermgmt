@@ -36,7 +36,9 @@ type handoffReturnedMsg struct {
 	err  error
 }
 
-type handoffEndedMsg struct{}
+// handoffEndedMsg carries the outcome notice: it is shown only once the
+// session end is posted and keys are accepted again.
+type handoffEndedMsg struct{ outcome notice }
 
 func hasCapability(n wire.Node, name string) bool {
 	for _, c := range n.Capabilities {
@@ -163,27 +165,31 @@ func exitOutcome(err error) (code int, launchErr error) {
 // goroutine: Done posts to the daemon.
 func (m *Model) onHandoffReturned(msg handoffReturnedMsg) tea.Cmd {
 	code, launchErr := exitOutcome(msg.err)
-	name := textsafe.Line(msg.node.Name)
-	switch {
-	case launchErr != nil:
-		m.notice = notice{text: fmt.Sprintf("could not start %s on %s: %s", msg.tool, name, textsafe.Line(launchErr.Error())), isErr: true}
-	case code == exitCommandNotFound && msg.tool == wire.ToolLazydocker:
-		m.notice = notice{text: "lazydocker is not installed on " + name + "; SuperMgmt never installs it, see " + lazydockerInstall, isErr: true}
-	case code != 0:
-		m.notice = notice{text: fmt.Sprintf("%s on %s exited with code %d", msg.tool, name, code), isErr: true}
-	default:
-		m.say("back from %s on %s", msg.tool, name)
-	}
+	outcome := handoffOutcome(msg, code, launchErr)
 	done := msg.h.Done
 	return func() tea.Msg {
 		done(code, launchErr)
-		return handoffEndedMsg{}
+		return handoffEndedMsg{outcome}
 	}
+}
+
+func handoffOutcome(msg handoffReturnedMsg, code int, launchErr error) notice {
+	name := textsafe.Line(msg.node.Name)
+	switch {
+	case launchErr != nil:
+		return notice{text: fmt.Sprintf("could not start %s on %s: %s", msg.tool, name, textsafe.Line(launchErr.Error())), isErr: true}
+	case code == exitCommandNotFound && msg.tool == wire.ToolLazydocker:
+		return notice{text: "lazydocker is not installed on " + name + "; SuperMgmt never installs it, see " + lazydockerInstall, isErr: true}
+	case code != 0:
+		return notice{text: fmt.Sprintf("%s on %s exited with code %d", msg.tool, name, code), isErr: true}
+	}
+	return notice{text: fmt.Sprintf("back from %s on %s", msg.tool, name)}
 }
 
 // onHandoffEnded refreshes what the screen shows: the session may have
 // changed the node.
-func (m *Model) onHandoffEnded(handoffEndedMsg) tea.Cmd {
+func (m *Model) onHandoffEnded(msg handoffEndedMsg) tea.Cmd {
 	m.handingOff = false
+	m.notice = msg.outcome
 	return m.reload(true, m.screenLoaders()...)
 }

@@ -352,6 +352,27 @@ func TestSetupResolvesSystemctlOnTheNode(t *testing.T) {
 	}
 }
 
+// unreachable is an executor whose node never answers.
+type unreachable struct{}
+
+func (unreachable) Run(context.Context, templates.Command) (transport.Result, error) {
+	return transport.Result{}, smerr.New(smerr.CodeNodeUnreachable, "", "connection refused")
+}
+
+func TestSetupReportsSystemctlMissingOnlyWhenTheNodeSaysSo(t *testing.T) {
+	p := setupParams()
+	p.SystemctlPath = ""
+	if _, err := Setup(context.Background(), unreachable{}, p); smerr.CodeOf(err) != smerr.CodeNodeUnreachable {
+		t.Errorf("unreachable node: %v, want NODE_UNREACHABLE", err)
+	}
+	missing := newSetupNode(t)
+	missing.on("setup.systemctl_path", func(templates.Command) transport.Result { return transport.Result{ExitStatus: 1} })
+	_, err := Setup(context.Background(), missing, p)
+	if smerr.CodeOf(err) != smerr.CodeCapabilityUnavailable || !strings.Contains(err.Error(), "systemctl was not found") {
+		t.Errorf("command -v failed: %v, want systemctl was not found", err)
+	}
+}
+
 func TestSetupValidatesParametersBeforeContactingTheNode(t *testing.T) {
 	for name, mutate := range map[string]func(*SetupParams){
 		"user":      func(p *SetupParams) { p.User = "Bad User" },

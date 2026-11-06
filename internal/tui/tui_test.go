@@ -694,10 +694,13 @@ func TestHandoffReportsExitCodeAndRefreshes(t *testing.T) {
 
 	childErr := exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3").Run()
 	end := returnFromChild(t, h, open(), childErr)
-	contains(t, h.view(), "shell on web-1 exited with code 3")
+	if strings.Contains(h.view(), "exited with code 3") {
+		t.Error("the outcome is shown while keys are still ignored")
+	}
 
 	nodesBefore := api.count("ListNodes")
 	h.drain(end) // Done, then the refresh
+	contains(t, h.view(), "shell on web-1 exited with code 3")
 	calls := probe.snapshot()
 	if len(calls) != 1 || calls[0].code != 3 || calls[0].err != nil {
 		t.Errorf("Done calls = %+v, want one (3, nil)", calls)

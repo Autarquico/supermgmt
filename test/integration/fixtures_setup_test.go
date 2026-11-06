@@ -335,7 +335,7 @@ func TestFixturesSetup_AdminRootRunsWithoutSudo(t *testing.T) {
 	useAgent(t, n.ClientSigner)
 	n.shell(t, "printf 'PermitRootLogin prohibit-password\\n' > /etc/ssh/sshd_config.d/05-root.conf && "+
 		"install -d -m 0700 /root/.ssh && printf '%s\\n' "+templates.Quote(authorizedKey(n.ClientSigner.PublicKey()))+
-		" > /root/.ssh/authorized_keys && chmod 0600 /root/.ssh/authorized_keys && systemctl reload ssh.service")
+		" > /root/.ssh/authorized_keys && chmod 0600 /root/.ssh/authorized_keys && systemctl restart ssh.service")
 	h := newHarness(t, defaultPoolConfig(), id)
 	rec := &recorder{inner: h.pool.For(n.target("root"))}
 
@@ -372,7 +372,7 @@ func TestFixturesSetup_VerifyFailureIsReported(t *testing.T) {
 		if err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		n.shell(t, "printf 'DenyUsers supermgmt\\n' > /etc/ssh/sshd_config.d/00-deny.conf && systemctl reload ssh.service")
+		n.shell(t, "printf 'DenyUsers supermgmt\\n' > /etc/ssh/sshd_config.d/00-deny.conf && systemctl restart ssh.service")
 
 		err = systemd.Verify(t.Context(), h.pool.For(n.superTarget()), verifyParams(p, out))
 		if codeOf(err) != smerr.CodeCapabilityUnavailable {
