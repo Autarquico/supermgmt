@@ -475,6 +475,20 @@ func TestChildDyingDuringHandshakeIsReapedAndItsStderrIsScrubbed(t *testing.T) {
 	waitGone(t, records(t, r.home)[0].PID)
 }
 
+func TestChildThatCannotResolveTheHostnameCarriesANotFoundLookupError(t *testing.T) {
+	r := newTunnelRig(t, defaultConfig(), admitting())
+	setFake(t, r.home, fakeBehaviour{Mode: "die", Stderr: "lookup " + testTunnelHost + " on 127.0.0.53:53: no such host\n"})
+	_, err := r.runTunnel(t, "x")
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound || dnsErr.Name != testTunnelHost {
+		t.Fatalf("error %v carries no not-found lookup error for %s", err, testTunnelHost)
+	}
+	if !IsCarrierFailure(err) {
+		t.Errorf("the original carrier failure was lost: %v", err)
+	}
+	waitGone(t, records(t, r.home)[0].PID)
+}
+
 func TestHandshakeTimeoutKillsASilentChild(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.ConnectTimeout = 2 * time.Second

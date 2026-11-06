@@ -34,6 +34,8 @@ type enrollmentDaemon struct {
 	replaced bool
 	// existing: GET answers it from the first call; otherwise the first GET is a 404 until a start.
 	started bool
+	// building: the first token requests answer that the Cloudflare side is still being built.
+	building int
 }
 
 func (d *enrollmentDaemon) view() wire.TunnelEnrollment {
@@ -76,6 +78,14 @@ func newEnrollmentDaemon(t *testing.T, existing bool, phases ...string) *enrollm
 			reply(w, 201, wire.Direct[wire.TunnelEnrollment]{Applied: &v})
 		},
 		"GET " + wire.Path(wire.PathTunnelEnrollmentToken, "vps1"): func(w http.ResponseWriter, _ *http.Request) {
+			d.mu.Lock()
+			busy := d.building > 0
+			d.building--
+			d.mu.Unlock()
+			if busy {
+				replyError(w, 409, smerr.CodeConflict, "", "the Cloudflare side of the enrollment is still being built: ask again in a moment")
+				return
+			}
 			reply(w, 200, wire.TunnelEnrollmentToken{Token: enrollToken})
 		},
 		"POST " + wire.Path(wire.PathTunnelEnrollmentConfirm, "vps1"): func(w http.ResponseWriter, _ *http.Request) {
@@ -390,5 +400,20 @@ func TestNodesListWithoutEnrollmentsKeepsThePlainPage(t *testing.T) {
 	r := f.run("nodes", "list", "--json")
 	if strings.Contains(r.stdout, "tunnel_enrollments") || strings.Contains(f.run("nodes", "list").stdout, "Open enrollments") {
 		t.Errorf("stdout = %q", r.stdout)
+	}
+}
+
+func TestTunnelAddKeepsPollingWhileTheTokenIsStillBeingBuilt(t *testing.T) {
+	d := newEnrollmentDaemon(t, false, "dns_created", "dns_created", "dns_created", "scanned", "confirmed", "committed")
+	d.building = 2
+	interactive(t, false)
+
+	r := d.run(append(enrollArgs, "--fingerprint", d.key.FingerprintSHA256)...)
+
+	if r.code != 0 || strings.Count(r.stdout, enrollToken) != 1 || !strings.Contains(r.stdout, "added node vps1") {
+		t.Fatalf("code=%d out=%q err=%q", r.code, r.stdout, r.stderr)
+	}
+	if got := len(d.sent("GET", wire.PathTunnelEnrollmentToken)); got != 3 {
+		t.Errorf("token requests = %d, want 3", got)
 	}
 }

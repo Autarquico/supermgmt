@@ -94,7 +94,7 @@ func (g *Governance) begin(ctx context.Context, tx *database.Tx, by Caller, id d
 	if err != nil {
 		return domain.Actor{}, jobs.Job{}, err
 	}
-	current, err := rebuildCurrent(ctx, tx, rec)
+	current, err := g.rebuildCurrent(ctx, tx, rec)
 	if err != nil {
 		return domain.Actor{}, jobs.Job{}, err
 	}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -8,6 +9,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
 const (
@@ -70,7 +72,6 @@ func newNodesSetupCmd(env []string) *cobra.Command {
 			if dockerAccess {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", dockerAccessWarning)
 			}
-			proxmox = wire.SetupProxmox(node, wire.SetupChoice[bool]{Value: proxmox, Set: flags.Changed("proxmox")})
 			parameters := wire.SetupParameters(dockerAccess, logsMode, grants)
 			details := []string{wire.UnitsChange(node.Setup, grants, kept)}
 			if tunnel {
@@ -115,6 +116,13 @@ func describePlan(cmd *cobra.Command, subject string, plan wire.CreatedPlan) err
 		_, _ = fmt.Fprintf(out, "it needs %d approval(s) before it runs\n", max(plan.Policy.Quorum, 1))
 	} else {
 		_, _ = fmt.Fprintln(out, "it runs as soon as it is submitted")
+	}
+	var doc struct {
+		Steps []string `json:"steps"`
+	}
+	_ = json.Unmarshal(plan.Plan, &doc)
+	for _, step := range doc.Steps {
+		_, _ = fmt.Fprintln(out, "  "+textsafe.Line(step))
 	}
 	return nil
 }

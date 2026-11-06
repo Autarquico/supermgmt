@@ -60,7 +60,7 @@ func (r *Revalidator) rebuildCurrentPlan(ctx context.Context, q database.Querier
 	case deploymentRollbackAction:
 		return rebuildRollbackDeployment(ctx, q, rec, job)
 	}
-	return rebuild(ctx, q, rec)
+	return r.rebuild(ctx, q, rec)
 }
 
 // requireRequesterMayRun is the part of spec §20.4 that depends on who asked:

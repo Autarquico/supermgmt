@@ -197,3 +197,29 @@ func FuzzParseBaseURL(f *testing.F) {
 		}
 	})
 }
+
+// A captive portal or a broken proxy can answer the resolver with anything:
+// any bytes decode to a usable status or an error, never a partial reply.
+func FuzzDecodeDoH(f *testing.F) {
+	f.Add([]byte(`{"Status":0,"Answer":[{"name":"a.example.com","type":1,"TTL":60,"data":"1.2.3.4"}]}`))
+	f.Add([]byte(`{"Status":0,"Authority":[{"type":6,"TTL":3600,"data":"ns. dns. 1 2 3 4 1800"}]}`))
+	f.Add([]byte(`{"Status":3,"Answer":[{"type":1}]}`))
+	f.Add([]byte(`{"Status":2}`))
+	f.Add([]byte(`<html></html>`))
+	addSeeds(f)
+	f.Fuzz(func(t *testing.T, body []byte) {
+		r, err := decodeDoH(body)
+		if err != nil {
+			if r.Status != 0 || r.Answer != nil || r.Authority != nil {
+				t.Fatalf("reply %+v returned with error %v", r, err)
+			}
+			return
+		}
+		if r.Status != dnsStatusOK && r.Status != dnsStatusNXDomain {
+			t.Fatalf("status %d accepted", r.Status)
+		}
+		if r.Status == dnsStatusNXDomain && r.answers(dnsTypeA) {
+			t.Fatal("NXDOMAIN with answers")
+		}
+	})
+}

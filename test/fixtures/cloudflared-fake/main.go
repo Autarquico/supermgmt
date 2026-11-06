@@ -8,6 +8,10 @@
 //
 //	$HOME/forward             host:port of the SSH server to bridge to (the fixture's sshd)
 //	$HOME/record-<pid>.json   what this process was started with (argv, env)
+//	$HOME/resolver            optional: the host names the system resolver answers, one per line. When it
+//	                          exists the process looks its --hostname up there first, appends the name to
+//	$HOME/lookups and exits 5 with "no such host" for one that is not listed, as the real
+//	                          cloudflared does when the system resolver answers NXDOMAIN.
 //
 // A missing or empty forward file makes it exit 4 with a message, never a
 // silent success.
@@ -21,6 +25,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -45,6 +50,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cloudflared-fake: record:", err)
 		os.Exit(4)
 	}
+	if err := lookup(home, os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "cloudflared-fake:", err)
+		os.Exit(5)
+	}
 	raw, err := os.ReadFile(filepath.Join(home, "forward"))
 	forward := strings.TrimSpace(string(raw))
 	if err != nil || forward == "" {
@@ -60,4 +69,26 @@ func main() {
 	go func() { _, _ = io.Copy(conn, os.Stdin); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(os.Stdout, conn); done <- struct{}{} }()
 	<-done
+}
+
+// lookup is the system resolver lookup of the tunnel hostname, when the test models one.
+func lookup(home string, argv []string) error {
+	listed, err := os.ReadFile(filepath.Join(home, "resolver"))
+	if err != nil {
+		return nil
+	}
+	i := slices.Index(argv, "--hostname")
+	if i < 0 || i+1 >= len(argv) {
+		return nil
+	}
+	host := argv[i+1]
+	log, err := os.OpenFile(filepath.Join(home, "lookups"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err == nil {
+		_, _ = fmt.Fprintln(log, host)
+		_ = log.Close()
+	}
+	if !slices.Contains(strings.Fields(string(listed)), host) {
+		return fmt.Errorf("lookup %s: no such host", host)
+	}
+	return nil
 }

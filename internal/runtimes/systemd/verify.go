@@ -10,6 +10,7 @@ import (
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/transport"
+	"github.com/autarquico/supermgmt/internal/transport/ssh"
 )
 
 // VerifyParams is what the dedicated user must be able to do after Setup.
@@ -49,7 +50,7 @@ func Verify(ctx context.Context, ex transport.Executor, p VerifyParams) error {
 func verifyIdentity(ctx context.Context, ex transport.Executor, user string) error {
 	id, err := succeeded(ctx, ex, "setup.verify_id", nil)
 	if err != nil {
-		return verifyFailed("cannot log in as the dedicated user")
+		return identityFailure(err)
 	}
 	if strings.TrimSpace(id) != user {
 		return verifyFailed("the session is not the dedicated user")
@@ -59,6 +60,15 @@ func verifyIdentity(ctx context.Context, ex transport.Executor, user string) err
 		return verifyFailed("the markers directory is not writable")
 	}
 	return nil
+}
+
+// identityFailure keeps the cause of a session that could not be opened or used: the dedicated user's keys
+// are blamed only when the node refused them, not for a dial or DNS failure on the way.
+func identityFailure(err error) error {
+	if ssh.IsAuthRejected(err) {
+		return smerr.Wrap(err, smerr.CodeCapabilityUnavailable, "", "node.setup verification failed: cannot log in as the dedicated user")
+	}
+	return fmt.Errorf("node.setup verification failed: the session of the dedicated user failed: %w", err)
 }
 
 // listedSudo returns what `sudo -n -l` lets the user run. A user with no sudo

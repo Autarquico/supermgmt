@@ -52,6 +52,7 @@ const (
 	ReasonMCPClientUnregistered   Reason = "MCP_CLIENT_UNREGISTERED"
 	ReasonIssuanceWindowExpired   Reason = "ISSUANCE_WINDOW_EXPIRED"
 	ReasonOAuthTokenInvalid       Reason = "OAUTH_TOKEN_INVALID"
+	ReasonTunnelDNSNegativeCache  Reason = "TUNNEL_DNS_NEGATIVE_CACHE"
 )
 
 var codeByReason = map[Reason]Code{
@@ -98,6 +99,7 @@ var codeByReason = map[Reason]Code{
 	ReasonMCPClientUnregistered:   CodePolicyDenied,
 	ReasonIssuanceWindowExpired:   CodeConflict,
 	ReasonOAuthTokenInvalid:       CodeUnauthenticated,
+	ReasonTunnelDNSNegativeCache:  CodeNodeUnreachable,
 }
 
 // CodeFor returns the top-level code a reason belongs to (spec §38). A reason

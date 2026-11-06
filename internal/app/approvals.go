@@ -64,7 +64,7 @@ func (a *Approvals) decide(ctx context.Context, by Caller, req DecisionRequest, 
 		if err := a.requireActive(ctx, by.Credential); err != nil {
 			return jobs.Job{}, err
 		}
-		current, err := rebuildCurrent(ctx, tx, rec)
+		current, err := a.rebuildCurrent(ctx, tx, rec)
 		if err != nil {
 			return jobs.Job{}, err
 		}

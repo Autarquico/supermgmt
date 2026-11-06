@@ -134,7 +134,9 @@ func (n *enrolledNode) session(ch cryptossh.Channel, requests <-chan *cryptossh.
 // is reachable only through the carrier.
 type enrollRig struct {
 	*stack
-	node *enrolledNode
+	node   *enrolledNode
+	system domain.ID
+	stop   func() // stops the scheduler running now
 }
 
 func newEnrollRig(t *testing.T, o stackOptions) *enrollRig {
@@ -150,23 +152,30 @@ func newEnrollRig(t *testing.T, o stackOptions) *enrollRig {
 		system = s.ids.NewID()
 		return database.CreateIdentity(ctx, tx, database.Identity{ID: system, ActorType: domain.ActorSystem, Subject: "system", CreatedAt: s.clock.Now()})
 	}))
-	scheduler := s.enroll.Scheduler(system)
+	r := &enrollRig{stack: s, node: node, system: system}
+	r.startScheduler()
+	t.Cleanup(func() { r.stop() })
+	return r
+}
+
+// startScheduler ticks a new scheduler, which remembers nothing of the enrollments it paced before.
+func (r *enrollRig) startScheduler() {
+	scheduler := r.enroll.Scheduler(r.system)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil {
 			if err := scheduler.Tick(ctx); err != nil && ctx.Err() == nil {
-				s.logs.add("scheduler", err.Error())
+				r.logs.add("scheduler", err.Error())
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
 	}()
-	t.Cleanup(func() {
+	r.stop = func() {
 		cancel()
 		<-done
-	})
-	return &enrollRig{stack: s, node: node}
+	}
 }
 
 func (r *enrollRig) view(name string) app.TunnelEnrollmentView {

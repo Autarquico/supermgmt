@@ -98,7 +98,7 @@ func TestDirectTargetOfAppWriteIsJudgedByTheStrictestEnvironmentOfItsTargets(t *
 	}
 	rec, err := database.GetPlan(context.Background(), d.db.Reader(), *res.Pending.Job.PlanID)
 	mustf(t, err, "GetPlan")
-	rebuilt, err := rebuildCurrent(context.Background(), d.db.Reader(), rec)
+	rebuilt, err := d.apps.rebuildCurrent(context.Background(), d.db.Reader(), rec)
 	mustf(t, err, "rebuildCurrent")
 	revision := rebuilt.plan.Targets[0].SpecRevision
 	if rebuilt.target.Attrs.EnvironmentRisk != domain.EnvironmentProduction || revision == nil || *revision != app.SpecRevision {

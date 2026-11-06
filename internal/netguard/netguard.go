@@ -6,6 +6,7 @@
 package netguard
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -49,6 +50,7 @@ type Option func(*options)
 
 type options struct {
 	dial    func(network, address string) (net.Conn, error)
+	lookup  lookupFunc
 	rootCAs *x509.CertPool
 }
 
@@ -57,6 +59,13 @@ type options struct {
 // the filter still runs on the address the request resolved to.
 func WithTestDialer(dial func(network, address string) (net.Conn, error)) Option {
 	return func(o *options) { o.dial = dial }
+}
+
+// WithTestResolver replaces the system lookup of a host name, so tests can
+// answer, fail or count lookups. The addresses it returns still go through the
+// filter. It exists for tests only: no production caller passes it.
+func WithTestResolver(lookup func(ctx context.Context, host string) ([]netip.Addr, error)) Option {
+	return func(o *options) { o.lookup = lookup }
 }
 
 // WithRootCAs trusts the given roots instead of the system pool, for
@@ -77,7 +86,11 @@ func NewClient(a Allow, proxy *url.URL, timeout time.Duration, maxBody int64, op
 	for _, opt := range opts {
 		opt(&o)
 	}
-	return newClient(a, proxy, timeout, maxBody, lookupHost, o)
+	lookup := lookupFunc(lookupHost)
+	if o.lookup != nil {
+		lookup = o.lookup
+	}
+	return newClient(a, proxy, timeout, maxBody, lookup, o)
 }
 
 func newClient(a Allow, proxy *url.URL, timeout time.Duration, maxBody int64, lookup lookupFunc, o options) *http.Client {

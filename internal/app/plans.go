@@ -82,6 +82,9 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 		if err := p.requireTunnelAvailable(ctx, tx, req); err != nil {
 			return CreatedPlan{}, err
 		}
+		if b.plan.Steps, err = p.tunnelSetupSteps(ctx, tx, req.Action, req.Target.ID, req.Parameters); err != nil {
+			return CreatedPlan{}, err
+		}
 		if err := p.requireMayPlan(ctx, tx, actor, b.target); err != nil {
 			return CreatedPlan{}, err
 		}
@@ -233,7 +236,7 @@ func (p *Plans) Submit(ctx context.Context, by Caller, planID domain.ID, planHas
 		if err := p.requireActive(ctx, by.Credential); err != nil {
 			return Submission{}, err
 		}
-		b, err := rebuild(ctx, tx, rec)
+		b, err := p.rebuild(ctx, tx, rec)
 		if err != nil {
 			return Submission{}, err
 		}

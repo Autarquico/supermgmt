@@ -454,3 +454,34 @@ func TestUnsupportedProxySchemeFailsClosed(t *testing.T) {
 		t.Fatal("want an error for an unsupported proxy scheme")
 	}
 }
+
+func TestTestResolverReplacesTheSystemLookup(t *testing.T) {
+	srv, reach := serve(t, okHandler("ok"))
+	var asked []string
+	client := NewClient(Allow{AllowHTTP: true}, nil, testTimeout, testMaxBody,
+		WithTestDialer(reach.dial),
+		WithTestResolver(func(_ context.Context, host string) ([]netip.Addr, error) {
+			asked = append(asked, host)
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		}))
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	if _, err := get(client, "http://served.test:"+port+"/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "served.test" {
+		t.Fatalf("lookups = %v, want [served.test]", asked)
+	}
+	if got := reach.reached(); len(got) != 1 || !strings.HasPrefix(got[0], "93.184.216.34:") {
+		t.Fatalf("dialled %v, want the injected address", got)
+	}
+}
+
+func TestTestResolverAnswersStillPassTheFilter(t *testing.T) {
+	client := NewClient(Allow{AllowHTTP: true}, nil, testTimeout, testMaxBody,
+		WithTestResolver(func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("169.254.169.254")}, nil
+		}))
+	if _, err := get(client, "http://rebound.test/"); !errors.Is(err, ErrBlocked) {
+		t.Fatalf("err = %v, want ErrBlocked", err)
+	}
+}

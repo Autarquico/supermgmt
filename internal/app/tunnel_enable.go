@@ -101,6 +101,9 @@ type tunnelRun struct {
 	// foreign. Zero when there are none.
 	lastEnabled database.TunnelOperation
 	disabling   bool // names the failing step as a disable's
+	// keepToken stores the connector token before the DNS record is recorded, so a record that waits for its
+	// node always has the token; nil for a setup, which hands the token to the node install.
+	keepToken func(context.Context, audit.Secret) error
 }
 
 // requireTunnelAllowed is the refusal of tunnel=true: the feature needs the

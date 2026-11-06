@@ -31,7 +31,7 @@ func newTunnelAPI(t *testing.T, endpoint wire.Endpoint, policy wire.Policy) *tun
 			var req wire.CreatePlanRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			s.plans = append(s.plans, req)
-			reply(w, 200, wire.CreatedPlan{PlanID: idPlan, PlanHash: hashOf, Policy: policy})
+			reply(w, 200, wire.CreatedPlan{PlanID: idPlan, PlanHash: hashOf, Policy: policy, Plan: planWithSteps})
 		},
 		"POST " + wire.Path(wire.PathPlanSubmit, string(idPlan)): func(w http.ResponseWriter, r *http.Request) {
 			var req wire.PlanHashRequest
@@ -158,5 +158,49 @@ func TestWriteNodeShowsTransportAndTunnelHostname(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
 		}
+	}
+}
+
+var planWithSteps = json.RawMessage(`{"action":"node.setup","steps":[` +
+	`"cloudflare tunnel: sm-inst-` + string(idWeb) + `",` +
+	`"cloudflare access application: supermgmt inst ` + string(idWeb) + `",` +
+	`"cloudflare dns record: ssh-web-1.example.com"]}`)
+
+func TestNodesSetupTunnelNamesTheCloudflareObjectsAndPrintsTheApprovalLine(t *testing.T) {
+	s := newTunnelAPI(t, wire.Endpoint{Transport: domain.TransportCloudflare, TunnelHostname: "ssh-web-1.example.com"}, approvalPolicy)
+
+	r := s.run("nodes", "setup", "web-1", "--tunnel", "--yes")
+
+	for _, want := range []string{
+		"cloudflare tunnel: sm-inst-" + string(idWeb),
+		"cloudflare access application: supermgmt inst " + string(idWeb),
+		"cloudflare dns record: ssh-web-1.example.com",
+		"to approve: sm jobs approve job-tunnel --plan-hash " + hashOf,
+	} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, r.stderr)
+		}
+	}
+}
+
+func TestNodesSetupTunnelOnANodeSetUpWithProxmoxLeavesProxmoxOutUnlessAsked(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want bool
+	}{
+		"not asked": {[]string{"--tunnel"}, false},
+		"asked":     {[]string{"--tunnel", "--proxmox"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSetupAPI(t, approvalPolicy)
+			s.current = &wire.Setup{LogsMode: "journal-group", Proxmox: true}
+
+			r := s.run(append([]string{"nodes", "setup", "web-1", "--yes"}, tc.args...)...)
+
+			_, sent := s.plans[0].Parameters["proxmox"]
+			if r.code != 0 || sent != tc.want || strings.Contains(r.stderr, "proxmox:") != tc.want {
+				t.Errorf("exit %d, parameters %v, stderr %q", r.code, s.plans[0].Parameters, r.stderr)
+			}
+		})
 	}
 }
