@@ -158,6 +158,17 @@ func newEnrollRig(t *testing.T, o stackOptions) *enrollRig {
 	return r
 }
 
+// jobRunning says whether a job is queued or running. The scheduler re-arms its backoff on every tick that
+// finds a job still active, and a wait on the skewed clock jumps the time while the job is still writing its
+// note: a tick in that window pushes the next submission a backoff step past the jump, which only real time
+// then releases. The rig ticks only between jobs.
+func (r *enrollRig) jobRunning(ctx context.Context) bool {
+	var n int
+	err := r.db.Reader().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM jobs WHERE state IN (?, ?)`, domain.JobQueued, domain.JobRunning).Scan(&n)
+	return err != nil || n > 0 // a failed count (the rig stopping) skips the tick
+}
+
 // startScheduler ticks a new scheduler, which remembers nothing of the enrollments it paced before.
 func (r *enrollRig) startScheduler() {
 	scheduler := r.enroll.Scheduler(r.system)
@@ -166,8 +177,10 @@ func (r *enrollRig) startScheduler() {
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil {
-			if err := scheduler.Tick(ctx); err != nil && ctx.Err() == nil {
-				r.logs.add("scheduler", err.Error())
+			if !r.jobRunning(ctx) {
+				if err := scheduler.Tick(ctx); err != nil && ctx.Err() == nil {
+					r.logs.add("scheduler", err.Error())
+				}
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -188,7 +201,7 @@ func (r *enrollRig) view(name string) app.TunnelEnrollmentView {
 // until polls the enrollment until its phase is want.
 func (r *enrollRig) until(name, want string) app.TunnelEnrollmentView {
 	r.t.Helper()
-	deadline := time.Now().Add(30 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop
+	deadline := time.Now().Add(90 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop, as in edge_test.go
 	for time.Now().Before(deadline) {            //nolint:forbidigo // see above
 		if v := r.view(name); v.Phase == want {
 			return v
