@@ -45,7 +45,7 @@ func (r *edgeRig) start(name string) string {
 // untilView polls the enrollment until ok accepts its view.
 func (r *edgeRig) untilView(name, what string, ok func(app.TunnelEnrollmentView) bool) app.TunnelEnrollmentView {
 	r.t.Helper()
-	deadline := time.Now().Add(30 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop
+	deadline := time.Now().Add(90 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop: the race detector on macOS runners slows a three-yield enrollment past 30s
 	for time.Now().Before(deadline) {            //nolint:forbidigo // see above
 		if v := r.view(name); ok(v) {
 			return v
@@ -64,7 +64,7 @@ func (r *edgeRig) untilNote(name, fragment string) app.TunnelEnrollmentView {
 
 func (r *edgeRig) untilAsked(host string, polls int) {
 	r.t.Helper()
-	deadline := time.Now().Add(30 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop
+	deadline := time.Now().Add(90 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop: the race detector on macOS runners slows a three-yield enrollment past 30s
 	for r.doh.Asked(host) < polls {
 		if time.Now().After(deadline) { //nolint:forbidigo // see above
 			r.t.Fatalf("Cloudflare's resolver was asked %d times, want %d", r.doh.Asked(host), polls)
@@ -171,7 +171,7 @@ func TestTheConnectorTokenIsReturnedWheneverTheEnrollmentIsWaiting(t *testing.T)
 	r.doh.PublishAfter(1 << 30)
 	r.start("vps1")
 
-	deadline := time.Now().Add(30 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop
+	deadline := time.Now().Add(90 * time.Second) //nolint:forbidigo // wall-clock budget of a polling loop: the race detector on macOS runners slows a three-yield enrollment past 30s
 	waiting := 0
 	for waiting < 5 && time.Now().Before(deadline) { //nolint:forbidigo // see above
 		v := r.view("vps1")
