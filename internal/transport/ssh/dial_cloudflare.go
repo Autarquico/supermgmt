@@ -3,6 +3,7 @@ package ssh
 import (
 	"cmp"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -220,6 +221,10 @@ func (d *CloudflareDialer) checkAdmitted(ctx context.Context, hostname string, t
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctxError("cloudflare access preflight", ctx.Err())
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			// The preflight client's own timeout, with the caller still live.
+			return ctxError("cloudflare access preflight", sanitizedError{err, token})
 		}
 		return unreachable("cloudflare access preflight", CarrierFailure(sanitizedError{err, token}))
 	}
