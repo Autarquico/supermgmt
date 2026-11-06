@@ -218,14 +218,10 @@ func (r *tunnelRun) verifyWhenServed(ctx context.Context, verify func(context.Co
 	return err
 }
 
-// retryableDial is a failure to reach the node that waiting can cure: not an SSH refusal of the keys, a
-// host key mismatch or a failed check of what the node answered.
+// retryableDial is a failure that waiting can cure: the carrier could not carry the stream yet, or an
+// attempt timed out. An Access refusal, an SSH refusal of the keys and a host key mismatch are not.
 func retryableDial(err error) bool {
-	code := smerr.CodeOf(err)
-	if code == smerr.CodeNodeUnreachable {
-		return !ssh.IsAuthRejected(err)
-	}
-	return code == smerr.CodeTimeout
+	return ssh.IsCarrierFailure(err) || smerr.CodeOf(err) == smerr.CodeTimeout
 }
 
 // dnsCreatedAt is when Cloudflare created the node's DNS record, which the operation record no longer says

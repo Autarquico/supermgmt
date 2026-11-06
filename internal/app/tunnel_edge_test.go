@@ -303,7 +303,7 @@ func TestASetupWaitsForTheHostnameThenRetriesTheTunnelAndSucceedsOnTheFirstAttem
 	ts := newTunnelSetting(t)
 	edge := &fakeEdge{notYet: 20} // 40 s of polling
 	ts.useEdge(edge)
-	dialer := ts.flakyTunnel(edge, 3, smerr.New(smerr.CodeNodeUnreachable, "", "cloudflare access preflight: connection refused"))
+	dialer := ts.flakyTunnel(edge, 3, smerr.Wrap(ssh.CarrierFailure(errors.New("connection refused")), smerr.CodeNodeUnreachable, "", "cloudflare access preflight"))
 	ts.plan()
 
 	mustf(t, ts.attempt(), "tunnel setup, first attempt")
@@ -372,7 +372,7 @@ func TestASetupThatCouldNotAskCloudflareSaysSoWhenItsVerificationFails(t *testin
 	ts := newTunnelSetting(t)
 	edge := &fakeEdge{unavailable: true, diagnosed: true}
 	ts.useEdge(edge)
-	ts.flakyTunnel(edge, 1<<20, smerr.Wrap(noSuchHost(ts.hostname()), smerr.CodeNodeUnreachable, "", "cloudflare access preflight"))
+	ts.flakyTunnel(edge, 1<<20, smerr.Wrap(ssh.CarrierFailure(noSuchHost(ts.hostname())), smerr.CodeNodeUnreachable, "", "cloudflare access preflight"))
 	ts.plan()
 
 	err := ts.attempt()
@@ -401,11 +401,30 @@ func TestASetupVerificationThatTheCarrierRefusesIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestOnlyAFailureThatWaitingCuresIsRetried(t *testing.T) {
+	accessRefusal := smerr.New(smerr.CodeNodeUnreachable, "", "Cloudflare Access did not admit the service token")
+	carrier := smerr.Wrap(ssh.CarrierFailure(errors.New("connection refused")), smerr.CodeNodeUnreachable, "", "cloudflare access preflight")
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"an Access refusal":   {accessRefusal, false},
+		"a rejected key":      {smerr.Wrap(ssh.AuthRejected(errors.New("denied")), smerr.CodeNodeUnreachable, "", "handshake"), false},
+		"a host key mismatch": {smerr.New(smerr.CodeSSHHostKeyMismatch, "", "host key changed"), false},
+		"a carrier failure":   {carrier, true},
+		"a timed out attempt": {smerr.New(smerr.CodeTimeout, "", "timed out"), true},
+	} {
+		if got := retryableDial(tc.err); got != tc.want {
+			t.Errorf("%s: retryable = %t, want %t", name, got, tc.want)
+		}
+	}
+}
+
 func TestASetupWhoseServedHostnameStillFailsToResolveNamesTheCachedNegativeAnswer(t *testing.T) {
 	ts := newTunnelSetting(t)
 	edge := &fakeEdge{diagnosed: true}
 	ts.useEdge(edge)
-	ts.flakyTunnel(edge, 1<<20, smerr.Wrap(noSuchHost(ts.hostname()), smerr.CodeNodeUnreachable, "", "cloudflare access preflight"))
+	ts.flakyTunnel(edge, 1<<20, smerr.Wrap(ssh.CarrierFailure(noSuchHost(ts.hostname())), smerr.CodeNodeUnreachable, "", "cloudflare access preflight"))
 	ts.plan()
 
 	err := ts.attempt()
@@ -455,7 +474,7 @@ func TestSlowFailingDialsDoNotStretchTheSetupStepPastItsDeadline(t *testing.T) {
 	ts := newTunnelSetting(t)
 	edge := &fakeEdge{}
 	ts.useEdge(edge)
-	dialer := ts.flakyTunnel(edge, 1<<20, smerr.New(smerr.CodeNodeUnreachable, "", "cloudflare access preflight: connection refused"))
+	dialer := ts.flakyTunnel(edge, 1<<20, smerr.Wrap(ssh.CarrierFailure(errors.New("connection refused")), smerr.CodeNodeUnreachable, "", "cloudflare access preflight"))
 	dialer.cost = 20 * time.Second
 	ts.plan()
 	begun := ts.clock.Now()
