@@ -29,16 +29,18 @@ ADR-0043 amends ADR-0040: a route publishes a port of a node, not a service of a
 ## Scope
 
 **Entra:**
-- Model: a route is `node, hostname, port, access`. Migration 000013 rebuilds the table as `node_routes` without `app_target_id` and `service`, keeping ids, phases, Cloudflare object ids and errors; a `waiting` route (it created nothing in Cloudflare) becomes `removed` with a note that it waited for a deployment.
+- Model: a route is `node, hostname, port, access`. Migration 000013 refuses while a route job (`app_route.expose`, `app_route.unexpose`) is not terminal, then rebuilds the table as `node_routes` without `app_target_id` and `service`, keeping ids, phases, Cloudflare object ids and errors; a `waiting` route (it created nothing in Cloudflare) becomes `removed`, with a note appended to any error it had.
 - Lifecycle: expose runs ingress, Access (owners), then DNS, as ADR-0040 fixes, and the route is `active` when they exist. No deployment is consulted. Unexpose and conflict handling unchanged.
-- Admission: the node is managed, has a connector (`transport: cloudflare`) and a committed tunnel; the port is 1-65535 and not already routed on that node; the hostname is in the zone and free. Exposing a port nothing listens on is allowed; `sm nodes routes` shows whether the node answers on it at read time (best effort, no history).
+- Admission: the node is managed, has a connector (`transport: cloudflare`) and a committed tunnel; the port is 1-65535, is not the node's SSH port, and is not already routed by a live route on that node (halted routes count); the hostname is in the zone and free. Exposing a port nothing listens on is allowed. The grant `node_route.expose` on a node lets its holder publish any local port of that node; a `public` route stays high risk, so it waits for approval where policy asks and always for MCP identities.
+- Locks: a route job locks its route and the instance's Cloudflare lock, not the node, so node actions are not blocked while Cloudflare is written.
+- Deployments no longer check routed ports: a deployment that stops publishing a routed port is accepted, and the route answers whatever (or nothing) listens there.
 - Policy: actions `node_route.expose`, `node_route.unexpose`, `node_route.read` on `ResourceNode`; `app_route.*` join the retired-action list (retire-app-move).
-- Surfaces: `sm nodes expose <node> --hostname <fqdn> --port <n> [--access public|owners]`, `sm nodes unexpose <node> --hostname <fqdn>`, `sm nodes routes [<node>]`; API, client and wire under the node; MCP `infra_expose_port`, `infra_unexpose_port`, `infra_list_routes`; the TUI routes view lists by node.
+- Surfaces: `sm nodes expose <node> --hostname <fqdn> --port <n> [--access public|owners]`, `sm nodes unexpose <node> --hostname <fqdn>`, `sm nodes routes [<node>]` (node, hostname, port, access, phase); API, client and wire under the node; MCP `infra_expose_port`, `infra_unexpose_port`, `infra_list_routes`; the TUI routes view lists by node.
 - Docs: ADR-0040 "Amended by ADR-0043"; `docs/specs/app-expose-tunnel.md` and `docs/manual-checks/app-expose-tunnel.md` rewritten as node routes; guides and generated docs updated.
 
 **No entra:**
 - Removing apps, app targets or deployments (retire-deployments), beyond cutting the route's dependency on them.
-- Discovering which container publishes a port.
+- Discovering which container publishes a port, or whether anything listens on it (a later spec).
 
 ## Criterios de aceptación
 
@@ -53,7 +55,7 @@ ADR-0043 amends ADR-0040: a route publishes a port of a node, not a service of a
 - **Then** the Access application with the owners' Allow policy exists before the DNS record, as in ADR-0040
 
 ### Scenario: admission refuses what cannot work
-- **Given** a node without a connector, a port already routed on the node, or a hostname outside the zone or already live
+- **Given** a node without a connector, the node's SSH port, a port already routed on the node by an active or halted route, or a hostname outside the zone or already live
 - **When** the operator exposes it
 - **Then** the plan is refused with the reason; for a node without a connector the message proposes `sm nodes setup <node> --tunnel`
 
@@ -63,9 +65,10 @@ ADR-0043 amends ADR-0040: a route publishes a port of a node, not a service of a
 - **Then** the objects are removed in the order ADR-0040 fixes, DNS record first (phases `dns_removed`, `ingress_removed`), and the row stays `removed` as the record
 
 ### Scenario: existing routes survive the migration
-- **Given** a database at 000012 with active, halted, removed and waiting routes
+- **Given** a database at 000012 with active, halted, removed and waiting routes and no open route job
 - **When** migration 000013 runs
-- **Then** the active, halted and removed rows keep their ids, phases and Cloudflare object ids under `node_routes`; the waiting row is `removed` with its note; tunnel setup still writes the same ingress for the node
+- **Then** the active, halted and removed rows keep their ids, phases and Cloudflare object ids under `node_routes`; the waiting row is `removed` with its note and no Cloudflare object id; tunnel setup still writes the same ingress for the node
+- **And** with an open `app_route.expose` job the migration refuses and changes nothing
 
 ### Scenario: an old policy file still loads
 - **Given** a policy file granting `app_route.expose`
@@ -75,7 +78,17 @@ ADR-0043 amends ADR-0040: a route publishes a port of a node, not a service of a
 ### Scenario: MCP lists and exposes by node
 - **Given** an MCP client with `node_route.read`
 - **When** it calls `infra_list_routes`
-- **Then** it receives node, hostname, port, access and phase per route; `infra_expose_port` creates a plan under the same approval as the CLI
+- **Then** it receives node, hostname, port, access and phase per route; `infra_expose_port` creates the same plan (action, parameters, risk) as the CLI, and approval follows policy
+
+### Scenario: a deployment may change a routed port
+- **Given** an active route on port 8080 of a node and an app deployed there
+- **When** a deployment whose model no longer publishes 8080 is requested
+- **Then** it is accepted, and the route stays active
+
+### Scenario: route work does not block the node
+- **Given** an expose job writing Cloudflare for a node
+- **When** the operator probes or restarts a service on that node
+- **Then** those actions are not held by the route job's locks
 
 ## Notas técnicas
 
