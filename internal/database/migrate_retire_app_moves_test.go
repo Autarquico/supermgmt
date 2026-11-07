@@ -143,7 +143,7 @@ func dump(t *testing.T, q Querier, query string) string {
 }
 
 func TestMigration000012OnAnEmptyDatabase(t *testing.T) {
-	db := migratedTest(t)
+	db := migratedTo(t, 12)
 	r := db.Reader()
 	for query, want := range map[string]int{
 		`SELECT max(version) FROM schema_migrations`:                                              12,
@@ -247,8 +247,8 @@ func TestMigration000012RetiresTerminalMoves(t *testing.T) {
 	intentsBefore := dump(t, r, `SELECT * FROM operation_intents ORDER BY id`)
 	deploymentsBefore := dump(t, r, `SELECT * FROM deployments ORDER BY id`)
 
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate: %v", err)
+	if err := MigrateUpTo(ctx, db, 12); err != nil {
+		t.Fatalf("MigrateUpTo 12: %v", err)
 	}
 
 	for query, want := range map[string]int{
