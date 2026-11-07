@@ -11,8 +11,8 @@ const retiredPolicy = `version: 1
 rules:
   - name: old
     subjects: ["role:admin"]
-    allow: ["app_target.move", "app_target.*"]
-    deny: ["app_target.cleanup_source", "app_target.write"]
+    allow: ["app_target.move", "*.read"]
+    deny: ["app_target.cleanup_source", "node.remove"]
 `
 
 func TestConfigValidateWarnsAboutRetiredActionsAndPasses(t *testing.T) {
@@ -49,5 +49,18 @@ func TestConfigValidateStillRejectsATypoInARetiredName(t *testing.T) {
 	writeFile(t, policyFile, "version: 1\nrules:\n  - {name: r, subjects: ['*'], allow: ['app_target.moev']}\n")
 	if r := s.run("config", "validate", "--policy", policyFile); r.code != 2 {
 		t.Fatalf("code = %d, stdout %q", r.code, r.stdout)
+	}
+}
+
+func TestConfigValidateWarnsAboutRetiredConfigAndPasses(t *testing.T) {
+	s := newSandbox(t)
+	s.writeConfig(t, "version: 1\ninstance:\n  mode: local\ngithub: {}\nhealth: {}\nproviders:\n  - {type: github, name: gh}\n")
+
+	r := s.run("config", "validate", "--config", s.configFile)
+	if r.code != 0 {
+		t.Fatalf("code = %d, stdout %q stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if got := strings.Count(r.stdout, "warning: "); got != 3 {
+		t.Errorf("%d warnings printed, want 3 (github, health, provider): %q", got, r.stdout)
 	}
 }

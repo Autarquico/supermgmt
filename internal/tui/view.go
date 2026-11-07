@@ -120,12 +120,6 @@ func (m *Model) body(bw, bh int) []string {
 		return m.providersBody(bw, bh)
 	case screenSettings:
 		return m.settingsBody(bw)
-	case screenApps:
-		return m.apps.body(m, bw, bh)
-	case screenDeployments:
-		return m.deployments.body(m, m.apps.items, bw, bh)
-	case screenDeployment:
-		return m.timeline.body(m, bw, bh)
 	case screenHelp:
 		return m.helpBody(bw)
 	}
@@ -229,12 +223,6 @@ func (m *Model) keyHints() string {
 		return "esc back  q quit"
 	case screenApprovals:
 		return "j/k move  A approve  R reject  esc back  " + global
-	case screenApps:
-		return "j/k move  r refresh  esc back  " + global
-	case screenDeployments:
-		return "j/k move  enter detail  r refresh  esc back  " + global
-	case screenDeployment:
-		return "r refresh  esc back  " + global
 	case screenEvents, screenProviders, screenSettings:
 		return "r refresh  esc back  " + global
 	}

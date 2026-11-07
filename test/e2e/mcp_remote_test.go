@@ -49,7 +49,7 @@ type m5Remote struct {
 func newM5Remote(t *testing.T) *m5Remote {
 	t.Helper()
 	ctx := context.Background()
-	hostIP := m4HostAddress()
+	hostIP := hostAddress()
 	if hostIP == "" {
 		t.Skip("the test machine has no address besides loopback; the server container cannot reach the authorization server")
 	}

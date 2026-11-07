@@ -347,7 +347,7 @@ func TestStatusKeepsTheLocalSocketActiveAndRefusesOtherKinds(t *testing.T) {
 	if err != nil || state != app.CredentialActive {
 		t.Fatalf("local socket = %s, %v", state, err)
 	}
-	for _, kind := range []domain.CredentialKind{domain.CredentialMCPToken, domain.CredentialOAuthAccessToken, domain.CredentialGitHubOIDC} {
+	for _, kind := range []domain.CredentialKind{domain.CredentialMCPToken, domain.CredentialOAuthAccessToken} {
 		_, err := status.Status(context.Background(), domain.CredentialContext{Kind: kind})
 		if smerr.CodeOf(err) != smerr.CodeUnauthenticated {
 			t.Errorf("%s: err = %v, want UNAUTHENTICATED", kind, err)

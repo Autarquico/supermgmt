@@ -118,8 +118,8 @@ func TestDefaultPolicy_ParsesAndNamesOnlyCatalogActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Default: %v", err)
 	}
-	if len(p.Rules()) != 6 {
-		t.Fatalf("default has %d rules, want 6", len(p.Rules()))
+	if len(p.Rules()) != 5 {
+		t.Fatalf("default has %d rules, want 5", len(p.Rules()))
 	}
 	for _, r := range p.Rules() {
 		for _, pattern := range append(append([]string{}, r.Allow...), r.Deny...) {

@@ -76,17 +76,8 @@ jobs:
   reconcile_grace: 45s             # >= ssh.connect_timeout + ssh.command_timeout + 5s
   retry_base: 2s                   # max attempts are per action (§11.2)
 
-health:
-  allowed_private_cidrs: []        # control-plane checks only (§21)
-
 outbound:
   proxy: ""                        # optional explicit HTTPS proxy URL; ambient *_PROXY env is ignored (§21.1)
-
-github:
-  oidc_audience: ""               # default: server.public_url; required `aud` for Actions OIDC (§18)
-  ci_poll_initial: 15s
-  ci_poll_max: 2m
-  ci_timeout: 2h
 
 mcp:
   enabled: true

@@ -152,11 +152,10 @@ func TestNodesRoutesAllAsksForRemovedRoutesToo(t *testing.T) {
 	}
 }
 
-func TestAppsNoLongerOwnRoutes(t *testing.T) {
-	web, _, _ := appsFixture()
-	for _, verb := range []string{"expose", "unexpose", "routes"} {
-		if r := appsAPI(t, web).run("apps", verb); r.code == 0 {
-			t.Errorf("sm apps %s still exists", verb)
+func TestTheDeploymentCommandsAreGone(t *testing.T) {
+	for _, args := range [][]string{{"apps", "list"}, {"apps", "expose"}, {"deploy"}, {"rollback"}, {"deployments", "list"}} {
+		if r := run(args...); r.code != 2 {
+			t.Errorf("sm %s still exists", strings.Join(args, " "))
 		}
 	}
 }

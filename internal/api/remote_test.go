@@ -113,9 +113,11 @@ func remoteServices(t *testing.T, cfg app.Config, store *jobs.Store) Services {
 	must(t, err)
 	keys, err := NewSSHKeys(func(context.Context) (secrets.Identity, error) { return secrets.Identity{}, nil })
 	must(t, err)
+	routes, err := app.NewNodeRoutes(cfg, store)
+	must(t, err)
 	return Services{
 		Plans: plans, Approvals: approvals, Governance: governance, Services: actions,
-		Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys,
+		Queries: queries, Inventory: inventory, Sessions: sessions, SSHKeys: keys, Routes: routes,
 	}
 }
 

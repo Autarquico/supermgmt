@@ -19,41 +19,6 @@ func (f *fixture) oauthJob(ctx context.Context, q Querier, actor, token domain.I
 	noErr(f.t, insertRow(ctx, q.(*Tx), "jobs", row))
 }
 
-// oauthDeployment inserts a provisional-shaped deployment carrying an OAuth access token.
-func (f *fixture) oauthDeployment(ctx context.Context, q Querier, requester, token domain.ID, state string) {
-	f.t.Helper()
-	row := override(m4Baselines()["deployments"], "id", f.ids.NewID().String())
-	row = override(row, "requested_by", requester.String())
-	row = override(row, "credential_kind", "oauth_access_token")
-	row = override(row, "credential_id", token.String())
-	row = override(row, "state", state)
-	f.deploymentParents(ctx, q)
-	noErr(f.t, insertRow(ctx, q.(*Tx), "deployments", row))
-}
-
-// deploymentParents inserts, once, the rows every deployment refers to.
-func (f *fixture) deploymentParents(ctx context.Context, q Querier) {
-	f.t.Helper()
-	var existing int
-	noErr(f.t, q.QueryRowContext(ctx, `SELECT count(*) FROM app_targets`).Scan(&existing))
-	if existing > 0 {
-		return
-	}
-	b, m4 := baselines(), m4Baselines()
-	for _, parent := range []struct {
-		table string
-		row   map[string]any
-	}{
-		{"environments", b["environments"]},
-		{"providers", b["providers"]},
-		{"nodes", b["nodes"]},
-		{"apps", m4["apps"]},
-		{"app_targets", m4["app_targets"]},
-	} {
-		noErr(f.t, insertRow(ctx, q.(*Tx), parent.table, parent.row))
-	}
-}
-
 func TestSweepAuthRemovesExpiredOAuthAccessTokens(t *testing.T) {
 	f := newFixture(t)
 	f.tx(func(ctx context.Context, q Querier) {
@@ -97,13 +62,6 @@ func TestSweepAuthKeepsOAuthAccessTokensStillNeeded(t *testing.T) {
 			held[state] = tok
 			_ = needed
 		}
-		deployStates := map[string]bool{"created": true, "waiting_ci": true, "queued": false, "succeeded": false, "failed": false, "cancelled": false}
-		deployments := map[string]OAuthAccessToken{}
-		for state := range deployStates {
-			tok := token("deployment-" + state)
-			f.oauthDeployment(ctx, q, alice.ID, tok.ID, state)
-			deployments[state] = tok
-		}
 		unreferenced := token("unreferenced")
 
 		must(SweepAuth(ctx, q, testEpoch.Add(2*time.Hour)))
@@ -114,33 +72,8 @@ func TestSweepAuthKeepsOAuthAccessTokensStillNeeded(t *testing.T) {
 				t.Errorf("token of a %s job kept = %v, want %v", state, !needed, needed)
 			}
 		}
-		for state, needed := range deployStates {
-			if exists(deployments[state]) != needed {
-				t.Errorf("token of a %s deployment kept = %v, want %v", state, !needed, needed)
-			}
-		}
 		if exists(unreferenced) {
 			t.Error("an unreferenced expired token survived")
-		}
-	})
-}
-
-func TestSweepAuthRemovesTheTokenOnceTheDeploymentIsTerminal(t *testing.T) {
-	f := newFixture(t)
-	f.tx(func(ctx context.Context, q Querier) {
-		alice := f.identity(ctx, q, domain.ActorHuman, "alice")
-		client := f.mcpClient(ctx, q, alice.ID, "remote", MCPOriginRemote)
-		tok := must(RecordOAuthAccessToken(ctx, q, f.oauthToken(client.ID, "waiting")))
-		f.oauthDeployment(ctx, q, alice.ID, tok.ID, "waiting_ci")
-
-		if got := must(SweepAuth(ctx, q, testEpoch.Add(2*time.Hour))); got.OAuthAccessTokens != 0 {
-			t.Fatalf("swept %+v while the deployment waits for CI", got)
-		}
-		if _, err := q.ExecContext(ctx, `UPDATE deployments SET state = 'failed'`); err != nil {
-			t.Fatal(err)
-		}
-		if got := must(SweepAuth(ctx, q, testEpoch.Add(2*time.Hour))); got.OAuthAccessTokens != 1 {
-			t.Fatalf("swept %+v after the deployment ended, want the token", got)
 		}
 	})
 }

@@ -183,6 +183,13 @@ func assertHealthyDatabase(t *testing.T, db database.Querier) {
 	}
 }
 
+// retiredTables are the tables migration 000014 drops with the deployment feature.
+var retiredTables = map[string]bool{
+	"repositories": true, "apps": true, "app_targets": true, "artifacts": true, "artifact_checks": true,
+	"github_oidc_credentials": true, "deployments": true, "deployment_steps": true, "health_checks": true,
+	"webhook_deliveries": true, "execution_snapshots": true,
+}
+
 func TestMigrationFixtures_MigrateToHeadKeepingEveryRow(t *testing.T) {
 	latest, err := database.LatestSchemaVersion()
 	if err != nil {
@@ -207,7 +214,17 @@ func TestMigrationFixtures_MigrateToHeadKeepingEveryRow(t *testing.T) {
 			assertHealthyDatabase(t, db.Reader())
 			after := rowCounts(t, db.Reader())
 			for table, n := range before {
-				if got, ok := after[table]; !ok || got < n {
+				got, ok := after[table]
+				switch {
+				case retiredTables[table]:
+					if ok {
+						t.Errorf("retired table %s survived the migration", table)
+					}
+				case table == "roles":
+					if got != n-1 {
+						t.Errorf("roles: %d before, %d after, want only the deployer role gone", n, got)
+					}
+				case !ok || got < n:
 					t.Errorf("table %s: %d rows before, %d after (present: %v)", table, n, got, ok)
 				}
 			}

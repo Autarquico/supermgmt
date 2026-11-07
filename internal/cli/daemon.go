@@ -31,9 +31,14 @@ func newDaemonCmd(env []string) *cobra.Command {
 			configFlag, _ := cmd.Flags().GetString("config")
 			level, _ := cmd.Flags().GetString("log-level")
 			file := configPath(configFlag, env)
-			cfg, err := loadDaemonConfig(file, env)
+			loaded, err := loadDaemonConfig(file, env)
 			if err != nil {
 				return err
+			}
+			cfg := loaded.Config
+			log := daemonLogger(cmd, level)
+			for _, w := range loaded.Warnings {
+				log.Warn(w)
 			}
 			if !fileExists(file) {
 				file = "" // built-in defaults: the snapshot stores the effective configuration
@@ -44,7 +49,7 @@ func newDaemonCmd(env []string) *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 			err = daemon.Run(ctx, daemon.Options{
-				Config: cfg, ConfigFile: file, Socket: socketPath(cfg, env), Log: daemonLogger(cmd, level),
+				Config: cfg, ConfigFile: file, Socket: socketPath(cfg, env), Log: log,
 			})
 			return daemonExit(cmd, err)
 		},
@@ -53,13 +58,11 @@ func newDaemonCmd(env []string) *cobra.Command {
 
 // loadDaemonConfig loads the file, or the built-in local-mode defaults when
 // there is none: the client autostarts the daemon before anyone wrote a config.
-func loadDaemonConfig(path string, env []string) (*config.Config, error) {
+func loadDaemonConfig(path string, env []string) (config.Result, error) {
 	if fileExists(path) {
-		result, err := config.Load(path, env)
-		return result.Config, err
+		return config.Load(path, env)
 	}
-	result, err := config.LoadBytes([]byte(minimalLocalConfig), env)
-	return result.Config, err
+	return config.LoadBytes([]byte(minimalLocalConfig), env)
 }
 
 func daemonLogger(cmd *cobra.Command, level string) *slog.Logger {

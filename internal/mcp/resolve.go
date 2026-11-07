@@ -54,17 +54,6 @@ func resolveService(ctx context.Context, api API, ref string) (domain.ID, error)
 	return service.ID, err
 }
 
-// resolveApp accepts an app id or an exact app name.
-func resolveApp(ctx context.Context, api API, ref string) (domain.ID, error) {
-	if id, err := domain.ParseID(ref); err == nil {
-		return id, nil
-	}
-	app, err := findUnique(ctx, "app", ref,
-		func(cursor string) (wire.Page[wire.App], error) { return api.ListApps(ctx, resolvePage(cursor)) },
-		func(a wire.App) bool { return a.Name == ref })
-	return app.ID, err
-}
-
 func resolvePage(cursor string) wire.PageQuery {
 	return wire.PageQuery{Cursor: cursor, Limit: wire.MaxLimit}
 }

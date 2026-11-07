@@ -132,7 +132,7 @@ func TestMigrateSeedsDefaultRoles(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"viewer", "operator", "deployer", "admin"}
+	want := []string{"viewer", "operator", "admin"}
 	if len(got) != len(want) {
 		t.Fatalf("roles = %v, want %v", got, want)
 	}

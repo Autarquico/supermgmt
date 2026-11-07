@@ -45,7 +45,7 @@ func FuzzToolArguments(f *testing.F) {
 	tools := toolNames(listed.Tools)
 	for i := range tools {
 		f.Add(uint8(i), `{}`, true)
-		f.Add(uint8(i), `{"node":"web-1","service":"nginx@web-1","app":"shop","plan_id":"x","plan_hash":"y","limit":-1}`, false)
+		f.Add(uint8(i), `{"node":"web-1","service":"nginx@web-1","plan_id":"x","plan_hash":"y","limit":-1}`, false)
 		f.Add(uint8(i), `{"node":null,"limit":9999999999999999999,"since":"not a time"}`, true)
 	}
 	f.Fuzz(func(t *testing.T, tool uint8, arguments string, writesEnabled bool) {
@@ -60,7 +60,7 @@ func FuzzToolArguments(f *testing.F) {
 		if _, err := session.CallTool(context.Background(), params); err != nil {
 			return
 		}
-		if !writesEnabled && len(readOnly.submits)+len(readOnly.deploymentRequests)+len(readOnly.rollbacks) > 0 {
+		if !writesEnabled && len(readOnly.submits) > 0 {
 			t.Fatalf("%s wrote with write tools disabled", params.Name)
 		}
 	})
@@ -76,11 +76,11 @@ func FuzzResolveRef(f *testing.F) {
 		f.Add(seed)
 	}
 	api := readTestAPI()
-	known := map[domain.ID]bool{readNodeID: true, readServiceID: true, readAppID: true}
+	known := map[domain.ID]bool{readNodeID: true, readServiceID: true}
 	f.Fuzz(func(t *testing.T, ref string) {
 		ctx := context.Background()
 		resolvers := map[string]func(context.Context, API, string) (domain.ID, error){
-			"node": resolveNode, "service": resolveService, "app": resolveApp,
+			"node": resolveNode, "service": resolveService,
 		}
 		for kind, resolve := range resolvers {
 			id, err := resolve(ctx, api, ref)

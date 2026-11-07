@@ -8,7 +8,6 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
-	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 // remoteDataNotice ends every description of a tool that returns text the
@@ -74,32 +73,6 @@ func addReadTools(s *sdk.Server, api API) {
 			chunk, err := api.ServiceLogs(ctx, id, wire.LogQuery{Lines: in.Lines})
 			return ViewLogChunk(chunk), err
 		})
-	readTool(s, "infra_list_apps",
-		"List registered applications. Pass next_cursor back as cursor for the next page.",
-		func(ctx context.Context, in pageInput) (listResult[AppView], error) {
-			page, err := api.ListApps(ctx, in.pageQuery())
-			return listOf(page, ViewApp), err
-		})
-	readTool(s, "infra_list_deployments",
-		"List deployments, optionally of one app (id or exact name), app target, environment or state. Pass next_cursor back as cursor for the next page."+remoteDataNotice,
-		func(ctx context.Context, in listDeploymentsInput) (listResult[DeploymentView], error) {
-			query, err := in.query(ctx, api)
-			if err != nil {
-				return listResult[DeploymentView]{}, err
-			}
-			page, err := api.ListDeployments(ctx, query)
-			return listOf(page, ViewDeployment), err
-		})
-	readTool(s, "infra_get_deployment",
-		"Get one deployment by id, with its steps."+remoteDataNotice,
-		func(ctx context.Context, in idInput) (DeploymentView, error) {
-			id, err := domain.ParseID(in.ID)
-			if err != nil {
-				return DeploymentView{}, invalidArgument("id is not a valid id")
-			}
-			deployment, err := api.GetDeployment(ctx, id)
-			return ViewDeployment(deployment), err
-		})
 	readTool(s, "infra_list_routes",
 		"List the routes that publish node ports through the node's Cloudflare Tunnel, optionally of one node (id or exact name). A route's phase says whether it is being set up, active or being removed; include_removed also lists removed routes with the note that says why."+remoteDataNotice,
 		func(ctx context.Context, in listRoutesInput) (listResult[RouteView], error) {
@@ -116,7 +89,7 @@ func addReadTools(s *sdk.Server, api API) {
 			return listOf(page, ViewEvent), err
 		})
 	readTool(s, "infra_get_health",
-		"Summarize the health of one node, service or deployment (kind and ref; a deployment ref is an id)."+remoteDataNotice,
+		"Summarize the health of one node or service (kind and ref)."+remoteDataNotice,
 		func(ctx context.Context, in healthInput) (HealthView, error) {
 			return health(ctx, api, in)
 		})
@@ -167,36 +140,9 @@ type refInput struct {
 	Ref string `json:"ref" jsonschema:"id, exact name, or name@node for a service"`
 }
 
-type idInput struct {
-	ID string `json:"id" jsonschema:"resource id"`
-}
-
 type logsInput struct {
 	Ref   string `json:"ref" jsonschema:"service id or name@node"`
 	Lines int    `json:"lines,omitempty" jsonschema:"number of recent lines, 1 to 500 (default 200)"`
-}
-
-type listDeploymentsInput struct {
-	pageInput
-	App           string `json:"app,omitempty" jsonschema:"app id or exact app name"`
-	AppTargetID   string `json:"app_target_id,omitempty" jsonschema:"app target id"`
-	EnvironmentID string `json:"environment_id,omitempty" jsonschema:"environment id"`
-	State         string `json:"state,omitempty" jsonschema:"deployment state"`
-}
-
-func (in listDeploymentsInput) query(ctx context.Context, api API) (wire.DeploymentQuery, error) {
-	query := wire.DeploymentQuery{PageQuery: in.pageQuery(), State: in.State}
-	var err error
-	if in.App != "" {
-		if query.AppID, err = resolveApp(ctx, api, in.App); err != nil {
-			return query, err
-		}
-	}
-	if query.AppTargetID, err = optionalID("app_target_id", in.AppTargetID); err != nil {
-		return query, err
-	}
-	query.EnvironmentID, err = optionalID("environment_id", in.EnvironmentID)
-	return query, err
 }
 
 type listEventsInput struct {
@@ -245,30 +191,26 @@ func listOf[T, V any](page wire.Page[T], view func(T) V) listResult[V] {
 // ---- health -------------------------------------------------------------------
 
 const (
-	healthNode       = "node"
-	healthService    = "service"
-	healthDeployment = "deployment"
+	healthNode    = "node"
+	healthService = "service"
 )
 
 type healthInput struct {
-	Kind string `json:"kind" jsonschema:"node, service or deployment"`
-	Ref  string `json:"ref" jsonschema:"id or exact name; name@node for a service; an id for a deployment"`
+	Kind string `json:"kind" jsonschema:"node or service"`
+	Ref  string `json:"ref" jsonschema:"id or exact name; name@node for a service"`
 }
 
 // HealthView is a derived summary of the views the other tools return; it
 // needs no route of its own. State is the control-plane state: reachability
-// for a node, the deployment state for a deployment, absent for a service
+// for a node, absent for a service
 // (the runtime's own status is under Remote).
 type HealthView struct {
-	Kind        string        `json:"kind"`
-	ID          domain.ID     `json:"id"`
-	State       string        `json:"state,omitempty"`
-	StateCode   *smerr.Code   `json:"state_code,omitempty"`
-	StateReason *smerr.Reason `json:"state_reason,omitempty"`
-	Stale       *bool         `json:"stale,omitempty"`
-	LastSeenAt  *time.Time    `json:"last_seen_at,omitempty"`
-	FinishedAt  *time.Time    `json:"finished_at,omitempty"`
-	Remote      *HealthRemote `json:"remote,omitempty"`
+	Kind       string        `json:"kind"`
+	ID         domain.ID     `json:"id"`
+	State      string        `json:"state,omitempty"`
+	Stale      *bool         `json:"stale,omitempty"`
+	LastSeenAt *time.Time    `json:"last_seen_at,omitempty"`
+	Remote     *HealthRemote `json:"remote,omitempty"`
 }
 
 // HealthRemote is what a runtime reported about a service.
@@ -284,10 +226,8 @@ func health(ctx context.Context, api API, in healthInput) (HealthView, error) {
 		return nodeHealth(ctx, api, in.Ref)
 	case healthService:
 		return serviceHealth(ctx, api, in.Ref)
-	case healthDeployment:
-		return deploymentHealth(ctx, api, in.Ref)
 	}
-	return HealthView{}, invalidArgument("kind must be node, service or deployment")
+	return HealthView{}, invalidArgument("kind must be node or service")
 }
 
 func nodeHealth(ctx context.Context, api API, ref string) (HealthView, error) {
@@ -328,25 +268,5 @@ func serviceHealth(ctx context.Context, api API, ref string) (HealthView, error)
 			Status:     service.Remote.Status,
 			Health:     service.Remote.Health,
 		},
-	}, nil
-}
-
-func deploymentHealth(ctx context.Context, api API, ref string) (HealthView, error) {
-	id, err := domain.ParseID(ref)
-	if err != nil {
-		return HealthView{}, invalidArgument("a deployment ref must be an id")
-	}
-	raw, err := api.GetDeployment(ctx, id)
-	if err != nil {
-		return HealthView{}, err
-	}
-	deployment := ViewDeployment(raw)
-	return HealthView{
-		Kind:        healthDeployment,
-		ID:          deployment.ID,
-		State:       deployment.State,
-		StateCode:   &deployment.StateCode,
-		StateReason: &deployment.StateReason,
-		FinishedAt:  deployment.FinishedAt,
 	}, nil
 }

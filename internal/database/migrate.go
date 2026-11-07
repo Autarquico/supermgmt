@@ -32,6 +32,9 @@ type migration struct {
 
 var migrationFile = regexp.MustCompile(`^(\d{6})_[a-z0-9_]+\.up\.sql$`)
 
+// UnfinishedDeploymentRefusal is the start of the message migration 000014 aborts with while a deployment is open.
+const UnfinishedDeploymentRefusal = "a deployment is unfinished"
+
 // Migrate applies every embedded migration newer than the database, each in
 // its own write transaction, and records it in schema_migrations. Re-running
 // is a no-op.

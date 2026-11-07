@@ -8,7 +8,6 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
-	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 const (
@@ -168,70 +167,6 @@ func TestViewEvent_DataIsRemoteAndRedacted(t *testing.T) {
 	wantNoLeak(t, raw)
 	if generic["event_id"] != viewUUID || generic["correlation_id"] != "corr-1" {
 		t.Errorf("identifiers changed: %v", generic)
-	}
-}
-
-func TestViewDeployment_IdentifiersAndHashesAreByteIdentical(t *testing.T) {
-	plan, job := domain.ID("plan-1"), domain.ID("job-1")
-	hash := viewPlanHash
-	d := wire.Deployment{
-		ID: viewUUID, Kind: "deploy", AppID: "app-1", AppTargetID: "t-1", EnvironmentID: "env-1", NodeID: "n-1",
-		CommitSHA: "0123456789abcdef0123456789abcdef01234567", PlanID: &plan, PlanHash: &hash, JobID: &job,
-		Images: []wire.RequestedImage{{Service: "web", Digest: "sha256:" + viewPlanHash}},
-		State:  "failed", StateCode: smerr.Code("CONFLICT"), StateCause: viewHostile,
-		RequestedBy: "ident-1",
-		Steps: []wire.DeploymentStep{{
-			Ordinal: 3, Name: "pull", State: "failed", OutputRef: viewHostile,
-			Error: &wire.StepError{Code: "UNAVAILABLE", Reason: "IMAGE_PULL_FAILED", Cause: viewHostile, Message: viewHostile},
-		}},
-	}
-	view := ViewDeployment(d)
-	raw, generic := viewJSON(t, view)
-
-	if view.ID != d.ID || view.AppID != d.AppID || view.CommitSHA != d.CommitSHA || *view.PlanHash != hash ||
-		view.Images[0].Digest != d.Images[0].Digest || *view.JobID != job || *view.PlanID != plan {
-		t.Errorf("an identifier or hash changed: %+v", view)
-	}
-	wantNoLeak(t, raw)
-	wantRemoteObject(t, generic, false)
-	if _, top := generic["state_cause"]; top {
-		t.Error("state_cause is at the top level")
-	}
-	step := generic["steps"].([]any)[0].(map[string]any)
-	if _, top := step["output_ref"]; top {
-		t.Error("output_ref is at the top level of a step")
-	}
-	if step["error_reason"] != "IMAGE_PULL_FAILED" {
-		t.Errorf("step error reason = %v", step["error_reason"])
-	}
-	stepRemote := wantRemoteObject(t, step, false)
-	for _, key := range []string{"output_ref", "error_cause", "error_message"} {
-		if _, ok := stepRemote[key]; !ok {
-			t.Errorf("step remote.%s missing", key)
-		}
-	}
-}
-
-func TestViewDeploymentStep_WithoutErrorHasNoErrorFields(t *testing.T) {
-	view := ViewDeploymentStep(wire.DeploymentStep{Ordinal: 1, Name: "plan", State: "succeeded"})
-	if view.ErrorCode != nil || view.ErrorReason != nil || view.Remote.ErrorText != "" {
-		t.Errorf("%+v", view)
-	}
-}
-
-func TestViewApp_OmitsComposeAndSecrets(t *testing.T) {
-	app := wire.App{
-		ID: viewUUID, Name: "shop\n", DeployedService: "web", ManifestPath: "deploy/app.yaml",
-		ComposeContent: "services:\n  web:\n    environment:\n      K: ${secret:db}",
-		SecretRefs:     map[string]string{"db": "secret://apps/shop/db"},
-		Variables:      map[string]string{"REGION": "eu"},
-		Targets:        []wire.AppTarget{{ID: "t-1", EnvironmentID: "env-1", Environment: "prod", NodeID: "n-1", ComposeProject: "shop"}},
-	}
-	raw, generic := viewJSON(t, ViewApp(app))
-
-	wantNoLeak(t, raw, "secret://", "services:", "REGION")
-	if generic["name"] != "shop" {
-		t.Errorf("name = %v", generic["name"])
 	}
 }
 

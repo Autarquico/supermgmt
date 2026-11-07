@@ -51,14 +51,6 @@ type API interface {
 	OpenSession(ctx context.Context, node domain.ID, tool string) (Handoff, error)
 }
 
-// AppsAPI is what the Applications and Deployments screens need. It is kept
-// apart from API so a client can lack it: the screens say so instead of
-// failing. Deployments are listed unfiltered; the screen orders them.
-type AppsAPI interface {
-	ListApps(ctx context.Context, q wire.PageQuery) (wire.Page[wire.App], error)
-	ListDeployments(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Deployment], error)
-}
-
 // Handoff is an interactive session ready to take over the terminal. The TUI
 // runs Cmd with tea.ExecProcess, which suspends the program and restores the
 // terminal on return (spec §17.1). Done must be called exactly once, on every
@@ -71,7 +63,7 @@ type Handoff struct {
 }
 
 // TunnelEnrollmentAPI starts the enrollment of a node reachable only through Cloudflare Tunnel (ADR-0039).
-// It is optional like AppsAPI: without it the palette entry says the daemon does not serve it.
+// It is optional: without it the palette entry says the daemon does not serve it.
 type TunnelEnrollmentAPI interface {
 	StartTunnelEnrollment(ctx context.Context, r wire.StartTunnelEnrollmentRequest) (wire.Direct[wire.TunnelEnrollment], error)
 }

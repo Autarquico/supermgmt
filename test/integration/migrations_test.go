@@ -135,7 +135,7 @@ func TestMigrationsM2ToM3KeepsIntents(t *testing.T) {
 
 // TestMigrationsM3ToM4KeepsData builds a database as an M3 binary left it
 // (migrations 000001-000004) with data, then migrates it with the current
-// binary: the M3 rows survive and the M4 tables are empty and usable.
+// binary: the M3 rows survive and the retired M4 tables are gone.
 func TestMigrationsM3ToM4KeepsData(t *testing.T) {
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "sm.db"), database.Options{})
@@ -167,21 +167,11 @@ func TestMigrationsM3ToM4KeepsData(t *testing.T) {
 		"repositories", "apps", "app_targets", "artifacts", "artifact_checks", "github_oidc_credentials",
 		"deployments", "deployment_steps", "health_checks", "webhook_deliveries", "execution_snapshots",
 	} {
-		if got := count(t, db, `SELECT COUNT(*) FROM `+table); got != 0 {
-			t.Errorf("new table %s has %d rows, want 0", table, got)
+		if got := count(t, db, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '`+table+`'`); got != 0 {
+			t.Errorf("retired table %s still exists after migration", table)
 		}
 	}
 	assertIntegrity(t, db)
-
-	err = db.WithWriteTx(ctx, func(ctx context.Context, tx *database.Tx) error {
-		return database.PutExecutionSnapshot(ctx, tx, database.ExecutionSnapshot{
-			Hash: database.ExecutionSnapshotHash([]byte("m")), Kind: database.SnapshotManifest, Content: []byte("m"),
-			CreatedAt: time.UnixMilli(2000),
-		})
-	})
-	if err != nil {
-		t.Errorf("snapshot on a migrated database: %v", err)
-	}
 }
 
 var (

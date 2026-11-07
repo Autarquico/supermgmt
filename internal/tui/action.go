@@ -405,8 +405,8 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · add node <name> tunnel · setup <node> [docker|no-docker] [broker|journal] [tunnel] [proxmox] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · deploy <app> <env> · rollback <app> <env> · expose <node> <hostname> <port> [public|owners] · unexpose <node> <hostname>"
-	paletteShortcut = "ssh · logs · services · add node · setup · tunnel-disable · probe · power · refresh · deploy · rollback · expose · unexpose   (? arguments)"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · add node <name> tunnel · setup <node> [docker|no-docker] [broker|journal] [tunnel] [proxmox] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · expose <node> <hostname> <port> [public|owners] · unexpose <node> <hostname>"
+	paletteShortcut = "ssh · logs · services · add node · setup · tunnel-disable · probe · power · refresh · expose · unexpose   (? arguments)"
 )
 
 func (m *Model) openPalette() tea.Cmd {
@@ -426,8 +426,6 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.commandPower(args)
 	case "logs":
 		return m.commandLogs(args)
-	case wizardDeploy, wizardRollback:
-		return m.commandDeploy(cmd, args)
 	case "ssh", "services", "setup", "tunnel-disable", "probe":
 		return m.commandOnNode(cmd, args)
 	case routeExpose, routeUnexpose:
@@ -463,16 +461,6 @@ func (m *Model) commandAdd(args []string) tea.Cmd {
 		}
 		return "enrollment of " + textsafe.Line(name) + " started; continue in a terminal: sm nodes add --tunnel --name " + textsafe.Line(name), nil
 	})
-}
-
-// commandDeploy starts the creation wizard or the rollback review of an
-// app's environment.
-func (m *Model) commandDeploy(cmd string, args []string) tea.Cmd {
-	if len(args) != 2 {
-		m.notice = notice{text: "usage: " + cmd + " <app> <environment>", isErr: true}
-		return nil
-	}
-	return m.startWizard(cmd, args[0], args[1])
 }
 
 func (m *Model) commandRefresh(args []string) tea.Cmd {

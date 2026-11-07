@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/autarquico/supermgmt/internal/database"
@@ -181,6 +182,9 @@ func (env) neutralizeOpen(ctx context.Context, o RestoreOptions, db *database.DB
 		return nil, err
 	}
 	if err := db.Migrate(ctx); err != nil {
+		if strings.Contains(err.Error(), database.UnfinishedDeploymentRefusal) {
+			return nil, fmt.Errorf("the backup holds an unfinished deployment, which this version cannot finish: restore it with the previous SuperMgmt release, let the deployment finish (or cancel it), then take a new backup and restore that: %w", err)
+		}
 		return nil, fmt.Errorf("migrate the staged database: %w", err)
 	}
 	if err := neutralize(ctx, db, o.Clock, o.IDs); err != nil {

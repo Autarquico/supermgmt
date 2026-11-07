@@ -389,9 +389,8 @@ type AuthSwept struct {
 // join tokens and OIDC replay records that expired at or before cutoff. Callers pass a cutoff
 // a little in the past so a recently expired credential still reads as
 // "expired" rather than "unknown". Revoked rows go with their expiry, except
-// sessions, API tokens and OAuth access tokens that a job not yet finished (or,
-// for OAuth tokens, a provisional deployment still waiting on CI) was submitted
-// with: the claim-time check must still find them (spec §11.1). MCP client rows
+// sessions, API tokens and OAuth access tokens that a job not yet finished was
+// submitted with: the claim-time check must still find them (spec §11.1). MCP client rows
 // are never swept: they are history.
 func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, error) {
 	var out AuthSwept
@@ -402,7 +401,7 @@ func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, err
 	}{
 		{"sessions", unfinishedJobCredential("session"), &out.Sessions},
 		{"api_tokens", unfinishedJobCredential("api_token"), &out.APITokens},
-		{"oauth_access_tokens", unfinishedJobCredential("oauth_access_token") + provisionalDeploymentCredential("oauth_access_token"), &out.OAuthAccessTokens},
+		{"oauth_access_tokens", unfinishedJobCredential("oauth_access_token"), &out.OAuthAccessTokens},
 		{"bootstrap_codes", "", &out.BootstrapCodes},
 		{"join_tokens", "", &out.JoinTokens},
 		{"oidc_replay", "", &out.OIDCReplays},
@@ -422,12 +421,4 @@ func SweepAuth(ctx context.Context, q Querier, cutoff time.Time) (AuthSwept, err
 func unfinishedJobCredential(kind string) string {
 	return ` AND id NOT IN (SELECT credential_id FROM jobs WHERE credential_kind = '` + kind +
 		`' AND state NOT IN ('succeeded', 'failed', 'cancelled'))`
-}
-
-// provisionalDeploymentCredential spares the credentials of deployments that
-// hold no job yet but will finalize with the credential once CI passes
-// (ADR-0011).
-func provisionalDeploymentCredential(kind string) string {
-	return ` AND id NOT IN (SELECT credential_id FROM deployments WHERE credential_kind = '` + kind +
-		`' AND state IN ('created', 'waiting_ci'))`
 }

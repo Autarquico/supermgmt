@@ -37,21 +37,6 @@ func addWriteTools(s *sdk.Server, api API) {
 		func(ctx context.Context, in refInput) (WriteResult, error) {
 			return planAndSubmit(ctx, api, "node.reboot", planTarget{Type: string(domain.ResourceNode), Ref: in.Ref})
 		})
-	actionTool(s, "infra_create_deployment",
-		"Create a deployment of a commit and image digests on an app target. It waits for CI and, where policy requires, approval.",
-		func(ctx context.Context, in createDeploymentInput) (WriteResult, error) {
-			target, err := domain.ParseID(in.AppTargetID)
-			if err != nil {
-				return WriteResult{}, invalidArgument("app_target_id is not a valid id")
-			}
-			deployment, err := api.CreateDeployment(ctx, wire.CreateDeploymentRequest{
-				AppTargetID: target,
-				Kind:        deployKind,
-				CommitSHA:   in.CommitSHA,
-				Images:      in.requestedImages(),
-			})
-			return deploymentResult(deployment), err
-		})
 	actionTool(s, "infra_expose_port",
 		"Publish a port of a node at a hostname through its Cloudflare Tunnel. Access defaults to public: reachable from the internet with no authentication, which is high risk; owners puts it behind Cloudflare Access. A request from an MCP client always waits for a person to approve it, and no route exists until then.",
 		func(ctx context.Context, in exposePortInput) (WriteResult, error) { return exposePort(ctx, api, in) })
@@ -59,24 +44,6 @@ func addWriteTools(s *sdk.Server, api API) {
 		"Remove the route of a hostname from a node. It removes the DNS record, then the ingress rule, then the Access app. A request from an MCP client always waits for a person to approve it.",
 		func(ctx context.Context, in unexposePortInput) (WriteResult, error) {
 			return unexposePort(ctx, api, in)
-		})
-	actionTool(s, "infra_rollback_deployment",
-		"Roll a deployment back to the newest known-good one, or to to_deployment_id. It waits for approval where policy requires.",
-		func(ctx context.Context, in rollbackInput) (WriteResult, error) {
-			from, err := domain.ParseID(in.DeploymentID)
-			if err != nil {
-				return WriteResult{}, invalidArgument("deployment_id is not a valid id")
-			}
-			to, err := optionalID("to_deployment_id", in.ToDeploymentID)
-			if err != nil {
-				return WriteResult{}, err
-			}
-			request := wire.RollbackRequest{}
-			if to != "" {
-				request.ToDeploymentID = &to
-			}
-			deployment, err := api.RollbackDeployment(ctx, from, request)
-			return deploymentResult(deployment), err
 		})
 }
 
@@ -104,39 +71,6 @@ type submitPlanInput struct {
 	PlanID   string `json:"plan_id" jsonschema:"plan_id returned by infra_plan_action"`
 	PlanHash string `json:"plan_hash" jsonschema:"plan_hash returned by infra_plan_action"`
 }
-
-type imageInput struct {
-	Service string `json:"service" jsonschema:"compose service name"`
-	Digest  string `json:"digest" jsonschema:"image digest, sha256:<64 hex>"`
-}
-
-type createDeploymentInput struct {
-	AppTargetID string       `json:"app_target_id" jsonschema:"app target id"`
-	CommitSHA   string       `json:"commit_sha" jsonschema:"commit to deploy"`
-	Images      []imageInput `json:"images" jsonschema:"image digest per compose service"`
-}
-
-func (in createDeploymentInput) requestedImages() []wire.RequestedImage {
-	images := make([]wire.RequestedImage, len(in.Images))
-	for i, image := range in.Images {
-		images[i] = wire.RequestedImage{Service: image.Service, Digest: image.Digest}
-	}
-	return images
-}
-
-type rollbackInput struct {
-	DeploymentID   string `json:"deployment_id" jsonschema:"deployment to roll back"`
-	ToDeploymentID string `json:"to_deployment_id,omitempty" jsonschema:"deployment to restore; default the newest known-good one"`
-}
-
-// Deployment values the results depend on (spec §20.1); the mcp package
-// does not import the deployment state machine.
-const (
-	deployKind            = "deploy"
-	stateCreated          = "created"
-	stateWaitingCI        = "waiting_ci"
-	stateAwaitingApproval = "awaiting_approval"
-)
 
 // ---- results ------------------------------------------------------------------
 
@@ -174,26 +108,5 @@ func submissionResult(s wire.Submission) WriteResult {
 		PlanHash: &s.Job.PlanHash,
 		Summary:  fmt.Sprintf("%s on %s %s: job %s", s.Job.Type, s.Job.Resource.Type, s.Job.Resource.ID, s.Job.State),
 		Risk:     string(s.Job.Risk),
-	}
-}
-
-// deploymentResult maps the deployment state at admission to a status. The
-// risk is the catalog's for deployments: a deployment has no plan until CI
-// has passed.
-func deploymentResult(d wire.Deployment) WriteResult {
-	status := WriteQueued
-	switch d.State {
-	case stateCreated, stateWaitingCI:
-		status = WriteWaitingCI
-	case stateAwaitingApproval:
-		status = WriteApprovalRequired
-	}
-	return WriteResult{
-		Status:       status,
-		JobID:        d.JobID,
-		DeploymentID: &d.ID,
-		PlanHash:     d.PlanHash,
-		Summary:      fmt.Sprintf("%s %s on app target %s: %s", d.Kind, d.CommitSHA, d.AppTargetID, d.State),
-		Risk:         string(domain.RiskOperational),
 	}
 }

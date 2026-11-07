@@ -36,9 +36,7 @@ type Config struct {
 	Auth     Auth     `yaml:"auth"`
 	SSH      SSH      `yaml:"ssh"`
 	Jobs     Jobs     `yaml:"jobs"`
-	Health   Health   `yaml:"health"`
 	Outbound Outbound `yaml:"outbound"`
-	GitHub   GitHub   `yaml:"github"`
 	MCP      MCP      `yaml:"mcp"`
 	// Cloudflare is nil when the block is absent: the feature is off.
 	Cloudflare   *Cloudflare   `yaml:"cloudflare"`
@@ -149,19 +147,8 @@ type Jobs struct {
 	RetryBase      time.Duration `yaml:"retry_base"`
 }
 
-type Health struct {
-	AllowedPrivateCIDRs []string `yaml:"allowed_private_cidrs"`
-}
-
 type Outbound struct {
 	Proxy string `yaml:"proxy"`
-}
-
-type GitHub struct {
-	OIDCAudience  string        `yaml:"oidc_audience"`
-	CIPollInitial time.Duration `yaml:"ci_poll_initial"`
-	CIPollMax     time.Duration `yaml:"ci_poll_max"`
-	CITimeout     time.Duration `yaml:"ci_timeout"`
 }
 
 type MCP struct {
@@ -257,11 +244,6 @@ func Defaults() Config {
 			Heartbeat:      15 * time.Second,
 			ReconcileGrace: 45 * time.Second,
 			RetryBase:      2 * time.Second,
-		},
-		GitHub: GitHub{
-			CIPollInitial: 15 * time.Second,
-			CIPollMax:     2 * time.Minute,
-			CITimeout:     2 * time.Hour,
 		},
 		MCP:    MCP{Enabled: true, OAuth: MCPOAuth{RequiredScopes: []string{"supermgmt:mcp"}}},
 		Backup: Backup{Retention: 14},

@@ -10,20 +10,17 @@ import (
 
 // Query parameter names.
 const (
-	QueryCursor        = "cursor"
-	QueryLimit         = "limit"
-	QueryFocus         = "focus"
-	QueryLines         = "lines"
-	QueryState         = "state"
-	QueryEnvironment   = "environment"
-	QueryTag           = "tag"
-	QueryReachability  = "reachability"
-	QueryResourceType  = "resource_type"
-	QueryResourceID    = "resource_id"
-	QueryAfterSeq      = "after_seq"
-	QueryAppID         = "app_id"
-	QueryAppTargetID   = "app_target_id"
-	QueryEnvironmentID = "environment_id"
+	QueryCursor       = "cursor"
+	QueryLimit        = "limit"
+	QueryFocus        = "focus"
+	QueryLines        = "lines"
+	QueryState        = "state"
+	QueryEnvironment  = "environment"
+	QueryTag          = "tag"
+	QueryReachability = "reachability"
+	QueryResourceType = "resource_type"
+	QueryResourceID   = "resource_id"
+	QueryAfterSeq     = "after_seq"
 )
 
 // Page sizes.
@@ -64,15 +61,6 @@ type EventQuery struct {
 	AfterSeq     int64
 }
 
-// DeploymentQuery filters GET /deployments. Empty fields do not filter.
-type DeploymentQuery struct {
-	PageQuery
-	AppID         domain.ID
-	AppTargetID   domain.ID
-	EnvironmentID domain.ID
-	State         string
-}
-
 // LogQuery is GET /services/{id}/logs. Lines 0 means DefaultLogLines.
 type LogQuery struct {
 	Lines int
@@ -106,15 +94,6 @@ func (q EventQuery) Values() url.Values {
 	setString(v, QueryResourceType, string(q.ResourceType))
 	setString(v, QueryResourceID, string(q.ResourceID))
 	setInt(v, QueryAfterSeq, q.AfterSeq)
-	return v
-}
-
-func (q DeploymentQuery) Values() url.Values {
-	v := q.PageQuery.Values()
-	setString(v, QueryAppID, string(q.AppID))
-	setString(v, QueryAppTargetID, string(q.AppTargetID))
-	setString(v, QueryEnvironmentID, string(q.EnvironmentID))
-	setString(v, QueryState, q.State)
 	return v
 }
 

@@ -64,6 +64,17 @@ func WithUnion(t reflect.Type, sel Selector) Option {
 	return func(w *walker) { w.unions[t] = sel }
 }
 
+// Retired recognises a mapping value or sequence item that an earlier version
+// accepted and this one ignores. It returns the warning to report and true;
+// the node is then dropped from the document before decoding.
+type Retired func(path string, n *yaml.Node) (warning string, ok bool)
+
+// WithRetired drops the nodes retired recognises instead of reporting them as
+// unknown, and appends one warning for each to *warnings.
+func WithRetired(retired Retired, warnings *[]string) Option {
+	return func(w *walker) { w.retired, w.warnings = retired, warnings }
+}
+
 var durationType = reflect.TypeFor[time.Duration]()
 
 // Decode decodes exactly one YAML document from r into v, a non-nil pointer.
@@ -119,6 +130,20 @@ func readSingleDocument(r io.Reader) (*yaml.Node, error) {
 type walker struct {
 	problems Problems
 	unions   map[reflect.Type]Selector
+	retired  Retired
+	warnings *[]string
+}
+
+// retire reports whether n is retired, recording its warning.
+func (w *walker) retire(path string, n *yaml.Node) bool {
+	if w.retired == nil {
+		return false
+	}
+	warning, ok := w.retired(path, n)
+	if ok {
+		*w.warnings = append(*w.warnings, warning)
+	}
+	return ok
 }
 
 func (w *walker) add(path string, n *yaml.Node, format string, args ...any) {
@@ -146,9 +171,16 @@ func (w *walker) walk(n *yaml.Node, t reflect.Type, path string) {
 	case t.Kind() == reflect.Struct && n.Kind == yaml.MappingNode:
 		w.walkStruct(n, t, path)
 	case t.Kind() == reflect.Slice && n.Kind == yaml.SequenceNode:
+		kept := n.Content[:0]
 		for i, item := range n.Content {
-			w.walk(item, t.Elem(), fmt.Sprintf("%s[%d]", path, i))
+			child := fmt.Sprintf("%s[%d]", path, i)
+			if w.retire(child, item) {
+				continue
+			}
+			w.walk(item, t.Elem(), child)
+			kept = append(kept, item)
 		}
+		n.Content = kept
 	}
 }
 
@@ -173,6 +205,8 @@ func (w *walker) walkUnion(n *yaml.Node, sel Selector, path string) {
 func (w *walker) walkStruct(n *yaml.Node, t reflect.Type, path string) {
 	fields := Fields(t)
 	seen := map[string]bool{}
+	kept := n.Content[:0]
+	defer func() { n.Content = kept }()
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i], n.Content[i+1]
 		child := JoinPath(path, key.Value)
@@ -185,6 +219,10 @@ func (w *walker) walkStruct(n *yaml.Node, t reflect.Type, path string) {
 			continue
 		}
 		seen[key.Value] = true
+		if w.retire(child, val) {
+			continue
+		}
+		kept = append(kept, key, val)
 		field, known := fields[key.Value]
 		if !known {
 			w.add(child, key, "unknown field")

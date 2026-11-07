@@ -43,24 +43,11 @@ func (r *Revalidator) Revalidate(ctx context.Context, q database.Querier, job jo
 	if rec.PlanHash != job.PlanHash {
 		return planStale()
 	}
-	current, err := r.rebuildCurrentPlan(ctx, q, rec, job)
+	current, err := r.rebuild(ctx, q, rec)
 	if err != nil {
 		return err
 	}
 	return r.requireRequesterMayRun(ctx, q, job, rec, current)
-}
-
-// rebuildCurrentPlan recomputes the plan from current state and refuses a
-// stale one. Deployment plans carry content frozen in snapshots, so each mode
-// of ADR-0007 rebuilds only what can have changed.
-func (r *Revalidator) rebuildCurrentPlan(ctx context.Context, q database.Querier, rec database.PlanRecord, job jobs.Job) (built, error) {
-	switch rec.Action {
-	case deploymentCreateAction:
-		return rebuildForwardDeployment(ctx, q, rec)
-	case deploymentRollbackAction:
-		return rebuildRollbackDeployment(ctx, q, rec, job)
-	}
-	return r.rebuild(ctx, q, rec)
 }
 
 // requireRequesterMayRun is the part of spec §20.4 that depends on who asked:

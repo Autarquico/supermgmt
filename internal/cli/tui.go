@@ -12,20 +12,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/tui"
 )
 
-// appsClient serves the TUI's optional Applications and Deployments screens,
-// which page through every deployment without the client's filters.
-type appsClient struct{ *client.Client }
-
-func (a appsClient) ListDeployments(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Deployment], error) {
-	return a.Client.ListDeployments(ctx, wire.DeploymentQuery{PageQuery: q})
-}
-
-var (
-	_ tui.API       = appsClient{}
-	_ tui.AppsAPI   = appsClient{}
-	_ tui.DeployAPI = appsClient{}
-)
-
 // daemonStartWait bounds the daemon autostart before the TUI takes the screen,
 // so a missing daemon is a plain error instead of an empty full-screen UI.
 const daemonStartWait = 10 * time.Second
@@ -64,7 +50,7 @@ func runTUI(cmd *cobra.Command, env []string) error {
 	if _, err := api.Me(ready); err != nil {
 		return err
 	}
-	return tui.Run(cmd.Context(), appsClient{api}, tuiOptions(api, where))
+	return tui.Run(cmd.Context(), api, tuiOptions(api, where))
 }
 
 // tuiOptions wires the TUI to its target. A local daemon is kept resident by

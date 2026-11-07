@@ -57,7 +57,7 @@ var (
 
 	propSubjects = []string{
 		"*", "type:human", "type:automation", "type:mcp",
-		"role:viewer", "role:operator", "role:deployer", "role:admin",
+		"role:viewer", "role:operator", "role:admin",
 		"identity:" + propActorIDs[0], "identity:" + propActorIDs[1],
 	}
 	propResources = []string{

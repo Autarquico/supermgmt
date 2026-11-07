@@ -292,8 +292,6 @@ func parseTools(lines []string) Tools {
 	var t Tools
 	flags := map[string]*bool{
 		"lazydocker": &t.Lazydocker, "btop": &t.Btop, "tmux": &t.Tmux,
-		"curl": &t.Curl, "bash": &t.Bash, "timeout": &t.Timeout, "flock": &t.Flock, "jq": &t.Jq,
-		"ss": &t.Ss, "sha256sum": &t.Sha256sum, "base64": &t.Base64, "df": &t.Df,
 	}
 	for _, name := range nonEmptyLines(lines) {
 		if flag, ok := flags[name]; ok {

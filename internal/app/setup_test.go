@@ -165,7 +165,7 @@ func TestSetupProvisionsVerifiesAndOnlyThenRecordsTheCapability(t *testing.T) {
 	}
 }
 
-func TestSetupV2CreatesDeployRootAndRequiresJQ(t *testing.T) {
+func TestSetupV2CreatesDeployRoot(t *testing.T) {
 	t.Run("deploy_root is created through sudo", func(t *testing.T) {
 		s := newSetting(t)
 		s.setupPlan(defaultSetup())
@@ -173,26 +173,8 @@ func TestSetupV2CreatesDeployRootAndRequiresJQ(t *testing.T) {
 		mustf(t, s.run(), "setup")
 
 		admin := s.dialer.as("admin")
-		if admin.count("setup.deploy_root.sudo") != 1 || admin.count("setup.deploy_root") != 0 || admin.count("setup.jq_path") != 1 {
+		if admin.count("setup.deploy_root.sudo") != 1 || admin.count("setup.deploy_root") != 0 {
 			t.Errorf("admin ran %v", admin.ran())
-		}
-	})
-	t.Run("a node without jq is refused before anything changes", func(t *testing.T) {
-		s := newSetting(t)
-		s.dialer.as("admin").exit("setup.jq_path", 1)
-		s.setupPlan(defaultSetup())
-
-		err := s.run()
-
-		wantError(t, err, smerr.CodeCapabilityUnavailable, "")
-		if !strings.Contains(err.Error(), "jq is required") {
-			t.Errorf("error = %v", err)
-		}
-		if got := s.dialer.as("admin").count("setup.user_add.sudo"); got != 0 {
-			t.Errorf("%d privileged steps ran on a node without jq", got)
-		}
-		if _, ok := s.setupCapability(); ok {
-			t.Error("capability recorded for a node without jq")
 		}
 	})
 	t.Run("a deploy_root that cannot be created fails the setup", func(t *testing.T) {

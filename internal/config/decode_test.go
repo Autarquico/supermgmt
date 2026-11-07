@@ -10,7 +10,7 @@ import (
 
 func decodeConfig(doc string) (Config, error) {
 	cfg := Defaults()
-	err := DecodeStrict(strings.NewReader(doc), &cfg)
+	_, err := DecodeStrict(strings.NewReader(doc), &cfg)
 	return cfg, err
 }
 
@@ -115,7 +115,7 @@ func TestDecodeStrictProviderBranchesKeepTheirDefaults(t *testing.T) {
 }
 
 func TestDecodeStrictRequiresPointerTarget(t *testing.T) {
-	if err := DecodeStrict(strings.NewReader("version: 1\n"), Config{}); err == nil {
+	if _, err := DecodeStrict(strings.NewReader("version: 1\n"), Config{}); err == nil {
 		t.Fatal("want error for non-pointer target")
 	}
 }

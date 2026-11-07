@@ -4,7 +4,6 @@ policy: <tmp>/policy.yaml: valid (1 rules)
     + added rule "ops-read"
     - removed rule "builtin-read"
     - removed rule "builtin-operator"
-    - removed rule "builtin-deployer"
     - removed rule "builtin-approver"
     - removed rule "builtin-admin"
     - removed rule "builtin-mcp-read"

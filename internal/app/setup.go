@@ -231,9 +231,6 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	if err != nil {
 		return systemd.SetupOutcome{}, err
 	}
-	if err := requireJQ(ctx, admin); err != nil {
-		return systemd.SetupOutcome{}, err
-	}
 	h.sessionEvent(ctx, lease, job, node, "start", asRoot, nil)
 	outcome, err := systemd.Setup(ctx, admin, systemd.SetupParams{
 		User: node.Endpoint.User, InstanceID: instance.ID.String(), AuthorizedKey: id.AuthorizedKey,
@@ -259,23 +256,6 @@ func requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool
 	}
 	if !asRoot && !snapshot.PasswordlessSudo {
 		return smerr.New(smerr.CodeCapabilityUnavailable, "", bootstrapRequirement)
-	}
-	return nil
-}
-
-// requireJQ refuses a node without jq before anything changes: the
-// resolved-environment check of deployments needs it (ADR-0010, ADR-0030).
-func requireJQ(ctx context.Context, ex transport.Executor) error {
-	c, err := templates.Render("setup.jq_path", nil)
-	if err != nil {
-		return err
-	}
-	res, err := ex.Run(ctx, c)
-	if err != nil {
-		return err
-	}
-	if res.ExitStatus != 0 {
-		return smerr.New(smerr.CodeCapabilityUnavailable, "", "jq is required on the node for deployments; install it and run setup again")
 	}
 	return nil
 }

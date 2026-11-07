@@ -5,8 +5,7 @@
 //
 // The catalog is assembled from one slice per file: probe.go and marker.go
 // (reads), systemd.go and docker.go (runtime actions), setup.go (node.setup
-// steps, ADR-0009 f), and the deployment groups of M4 (ADR-0029):
-// compose_stage.go, compose_run.go and health.go, and proxmox.go (the API relay).
+// steps, ADR-0009 f) and proxmox.go (the API relay).
 package templates
 
 import (
@@ -49,20 +48,16 @@ type Param struct {
 //     render only through RenderMutatingInput with non-empty stdin.
 //   - SecretOutput templates (setup) print a secret on stdout; executors hand
 //     back that stdout on success only and never the stderr (see Command).
-//   - Locked templates (mutating) run under the node-side project flock; they
-//     render only through RenderMutatingInput with the project name.
 //
 // MaxBytes (required) and MaxLines (0 = unlimited) bound what is read back.
 type Template struct {
-	Name     string
-	Body     string
-	Params   []Param
-	Mutating bool
-	Sudo     bool
-	Setup    bool
-	// Sensitive and Locked are described above.
+	Name         string
+	Body         string
+	Params       []Param
+	Mutating     bool
+	Sudo         bool
+	Setup        bool
 	Sensitive    bool
-	Locked       bool
 	SecretOutput bool
 	Deadline     time.Duration
 	MaxBytes     int
@@ -120,15 +115,13 @@ func RenderMutating(name, marker string, args map[string]string) (Command, error
 }
 
 // RenderMutatingInput renders a mutating template that takes stdin (Sensitive
-// templates: stdin required) and/or runs under the node-side project flock
-// (Locked templates: flockProject required). The flock wraps the whole marker
-// command, so the lock is held from the marker's creation to its .done.
-func RenderMutatingInput(name, marker string, args map[string]string, stdin []byte, flockProject string) (Command, error) {
+// templates: stdin required).
+func RenderMutatingInput(name, marker string, args map[string]string, stdin []byte) (Command, error) {
 	r, err := catalog()
 	if err != nil {
 		return Command{}, err
 	}
-	return r.renderMutatingInput(name, marker, args, stdin, flockProject)
+	return r.renderMutatingInput(name, marker, args, stdin)
 }
 
 // RenderSetup renders a node.setup step. stdin is passed through untouched.
@@ -158,7 +151,7 @@ func Templates() ([]Template, error) {
 var catalog = sync.OnceValues(func() (registry, error) {
 	return newRegistry(
 		probeTemplates, markerTemplates, systemdTemplates, dockerTemplates, setupTemplates,
-		composeStageTemplates, composeRunTemplates, healthTemplates, proxmoxTemplates,
+		proxmoxTemplates,
 	)
 })
 
@@ -193,8 +186,8 @@ func (t Template) check() error {
 		problem = "empty name"
 	case t.Mutating && t.Setup:
 		problem = "a template is either mutating or setup"
-	case (t.Sensitive || t.Locked) && !t.Mutating:
-		problem = "only a mutating template can be sensitive or locked"
+	case t.Sensitive && !t.Mutating:
+		problem = "only a mutating template can be sensitive"
 	case t.SecretOutput && !t.Setup:
 		problem = "only a setup template can have secret output"
 	case t.Mutating && t.Deadline <= 0:
@@ -250,10 +243,10 @@ func (r registry) render(name string, args map[string]string) (Command, error) {
 }
 
 func (r registry) renderMutating(name, marker string, args map[string]string) (Command, error) {
-	return r.renderMutatingInput(name, marker, args, nil, "")
+	return r.renderMutatingInput(name, marker, args, nil)
 }
 
-func (r registry) renderMutatingInput(name, marker string, args map[string]string, stdin []byte, flockProject string) (Command, error) {
+func (r registry) renderMutatingInput(name, marker string, args map[string]string, stdin []byte) (Command, error) {
 	t, err := r.lookup(name)
 	if err != nil {
 		return Command{}, err
@@ -264,7 +257,7 @@ func (r registry) renderMutatingInput(name, marker string, args map[string]strin
 	if !markerPattern.MatchString(marker) {
 		return Command{}, renderError(name, "invalid marker")
 	}
-	if err := t.checkInputs(stdin, flockProject); err != nil {
+	if err := t.checkInput(stdin); err != nil {
 		return Command{}, err
 	}
 	c, err := t.bind(args)
@@ -272,23 +265,14 @@ func (r registry) renderMutatingInput(name, marker string, args map[string]strin
 		return Command{}, err
 	}
 	c.Line = wrapMutating(c.Line, marker, t.Deadline)
-	if t.Locked {
-		c.Line = underFlock(flockProject, c.Line)
-	}
 	c.Stdin, c.Sensitive = stdin, t.Sensitive
 	return c, nil
 }
 
-// checkInputs requires stdin exactly when the template is Sensitive and a
-// project exactly when it is Locked.
-func (t Template) checkInputs(stdin []byte, flockProject string) error {
-	switch {
-	case t.Sensitive != (len(stdin) > 0):
+// checkInput requires stdin exactly when the template is Sensitive.
+func (t Template) checkInput(stdin []byte) error {
+	if t.Sensitive != (len(stdin) > 0) {
 		return renderError(t.Name, "stdin is required by sensitive templates and refused by the others")
-	case t.Locked != (flockProject != ""):
-		return renderError(t.Name, "a project is required by locked templates and refused by the others")
-	case t.Locked && !projectPattern.MatchString(flockProject):
-		return renderError(t.Name, "invalid project")
 	}
 	return nil
 }
@@ -375,24 +359,6 @@ func wrapMutating(line, marker string, deadline time.Duration) string {
 	return fmt.Sprintf(
 		`: > %[1]s && { timeout --kill-after=%[2]s %[3]s %[4]s; rc=$?; printf '%%d\n' "$rc" > %[1]s.done.tmp && mv -f %[1]s.done.tmp %[1]s.done; exit "$rc"; }`,
 		m, seconds(KillAfter), seconds(deadline), line)
-}
-
-// LockDir is the node-side directory of project locks; node.setup's tmpfiles
-// entry creates it (ADR-0030).
-const LockDir = "/run/supermgmt/locks"
-
-// LockConflictExit is the exit status of a Locked command that found the
-// project lock held and therefore never started.
-const LockConflictExit = 75
-
-// LockPath is the flock file of a Compose project.
-func LockPath(project string) string { return LockDir + "/" + project + ".lock" }
-
-// underFlock runs the marker command line holding the project lock, failing
-// at once with LockConflictExit when the lock is taken (spec §20.4).
-func underFlock(project, markerLine string) string {
-	return fmt.Sprintf("flock --nonblock --conflict-exit-code %d %s sh -c %s",
-		LockConflictExit, Quote(LockPath(project)), Quote(markerLine))
 }
 
 // seconds formats d for timeout(1), rounding up to whole seconds.

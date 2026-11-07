@@ -28,10 +28,6 @@ type HandlersOptions struct {
 	Proxmox            *ProxmoxSync
 	ProxmoxHTTPTimeout time.Duration
 
-	// Apps lets the control_plane.apply job apply approved app, app target and
-	// GitHub provider writes; without it those jobs fail loudly.
-	Apps *Apps
-
 	// Secrets is the secret store node.setup --proxmox keeps the PVE token in;
 	// without it that option is refused.
 	Secrets TunnelSecrets
@@ -39,10 +35,6 @@ type HandlersOptions struct {
 	// Tunnel enables node.setup with tunnel=true; nil (no cloudflare: block)
 	// refuses it.
 	Tunnel *TunnelOptions
-
-	// Deploy enables deployment.create, and deployment.rollback; without it the
-	// types have no handler.
-	Deploy *DeployOptions
 
 	// Enrollments runs the node.add jobs of a tunnel enrollment (ADR-0039); nil
 	// leaves such a job to fail loudly.
@@ -59,7 +51,6 @@ type Handlers struct {
 	action  actionHandler
 	apply   applyHandler
 	power   *proxmoxPowerHandler // nil unless Proxmox is configured
-	deploy  *deployHandler       // nil unless deployments are configured
 }
 
 // NewHandlers validates the options.
@@ -89,7 +80,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
 		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober, tunnel: tunnel, secrets: o.Secrets},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
-		apply:  applyHandler{inv: o.Inventory, apps: o.Apps, enrollments: o.Enrollments},
+		apply:  applyHandler{inv: o.Inventory, enrollments: o.Enrollments},
 	}
 	if tunnel != nil {
 		h.disable = &tunnelDisableHandler{core: c, store: o.Store, conn: o.Connector, prober: o.Prober, tunnel: tunnel}
@@ -100,11 +91,6 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		h.power = &proxmoxPowerHandler{
 			core: c, store: o.Store, sync: o.Proxmox, settle: o.Settle.withDefaults(),
 			httpTimeout: orDefaultDuration(o.ProxmoxHTTPTimeout, proxmox.DefaultTimeout),
-		}
-	}
-	if o.Deploy != nil {
-		if h.deploy, err = newDeployHandler(c, o.Store, o.Connector, *o.Deploy); err != nil {
-			return nil, err
 		}
 	}
 	return h, nil
@@ -126,10 +112,6 @@ func (h *Handlers) Map() map[string]jobs.Handler {
 	}
 	if h.power != nil {
 		table[policy.ActionProxmoxVMPower] = h.power
-	}
-	if h.deploy != nil {
-		table[deploymentCreateAction] = h.deploy
-		table[deploymentRollbackAction] = h.deploy
 	}
 	return table
 }

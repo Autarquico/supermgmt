@@ -38,7 +38,6 @@ func (c *Config) Validate() error {
 	v.positiveInts()
 	v.ssh()
 	v.jobs()
-	v.cidrs("health.allowed_private_cidrs", c.Health.AllowedPrivateCIDRs)
 	v.oidc()
 	v.mcp()
 	v.cloudflare()
@@ -131,14 +130,6 @@ func validIPOrCIDR(s string) bool {
 	}
 	_, err := netip.ParseAddr(s)
 	return err == nil
-}
-
-func (v *validator) cidrs(yamlPath string, values []string) {
-	for i, s := range values {
-		if _, err := netip.ParsePrefix(s); err != nil {
-			v.add(fmt.Sprintf("%s[%d]", yamlPath, i), "not a CIDR: %q", s)
-		}
-	}
 }
 
 // positiveDurations requires every duration in the config to be > 0.
@@ -332,8 +323,6 @@ func (v *validator) providers() {
 		}
 		names[p.Name()] = true
 		switch {
-		case p.GitHub != nil:
-			v.githubProvider(*p.GitHub, at)
 		case p.Proxmox != nil:
 			v.proxmox(*p.Proxmox, at)
 		case p.SSH != nil:

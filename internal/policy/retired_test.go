@@ -14,11 +14,8 @@ func parseWarnings(t *testing.T, rules ...string) (*Policy, []Warning, error) {
 	return ParseWithWarnings([]byte("version: 1\nrules:\n  - " + strings.Join(rules, "\n  - ") + "\n"))
 }
 
-func writeTarget() Request {
-	return Request{
-		Actor: human(), Action: "app_target.write",
-		Targets: []Target{target(domain.ResourceAppTarget, "t", stagingAttrs)},
-	}
+func nodeRequest(action string) Request {
+	return Request{Actor: human(), Action: action, Targets: []Target{nodeT(stagingAttrs)}}
 }
 
 func TestRetiredExactNameLoadsWithWarningAndGrantsNothing(t *testing.T) {
@@ -61,8 +58,8 @@ func TestRetiredOnlyWildcardIsDropped(t *testing.T) {
 func TestRetiredMixedWithLiveKeepsLiveOnAllowAndDeny(t *testing.T) {
 	p, warnings, err := parseWarnings(t,
 		`{name: first, subjects: ['*'], allow: ['app_target.move']}`,
-		`{name: wide, subjects: ['*'], allow: ['app_target.*']}`,
-		`{name: stop, subjects: ['*'], deny: ['app_target.cleanup_source', 'app_target.write']}`,
+		`{name: wide, subjects: ['*'], allow: ['*.read']}`,
+		`{name: stop, subjects: ['*'], deny: ['app_target.cleanup_source', 'node.remove']}`,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -75,25 +72,24 @@ func TestRetiredMixedWithLiveKeepsLiveOnAllowAndDeny(t *testing.T) {
 		t.Errorf("warned actions = %v", actions)
 	}
 	rules := p.Rules()
-	if len(rules[0].Allow) != 0 || !reflect.DeepEqual(rules[1].Allow, []string{"app_target.*"}) || !reflect.DeepEqual(rules[2].Deny, []string{"app_target.write"}) {
+	if len(rules[0].Allow) != 0 || !reflect.DeepEqual(rules[1].Allow, []string{"*.read"}) || !reflect.DeepEqual(rules[2].Deny, []string{"node.remove"}) {
 		t.Errorf("rules = %+v", rules)
 	}
-	read := Request{Actor: human(), Action: "app_target.read", Targets: []Target{target(domain.ResourceAppTarget, "t", stagingAttrs)}}
-	if got := p.Evaluate(read); got.Decision != DecisionAllow {
-		t.Errorf("app_target.read = %s, want allow", got.Decision)
+	if got := p.Evaluate(nodeRequest("node.read")); got.Decision != DecisionAllow {
+		t.Errorf("node.read = %s, want allow", got.Decision)
 	}
-	if got := p.Evaluate(writeTarget()); got.Decision != DecisionDeny {
-		t.Errorf("app_target.write = %s, want the live deny preserved", got.Decision)
+	if got := p.Evaluate(nodeRequest("node.remove")); got.Decision != DecisionDeny {
+		t.Errorf("node.remove = %s, want the live deny preserved", got.Decision)
 	}
 }
 
 func TestRetiredAllowAndDenyInOneRuleAreFilteredIndependently(t *testing.T) {
-	p, _, err := parseWarnings(t, `{name: r, subjects: ['*'], allow: ['app_target.move', 'app_target.read'], deny: ['app_target.abandon_move', 'app_target.write']}`)
+	p, _, err := parseWarnings(t, `{name: r, subjects: ['*'], allow: ['app_target.move', 'node.read'], deny: ['app_target.abandon_move', 'node.remove']}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := p.Rules()[0]
-	if !reflect.DeepEqual(r.Allow, []string{"app_target.read"}) || !reflect.DeepEqual(r.Deny, []string{"app_target.write"}) {
+	if !reflect.DeepEqual(r.Allow, []string{"node.read"}) || !reflect.DeepEqual(r.Deny, []string{"node.remove"}) {
 		t.Errorf("rule = %+v", r)
 	}
 }
@@ -453,5 +449,48 @@ func TestRetiredRouteWildcardDenyUnscopedNeedsNoSyntheticRule(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %+v, want none", warnings)
+	}
+}
+
+func TestRetiredDeploymentAndAppActionsLoadWithOneWarningEachAndGrantNothing(t *testing.T) {
+	retired := []string{"app.read", "app.write", "app_target.read", "app_target.write", "deployment.create", "deployment.read", "deployment.rollback"}
+	quoted := "'" + strings.Join(retired, "', '") + "'"
+	p, warnings, err := parseWarnings(t, `{name: deployer, subjects: ['role:deployer'], allow: [`+quoted+`]}`, `{name: live, subjects: ['*'], allow: ['*.read']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, w := range warnings {
+		got = append(got, w.Action)
+		if w.Replacement != "" {
+			t.Errorf("%s names replacement %q, want none", w.Action, w.Replacement)
+		}
+	}
+	if !slices.Equal(got, retired) {
+		t.Errorf("warned actions = %v, want %v", got, retired)
+	}
+	if allow := p.Rules()[0].Allow; len(allow) != 0 {
+		t.Errorf("allow = %v, want none", allow)
+	}
+	if res := p.Evaluate(nodeRequest("node.read")); res.Decision != DecisionAllow {
+		t.Errorf("a wildcard live action = %s, want allow", res.Decision)
+	}
+}
+
+func TestDefaultPolicyGrantsAdminTheBackupTemplate(t *testing.T) {
+	p, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := Request{
+		Actor: human("admin"), Action: "node.probe", Targets: []Target{nodeT(stagingAttrs, "node.read")},
+		SubActions: []SubAction{{Action: ActionNodeBackupTemplateRun, Target: nodeT(stagingAttrs, "node.exec.template")}},
+	}
+	if res := p.Evaluate(admin); res.Decision != DecisionAllow {
+		t.Errorf("admin node.backup_template.run = %s, want allow", res.Decision)
+	}
+	admin.Actor = human("operator")
+	if res := p.Evaluate(admin); res.Decision != DecisionDeny {
+		t.Errorf("operator node.backup_template.run = %s, want deny", res.Decision)
 	}
 }

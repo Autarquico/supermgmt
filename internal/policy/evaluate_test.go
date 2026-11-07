@@ -250,9 +250,9 @@ func TestEvaluate_Step6_DestructiveGate(t *testing.T) {
 			DecisionAllow, "", true, 1,
 		},
 		{
-			"step6/destructive_sub_action_is_gated", pol(t, `{name: r, subjects: ['*'], allow: ['deployment.create', 'proxmox.snapshot.delete']}`),
+			"step6/destructive_sub_action_is_gated", pol(t, `{name: r, subjects: ['*'], allow: ['service.restart', 'proxmox.snapshot.delete']}`),
 			Request{
-				Actor: human(), Action: "deployment.create", Targets: []Target{target(domain.ResourceAppTarget, "t", Attributes{}, "docker.compose.deploy")},
+				Actor: human(), Action: "service.restart", Targets: []Target{target(domain.ResourceService, "t", Attributes{}, "service.restart")},
 				SubActions: []SubAction{{Action: "proxmox.snapshot.delete", Target: nodeT(Attributes{}, "proxmox.snapshot.create")}},
 			},
 			DecisionDeny, smerr.ReasonDestructiveGate, false, 0,
@@ -275,7 +275,7 @@ func TestEvaluate_Step7_CredentialScopes(t *testing.T) {
 		{
 			"step7/scope_checked_for_sub_actions_too", pol(t, allowAll),
 			Request{
-				Actor: scoped(human(), "deployment.create"), Action: "deployment.create", Targets: []Target{target(domain.ResourceAppTarget, "t", Attributes{}, "docker.compose.deploy")},
+				Actor: scoped(human(), "service.restart"), Action: "service.restart", Targets: []Target{target(domain.ResourceService, "t", Attributes{}, "service.restart")},
 				SubActions: []SubAction{{Action: ActionSnapshotCreate, Target: nodeT(Attributes{}, "proxmox.snapshot.create")}},
 			},
 			DecisionDeny, smerr.ReasonScopeDenied, false, 0,
@@ -403,27 +403,27 @@ func TestEvaluate_Step8_CredentialIssuingIsNeverApprovalGated(t *testing.T) {
 }
 
 func TestEvaluate_Step9_CompositePlans(t *testing.T) {
-	deploy := target(domain.ResourceAppTarget, "t", stagingAttrs, "docker.compose.deploy")
+	main := target(domain.ResourceService, "t", stagingAttrs, "service.restart")
 	snapshot := SubAction{Action: ActionSnapshotCreate, Target: nodeT(stagingAttrs, "proxmox.snapshot.create")}
 	template := SubAction{Action: ActionNodeBackupTemplateRun, Target: nodeT(stagingAttrs, "node.exec.template")}
 	plan := func(a domain.Actor, subs ...SubAction) Request {
-		return Request{Actor: a, Action: "deployment.create", Targets: []Target{deploy}, SubActions: subs}
+		return Request{Actor: a, Action: "service.restart", Targets: []Target{main}, SubActions: subs}
 	}
-	const deployRule = `{name: d, subjects: ['*'], allow: ['deployment.create']}`
+	const mainRule = `{name: d, subjects: ['*'], allow: ['service.restart']}`
 	runEvalCases(t, []evalCase{
-		{"step9/main_only", pol(t, deployRule), plan(human()), DecisionAllow, "", false, 1},
-		{"step9/all_allowed", pol(t, deployRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create', 'node.backup_template.run']}`), plan(human(), snapshot, template), DecisionAllow, "", false, 1},
-		{"step9/one_sub_action_denied_denies_the_plan", pol(t, deployRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create']}`), plan(human(), snapshot, template), DecisionDeny, smerr.ReasonDefaultDeny, false, 0},
+		{"step9/main_only", pol(t, mainRule), plan(human()), DecisionAllow, "", false, 1},
+		{"step9/all_allowed", pol(t, mainRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create', 'node.backup_template.run']}`), plan(human(), snapshot, template), DecisionAllow, "", false, 1},
+		{"step9/one_sub_action_denied_denies_the_plan", pol(t, mainRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create']}`), plan(human(), snapshot, template), DecisionDeny, smerr.ReasonDefaultDeny, false, 0},
 		{"step9/explicit_deny_on_sub_action_denies_the_plan", pol(t, allowAll, `{name: x, subjects: ['*'], deny: ['proxmox.snapshot.create']}`), plan(human(), snapshot), DecisionDeny, smerr.ReasonDenyRule, false, 0},
 		{"step9/main_denied_while_sub_actions_allowed", pol(t, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create']}`), plan(human(), snapshot), DecisionDeny, smerr.ReasonDefaultDeny, false, 0},
 		{"step9/sub_action_capability_missing", pol(t, allowAll), plan(human(), SubAction{Action: ActionSnapshotCreate, Target: nodeT(stagingAttrs)}), DecisionCapabilityUnavailable, "", false, 0},
-		{"step9/approval_is_OR_over_sub_actions", pol(t, deployRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create'], require_approval: true}`), plan(human(), snapshot), DecisionAllow, "", true, 1},
+		{"step9/approval_is_OR_over_sub_actions", pol(t, mainRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create'], require_approval: true}`), plan(human(), snapshot), DecisionAllow, "", true, 1},
 		{
-			"step9/approval_from_sub_action_target_in_production", pol(t, deployRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create']}`),
+			"step9/approval_from_sub_action_target_in_production", pol(t, mainRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create']}`),
 			plan(human(), SubAction{Action: ActionSnapshotCreate, Target: nodeT(prodAttrs, "proxmox.snapshot.create")}), DecisionAllow, "", true, 1,
 		},
 		{
-			"step9/quorum_is_max_over_sub_actions", pol(t, deployRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create'], approvals: 3}`, `{name: t, subjects: ['*'], allow: ['node.backup_template.run'], approvals: 2}`),
+			"step9/quorum_is_max_over_sub_actions", pol(t, mainRule, `{name: s, subjects: ['*'], allow: ['proxmox.snapshot.create'], approvals: 3}`, `{name: t, subjects: ['*'], allow: ['node.backup_template.run'], approvals: 2}`),
 			plan(human(), snapshot, template), DecisionAllow, "", false, 3,
 		},
 		{

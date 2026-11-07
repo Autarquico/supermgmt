@@ -62,13 +62,12 @@ func TestLoadSelfApprovalDefaultFollowsMode(t *testing.T) {
 func TestLoadServerDefaults(t *testing.T) {
 	c := mustLoad(t, serverDoc+"server:\n  public_url: https://mgmt.example.com\n").Config
 	checks := map[string][2]string{
-		"data_dir":      {c.Instance.DataDir, "/var/lib/supermgmt"},
-		"sqlite path":   {c.Storage.SQLite.Path, "/var/lib/supermgmt/supermgmt.db"},
-		"keys_dir":      {c.Security.KeysDir, "/var/lib/supermgmt/secrets/keys"},
-		"known_hosts":   {c.SSH.KnownHostsFile, "/var/lib/supermgmt/known_hosts"},
-		"backups":       {c.Backup.Directory, "/var/lib/supermgmt/backups"},
-		"backup cron":   {c.Backup.Schedule, "0 3 * * *"},
-		"oidc audience": {c.GitHub.OIDCAudience, "https://mgmt.example.com"},
+		"data_dir":    {c.Instance.DataDir, "/var/lib/supermgmt"},
+		"sqlite path": {c.Storage.SQLite.Path, "/var/lib/supermgmt/supermgmt.db"},
+		"keys_dir":    {c.Security.KeysDir, "/var/lib/supermgmt/secrets/keys"},
+		"known_hosts": {c.SSH.KnownHostsFile, "/var/lib/supermgmt/known_hosts"},
+		"backups":     {c.Backup.Directory, "/var/lib/supermgmt/backups"},
+		"backup cron": {c.Backup.Schedule, "0 3 * * *"},
 	}
 	for name, v := range checks {
 		if v[0] != v[1] {
@@ -212,5 +211,49 @@ func TestTheNoAutostartSwitchIsNotAnUnknownVariable(t *testing.T) {
 	res, err := LoadBytes([]byte("version: 1\ninstance:\n  mode: local\n"), []string{"HOME=/home/u", "SUPERMGMT_NO_AUTOSTART=1"})
 	if err != nil || len(res.Warnings) != 0 {
 		t.Errorf("warnings %v, err %v", res.Warnings, err)
+	}
+}
+
+func TestLoadIgnoresRetiredBlocksAndProvidersWithOneWarningEach(t *testing.T) {
+	doc := localDoc + `github:
+  oidc_audience: ""
+health:
+  allowed_private_cidrs: []
+providers:
+  - type: github
+    name: gh
+    credential_ref: secret://providers/gh/token
+  - type: ssh
+    name: kept
+    endpoint: {host: h, admin_user: root}
+  - type: github
+    name: gh2
+`
+	res := mustLoad(t, doc)
+	want := []string{
+		"config block github: was retired by ADR-0043 and is ignored; remove it",
+		"config block health: was retired by ADR-0043 and is ignored; remove it",
+		"providers[0]: provider of type github was retired by ADR-0043 and is ignored; remove it",
+		"providers[2]: provider of type github was retired by ADR-0043 and is ignored; remove it",
+	}
+	if !slices.Equal(res.Warnings, want) {
+		t.Errorf("warnings = %q, want %q", res.Warnings, want)
+	}
+	if got := res.Config.Providers; len(got) != 1 || got[0].Name() != "kept" {
+		t.Errorf("providers = %+v, want only the ssh provider", got)
+	}
+}
+
+func TestLoadStillRejectsAMisspeltKeyBesideRetiredOnes(t *testing.T) {
+	_, err := load(t, localDoc+"github: {}\nhealh: {}\n")
+	if err == nil || !strings.Contains(err.Error(), "healh") {
+		t.Fatalf("err = %v, want unknown field healh", err)
+	}
+}
+
+func TestLoadStillRejectsAMisspeltKeyInsideAProvider(t *testing.T) {
+	_, err := load(t, localDoc+"providers:\n  - type: ssh\n    name: n\n    endpoint: {host: h, prot: 22}\n")
+	if err == nil || !strings.Contains(err.Error(), "providers[0].endpoint.prot") {
+		t.Fatalf("err = %v", err)
 	}
 }

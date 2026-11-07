@@ -42,15 +42,9 @@ type Target struct {
 	SpecRevision *int64 `json:"spec_revision"`
 }
 
-// Deployment input types (App. C). Repository and health_check are plan-only
-// types, not domain.ResourceType values; a secret input carries a version
-// instead of a spec revision. Like every plan input they are locked shared
-// (§20.5; ADR-0029).
-const (
-	InputTypeRepository  = "repository"
-	InputTypeHealthCheck = "health_check"
-	InputTypeSecret      = string(domain.ResourceSecret)
-)
+// InputTypeSecret is the type of a secret input, which carries a version instead of a spec revision. Like every
+// plan input it is locked shared (§20.5).
+const InputTypeSecret = string(domain.ResourceSecret)
 
 // Input is a configured resource the execution reads. Which optional fields
 // apply depends on Type (a secret has Version, a node has Endpoint and a host

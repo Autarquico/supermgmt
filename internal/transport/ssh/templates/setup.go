@@ -15,6 +15,7 @@ const (
 	HomeDir            = "/var/lib/supermgmt"
 	SSHDir             = HomeDir + "/.ssh"
 	AuthorizedKeysPath = SSHDir + "/authorized_keys"
+	BackupDir          = HomeDir + "/db-backups"
 	SudoersPath        = "/etc/sudoers.d/supermgmt"
 	TmpfilesPath       = "/etc/tmpfiles.d/supermgmt.conf"
 	BrokerDir          = "/usr/local/libexec/supermgmt"
@@ -255,7 +256,6 @@ var setupReads = []Template{
 	{Name: "setup.group_entry", Params: []Param{paramPlatGroup}, Body: "getent group {{group}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.user_groups", Params: []Param{paramUser}, Body: "id -nG {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.user_primary_group", Params: []Param{paramUser}, Body: "id -gn {{user}}", MaxBytes: 4 << 10, MaxLines: 5},
-	{Name: "setup.jq_path", Body: "command -v jq", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.systemctl_path", Body: "command -v systemctl", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.verify_groups", Body: "id -nG", MaxBytes: 4 << 10, MaxLines: 5},
 	{Name: "setup.verify_id", Body: "id -un", MaxBytes: 1 << 10, MaxLines: 2},

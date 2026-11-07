@@ -55,7 +55,7 @@ func TestMigration000013RebuildsAppRoutesAsNodeRoutes(t *testing.T) {
 		routeAt12("dup", 8001, "removed", "NULL", "dns-d", ""), // a removed route does not hold its port
 	)
 
-	if err := db.Migrate(ctx); err != nil {
+	if err := MigrateUpTo(ctx, db, 13); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	r := db.Reader()
@@ -96,7 +96,7 @@ func TestMigration000013RefusesTwoLiveRoutesOnOnePort(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db := nodeRoutesWorld(t, routeAt12("one", 8001, "active", "NULL", "dns-1", ""), second)
 			before := dump(t, db.Reader(), `SELECT type, name, sql FROM sqlite_master ORDER BY type, name`) + dump(t, db.Reader(), `SELECT * FROM app_routes ORDER BY id`)
-			err := db.Migrate(context.Background())
+			err := MigrateUpTo(context.Background(), db, 13)
 			if err == nil || !strings.Contains(err.Error(), "unexpose one of them with the previous SuperMgmt version") {
 				t.Fatalf("Migrate: err = %v, want the guidance", err)
 			}
@@ -139,7 +139,7 @@ func TestMigration000013RefusesOpenRouteJobs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db := nodeRoutesWorld(t, append([]string{routeAt12("one", 8001, "active", "NULL", "dns-1", "")}, setup...)...)
 			before := routesStateOf(t, db)
-			err := db.Migrate(context.Background())
+			err := MigrateUpTo(context.Background(), db, 13)
 			if err == nil || !strings.Contains(err.Error(), routeJobGuidance) {
 				t.Fatalf("Migrate: err = %v, want the guidance", err)
 			}
@@ -160,7 +160,7 @@ func TestMigration000013TerminalRouteJobsMigrate(t *testing.T) {
 	}
 	setup = append(setup, routeJobAt12("job-q", "app_target.deploy", "queued")...) // an open job of another plan action is not this guard's business
 	db := nodeRoutesWorld(t, setup...)
-	if err := db.Migrate(context.Background()); err != nil {
+	if err := MigrateUpTo(context.Background(), db, 13); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	if n := scalar[int](t, db.Reader(), `SELECT max(version) FROM schema_migrations`); n != 13 {
@@ -176,7 +176,7 @@ func TestMigration000013WaitingRoutesDoNotBlockOnPort(t *testing.T) {
 		routeAt12("one", 8001, "active", "NULL", "dns-1", ""),
 		routeAt12("two", 8001, "waiting", "NULL", "", ""),
 	)
-	if err := db.Migrate(context.Background()); err != nil {
+	if err := MigrateUpTo(context.Background(), db, 13); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 }
@@ -184,7 +184,7 @@ func TestMigration000013WaitingRoutesDoNotBlockOnPort(t *testing.T) {
 func TestNodeRoutesTriggersAndIndexes(t *testing.T) {
 	ctx := context.Background()
 	db := nodeRoutesWorld(t, routeAt12("route-1", 8001, "active", "NULL", "dns-1", ""))
-	if err := db.Migrate(ctx); err != nil {
+	if err := MigrateUpTo(ctx, db, 13); err != nil {
 		t.Fatal(err)
 	}
 	err := db.WithWriteTx(ctx, func(ctx context.Context, tx *Tx) error {

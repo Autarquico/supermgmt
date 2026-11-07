@@ -29,8 +29,8 @@ var (
 	planToolName = "infra_plan_action"
 
 	writeToolNames = []string{
-		"infra_create_deployment", "infra_expose_port", "infra_reboot_node", "infra_restart_service",
-		"infra_rollback_deployment", "infra_submit_plan", "infra_unexpose_port",
+		"infra_expose_port", "infra_reboot_node", "infra_restart_service",
+		"infra_submit_plan", "infra_unexpose_port",
 	}
 )
 
@@ -40,30 +40,20 @@ type submitCall struct {
 	hash string
 }
 
-// rollbackCall is one RollbackDeployment call seen by serverFakeAPI.
-type rollbackCall struct {
-	id      domain.ID
-	request wire.RollbackRequest
-}
-
 // serverFakeAPI adds the plan and write calls to fakeAPI and records them.
 type serverFakeAPI struct {
 	fakeAPI
 
-	plan         wire.CreatedPlan
-	submission   wire.Submission
-	deployment   wire.Deployment
-	planErr      error
-	submitErr    error
-	deploymentEr error
+	plan       wire.CreatedPlan
+	submission wire.Submission
+	planErr    error
+	submitErr  error
 
-	planRequests       []wire.CreatePlanRequest
-	submits            []submitCall
-	deploymentRequests []wire.CreateDeploymentRequest
-	rollbacks          []rollbackCall
-	exposes            []exposeCall
-	unexposes          []unexposeCall
-	routeSubmission    wire.NodeRouteSubmission
+	planRequests    []wire.CreatePlanRequest
+	submits         []submitCall
+	exposes         []exposeCall
+	unexposes       []unexposeCall
+	routeSubmission wire.NodeRouteSubmission
 }
 
 // exposeCall is one ExposeNodeRoute call seen by serverFakeAPI.
@@ -88,16 +78,6 @@ func (f *serverFakeAPI) SubmitPlan(_ context.Context, plan domain.ID, hash strin
 	return f.submission, f.submitErr
 }
 
-func (f *serverFakeAPI) CreateDeployment(_ context.Context, r wire.CreateDeploymentRequest) (wire.Deployment, error) {
-	f.deploymentRequests = append(f.deploymentRequests, r)
-	return f.deployment, f.deploymentEr
-}
-
-func (f *serverFakeAPI) RollbackDeployment(_ context.Context, id domain.ID, r wire.RollbackRequest) (wire.Deployment, error) {
-	f.rollbacks = append(f.rollbacks, rollbackCall{id, r})
-	return f.deployment, f.deploymentEr
-}
-
 func (f *serverFakeAPI) ExposeNodeRoute(_ context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error) {
 	f.exposes = append(f.exposes, exposeCall{node, r})
 	return f.routeSubmission, f.submitErr
@@ -109,10 +89,10 @@ func (f *serverFakeAPI) UnexposeNodeRoute(_ context.Context, node domain.ID, hos
 }
 
 func (f *serverFakeAPI) wrote() bool {
-	return len(f.planRequests)+len(f.submits)+len(f.deploymentRequests)+len(f.rollbacks)+len(f.exposes)+len(f.unexposes) > 0
+	return len(f.planRequests)+len(f.submits)+len(f.exposes)+len(f.unexposes) > 0
 }
 
-// newServerFakeAPI serves the nodes, services and apps of readTestAPI and a
+// newServerFakeAPI serves the nodes and services of readTestAPI and a
 // plan whose hash is serverHash, allowed, with a queued submission.
 func newServerFakeAPI() *serverFakeAPI {
 	api := &serverFakeAPI{fakeAPI: *readTestAPI()}
