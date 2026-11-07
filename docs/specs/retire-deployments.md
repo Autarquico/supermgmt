@@ -31,10 +31,10 @@ ADR-0043 removes the deployment engine (ADR-0011, ADR-0029), the GitHub connecto
 
 **Entra:**
 - Delete the packages, code, surfaces, policy actions (`deployment.*`, `app.*`, `app_target.*`), MCP tools, TUI views, config keys (`github:`, provider type `github`), SSH templates only deployments use, error reasons only they use, examples, tests, fuzz targets and inventory rows, Makefile targets, CI jobs and unused modules.
-- The `deployer` role and automation identities seeded for CI are removed; their audit events stay.
-- Migration 000014: refuse to run while a deployment is not terminal; close leftover deployment jobs, intents and locks; delete provider rows of type `github` and the secrets only they reference; drop the tables in foreign-key order. `events`, `jobs` and `observations` keep their resource-type checks so the audit and old jobs stay readable.
-- Restore: neutralize only what still exists, so restoring a backup taken before 000014 works.
-- Config: a config file with a `github:` block or a `github` provider loads with a warning that it is retired and is otherwise ignored.
+- The `deployer` role is removed (its bindings first); `node.backup_template.run`, which only its rule granted, moves to the admin rule. Automation identities created for CI are disabled and lose their role bindings, never deleted (jobs, plans and events reference them); their audit events stay. Jobs whose stored credential kind is `github_oidc` are no longer resumable: the credential reads as revoked.
+- Migration 000014: refuse, changing nothing, while a deployment is not in a terminal state (`succeeded`, `failed`, `rolled_back`, `rollback_failed`, `cancelled`), or a job of type `deployment.create` or `deployment.rollback`, or a `control_plane.apply` job whose plan is `app.write`, `app_target.write` or a GitHub `provider.write`, is not terminal or has an intent not completed. Otherwise delete the locks of those terminal jobs by job id, disable the automation identities, remove the deployer role, delete provider rows of type `github` (their secrets stay and are listed in the upgrade guide for removal with `sm secrets`), and drop the tables children first. `events`, `jobs`, `plans` and `observations` keep their CHECKs so the audit and old jobs stay readable.
+- Restore: the deployment neutralisation goes (the table no longer exists after migrating). A backup taken before 000014 with only terminal deployments restores; one with an open deployment is refused with guidance to restore it with the previous release, let the deployment finish, and take a new backup.
+- Config: the `github:` and `health:` blocks (the latter only served deployment health checks) and providers of type `github` are retired: a config file that has them loads with one warning per block or provider, which `sm config validate` also prints, and they are otherwise ignored. A misspelt key is still an error.
 - Docs: ADR-0011, 0028, 0029 "Superseded by ADR-0043", ADR-0043 "Accepted"; `docs/deployments.md` and `docs/manual-checks/m4-real-github.md` retired; the spec (`docs/spec/SUPERMGMT-SPEC.md` §18-§20.3, §28, M4) and guides updated; generated docs regenerated.
 
 **No entra:**
@@ -53,24 +53,29 @@ ADR-0043 removes the deployment engine (ADR-0011, ADR-0029), the GitHub connecto
 - **Then** 000014 fails without changing anything and says to let it finish or cancel it with the previous version
 
 ### Scenario: a finished M4 instance migrates and keeps its audit
-- **Given** the M4 and M5 migration fixtures brought to 000013
+- **Given** a database at 000013 with terminal deployments and their jobs, locks and events, a GitHub provider, an automation identity with role bindings and a deployer binding (and, separately, the M4 and M5 migration fixtures)
 - **When** 000014 runs
-- **Then** the M4 tables are gone, no deployment job, intent or lock is open, no GitHub provider or its secret remains, and the `deployment.*` and `webhook.received` events are still listed by `sm audit`
+- **Then** the M4 tables are gone, no lock of those jobs remains, no GitHub provider remains, the automation identity is disabled without bindings, the deployer role is gone, `foreign_key_check` passes, and the `deployment.*`, `app.write` and `app_target.write` events are still listed by `sm audit`
 
 ### Scenario: a backup from before the retirement restores
 - **Given** a backup taken at 000011 with deployments in progress
 - **When** it is restored with this version
-- **Then** the restore migrates it, refuses or neutralizes as the scenarios above say, and never fails on a dropped table
+- **Then** a backup with only terminal deployments restores; one with an open deployment is refused, changing nothing, with the guidance to restore it with the previous release, let it finish and back up again; neither fails on a dropped table
 
 ### Scenario: an old config and policy still load
 - **Given** a config with a `github:` block and a policy granting `deployment.create` to `deployer`
 - **When** the daemon starts
-- **Then** it starts with one warning per retired key and action
+- **Then** it starts with one warning per retired block, provider and action, and admin still has `node.backup_template.run`
+
+### Scenario: old GitHub-authenticated jobs do not resume
+- **Given** an interrupted job whose credential kind is `github_oidc`, from before the upgrade
+- **When** recovery looks at it
+- **Then** its credential reads as revoked and it is not resumed
 
 ### Scenario: the build is smaller
 - **Given** `go mod tidy`
 - **When** the modules are listed
-- **Then** compose-go, sigstore-go and go-tuf are not required; `make generate`, `make lint` and CI pass without `compose-equivalence` and `e2e-deploy`
+- **Then** compose-go, sigstore-go, go-tuf, go-containerregistry and their indirects are not required (go-oidc stays for MCP OAuth); `make generate`, `make lint` and CI pass without `compose-equivalence` and `e2e-deploy`
 
 ## Notas técnicas
 
