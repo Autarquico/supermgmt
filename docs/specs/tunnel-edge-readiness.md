@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Tunnel nodes wait for the Cloudflare edge before dialling
 type: task
-status: draft
+status: shipped
 priority: P0
 size: M
 issue: 69
@@ -12,7 +12,7 @@ depends_on: []
 supersedes: []
 related_specs: [node-enroll-tunnel, cloudflare-tunnel-transport]
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 ---
 
 # Tunnel nodes wait for the Cloudflare edge before dialling

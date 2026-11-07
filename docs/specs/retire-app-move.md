@@ -5,7 +5,7 @@ type: task
 status: active
 priority: P1
 size: L
-issue: null
+issue: 75
 prs: [78]
 related_issues: [75]
 depends_on: []
