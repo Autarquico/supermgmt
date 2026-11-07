@@ -1,6 +1,6 @@
 # ADR-0043: SuperMgmt is an operations plane, not a deployer
 
-- Status: Proposed
+- Status: Accepted
 - Supersedes: ADR-0011, ADR-0028, ADR-0029, ADR-0041, ADR-0042
 - Amends: ADR-0040
 

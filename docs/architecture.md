@@ -12,7 +12,7 @@ Laptop
 │   ├── API: Unix socket 0600        (server mode: HTTPS + admin socket, remote MCP at /mcp)
 │   ├── SQLite
 │   ├── job workers, reconciler, refresher
-│   └── connectors: SSH, local, Proxmox, GitHub
+│   └── connectors: SSH, local, Proxmox, Cloudflare
 └── clients of the API: sm TUI, sm CLI, sm mcp (stdio bridge for MCP hosts)
         │ interactive SSH only: the terminal is handed to the system `ssh`, which
         └ the daemon authorizes and audits but does not proxy
@@ -39,16 +39,13 @@ Connector/Provider
         │
         ▼
        Node ──────────────► Runtime ─────► Service
-        │                                  ▲
-        │                                  │
-        └──── capabilities                 │
-                                           │
-Repository ─► Application ─► Deployment ───┘
-                  │
-                  └──── Environment / Target
+        │
+        ├──── capabilities
+        ├──── routes (published ports)
+        └──── Environment
 ```
 
-The database holds providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations, events and secrets, plus repositories, applications, app targets and deployments. Embedded migrations `000001_initial` to `000007_cloudflare_tunnels` build the schema. The last one adds `tunnel_operations` (per node and generation: account, zone, phase and every Cloudflare object ID the tunnel jobs created) and `cloudflare_state` (the instance's Access service token and policy IDs).
+The database holds providers, nodes, runtimes, services, environments, identities, roles, plans, jobs, approvals, intents, locks, observations, events, secrets and node routes. Embedded migrations `000001_initial` to `000014_retire_deployments` build the schema; `000014` drops the tables of the retired deployments, apps and GitHub connector. `000007_cloudflare_tunnels` adds `tunnel_operations` (per node and generation: account, zone, phase and every Cloudflare object ID the tunnel jobs created) and `cloudflare_state` (the instance's Access service token and policy IDs).
 
 Configured state and observed state are kept apart. Configured resources carry one `spec_revision`, which increments only when desired state changes and is used for optimistic concurrency. Observations (reachability, metrics, versions) live in separate records and never bump it. Consequence: periodic discovery does not invalidate approvals.
 
@@ -88,7 +85,7 @@ Key properties:
 - **The claim step re-checks everything the plan depended on**, so a changed `spec_revision` fails the job with `PLAN_STALE`.
 - **Retry classes** (`idempotent`, `resumable`, `non_retryable`) come from the action catalog. Non-retryable remote mutations are observed, never repeated.
 - **Locks are acquired at claim and held until the job is terminal**, including while it is `interrupted` or requeued, so a retrying job cannot lose its resources to a rival.
-- **The reconciler acts only on a quiescent job and only on confirmed evidence:** the completion signal with exit status 0 plus a classification observed identically in two samples at least 30 seconds apart, collected until `deadline_at` + 5 minutes. Missing, contradictory or inconclusive evidence holds the job `interrupted`. Evidence is read from the node over SSH (systemd and Docker), from Proxmox tasks and from deployment markers.
+- **The reconciler acts only on a quiescent job and only on confirmed evidence:** the completion signal with exit status 0 plus a classification observed identically in two samples at least 30 seconds apart, collected until `deadline_at` + 5 minutes. Missing, contradictory or inconclusive evidence holds the job `interrupted`. Evidence is read from the node over SSH (systemd and Docker), from Proxmox tasks and from the node-side markers of service actions.
 - **One poison job cannot block the queue:** a claim error that is a per-job data fault fails only that job.
 - **A human resolves a held job** with `job.resolve`, an action in the catalog, served by `POST /api/v1/jobs/{id}/resolve` and `sm jobs resolve`. It needs the plan hash and an outcome.
 
@@ -107,35 +104,6 @@ Nodes are never given a SuperMgmt binary (a Cloudflare tunnel node also gets Clo
 ### The dial seam
 
 The SSH pool does not open TCP connections itself: it asks a `Dialer` chosen by the target's transport (`direct` or `cloudflare`), and `ScanHostKey` goes through the same seam. Host-key pinning, credentials, handshake classification and every command template sit above it and do not change. The pool keeps one connection set per node, user and transport, so a candidate transport can be verified while the old one still serves; a transport change retires the old connections. The `cloudflare` dialer runs `cloudflared access ssh` as a subprocess whose standard input and output are the connection; its lifetime, deadlines and clean-up rules are in [Security](security.md#cloudflare-tunnel-nodes) and the decision record. The transport lives in the node endpoint and is changed only by the tunnel jobs. Cloudflare-side objects are created and removed by those jobs through a single API client (`internal/providers/cloudflare`, with `cffake` as its test fake).
-
-## Applications and deployments
-
-Everything below ran against a **fake GitHub, a virtual Sigstore and a local registry**. See [compatibility.md](compatibility.md) and the [real-GitHub manual checklist](manual-checks/m4-real-github.md) for what was never run against the real services.
-
-```text
-GitHub (REST, OIDC, attestations, webhook)        providers/github        [fake-verified]
-   │ CI checks for a commit, contents at that commit, attestation per digest
-   ▼
-create deployment (provisional) ─► waiting_ci ─► finalize
-   │   server mode: webhook nudge + backstop poll at ci_poll_max; local mode: poll
-   ▼
-finalize: manifest + Compose read from the CI-passed commit (never branch head),
-          closed-schema checks, target-bound freeze, every image bound to a digest,
-          plan with frozen rollback target, snapshots, policy ─► job
-   ▼
-preflight ► [snapshot] ► [pre-deploy backup] ► pull ► materialize ► verify ► compose up ► health
-   │ health fails and rollback is declared safe
-   ▼
-rolling_back ─► rolled_back | rollback_failed          (restore steps only)
-```
-
-- **Two machines, one transaction.** `deployments.state` holds the fine-grained deployment state machine (`internal/deployments/state.go`, an exhaustive table); the job keeps the coarse state, and `TypePolicy.Mirror` writes both in the same transaction. Tests: `TestDeploymentState_TransitionTable`.
-- **Exact commit, exact digest.** Finalization reads the manifest and Compose from the commit CI passed; every image must be bound (`oidc_claims`, attestation or `pinned`) or the deployment fails `ARTIFACT_NOT_IMMUTABLE`. Tests: `TestFinalize_UsesCIPassedCommitNeverBranchHead`, `TestM4_DeployExactAttestedDigest`.
-- **Closed Compose pipeline.** A raw closed-schema pass before the loader, then a model pass after it; `compose-go` v2.15.0 and Docker Compose CLI v5.5.1 are the only pair supported. Tests: `TestCheckRaw_RejectsSourceForms`, `TestM4_RepositoryComposePrivilegedRejected`, `TestComposeEquivalence_Corpus`.
-- **Secrets never reach the control plane's disk.** Env files are written on the node from stdin, byte-exact (`format: raw`), and the node compares the **resolved** environment hash only (needs `jq` on the node). Tests: `TestM4_SecretNeverOnControlPlane`.
-- **Rollback and recovery.** Health failure rolls back only when the rollback is declared safe and a known-good deployment exists; otherwise the deployment fails with `ROLLBACK_UNAVAILABLE` and its cause. An interrupted deployment is reconciled from node evidence (`.done` marker, flock, labelled containers, two samples); a proven partial deploy escalates to a durable, fenced safety-recovery claim that only restores. Tests: `TestM4_HealthFailureRollsBackToKnownGood`, `TestReconcileDeploy_KilledCLIHeldDespiteStableSamples`, `TestClaimRecovery_*`.
-- **Ownership and locks.** Compose projects, volumes and networks carry a `dev.supermgmt.owner` label; preflight refuses foreign projects and ports. A deployment holds exclusive locks on the target, the project and its host ports (the plan's and the frozen rollback target's). Tests: `TestPreflight_*`.
-- **Nodes.** A deploy-capable node needs version 2 of `node.setup` (`deploy_root`, default `/srv/supermgmt`), Compose CLI 5.5.1 exactly, and `flock`, `jq`, `bash`, `timeout`, `ss`, `sha256sum`, `base64`, `df`; discovery reports `docker.compose.deploy` as unavailable with the first unmet requirement (`internal/discovery/capabilities.go`). Local-provider nodes are never deploy targets.
 
 ## For contributors
 
@@ -172,9 +140,6 @@ Dependencies point inward: adapters (CLI, API, TUI, MCP) call application servic
 | `internal/join` | node enrollment (`sm join`) |
 | `internal/providers/proxmox` | Proxmox VE API client, UPID parsing, task correlation; `pvefake` is its test fake |
 | `internal/providers/cloudflare` | Cloudflare API client for tunnels, Access and DNS, ownership names, read-only token probe; `cffake` is its test fake |
-| `internal/providers/github` | GitHub connector: REST client, origin-pinned redirects, CI checks, contents, Actions OIDC verification, Sigstore attestation verification, webhook HMAC; `ghfake` is its test fake |
-| `internal/deployments`, `internal/deployments/compose`, `internal/deployments/manifest` | the deployment state table, step catalog and rollback rules; the closed Compose pipeline (raw and model schema passes, freeze, canonicalisation, env-file encoding, resolved-environment hash); the app manifest |
-| `internal/health` | health-check validation (manifest versus control-plane origin rules) and node-side checks |
 | `internal/mcp` | MCP server: transports, tools, resources, untrusted-output marking; an API client like the TUI |
 | `internal/installer`, `internal/backup` | installer logic (local, server, Proxmox LXC appliance, upgrade and uninstall); backup and restore |
 
@@ -202,10 +167,10 @@ These are checked by `depguard` in [`.golangci.yml`](../.golangci.yml):
 
 ## References
 
-- Specification: [SUPERMGMT-SPEC.md](spec/SUPERMGMT-SPEC.md), sections 2.1.1 (process model), 5 (layers), 6 and 6.4 (domain, configured versus observed state), 11 and 11.3 (policy), 18 to 21 (applications and deployments; 20.1 state table, 20.4 and 20.5 jobs and locks), Appendix C (deployment plan).
+- Specification: [SUPERMGMT-SPEC.md](spec/SUPERMGMT-SPEC.md), sections 2.1.1 (process model), 5 (layers), 6 and 6.4 (domain, configured versus observed state), 11 and 11.3 (policy), 20.4 and 20.5 (jobs and locks).
 - Process model and daemon: [ADR-0005](adr/0005-daemon-process-model.md), [ADR-0014](adr/0014-local-api-and-daemon-lifecycle.md).
 - Jobs: [ADR-0013](adr/0013-generic-job-state-machine.md).
 - Remote execution: [ADR-0009](adr/0009-node-provisioning.md), [ADR-0015](adr/0015-ssh-transport-and-command-templates.md).
-- Deployments: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [ADR-0007](adr/0007-execution-snapshots.md), [ADR-0008](adr/0008-secret-versions.md), [ADR-0010](adr/0010-secret-env-file-encoding.md), [ADR-0011](adr/0011-provisional-deployment-api.md), [ADR-0028](adr/0028-github-connector.md), [ADR-0029](adr/0029-deployment-engine.md), [ADR-0030](adr/0030-node-setup-v2.md).
+- Scope, and the retirement of deployments: [ADR-0043](adr/0043-operations-plane-not-a-deployer.md). Node setup: [ADR-0030](adr/0030-node-setup-v2.md).
 - Cloudflare tunnel nodes: [ADR-0037](adr/0037-cloudflare-tunnel-transport.md).
 - MCP: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md).

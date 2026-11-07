@@ -5,7 +5,7 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](docs/project-status.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-> **Pre-alpha. No stable release yet: build `sm` from source.** Pre-releases may exist, but the installer has not been verified on a clean machine. Proxmox, GitHub and MCP clients were tested only against fakes. What is verified, and how: [Project status](docs/project-status.md).
+> **Pre-alpha. No stable release yet: build `sm` from source.** Pre-releases may exist, but the installer has not been verified on a clean machine. Proxmox, Cloudflare and MCP clients were tested only against fakes. What is verified, and how: [Project status](docs/project-status.md).
 
 SuperMgmt is a local-first, terminal-first control plane for the machines and services you run yourself. You add Linux machines over SSH, see their systemd services and Docker containers, read their logs and act on them from a fast terminal UI or the `sm` command line. AI agents can reach the same operations through MCP, under the same policy and approvals as you.
 
@@ -29,10 +29,10 @@ The website, **https://autarquico.github.io/supermgmt/**, is built from release 
 - **Changes things only through plans.** Every change becomes a plan with a hash. Policy decides whether it may run; in a production environment it waits until someone approves that exact plan.
 - **Records everything** in an append-only audit trail, with secrets redacted.
 - **Treats AI agents as clients, not operators.** An MCP client can never approve anything, and write tools are off unless you turn them on.
-- **Deploys Docker Compose apps from CI**: only a commit that passed CI and an image digest CI attested, with health checks and rollback.
+- **Leaves deploying to your CI/CD**: your pipelines deploy your apps as they are; SuperMgmt operates what they put on the machine.
 - **Optionally runs as a server** over HTTPS with tokens and OIDC login, or as an unprivileged container on Proxmox VE.
 
-The terminal UI has screens for the dashboard, resources, nodes, services, logs, jobs, approvals, events, applications and deployments, plus read-only Providers and Settings screens; see [Using the TUI](docs/tui.md).
+The terminal UI has screens for the dashboard, resources, nodes, services, logs, jobs, approvals and events, plus read-only Providers and Settings screens; see [Using the TUI](docs/tui.md).
 
 ## Install
 
@@ -94,10 +94,10 @@ One process, the daemon, owns all state. The terminal UI, the CLI and the MCP br
         |  audit · SQLite · reconciler
         +------+-------+
                |  connectors
-     +---------+----------+-----------+
-     |         |          |           |
-    SSH     Proxmox    GitHub      Docker Compose
-  (nodes)   VE API     API         on nodes over SSH
+     +---------+----------+
+     |         |          |
+    SSH     Proxmox    Cloudflare
+  (nodes)   VE API     tunnels, Access
 ```
 
 More: [Concepts](docs/concepts.md) and [Architecture](docs/architecture.md).

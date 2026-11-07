@@ -12,7 +12,7 @@ Read this before you point SuperMgmt at a machine you care about.
 
 1. **The local boundary is the OS user.** The daemon listens on a Unix socket and accepts connections from its own UID only. Anything running as you can drive SuperMgmt, approve its own plans (`security.allow_self_approval` defaults to `true` in local mode) and use the instance SSH identity. Local mode does not defend against malicious software under your user.
 2. **The node credential can read all logs in `journal-group` mode.** That mode puts `supermgmt` in `systemd-journal` (or `adm`), so a stolen node credential reads the node's entire system journal, not only selected units. Mediation by the API limits what clients see, not what the credential can read. `broker` mode avoids the group: see [Log modes on a node](#log-modes-on-a-node).
-3. **Docker access is root.** The `docker` group is equivalent to root on the node. Setup asks for `docker_access` explicitly, has no default, and shows this warning. Compose deployments need it: see [Apps, GitHub and deployments](#apps-github-and-deployments).
+3. **Docker access is root.** The `docker` group is equivalent to root on the node. Setup asks for `docker_access` explicitly, has no default, and shows this warning.
 4. **A unit grant is a trust profile, not a proof.** Granting restart on a unit trusts everything that unit executes.
 5. **The KEK files are separate from the database and from backup archives and must be backed up separately.** `sm secrets export-key` produces a passphrase-protected copy ([operations.md](operations.md#key-management)).
 6. **Setup needs root once.** Afterwards SuperMgmt holds no standing root on the node.
@@ -26,14 +26,12 @@ Read this before you point SuperMgmt at a machine you care about.
 | Stolen browser or OIDC session | session TTL (12h default), revocation on logout, no cookies so no CSRF surface, `no-store` and `nosniff` headers, no CORS | implemented in server mode; there is no browser UI yet |
 | Compromised MCP client; malicious prompt asking for a privileged action | MCP is its own actor type with no inherited roles; hard approval floor for operational writes; MCP can never approve | implemented; tested with the Go SDK client and a fake authorization server, not with real MCP clients ([MCP](#mcp)) |
 | Compromised managed node | least privilege on the node, bounded and sanitized output, timeouts | implemented |
-| Malicious repository or PR | closed-schema Compose pipeline, immutable digests, repository Compose refused in production | implemented; tested against a fake GitHub ([Apps, GitHub and deployments](#apps-github-and-deployments)) |
-| Forged or replayed GitHub webhook | HMAC signature check, delivery de-duplication, the payload only nudges a re-check | implemented; tested against a fake GitHub |
 | SSH MITM or host key change | pinned host key compared byte for byte; a changed key fails the job | implemented |
 | Leaked API token | SHA-256-only storage, expiry (at most 365 days), scopes that only narrow, revocation effective on the next request, rate limits | implemented in server mode |
 | Another local user reaching the daemon | socket directory 0700, peer UID checked on both ends, `Authorization` header rejected | implemented; refusal of a second user is tested on Linux CI only, on macOS it rests on the same-UID test and a manual check |
 | Terminal escape sequences in remote logs | ANSI, C0 and C1 controls stripped and UTF-8 repaired at the transport boundary | implemented |
 | Command injection via names or parameters | closed command catalog, per-parameter allowlists, no leading `-`, POSIX quoting, setup content on stdin | implemented |
-| SSRF via health URLs or provider endpoints | outbound request filter (`internal/netguard`) | implemented for identity-provider, GitHub and MCP authorization-server endpoints and for control-plane health checks |
+| SSRF via provider endpoints | outbound request filter (`internal/netguard`) | implemented for identity-provider and MCP authorization-server endpoints |
 | Supply-chain compromise | pinned dependencies, scanning, fuzzing, signed releases | scanning and fuzz seeds run on every change ([automated scanning](../SECURITY.md#automated-security-scanning)); signed pipeline and verifying installer implemented, production key and provenance not yet exercised |
 | Tampered installer download | embedded-key signature check of checksums and archive before anything runs | implemented, tamper tests with a test key in CI; `curl \| bash` still trusts `main` |
 | Backup theft; control-plane database theft | envelope encryption of secrets; KEKs never in the archive | implemented. The archive itself is not encrypted |
@@ -313,7 +311,7 @@ Unit-tested with fakes; the real keychain and `secret-tool` are manual checks. W
 - It then dials the vetted address while TLS verifies the original hostname.
 - Redirects are off by default, bodies are capped, and ambient proxy variables are never read (`outbound.proxy` is the only proxy).
 
-Callers: the identity-provider client (private ranges allowed), the GitHub connector (exact `api_url` origin only, redirects pinned to that origin), control-plane health checks (only `health.allowed_private_cidrs`) and the remote-MCP authorization-server endpoints (see [Remote MCP as an OAuth protected resource](#remote-mcp-as-an-oauth-protected-resource)). 6to4 and Teredo are not unwrapped.
+Callers: the identity-provider client (private ranges allowed) and the remote-MCP authorization-server endpoints (see [Remote MCP as an OAuth protected resource](#remote-mcp-as-an-oauth-protected-resource)). 6to4 and Teredo are not unwrapped.
 
 ## Releases and the installer
 
@@ -345,37 +343,6 @@ Verified against fakes only; the real-host checks are in the [Proxmox manual che
 
 Not verified on a real Proxmox host: the privilege model, the permission propagation rules, the task API shapes and the installer's host commands.
 
-## Apps, GitHub and deployments
-
-Verified against a fake GitHub, a virtual Sigstore and a Docker fixture node only; nothing was run against real GitHub, GHCR or Sigstore. The real-GitHub checks are in the [GitHub manual checklist](manual-checks/m4-real-github.md) and are **deferred**. Operating details: [deployments.md](deployments.md).
-
-### Docker access is root-equivalent, and deployments use it
-
-A deployment runs `docker compose up` as the `supermgmt` user, which is in the `docker` group. Anyone who can make SuperMgmt run a Compose file can therefore get root on that node. The controls below reduce what SuperMgmt asks for; they do not change what the credential could do.
-
-- Compose files go through a closed pipeline: two allowlist passes around the pinned `compose-go` loader. `privileged`, bind mounts, host networking, devices and every key not on the allowlist are rejected (`COMPOSE_REJECTED`). `cap_add`, `sysctls`, `extra_hosts` and `shm_size` pass only as exact, admin-approved per-service exceptions, with a fixed capability set. Tests: `TestCheckRaw_*`, `TestCheckModel_RejectsDeniedServiceKeys`, `TestExceptions_*`, e2e `TestM4_RepositoryComposePrivilegedRejected`.
-- The control plane freezes the model and the node's `docker compose config` must match it (**5.5.1** is the only Compose CLI accepted; the equivalence corpus was run for that version only).
-- **Repository Compose is refused in production.** A Compose file read from the repository is code from a repository whose CI passed; production targets take their Compose text only from the control plane (`TestAppsUpdate_RefusesARepositorySourceWhileAProductionTargetExists`).
-- Published ports must bind `127.0.0.1`, `::1` or an address in the target's `allowed_bind_addresses`. Preflight refuses a project, volume or network that lacks `dev.supermgmt.owner=<app_target_id>` and ports held by something else.
-- `deploy_root` is owned by the `supermgmt` user (0750) so the dedicated user can create project directories; it is not root-owned. It must be outside `/var/lib/supermgmt`, and a symlink there is refused.
-- Nothing is pulled by tag: the node pulls `<repository>@<digest>`, and a digest must be bound to the commit by an attestation, verified Actions claims, or the app's pinned list.
-
-### GitHub connector
-
-- **Token scope.** The provider token is read-only. It is attached only to requests whose origin equals `api_url`; a redirect to any other origin, scheme or port is refused before a request is made, at most three hops (`TestRedirect_OriginPinned`, `TestClient_TokenNeverOffOrigin`, `TestTokenNeverAppearsInErrors`). File contents are read through the JSON contents API, so no content host is contacted. How real GitHub redirects is **not verified**.
-- **Actions OIDC.** Tokens are verified against the Actions JWKS (RS256, issuer, audience, age of at most 5 minutes, `jti` accepted once, restricted to the claims of the app's CI policy; pull-request and fork-style events never match). Tests: `TestOIDC_*`, `TestMatchClaims`. The token proves who asks, not that tests passed: SuperMgmt checks the required checks itself. The automation identity has no role until an admin grants one, and its credentials carry only `deployment.create` and `deployment.read`.
-- **No environment claim.** No environment requires the token's `environment` claim, because the specification defines no field for it. An Actions job in any environment of the configured repository, workflow and branch that is entitled by the role you grant can request a deployment. Use `approvals_required` on production to add a human.
-- **Webhooks.** `POST /api/v1/github/webhook` is served on the HTTPS listener only (not on the local socket). It is exempt from bearer tokens and acts only after an HMAC-SHA256 check of the raw body (constant time). Bodies over 1 MiB are refused; deliveries are de-duplicated by `X-GitHub-Delivery`; requests are rate-limited per client; the payload only nudges a re-check, so a forged or replayed delivery cannot approve anything (`TestWebhookForgedDeliveriesAreRefusedAndActOnNothing`, `TestWebhookReplayedDeliveryIsAcknowledgedAndNotReevaluated`, `TestWebhookOversizeBodyIsRefused`, `TestWebhookIsRateLimitedPerClient`, `TestTheWebhookIsNotServedOnTheLocalSocket`).
-- **Attestations.** Verified with `sigstore-go` against the Sigstore public-good and GitHub trusted roots, refreshed through TUF via the outbound filter with the last good copy cached; a stale or unreachable root fails closed, never "unverified" (`internal/providers/github/trustroot.go`). **The GitHub TUF trust anchor (version 1 `root.json` of `tuf-repo.github.com`) was fetched once by hand on 2026-10-12 and has not been independently verified**; it is on the manual checklist. The real TUF refresh walk is untested (tests stub the fetch), and attestations were verified only against a virtual Sigstore.
-- **Provenance requirement.** `require_provenance: true` on an environment accepts only an attestation for the deployed service.
-
-### Approvals, recovery and secrets in deployments
-
-- App, target and GitHub-provider writes go through the approval path; an approved write is validated again and applied exactly as planned (`TestApplyApproved_AppComposeEditProduction`, `TestApplyApproved_GitHubProvider`). A deployment's plan hash binds the frozen Compose model, digests, secret versions, health and policy snapshots, so an approval cannot be reused for different content (`TestRevalidateDeploy_StaleInputs`).
-- A job interrupted while changing a node is never re-run blind. Recovery after a partial update restores only the plan's frozen rollback target, as the `system` actor, without asking the requester's credential or quorum again (`TestClaimRecovery_StalePlanRevokedRequesterLostQuorum`). That is intentional: the recovery target was approved with the plan.
-- Secret values reach the node over stdin, are written to `secrets/<service>.env` on the node, are compared there only as hashes, and are never in plans, API views, events, logs or control-plane backups (`TestM4_SecretNeverOnControlPlane`, `TestFixtures_EnvHashResolvedPrecedenceAndTamper`). The end-to-end scan does not cover the node and CLI stdout. Old secret versions are kept encrypted so rollbacks can restore them; there is no deletion API yet.
-- Pre-deploy database dumps are written on the node under `/var/lib/supermgmt/db-backups` (0700) and are not encrypted.
-
 ## MCP
 
 Verified with the official Go SDK client, hand-written raw JSON-RPC goldens and a fake authorization server. **Not verified with any real MCP client or real authorization server**; those checks are in the [MCP manual checklist](manual-checks/m5-real-mcp-clients.md) and are deferred. The operator guide, [mcp.md](mcp.md), names the test behind each claim.
@@ -400,7 +367,7 @@ An operational-or-higher write by an MCP identity always needs approval, and app
 
 ### Writes are off by default
 
-With `mcp.write_tools_enabled: false` (the default) the write tools are not registered and every non-query action by an MCP identity is denied `MCP_WRITES_DISABLED`, including deployment admission, before any row, CI watch or provider call. Plans can still be created and carry the denial as their verdict.
+With `mcp.write_tools_enabled: false` (the default) the write tools are not registered and every non-query action by an MCP identity is denied `MCP_WRITES_DISABLED`, before any row or provider call. Plans can still be created and carry the denial as their verdict.
 
 ### Remote MCP as an OAuth protected resource
 
@@ -413,7 +380,7 @@ With `mcp.write_tools_enabled: false` (the default) the write tools are not regi
 
 ### Output shown to the model
 
-Tool results are allowlisted views. Text that came from remote systems (log lines, service metadata, event data, deployment step errors) is sanitized, bounded, scrubbed and marked `untrusted_remote_output`.
+Tool results are allowlisted views. Text that came from remote systems (log lines, service metadata, event data) is sanitized, bounded, scrubbed and marked `untrusted_remote_output`.
 
 **The scrubbing is pattern-based:** Bearer/Basic credentials, PEM keys, SuperMgmt tokens, JWT-shaped values and values under secret-looking keys are removed, independent of `security.redact_command_output`. An unknown secret under a harmless name is not detected and reaches the model. See [mcp.md](mcp.md#the-redaction-boundary).
 
@@ -439,12 +406,6 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Node setup is verified in CI on Debian only. Other distributions are an assumption.
 - The `curl | bash` installer path trusts the repository's `main` branch; the review-first path with an out-of-band key avoids that. The installer requires OpenSSH 8.2 or newer (`valid-after` in `allowed_signers`).
 - No stable release exists yet: the default `stable` channel of `install.sh` has nothing to download, and the installer has not been verified on a clean machine.
-- Deployments need a root-equivalent `docker` group; a Compose file that passes the allowlist can still run any image whose digest was bound.
-- Production Compose content comes only from the control plane; a repository Compose source is refused there. No exception mechanism exists.
-- Actions OIDC tokens are not required to carry an `environment` claim.
-- The GitHub TUF trust anchor is not independently verified; real attestations, real Actions tokens, redirect behavior and GHCR pulls are unverified.
-- Health check bounds (timeout 30s, interval 1m, 60 attempts) and the Compose CLI pin (5.5.1) are implementation choices, not specification text.
-- Old deployment directories are garbage-collected after a success (newest 5 kept, never the current one, a known-good or the rollback target); a GC failure only emits `deployment.gc_failed`.
 - MCP: redaction of remote text is pattern-based and unknown secrets are not detected; no real MCP client or authorization server has been tested; root-path OAuth metadata discovery deviates from RFC 9728 section 3.3; JWT access tokens must be `at+jwt` (otherwise use introspection); remote MCP does not support a path-prefixed reverse proxy.
 - Cloudflare tunnel nodes: the API token has account-wide tunnel and Access edit rights while it exists, and since rotation needs it, the one-year service token cannot be rotated without creating an account-wide token again; a node whose direct path is closed depends on Cloudflare's availability; the permission labels, the pinned package key and the absence of the tunnel credential from `cloudflared`'s own logs are unverified until the [real-account checklist](manual-checks/cloudflare-tunnel.md) passes.
 - No independent security audit has been performed.
@@ -456,7 +417,7 @@ Not implemented; listed so nothing is mistaken for shipped.
 - Local daemon and nodes: [ADR-0009](adr/0009-node-provisioning.md), [ADR-0014](adr/0014-local-api-and-daemon-lifecycle.md), [ADR-0015](adr/0015-ssh-transport-and-command-templates.md), [ADR-0016](adr/0016-m1-secrets-slice-and-ssh-identity.md).
 - Server mode, keys, backup and releases: [ADR-0017](adr/0017-server-transport-credentials-sessions.md), [ADR-0018](adr/0018-oidc-adapter.md), [ADR-0019](adr/0019-release-pipeline-and-installer.md), [ADR-0020](adr/0020-backup-format-and-offline-restore.md), [ADR-0021](adr/0021-key-and-identity-management.md), [ADR-0022](adr/0022-join-enrollment.md).
 - Proxmox: [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md).
-- Deployments: [ADR-0006](adr/0006-pinned-compose-go-and-cli-equivalence.md), [ADR-0012](adr/0012-route-metadata.md), [ADR-0029](adr/0029-deployment-engine.md).
+- Scope (SuperMgmt operates what CI/CD deploys, and deploys nothing itself): [ADR-0043](adr/0043-operations-plane-not-a-deployer.md).
 - Cloudflare tunnel nodes: [ADR-0037](adr/0037-cloudflare-tunnel-transport.md).
 - MCP: [ADR-0031](adr/0031-mcp-server-sdk-transports-tools.md), [ADR-0032](adr/0032-mcp-clients-tokens-identity.md), [ADR-0033](adr/0033-remote-mcp-oauth-protected-resource.md).
-- Manual checklists for what CI cannot run: [interactive sessions](manual-checks/m1-handoff.md), [server mode](manual-checks/m2-handoff.md), [real Proxmox](manual-checks/m3-real-pve.md), [real GitHub](manual-checks/m4-real-github.md), [real MCP clients](manual-checks/m5-real-mcp-clients.md), [Cloudflare Tunnel](manual-checks/cloudflare-tunnel.md).
+- Manual checklists for what CI cannot run: [interactive sessions](manual-checks/m1-handoff.md), [server mode](manual-checks/m2-handoff.md), [real Proxmox](manual-checks/m3-real-pve.md), [real MCP clients](manual-checks/m5-real-mcp-clients.md), [Cloudflare Tunnel](manual-checks/cloudflare-tunnel.md).

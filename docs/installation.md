@@ -274,6 +274,24 @@ On a Proxmox host with an appliance record, `sm install upgrade` upgrades **the 
 
 Covered by `TestUpgrade_*` and `TestUpgradeAppliance_*` (`internal/installer`) and `TestM3_Upgrade*` (CI job `e2e-upgrade`, which upgrades from an earlier build at commit e6d5577 and kills the run at each phase). The installer is also killed at each of its 20 crash points and rerun (`TestM6_CrashUpgrade_*`, CI job `e2e-crash`); the oldest recorded build is upgraded to the latest in one jump (`TestM6_UpgradeChainOldestToLatestInOneJump`, CI job `e2e-chain`); the database and archive of every recorded build are migrated and restored (job `migration-test`). The full lifecycle per platform is in [compatibility.md](compatibility.md#supported-platforms). Real-host runs of Proxmox: not verified.
 
+### Upgrading from a version that deployed apps
+
+This version no longer deploys applications: your project's CI/CD deploys them, and SuperMgmt operates what runs on the node. The upgrade removes:
+
+- deployments, rollbacks, apps and app targets, with the commands `sm deploy`, `sm rollback`, `sm deployments` and `sm apps`, their MCP tools and their TUI screens;
+- the GitHub connector: GitHub providers, the webhook and the CI and attestation checks;
+- the `deployer` role and its bindings; `admin` keeps `node.backup_template.run`;
+- the role bindings of the automation identities CI used. The identities are disabled, not deleted, and an interrupted job that authenticated with a GitHub Actions token is not resumed.
+
+Their audit events stay readable with `sm events`. Before you upgrade, let every deployment and its jobs finish, or cancel them, with the previous version: the upgrade refuses, changing nothing, while one is open ([how to settle it](troubleshooting.md#the-upgrade-stops-with-a-deployment-is-unfinished)). A backup taken while a deployment was open does not restore either ([troubleshooting](troubleshooting.md#restore-says-the-backup-holds-an-unfinished-deployment)).
+
+After the upgrade:
+
+1. Deploy from your CI/CD. Pipelines that ran `sm deploy` or `sm rollback`, or called the deployments API, fail from this version on (the commands are gone and the identity they used is disabled): replace that step before you upgrade. If your CI/CD reaches the node over SSH, give it its own account and key on the node.
+2. Remove the `github:` and `health:` blocks and every provider of `type: github` from the configuration file. Until you do, the daemon and `sm config validate` print one warning for each, and ignore them.
+3. Rewrite policy rules that granted `deployment.*`, `app.*` or `app_target.*`, or named `role:deployer`. Those actions grant and deny nothing now, with a warning ([retired actions](policies.md#rule-reference)).
+4. The secrets behind a GitHub provider (`credential_ref`, `webhook_secret_ref`) stay in the store, unused. `sm secrets` has no command to delete a secret yet; revoke the token and the webhook in GitHub so the stored copies are worthless.
+
 ## Uninstall
 
 ```bash

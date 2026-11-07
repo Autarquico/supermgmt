@@ -30,8 +30,6 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 - `cloudflare.*`, optional; see [Cloudflare](#cloudflare)
 - `environments` and SSH `providers`, applied when the daemon starts
 - Proxmox `providers`, applied when the daemon starts and then synced every `sync_interval`; see [providers.md](providers.md#proxmox)
-- GitHub `providers`, applied when the daemon starts; see [GitHub](#github)
-- `github.oidc_audience`, `github.ci_poll_initial`, `github.ci_poll_max`, `github.ci_timeout`, and `health.allowed_private_cidrs` (control-plane health checks only); environment keys `require_provenance` and `allow_automatic_rollback` (`internal/daemon/assemble.go`, `internal/app/staticconfig.go`)
 
 ### Server, read by `sm server`
 
@@ -53,7 +51,8 @@ Reading was checked by searching the code for each key; a key not listed has no 
 ### Validated but not read
 
 - `ssh.host_key_policy` (must be `strict`).
-- `ui.theme`, `server.public_url` (the installer, the default of `github.oidc_audience` and, with `mcp.remote_enabled`, the MCP resource identity and the `Origin` check use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
+- the environment keys `require_provenance` and `allow_automatic_rollback`: stored with the environment, read by nothing since deployments were retired.
+- `ui.theme`, `server.public_url` (the installer and, with `mcp.remote_enabled`, the MCP resource identity and the `Origin` check use it), `auth.oidc.redirect_url` (reserved for a web callback; the CLI uses a loopback redirect)
 
 ## How a value is resolved
 
@@ -73,7 +72,7 @@ Secrets are never written inline. Credential references are URIs from a closed s
 
 | Reference | Meaning |
 |---|---|
-| `secret://<path>` | encrypted secret in the SuperMgmt store. `secret://ssh/default` is the instance SSH identity; other names are stored with `sm secrets import --name <path>` ([operations.md](operations.md#key-management)). `secret://<path>@<n>` pins version `n`. Besides the SSH identity, such names are read for `auth.oidc.client_secret_ref`, the tokens of Proxmox and GitHub providers and `mcp.oauth.introspection_client_secret_ref`; whether provider `credential_ref` values other than `secret://ssh/default` resolve for SSH nodes is not verified |
+| `secret://<path>` | encrypted secret in the SuperMgmt store. `secret://ssh/default` is the instance SSH identity; other names are stored with `sm secrets import --name <path>` ([operations.md](operations.md#key-management)). `secret://<path>@<n>` pins version `n`. Besides the SSH identity, such names are read for `auth.oidc.client_secret_ref`, the tokens of Proxmox providers and `mcp.oauth.introspection_client_secret_ref`; whether provider `credential_ref` values other than `secret://ssh/default` resolve for SSH nodes is not verified |
 | `ssh-agent://default` | the daemon user's `$SSH_AUTH_SOCK`; local mode only, rejected in server mode. It serves `admin_user` only |
 | `file://<abs-path>` | key file at an absolute path; discouraged, supported for migration |
 
@@ -140,12 +139,7 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_JOBS_HEARTBEAT` | `jobs.heartbeat` | duration |
 | `SUPERMGMT_JOBS_RECONCILE_GRACE` | `jobs.reconcile_grace` | duration |
 | `SUPERMGMT_JOBS_RETRY_BASE` | `jobs.retry_base` | duration |
-| `SUPERMGMT_HEALTH_ALLOWED_PRIVATE_CIDRS` | `health.allowed_private_cidrs` | list (comma-separated) |
 | `SUPERMGMT_OUTBOUND_PROXY` | `outbound.proxy` | string |
-| `SUPERMGMT_GITHUB_OIDC_AUDIENCE` | `github.oidc_audience` | string |
-| `SUPERMGMT_GITHUB_CI_POLL_INITIAL` | `github.ci_poll_initial` | duration |
-| `SUPERMGMT_GITHUB_CI_POLL_MAX` | `github.ci_poll_max` | duration |
-| `SUPERMGMT_GITHUB_CI_TIMEOUT` | `github.ci_timeout` | duration |
 | `SUPERMGMT_MCP_ENABLED` | `mcp.enabled` | bool |
 | `SUPERMGMT_MCP_REMOTE_ENABLED` | `mcp.remote_enabled` | bool |
 | `SUPERMGMT_MCP_OAUTH_ISSUER` | `mcp.oauth.issuer` | string |
@@ -280,38 +274,9 @@ providers:
 
 An environment with `risk_level: production` makes operational writes (service restarts, `node.setup`) require approval by default. At daemon start the file's environments and SSH providers are written to the database as the `system` actor; a change bumps `spec_revision` and is audited, and a provider removed from the file retires its node. Nodes added through `sm nodes add` are never touched by the file. `user` is the account `node.setup` creates; until setup, the node is read as `admin_user`. See [providers.md](providers.md). Provider tokens always use `secret://` references. A Proxmox provider (`type: proxmox`) is applied the same way and then synced; its keys, `verify_tls: true` (required), `ca_file`, and `via_node` with `tls_server_name` for a host reached through its SSH node, are described in [providers.md](providers.md#proxmox).
 
-## GitHub
+## Retired keys
 
-A GitHub provider and the `github:` block configure the GitHub connector used by apps and deployments ([deployments.md](deployments.md)). Applications and their targets are **not** in this file; they are created with `sm apps` or the API.
-
-```yaml
-providers:
-  - type: github
-    name: github
-    api_url: https://api.github.com            # default; the exact origin is the only host contacted
-    credential_ref: secret://providers/github/token     # must be secret://providers/<name>/token
-    webhook_secret_ref: secret://providers/github/webhook   # server mode only; must sit under secret://providers/<name>/
-    ca_file: ""                                 # optional absolute path (GitHub Enterprise Server)
-
-github:
-  oidc_audience: ""     # default: server.public_url; required `aud` of GitHub Actions tokens
-  ci_poll_initial: 15s
-  ci_poll_max: 2m       # server mode: also the backstop poll next to webhooks
-  ci_timeout: 2h
-
-environments:
-  - name: production
-    risk_level: production
-    require_provenance: true         # only an attestation binds the deployed digest
-    allow_automatic_rollback: false  # default false
-```
-
-- `api_url` must be https without userinfo, query, fragment or trailing slash; `credential_ref` and `webhook_secret_ref` must be `secret://`; `ca_file` must be absolute (`internal/config/github.go`, tests `TestGitHubProviderRejections`, `TestGitHubProviderAcceptsEnterpriseServer`). The credential is a read-only fine-grained token; whether the permission set listed in [deployments.md](deployments.md#register-github) is exactly sufficient is **not verified against real GitHub**.
-- Redirects from the GitHub API are followed only up to three hops and only to the exact origin (scheme, host and port) of `api_url`; the token is attached only to requests to that origin (`TestRedirect_OriginPinned`, `TestClient_TokenNeverOffOrigin`). Real GitHub's redirect behavior is **not verified**.
-- Setting `github.oidc_audience` (or `server.public_url`, its default) enables Actions OIDC bearers on the HTTPS listener. With neither set, Actions tokens are not accepted (`TestGitHubActionsTokensAreAcceptedOnlyWithAnAudience`).
-- The webhook is `POST /api/v1/github/webhook`, HTTPS listener only, authenticated by HMAC-SHA256 over the body with the secret behind `webhook_secret_ref`. Local mode has no webhook and only polls.
-- `require_provenance` and `allow_automatic_rollback` are read from the file at start like the other environment keys. A `GitHub` provider can also be registered by `POST /api/v1/providers` with `type: github`; the request is gated by `provider.write` and may park for approval (`TestPostProvidersAcceptsAGitHubProvider`).
-- `github.ci_poll_*` and `ci_timeout` are read by the CI watcher (`internal/daemon/assemble.go`); the generated table above lists their environment variables.
+The `github:` and `health:` blocks and providers of `type: github` belonged to deployments, which SuperMgmt no longer does. A file that still has them loads: each block and each such provider gives one warning, in the daemon log at start and in `sm config validate`, and is otherwise ignored. A misspelt key beside them is still an error (`TestLoadIgnoresRetiredBlocksAndProvidersWithOneWarningEach`, `TestLoadStillRejectsAMisspeltKeyBesideRetiredOnes`). Remove them when you can; [installation.md](installation.md#upgrading-from-a-version-that-deployed-apps) lists what else the upgrade changes.
 
 ## MCP
 

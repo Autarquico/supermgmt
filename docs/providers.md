@@ -5,7 +5,6 @@ A provider is a source of nodes. There are four:
 - **ssh**: a Linux machine reached over SSH. A Mac can be added too, read-only: the probe reads its system, CPU, memory and disk, but setup is Linux only.
 - **local**: the machine running `sm`.
 - **proxmox**: a Proxmox VE cluster ([below](#proxmox)).
-- **github**: a source of repositories, CI results and attestations, not of nodes ([below](#github)).
 
 New to nodes, setup and approvals? Start with [Getting started](getting-started.md) and [Concepts](concepts.md). What is verified, and how, is on [Project status](project-status.md).
 
@@ -43,7 +42,7 @@ A node can also be declared in the configuration file (`providers:` with `type: 
 
 ### Set up a node
 
-Without setup a node is read-only. Starting, stopping and restarting services, restricted log modes, Docker container actions and deployments all need `node.setup`. Start it from the CLI:
+Without setup a node is read-only. Starting, stopping and restarting services, restricted log modes and Docker container actions all need `node.setup`. Start it from the CLI:
 
 ```bash
 sm nodes setup web1                          # first setup: journal group, no Docker; a re-run keeps what the node has
@@ -77,7 +76,7 @@ Bootstrap privilege:
 - Otherwise `admin_user` needs passwordless sudo: each privileged command runs as `sudo -n ...`. SuperMgmt never prompts for a password; without it setup fails before changing anything.
 - If you added a temporary `NOPASSWD` rule for this, revoke it afterwards. SuperMgmt needs it again only to re-run setup.
 
-Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo, and that `jq` is installed on the node (deployments need it). Either missing fails the job with nothing changed.
+Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo; otherwise the job fails with nothing changed.
 
 What setup does, in order, and how it ends:
 
@@ -88,7 +87,7 @@ What setup does, in order, and how it ends:
 5. Applies a tmpfiles entry; in broker mode installs the broker.
 6. Writes `/etc/sudoers.d/supermgmt` (validated with `visudo -cf` before it is moved into place).
 7. Verifies over a fresh connection as `supermgmt`, with the pinned host key: the user, writable markers, and `sudo -n -l` equal to the rendered lines exactly.
-8. Creates `deploy_root` (default `/srv/supermgmt`), owned by `supermgmt` with mode 0750, for deployments ([deployments.md](deployments.md#prerequisites-on-the-node)).
+8. Creates `deploy_root` (default `/srv/supermgmt`), owned by `supermgmt` with mode 0750. An existing directory is never re-owned.
 9. Records the capability `node.setup` with its metadata. If any step fails or the verification does not match, the job fails, the capability is not written and the node stays read-only as `admin_user`.
 
 Every step is an "ensure" step, so an interrupted setup is requeued and re-running it is safe. Full list of what lands on the node and how to remove it: [security.md](security.md#the-dedicated-supermgmt-user-and-how-to-remove-it).
@@ -266,34 +265,6 @@ sm jobs resolve <job-id> --plan-hash <hash> --outcome succeeded|failed --note "c
 
 `--assume-quiescent` is your statement that nothing of the task is still running; it is recorded and audited with your note. Without it, `resolve` of a task-tracked job without stop evidence is refused with `CONFLICT`.
 
-## GitHub
-
-> **Status: tested against fakes. Never run against github.com, GHCR, real attestations or real Actions OIDC tokens.** The connector runs against a hand-written fake GitHub API (`internal/providers/github/ghfake`), a virtual Sigstore and a local registry, end to end by `TestM4_*` (CI job `e2e-deploy`). See [compatibility.md](compatibility.md#github-provider-github-internalprovidersgithub), the [real GitHub checklist](manual-checks/m4-real-github.md) and [Project status](project-status.md).
-
-The GitHub provider is read-only. It lists repositories, reads a manifest and Compose file at one commit, checks that the required CI checks passed for that commit, verifies image attestations and verifies GitHub Actions OIDC tokens. It never writes to GitHub.
-
-```yaml
-providers:
-  - type: github
-    name: github
-    api_url: https://api.github.com             # https, no query, fragment or trailing slash
-    credential_ref: secret://providers/github/token
-    webhook_secret_ref: secret://providers/github/webhook   # optional; server mode
-    ca_file: /etc/supermgmt/github-ca.pem       # optional, absolute path
-```
-
-(`internal/config/github.go`; the fields and checks are the ones that file validates.) A provider can also be registered with `POST /api/v1/providers` for `type: github` (a high-risk `provider.write`: it needs approval); registering a Proxmox provider that way is still not built.
-
-- **Credential.** A fine-grained, read-only personal access token in `credential_ref`. GitHub App installation tokens are not supported. Private repositories work only if the token can read them (not verified against real GitHub).
-- **One origin.** The exact origin of `api_url` is the only host the connector talks to and the only redirect target it follows (at most 3 hops, same scheme, host and port); the token is never sent anywhere else. GitHub Enterprise Server uses its own `api_url` (for example `https://ghe.example.com/api/v3`); it is not verified.
-- **CI delivery.** In server mode a signed webhook (`POST /api/v1/github/webhook`, `X-Hub-Signature-256`, needs `webhook_secret_ref`) nudges re-evaluation, and a backstop poll at `github.ci_poll_max` covers lost deliveries. In local mode there is no webhook endpoint; CI is polled from `github.ci_poll_initial` up to `github.ci_poll_max`.
-- **Attestations.** Verified with Sigstore (public good and GitHub trusted roots, refreshed over TUF through the outbound filter, last-good cached, fail closed when stale). Required only for environments with `require_provenance: true`.
-- **Actions OIDC.** A workflow's token is limited to the `deployment.create` and `deployment.read` actions (every other route refuses it), and is accepted only if its repository id, repository owner id and workflow match the linked automation identity. That identity is created with **no role**; an administrator grants `deployer` (or a narrower rule) explicitly.
-
-## Docker Compose apps on SSH nodes
-
-An application is deployed to an SSH node that completed `node.setup` v2. The node needs Docker with Compose CLI **5.5.1 exactly**, `jq`, `flock` and the other tools listed in [compatibility.md](compatibility.md#docker-compose-and-node-tools); `deploy_root` (default `/srv/supermgmt`) is created and owned by the dedicated user. Discovery reports the capability `docker.compose.deploy` as unavailable, with the first unmet requirement as reason, when any of this is missing. The local provider and Proxmox guests without SSH are never deploy targets. The deployment flow is described in [architecture.md](architecture.md#applications-and-deployments) and operated in [deployments.md](deployments.md).
-
 ## Not available
 
 - SSH CA trust and per-node keys are not scheduled. Identity rotation (`sm ssh-key rotate`), host-key re-pin (`sm nodes repin`) and the secrets CLI exist; see [operations.md](operations.md). `ssh.known_hosts_file` is only the file that goes into a backup.
@@ -301,6 +272,6 @@ An application is deployed to an SSH node that completed `node.setup` v2. The no
 
 ## References
 
-- Binding specification: [`docs/spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md), sections 6.4 (providers), 12 (nodes and setup), 14 and 15 (Proxmox), 18 (GitHub) and 20.4 (resolving interrupted jobs).
-- Decision records: [ADR-0009](adr/0009-node-provisioning.md) node provisioning, [ADR-0015](adr/0015-ssh-transport-and-command-templates.md) SSH transport and command templates, [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md) Proxmox identity and privileges, [ADR-0024](adr/0024-proxmox-discovery.md) Proxmox discovery, [ADR-0025](adr/0025-proxmox-power-jobs-task-correlation.md) Proxmox power jobs and task correlation, [ADR-0028](adr/0028-github-connector.md) GitHub connector.
-- Code: `internal/app/setup.go` (setup), `internal/app/proxmox_power.go` (power jobs), `internal/api/routes_m3.go` (provider refresh rate limit), `internal/config/github.go` and `internal/config/validate.go` (provider validation).
+- Binding specification: [`docs/spec/SUPERMGMT-SPEC.md`](spec/SUPERMGMT-SPEC.md), sections 6.4 (providers), 12 (nodes and setup), 14 and 15 (Proxmox) and 20.4 (resolving interrupted jobs).
+- Decision records: [ADR-0009](adr/0009-node-provisioning.md) node provisioning, [ADR-0015](adr/0015-ssh-transport-and-command-templates.md) SSH transport and command templates, [ADR-0023](adr/0023-pve-identity-privileges-compatibility.md) Proxmox identity and privileges, [ADR-0024](adr/0024-proxmox-discovery.md) Proxmox discovery, [ADR-0025](adr/0025-proxmox-power-jobs-task-correlation.md) Proxmox power jobs and task correlation.
+- Code: `internal/app/setup.go` (setup), `internal/app/proxmox_power.go` (power jobs), `internal/api/routes_m3.go` (provider refresh rate limit), `internal/config/validate.go` (provider validation).

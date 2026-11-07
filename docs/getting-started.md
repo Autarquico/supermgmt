@@ -169,7 +169,7 @@ Every action is a job. In an environment marked `production`, it waits for appro
 ## Next steps
 
 - [Concepts](concepts.md): nodes, plans, approvals, jobs and environments.
-- [Providers](providers.md): SSH nodes, the local machine, Proxmox and GitHub in detail.
+- [Providers](providers.md): SSH nodes, the local machine and Proxmox in detail.
 - [Configuration](configuration.md): environments, policies and every setting.
 - [MCP](mcp.md): let an AI agent read your infrastructure and propose plans.
 - [Installation](installation.md): server mode and the Proxmox appliance (no stable release yet).

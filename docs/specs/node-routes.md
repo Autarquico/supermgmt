@@ -17,6 +17,8 @@ updated: 2026-11-07
 
 # Routes publish a node port
 
+> **Followed by [retire-deployments](retire-deployments.md).** Apps, app targets and deployments no longer exist, so the scenario "a deployment may change a routed port" and the read path for app-target plans describe the state between the two changes.
+
 ## Contexto / problema
 
 ADR-0043 amends ADR-0040: a route publishes a port of a node, not a service of a deployment (`hostname → node, port, access`). Today a route belongs to an app target and waits for its deployment:
