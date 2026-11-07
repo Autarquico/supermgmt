@@ -35,8 +35,8 @@ ADR-0043 amends ADR-0040: a route publishes a port of a node, not a service of a
 - Locks: a route job locks its route and the instance's Cloudflare lock, not the node, so node actions are not blocked while Cloudflare is written.
 - Deployments no longer check routed ports: a deployment that stops publishing a routed port is accepted, and the route answers whatever (or nothing) listens there.
 - Policy: actions `node_route.expose`, `node_route.unexpose`, `node_route.read` on `ResourceNode`; `app_route.*` join the retired-action list (retire-app-move).
-- Surfaces: `sm nodes expose <node> --hostname <fqdn> --port <n> [--access public|owners]`, `sm nodes unexpose <node> --hostname <fqdn>`, `sm nodes routes [<node>]` (node, hostname, port, access, phase); API, client and wire under the node; MCP `infra_expose_port`, `infra_unexpose_port`, `infra_list_routes`; the TUI routes view lists by node.
-- Docs: ADR-0040 "Amended by ADR-0043"; `docs/specs/app-expose-tunnel.md` and `docs/manual-checks/app-expose-tunnel.md` rewritten as node routes; guides and generated docs updated.
+- Surfaces: `sm nodes expose <node> --hostname <fqdn> --port <n> [--access public|owners]`, `sm nodes unexpose <node> --hostname <fqdn>`, `sm nodes routes [<node>]` (node, hostname, port, access, phase); API, client and wire under the node; MCP `infra_expose_port`, `infra_unexpose_port`, `infra_list_routes`; the TUI palette commands `expose` and `unexpose` take the node.
+- Docs: ADR-0040 "Amended by ADR-0043"; `docs/specs/app-expose-tunnel.md` marked as amended; `docs/manual-checks/app-expose-tunnel.md` rewritten as node routes; guides and generated docs updated.
 
 **No entra:**
 - Removing apps, app targets or deployments (retire-deployments), beyond cutting the route's dependency on them.

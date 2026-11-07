@@ -111,29 +111,6 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
-#### sm apps expose
-
-Publish a service port of an application through its node's Cloudflare Tunnel (experimental)
-
-Request a route from the node's Cloudflare Tunnel to a port the target's newest known-good deployment
-publishes on 127.0.0.1 or 0.0.0.0. The hostname must sit under the configured Cloudflare zone. An access of
-public, the default, makes the app reachable from the internet with no authentication; owners puts it behind
-Cloudflare Access for the owners. The request is a plan and waits for approval when policy asks (a public
-route is high risk). A target with no known-good deployment yet gets a route that waits for one.
-
-```text
-sm apps expose <app> <environment> --hostname <fqdn> --service <service> --port <n> [--access public|owners] [flags]
-```
-
-Flags:
-
-- `--access` (string, default `public`): public (no authentication) | owners (Cloudflare Access)
-- `--hostname` (string): hostname under the Cloudflare zone
-- `--port` (int): published port
-- `--service` (string): Compose service that publishes the port
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
 #### sm apps get
 
 Show one application with its targets (id or name)
@@ -156,16 +133,6 @@ Flags:
 
 - `--cursor` (string): continue after this cursor
 - `--limit` (int): maximum items per page (default 50, max 500)
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps routes
-
-List the routes of applications (experimental)
-
-```text
-sm apps routes [<app> [<environment>]]
-```
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -199,23 +166,6 @@ Flags:
 - `--policy-file` (string): JSON file with the deployment policy
 - `--rollback` (string): rollback mode: automatic | manual
 - `--stateful` (bool): the application holds state
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps unexpose
-
-Remove a route of an application (experimental)
-
-Request the removal of the route for the hostname. It removes the DNS record, then the ingress rule, then
-the Access app, and waits for approval when policy asks. The hostname can be exposed again afterwards.
-
-```text
-sm apps unexpose <app> <environment> --hostname <fqdn> [flags]
-```
-
-Flags:
-
-- `--hostname` (string): hostname of the route
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -954,6 +904,27 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+#### sm nodes expose
+
+Publish a port of a node through its Cloudflare Tunnel (experimental)
+
+Request a route from the node's Cloudflare Tunnel to a port on the node. The hostname must sit under the
+configured Cloudflare zone. An access of public, the default, makes the port reachable from the internet with
+no authentication; owners puts it behind Cloudflare Access for the owners. The request is a plan and waits for
+approval when policy asks (a public route is high risk).
+
+```text
+sm nodes expose <node> --hostname <fqdn> --port <n> [--access public|owners] [flags]
+```
+
+Flags:
+
+- `--access` (string, default `public`): public (no authentication) | owners (Cloudflare Access)
+- `--hostname` (string): hostname under the Cloudflare zone
+- `--port` (int): port of the node to publish
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 #### sm nodes get
 
 Show one node (id or name)
@@ -1051,6 +1022,22 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+#### sm nodes routes
+
+List the routes of every node, or of one (experimental)
+
+List the routes of every node, or of one. --all also lists removed routes with the note that says why.
+
+```text
+sm nodes routes [<node>] [flags]
+```
+
+Flags:
+
+- `--all` (bool): include removed routes
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 #### sm nodes setup
 
 Provision the dedicated supermgmt account on a node (a job; may wait for approval)
@@ -1117,6 +1104,23 @@ sm nodes tunnel disable <node> [flags]
 Flags:
 
 - `--yes` (bool): do not ask for confirmation
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm nodes unexpose
+
+Remove a route of a node (experimental)
+
+Request the removal of the route for the hostname. It removes the DNS record, then the ingress rule, then
+the Access app, and waits for approval when policy asks. The hostname can be exposed again afterwards.
+
+```text
+sm nodes unexpose <node> --hostname <fqdn> [flags]
+```
+
+Flags:
+
+- `--hostname` (string): hostname of the route
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
