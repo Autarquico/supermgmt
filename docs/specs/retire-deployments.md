@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "Retire deployments, apps and the GitHub connector"
+title: Retire deployments, apps and the GitHub connector
 type: task
-status: draft
+status: active
 priority: P1
 size: XL
 issue: null
 prs: []
-related_issues: []
+related_issues: [77]
 depends_on: [retire-app-move, node-routes]
 supersedes: [m4-apps-deployments]
 related_specs: [retire-app-move, node-routes]
