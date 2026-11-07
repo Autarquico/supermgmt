@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "Routes publish a node port"
+title: Routes publish a node port
 type: task
-status: draft
+status: active
 priority: P1
 size: L
 issue: null
 prs: []
-related_issues: []
+related_issues: [76]
 depends_on: [retire-app-move]
 supersedes: []
 related_specs: [app-expose-tunnel, retire-deployments]
