@@ -20,48 +20,44 @@ import (
 	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
-// The expose and unexpose jobs of an app route (ADR-0040). One job moves one route: expose walks
+// The expose and unexpose jobs of a node route (ADR-0040, ADR-0043). One job moves one route: expose walks
 // provisioning -> ingress_ready -> access_ready -> active, unexpose walks removing -> dns_removed ->
 // ingress_removed -> removed. Each step looks at what exists first and records its progress before the next,
-// so a job taken over after a crash converges. Both jobs hold the instance Cloudflare lock and the app
-// target's lock (locks.go).
+// so a job taken over after a crash converges. Both jobs hold the instance Cloudflare lock and the lock of
+// their route (locks.go), never the node's.
 
 const (
-	appRouteExposeAction   = policy.ActionAppRouteExpose
-	appRouteUnexposeAction = policy.ActionAppRouteUnexpose
+	nodeRouteExposeAction   = policy.ActionNodeRouteExpose
+	nodeRouteUnexposeAction = policy.ActionNodeRouteUnexpose
 
-	eventAppRouteExposed = "app_route.exposed"
-	eventAppRouteRemoved = "app_route.removed"
-	eventAppRouteHalted  = "app_route.halted"
+	eventNodeRouteExposed = "node_route.exposed"
+	eventNodeRouteRemoved = "node_route.removed"
+	eventNodeRouteHalted  = "node_route.halted"
 )
 
-// appRouteParams are the parameters of an app_route.expose / app_route.unexpose plan and of its job payload.
+// nodeRouteParams are the parameters of a node_route.expose / node_route.unexpose plan and of its job payload.
 // Unexpose carries the hostname and the ID of the route it was requested for, so an approval that comes after
 // the hostname was exposed again cannot remove the newer route. An expose finds its route by the plan
-// that admitted it; the system's activation of a route admitted already finds it by these parameters.
-type appRouteParams struct {
+// that admitted it, or by these parameters when it resumes a halted route.
+type nodeRouteParams struct {
 	Hostname string `json:"hostname"`
-	Service  string `json:"service,omitempty"`
 	Port     string `json:"port,omitempty"`
 	Access   string `json:"access,omitempty"`
 	RouteID  string `json:"route_id,omitempty"`
 }
 
-func (p appRouteParams) validate(expose bool) error {
+func (p nodeRouteParams) validate(expose bool) error {
 	if p.Hostname == "" {
 		return invalidArgument("hostname is required")
 	}
 	if !expose {
-		if p.Service != "" || p.Port != "" || p.Access != "" {
-			return invalidArgument("unexpose takes no service, port or access")
+		if p.Port != "" || p.Access != "" {
+			return invalidArgument("unexpose takes no port or access")
 		}
 		return nil
 	}
 	if port, err := strconv.Atoi(p.Port); err != nil || port < 1 || port > 65535 {
 		return invalidArgument("port must be a number between 1 and 65535")
-	}
-	if p.Service == "" {
-		return invalidArgument("service is required")
 	}
 	if p.Access != "public" && p.Access != "owners" {
 		return invalidArgument("access must be public or owners")
@@ -69,30 +65,30 @@ func (p appRouteParams) validate(expose bool) error {
 	return nil
 }
 
-func isAppRouteAction(action string) bool {
-	return action == appRouteExposeAction || action == appRouteUnexposeAction
+func isNodeRouteAction(action string) bool {
+	return action == nodeRouteExposeAction || action == nodeRouteUnexposeAction
 }
 
-// appRouteTarget is the policy view of an app_route plan: the app target it is about.
-func appRouteTarget(ctx context.Context, q database.Querier, spec policy.ActionSpec, ref domain.ResourceRef, params map[string]any) (policy.Target, *int64, []plan.Input, error) {
-	p, err := fromParams[appRouteParams](params)
+// nodeRouteTarget is the policy view of a node_route plan: the node it is about.
+func nodeRouteTarget(ctx context.Context, q database.Querier, spec policy.ActionSpec, ref domain.ResourceRef, params map[string]any) (policy.Target, *int64, []plan.Input, error) {
+	p, err := fromParams[nodeRouteParams](params)
 	if err != nil {
 		return policy.Target{}, nil, nil, err
 	}
-	if err := p.validate(spec.Name == appRouteExposeAction); err != nil {
+	if err := p.validate(spec.Name == nodeRouteExposeAction); err != nil {
 		return policy.Target{}, nil, nil, err
 	}
-	r, err := resolveAppTarget(ctx, q, ref.ID)
+	r, err := resolveNode(ctx, q, ref.ID)
 	if err != nil {
 		return policy.Target{}, nil, nil, err
 	}
 	return r.target, &r.revision, r.inputs, nil
 }
 
-// appRouteHandler moves the route of a plan of app_route.expose or app_route.unexpose. It runs inside the
+// nodeRouteHandler moves the route of a plan of node_route.expose or node_route.unexpose. It runs inside the
 // control_plane.apply job, after the apply step has admitted the row; the plan is what revalidation checked
-// at claim, for the user's request and for the system's activation after a deployment alike.
-type appRouteHandler struct {
+// at claim.
+type nodeRouteHandler struct {
 	core
 	store  *jobs.Store
 	tunnel *tunnelEngine
@@ -100,7 +96,7 @@ type appRouteHandler struct {
 
 // routeHalt ends the route in failed or conflict. The route keeps the phase it held, and a new job resumes it.
 type routeHalt struct {
-	halt database.AppRoutePhase
+	halt database.NodeRoutePhase
 	// inner is the message the operator reads.
 	inner *smerr.Error
 }
@@ -109,24 +105,24 @@ func (e *routeHalt) Error() string { return e.inner.Error() }
 func (e *routeHalt) Unwrap() error { return e.inner }
 
 func routeConflict(kind, name string) error {
-	return &routeHalt{halt: database.AppRouteConflict, inner: smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+	return &routeHalt{halt: database.NodeRouteConflict, inner: smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
 		"a Cloudflare %s named %q exists and was not created by this route; resolve it in Cloudflare and expose the route again", kind, name))}
 }
 
 func routeFailed(message string) error { return failedHalt(message) }
 
 func failedHalt(message string) *routeHalt {
-	return &routeHalt{halt: database.AppRouteFailed, inner: smerr.New(smerr.CodeConflict, "", message)}
+	return &routeHalt{halt: database.NodeRouteFailed, inner: smerr.New(smerr.CodeConflict, "", message)}
 }
 
 var errTunnelChanged = routeFailed("the node's tunnel changed; unexpose and expose again")
 
-// routeRecord is the app_routes row a job moves, written under the job's lease.
+// routeRecord is the node_routes row a job moves, written under the job's lease.
 type routeRecord struct {
 	core
 	lease jobs.Lease
 	job   jobs.Job
-	route database.AppRoute
+	route database.NodeRoute
 }
 
 func (rr *routeRecord) emitRoute(ctx context.Context, tx *database.Tx, action string, result domain.Result, data map[string]any) error {
@@ -136,13 +132,13 @@ func (rr *routeRecord) emitRoute(ctx context.Context, tx *database.Tx, action st
 	}
 	data["job_id"], data["route_id"], data["node_id"] = rr.job.ID.String(), rr.route.ID.String(), rr.route.NodeID.String()
 	data["hostname"], data["access"] = rr.route.Hostname, rr.route.Access
-	return rr.emit(ctx, tx, actor, action, appTargetRef(rr.route.AppTargetID), result, data)
+	return rr.emit(ctx, tx, actor, action, nodeRef(rr.route.NodeID), result, data)
 }
 
 // advance moves the route to to and records the object IDs and the audit event in the same fenced transaction.
-func (rr *routeRecord) advance(ctx context.Context, to database.AppRoutePhase, objects database.AppRouteObjects, action string, data map[string]any) error {
-	return rr.change(ctx, func(ctx context.Context, tx *database.Tx) (database.AppRoute, error) {
-		next, err := database.AdvanceAppRoutePhase(ctx, tx, rr.route.ID, rr.route.Phase, to, objects, rr.cfg.Clock.Now())
+func (rr *routeRecord) advance(ctx context.Context, to database.NodeRoutePhase, objects database.NodeRouteObjects, action string, data map[string]any) error {
+	return rr.change(ctx, func(ctx context.Context, tx *database.Tx) (database.NodeRoute, error) {
+		next, err := database.AdvanceNodeRoutePhase(ctx, tx, rr.route.ID, rr.route.Phase, to, objects, rr.cfg.Clock.Now())
 		if err != nil || action == "" {
 			return next, err
 		}
@@ -150,8 +146,8 @@ func (rr *routeRecord) advance(ctx context.Context, to database.AppRoutePhase, o
 	})
 }
 
-func (rr *routeRecord) change(ctx context.Context, step func(context.Context, *database.Tx) (database.AppRoute, error)) error {
-	var changed database.AppRoute
+func (rr *routeRecord) change(ctx context.Context, step func(context.Context, *database.Tx) (database.NodeRoute, error)) error {
+	var changed database.NodeRoute
 	err := rr.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		if err := rr.lease.Fence(ctx, tx); err != nil {
 			return err
@@ -179,30 +175,30 @@ func (rr *routeRecord) audit(ctx context.Context, action string, data map[string
 // resume returns a halted route to the phase it held, keeping the phase start so the objects an earlier
 // attempt created stay adoptable.
 func (rr *routeRecord) resume(ctx context.Context) error {
-	return rr.change(ctx, func(ctx context.Context, tx *database.Tx) (database.AppRoute, error) {
-		return database.ResumeHaltedAppRoute(ctx, tx, rr.route.ID, rr.route.Phase, rr.cfg.Clock.Now())
+	return rr.change(ctx, func(ctx context.Context, tx *database.Tx) (database.NodeRoute, error) {
+		return database.ResumeHaltedNodeRoute(ctx, tx, rr.route.ID, rr.route.Phase, rr.cfg.Clock.Now())
 	})
 }
 
 // halt records that the route stopped, with a sanitized message, and the audit event.
-func (rr *routeRecord) halt(ctx context.Context, to database.AppRoutePhase, cause error) error {
+func (rr *routeRecord) halt(ctx context.Context, to database.NodeRoutePhase, cause error) error {
 	message := textsafe.Line(audit.ScrubString(cause.Error()))
 	if utf8.RuneCountInString(message) > maxRecordedErrorLength {
 		message = string([]rune(message)[:maxRecordedErrorLength])
 	}
 	phase := rr.route.Phase
-	return rr.change(context.WithoutCancel(ctx), func(ctx context.Context, tx *database.Tx) (database.AppRoute, error) {
-		halted, err := database.HaltAppRoute(ctx, tx, rr.route.ID, phase, to, message, rr.cfg.Clock.Now())
+	return rr.change(context.WithoutCancel(ctx), func(ctx context.Context, tx *database.Tx) (database.NodeRoute, error) {
+		halted, err := database.HaltNodeRoute(ctx, tx, rr.route.ID, phase, to, message, rr.cfg.Clock.Now())
 		if err != nil {
 			return halted, err
 		}
-		return halted, rr.emitRoute(ctx, tx, eventAppRouteHalted, domain.ResultFailed, map[string]any{"phase": string(phase), "state": string(to)})
+		return halted, rr.emitRoute(ctx, tx, eventNodeRouteHalted, domain.ResultFailed, map[string]any{"phase": string(phase), "state": string(to)})
 	})
 }
 
-func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job, action string) error {
-	unexpose := action == appRouteUnexposeAction
-	params, err := payloadOf[appRouteParams](job)
+func (h nodeRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job, action string) error {
+	unexpose := action == nodeRouteUnexposeAction
+	params, err := payloadOf[nodeRouteParams](job)
 	if err != nil {
 		return err
 	}
@@ -225,10 +221,6 @@ func (h appRouteHandler) run(ctx context.Context, lease jobs.Lease, job jobs.Job
 				return err
 			}
 		}
-	}
-	if unexpose && rr.route.Phase == database.AppRouteWaiting {
-		// Nothing happened in Cloudflare, so nothing is called.
-		return rr.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, map[string]any{})
 	}
 	if unexpose {
 		if gone, err := h.abandoned(ctx, &rr); gone || err != nil {
@@ -271,34 +263,34 @@ func (r *routeRun) resumeAndExpose(ctx context.Context) error {
 
 // routeOf is the route the job moves. An unexpose moves the route it was requested for. An expose moves the
 // route its plan admitted, removed or not, so a retry or a late job never reaches a route admitted by another
-// request. A plan that admitted none (the system's activation, or the request that resumes a halted route)
-// moves the live route that has exactly its parameters. found is false when there is none: it was removed,
+// request. A plan that admitted none (the request that resumes a halted route) moves the live route that has
+// exactly its parameters. found is false when there is none: it was removed,
 // or the hostname belongs to something else now.
-func (h appRouteHandler) routeOf(ctx context.Context, job jobs.Job, params appRouteParams, unexpose bool) (route database.AppRoute, found bool, err error) {
+func (h nodeRouteHandler) routeOf(ctx context.Context, job jobs.Job, params nodeRouteParams, unexpose bool) (route database.NodeRoute, found bool, err error) {
 	q := h.cfg.DB.Reader()
 	switch {
 	case unexpose && params.RouteID == "":
 		return route, false, nil
 	case unexpose:
-		route, err = database.GetAppRoute(ctx, q, domain.ID(params.RouteID))
+		route, err = database.GetNodeRoute(ctx, q, domain.ID(params.RouteID))
 	case job.PlanID == nil:
-		return route, false, smerr.New(smerr.CodeInternal, "", "app route job has no plan")
+		return route, false, smerr.New(smerr.CodeInternal, "", "node route job has no plan")
 	default:
-		route, err = database.GetAppRouteByPlan(ctx, q, *job.PlanID)
+		route, err = database.GetNodeRouteByPlan(ctx, q, *job.PlanID)
 		if smerr.CodeOf(err) == smerr.CodeNotFound {
-			route, err = database.GetLiveAppRouteByHostname(ctx, q, params.Hostname)
+			route, err = database.GetLiveNodeRouteByHostname(ctx, q, params.Hostname)
 			if err == nil && !routeHas(route, job.Resource.ID, params) {
-				err = smerr.New(smerr.CodeNotFound, "", "app route")
+				err = smerr.New(smerr.CodeNotFound, "", "node route")
 			}
 		}
 	}
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
-		return database.AppRoute{}, false, nil
+		return database.NodeRoute{}, false, nil
 	}
 	if err != nil {
-		return database.AppRoute{}, false, err
+		return database.NodeRoute{}, false, err
 	}
-	return route, route.AppTargetID == job.Resource.ID && route.Hostname == params.Hostname, nil
+	return route, route.NodeID == job.Resource.ID && route.Hostname == params.Hostname, nil
 }
 
 // jobAction is the action of the plan the job carries.
@@ -313,7 +305,7 @@ func jobAction(ctx context.Context, q database.Querier, job jobs.Job) (string, e
 // abandoned ends the removal of a route whose Cloudflare account, zone or instance is no longer the configured
 // one: its objects belong to a place this instance cannot reach, so the route is marked removed with no
 // Cloudflare call, and the object IDs it recorded are listed in the audit event for the operator to clean up.
-func (h appRouteHandler) abandoned(ctx context.Context, rr *routeRecord) (bool, error) {
+func (h nodeRouteHandler) abandoned(ctx context.Context, rr *routeRecord) (bool, error) {
 	instance, err := database.GetInstance(ctx, h.cfg.DB.Reader())
 	if err != nil {
 		return false, err
@@ -327,24 +319,24 @@ func (h appRouteHandler) abandoned(ctx context.Context, rr *routeRecord) (bool, 
 		"abandoned": true, "account_id": route.AccountID, "zone": route.Zone, "tunnel_id": route.TunnelID,
 		"dns_record_id": route.Objects.DNSRecordID, "access_app_id": route.Objects.AccessAppID,
 	}
-	return true, rr.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, leftover)
+	return true, rr.advance(ctx, database.NodeRouteRemoved, database.NodeRouteObjects{}, eventNodeRouteRemoved, leftover)
 }
 
 // nothingToDo reports whether the job has no work: its route is where the job takes it, or another job's
-// removal (or the removal itself) has taken it past. A waiting route is the expose job's to start.
-func nothingToDo(unexpose bool, route database.AppRoute) bool {
+// removal (or the removal itself) has taken it past.
+func nothingToDo(unexpose bool, route database.NodeRoute) bool {
 	if unexpose {
-		return route.Phase == database.AppRouteRemoved
+		return route.Phase == database.NodeRouteRemoved
 	}
 	switch route.Phase {
-	case database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
-		database.AppRouteIngressRemoved, database.AppRouteRemoved:
+	case database.NodeRouteActive, database.NodeRouteRemoving, database.NodeRouteDNSRemoved,
+		database.NodeRouteIngressRemoved, database.NodeRouteRemoved:
 		return true
-	case database.AppRouteWaiting, database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady,
-		database.AppRouteFailed, database.AppRouteConflict:
+	case database.NodeRouteAdmitted, database.NodeRouteProvisioning, database.NodeRouteIngressReady, database.NodeRouteAccessReady,
+		database.NodeRouteFailed, database.NodeRouteConflict:
 	}
-	return route.Phase.Halted() && slices.Contains([]database.AppRoutePhase{
-		database.AppRouteRemoving, database.AppRouteDNSRemoved, database.AppRouteIngressRemoved,
+	return route.Phase.Halted() && slices.Contains([]database.NodeRoutePhase{
+		database.NodeRouteRemoving, database.NodeRouteDNSRemoved, database.NodeRouteIngressRemoved,
 	}, route.HaltedPhase)
 }
 
@@ -416,10 +408,10 @@ func (rr *routeRecord) exhausted(ctx context.Context, err error) bool {
 
 func (r *routeRun) exposing() bool {
 	switch r.route.Phase {
-	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady:
+	case database.NodeRouteAdmitted, database.NodeRouteProvisioning, database.NodeRouteIngressReady, database.NodeRouteAccessReady:
 		return true
-	case database.AppRouteWaiting, database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
-		database.AppRouteIngressRemoved, database.AppRouteRemoved, database.AppRouteFailed, database.AppRouteConflict:
+	case database.NodeRouteActive, database.NodeRouteRemoving, database.NodeRouteDNSRemoved,
+		database.NodeRouteIngressRemoved, database.NodeRouteRemoved, database.NodeRouteFailed, database.NodeRouteConflict:
 	}
 	return false
 }

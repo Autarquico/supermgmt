@@ -1,39 +1,35 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
-	"github.com/autarquico/supermgmt/internal/client"
-	"github.com/autarquico/supermgmt/internal/domain"
 )
 
 const (
 	routeAccessPublic = "public"
 	routeAccessOwners = "owners"
 
-	publicRouteWarning = "warning: a public route is reachable from the internet with no authentication; the app owns its own auth"
+	publicRouteWarning = "warning: a public route is reachable from the internet with no authentication; the service on the port owns its own auth"
 )
 
-func newAppsExposeCmd(env []string) *cobra.Command {
-	var hostname, service, access string
+func newNodesExposeCmd(env []string) *cobra.Command {
+	var hostname, access string
 	var port int
 	cmd := &cobra.Command{
-		Use:   "expose <app> <environment> --hostname <fqdn> --service <service> --port <n> [--access public|owners]",
-		Short: "Publish a service port of an application through its node's Cloudflare Tunnel (experimental)",
-		Long: "Request a route from the node's Cloudflare Tunnel to a port the target's newest known-good deployment\n" +
-			"publishes on 127.0.0.1 or 0.0.0.0. The hostname must sit under the configured Cloudflare zone. An access of\n" +
-			"public, the default, makes the app reachable from the internet with no authentication; owners puts it behind\n" +
-			"Cloudflare Access for the owners. The request is a plan and waits for approval when policy asks (a public\n" +
-			"route is high risk). A target with no known-good deployment yet gets a route that waits for one.",
-		Args: cobra.ExactArgs(2),
+		Use:   "expose <node> --hostname <fqdn> --port <n> [--access public|owners]",
+		Short: "Publish a port of a node through its Cloudflare Tunnel (experimental)",
+		Long: "Request a route from the node's Cloudflare Tunnel to a port on the node. The hostname must sit under the\n" +
+			"configured Cloudflare zone. An access of public, the default, makes the port reachable from the internet with\n" +
+			"no authentication; owners puts it behind Cloudflare Access for the owners. The request is a plan and waits for\n" +
+			"approval when policy asks (a public route is high risk).",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if hostname == "" || service == "" || port == 0 {
-				return usageErrorf("--hostname, --service and --port are required")
+			if hostname == "" || port == 0 {
+				return usageErrorf("--hostname and --port are required")
 			}
 			if access != routeAccessPublic && access != routeAccessOwners {
 				return usageErrorf("--access must be %s or %s", routeAccessPublic, routeAccessOwners)
@@ -42,14 +38,14 @@ func newAppsExposeCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, target, err := resolveAppTarget(cmd.Context(), api, args[0], args[1])
+			node, err := resolveNode(cmd.Context(), api, args[0])
 			if err != nil {
 				return err
 			}
 			if access == routeAccessPublic {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), publicRouteWarning)
 			}
-			res, err := api.ExposeAppRoute(cmd.Context(), target.ID, wire.ExposeAppRouteRequest{Hostname: hostname, Service: service, Port: port, Access: access})
+			res, err := api.ExposeNodeRoute(cmd.Context(), node, wire.ExposeNodeRouteRequest{Hostname: hostname, Port: port, Access: access})
 			if err != nil {
 				return err
 			}
@@ -57,20 +53,19 @@ func newAppsExposeCmd(env []string) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&hostname, "hostname", "", "hostname under the Cloudflare zone")
-	cmd.Flags().StringVar(&service, "service", "", "Compose service that publishes the port")
-	cmd.Flags().IntVar(&port, "port", 0, "published port")
+	cmd.Flags().IntVar(&port, "port", 0, "port of the node to publish")
 	cmd.Flags().StringVar(&access, "access", routeAccessPublic, "public (no authentication) | owners (Cloudflare Access)")
 	return cmd
 }
 
-func newAppsUnexposeCmd(env []string) *cobra.Command {
+func newNodesUnexposeCmd(env []string) *cobra.Command {
 	var hostname string
 	cmd := &cobra.Command{
-		Use:   "unexpose <app> <environment> --hostname <fqdn>",
-		Short: "Remove a route of an application (experimental)",
+		Use:   "unexpose <node> --hostname <fqdn>",
+		Short: "Remove a route of a node (experimental)",
 		Long: "Request the removal of the route for the hostname. It removes the DNS record, then the ingress rule, then\n" +
 			"the Access app, and waits for approval when policy asks. The hostname can be exposed again afterwards.",
-		Args: cobra.ExactArgs(2),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if hostname == "" {
 				return usageErrorf("--hostname is required")
@@ -79,11 +74,11 @@ func newAppsUnexposeCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, target, err := resolveAppTarget(cmd.Context(), api, args[0], args[1])
+			node, err := resolveNode(cmd.Context(), api, args[0])
 			if err != nil {
 				return err
 			}
-			res, err := api.UnexposeAppRoute(cmd.Context(), target.ID, hostname)
+			res, err := api.UnexposeNodeRoute(cmd.Context(), node, hostname)
 			if err != nil {
 				return err
 			}
@@ -95,7 +90,10 @@ func newAppsUnexposeCmd(env []string) *cobra.Command {
 }
 
 // routeSubmissionOutput prints the job of an expose or unexpose and, when the route already exists, its row.
-func routeSubmissionOutput(cmd *cobra.Command, res wire.AppRouteSubmission) error {
+func routeSubmissionOutput(cmd *cobra.Command, res wire.NodeRouteSubmission) error {
+	if res.Submission.Policy.ApprovalRequired {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "to approve: sm jobs approve %s --plan-hash %s\n", res.Submission.Job.ID, res.Submission.Job.PlanHash)
+	}
 	return emit(cmd, res, func(w io.Writer) error {
 		if _, err := fmt.Fprintln(w, describeSubmission(res.Submission)); err != nil {
 			return err
@@ -103,115 +101,63 @@ func routeSubmissionOutput(cmd *cobra.Command, res wire.AppRouteSubmission) erro
 		if res.Route == nil {
 			return nil
 		}
-		_, err := fmt.Fprintf(w, "route %s -> %s:%d (%s) is %s\n", res.Route.Hostname, res.Route.Service, res.Route.Port, res.Route.Access, res.Route.Phase)
+		_, err := fmt.Fprintf(w, "route %s -> port %d (%s) is %s\n", res.Route.Hostname, res.Route.Port, res.Route.Access, res.Route.Phase)
 		return err
 	})
 }
 
-func newAppsRoutesCmd(env []string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "routes [<app> [<environment>]]",
-		Short: "List the routes of applications (experimental)",
-		Args:  cobra.MaximumNArgs(2),
+func newNodesRoutesCmd(env []string) *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "routes [<node>]",
+		Short: "List the routes of every node, or of one (experimental)",
+		Long:  "List the routes of every node, or of one. --all also lists removed routes with the note that says why.",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, err := newClient(cmd, env)
 			if err != nil {
 				return err
 			}
-			routes, labels, err := listRoutes(cmd.Context(), api, args)
+			nodes, err := allNodes(cmd.Context(), api, wire.NodeQuery{})
 			if err != nil {
 				return err
 			}
-			return emit(cmd, wire.Page[wire.AppRoute]{Items: routes}, func(w io.Writer) error { return writeRoutes(w, routes, labels) })
+			var page wire.Page[wire.NodeRoute]
+			if len(args) == 1 {
+				node, err := resolveNode(cmd.Context(), api, args[0])
+				if err != nil {
+					return err
+				}
+				page, err = api.ListNodeRoutes(cmd.Context(), node, all)
+				if err != nil {
+					return err
+				}
+			} else if page, err = api.ListAllNodeRoutes(cmd.Context(), all); err != nil {
+				return err
+			}
+			names := map[string]string{}
+			for _, n := range nodes {
+				names[string(n.ID)] = n.Name
+			}
+			return emit(cmd, page, func(w io.Writer) error { return writeNodeRoutes(w, page.Items, names) })
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "include removed routes")
+	return cmd
 }
 
-// listRoutes reads the routes of every app, of one app, or of one app's environment, and names their targets.
-func listRoutes(ctx context.Context, api *client.Client, args []string) ([]wire.AppRoute, map[domain.ID]string, error) {
-	switch len(args) {
-	case 0:
-		apps, err := allApps(ctx, api)
-		if err != nil {
-			return nil, nil, err
-		}
-		page, err := api.ListAppRoutes(ctx)
-		return page.Items, targetLabels(apps), err
-	case 1:
-		id, err := resolveApp(ctx, api, args[0])
-		if err != nil {
-			return nil, nil, err
-		}
-		app, err := api.GetApp(ctx, id)
-		if err != nil {
-			return nil, nil, err
-		}
-		routes, err := appRoutes(ctx, api, app)
-		return routes, targetLabels([]wire.App{app}), err
-	}
-	app, target, err := resolveAppTarget(ctx, api, args[0], args[1])
-	if err != nil {
-		return nil, nil, err
-	}
-	page, err := api.ListAppTargetRoutes(ctx, target.ID)
-	return page.Items, targetLabels([]wire.App{app}), err
-}
-
-// appRoutes are the routes of every target of the app.
-func appRoutes(ctx context.Context, api *client.Client, app wire.App) ([]wire.AppRoute, error) {
-	page, err := api.ListAppRoutes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	labels := targetLabels([]wire.App{app})
-	var routes []wire.AppRoute
-	for _, r := range page.Items {
-		if _, ours := labels[r.AppTargetID]; ours {
-			routes = append(routes, r)
-		}
-	}
-	return routes, nil
-}
-
-func allApps(ctx context.Context, api *client.Client) ([]wire.App, error) {
-	query := wire.PageQuery{Limit: wire.MaxLimit}
-	var apps []wire.App
-	for {
-		page, err := api.ListApps(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		apps = append(apps, page.Items...)
-		if page.NextCursor == "" {
-			return apps, nil
-		}
-		query.Cursor = page.NextCursor
-	}
-}
-
-// targetLabels names each target "<app>/<environment>".
-func targetLabels(apps []wire.App) map[domain.ID]string {
-	labels := map[domain.ID]string{}
-	for _, a := range apps {
-		for _, t := range a.Targets {
-			labels[t.ID] = a.Name + "/" + t.Environment
-		}
-	}
-	return labels
-}
-
-func writeRoutes(w io.Writer, routes []wire.AppRoute, labels map[domain.ID]string) error {
+func writeNodeRoutes(w io.Writer, routes []wire.NodeRoute, nodeNames map[string]string) error {
 	rows := make([][]string, len(routes))
 	for i, r := range routes {
-		target := labels[r.AppTargetID]
-		if target == "" {
-			target = string(r.AppTargetID)
+		node := nodeNames[string(r.NodeID)]
+		if node == "" {
+			node = string(r.NodeID)
 		}
 		phase := r.Phase
 		if r.LastError != "" {
 			phase += ": " + r.LastError
 		}
-		rows[i] = []string{r.Hostname, target, fmt.Sprintf("%s:%d", r.Service, r.Port), r.Access, phase}
+		rows[i] = []string{node, r.Hostname, fmt.Sprint(r.Port), r.Access, phase}
 	}
-	return table(w, []string{"HOSTNAME", "TARGET", "SERVICE:PORT", "ACCESS", "PHASE"}, rows)
+	return table(w, []string{"NODE", "HOSTNAME", "PORT", "ACCESS", "PHASE"}, rows)
 }

@@ -61,7 +61,6 @@ func (rs *routeSet) apps() {
 		},
 		direct(http.StatusOK, same[app.AppView])))
 	rs.appTargets()
-	rs.appRoutes()
 }
 
 func (rs *routeSet) appTargets() {

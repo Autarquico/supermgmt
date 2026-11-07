@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 )
 
 // Run lets a test register the route handler on its own, without the apply step before it.
-func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
+func (h nodeRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	job, err := h.store.Get(ctx, h.cfg.DB.Reader(), lease.JobID)
 	if err != nil {
 		return err
@@ -30,11 +31,10 @@ func (h appRouteHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	return h.run(ctx, lease, job, action)
 }
 
-// routeSetting is a node with an enabled tunnel and an app target on it.
+// routeSetting is a node with an enabled tunnel.
 type routeSetting struct {
 	*tunnelSetting
-	target database.AppTarget
-	routes appRouteHandler
+	routes nodeRouteHandler
 }
 
 func newRouteSetting(t *testing.T) *routeSetting {
@@ -42,36 +42,21 @@ func newRouteSetting(t *testing.T) *routeSetting {
 	return newRouteSettingOn(newEnabledTunnel(t))
 }
 
-// newRouteSettingOn puts an app target on the node of ts, with or without a tunnel.
+// newRouteSettingOn wraps the node of ts, with or without a tunnel.
 func newRouteSettingOn(ts *tunnelSetting) *routeSetting {
 	rs := &routeSetting{tunnelSetting: ts}
-	rs.routes = appRouteHandler{core: ts.handler.core, store: ts.store, tunnel: ts.handler.tunnel}
+	rs.routes = nodeRouteHandler{core: ts.handler.core, store: ts.store, tunnel: ts.handler.tunnel}
 	rs.current = rs.routes
-	ts.inTx(func(ctx context.Context, tx *database.Tx) error {
-		now := ts.clock.Now()
-		app, err := database.CreateApp(ctx, tx, database.App{
-			ID: ts.ids.NewID(), Name: "shop", DeployedService: "web", ImagePolicyJSON: []byte(`{}`),
-			ComposeSource: "control-plane", CreatedAt: now, UpdatedAt: now,
-		})
-		if err != nil {
-			return err
-		}
-		rs.target, err = database.CreateAppTarget(ctx, tx, database.AppTarget{
-			ID: ts.ids.NewID(), AppID: app.ID, EnvironmentID: ts.env.ID, NodeID: ts.node.ID, ComposeProject: "sm-shop-prod",
-			DeploymentPolicyJSON: []byte(`{}`), CreatedAt: now, UpdatedAt: now,
-		})
-		return err
-	})
 	return rs
 }
 
-// addRoute admits a route the way the service does: frozen identity from the node's tunnel, then waiting,
-// or provisioning when the target already has a version that publishes the port.
-func (rs *routeSetting) addRoute(hostname string, port int, access string, phase database.AppRoutePhase) database.AppRoute {
+// addRoute admits a route the way the service does: frozen identity from the node's tunnel, in admitted,
+// then moved on to phase.
+func (rs *routeSetting) addRoute(hostname string, port int, access string, phase database.NodeRoutePhase) database.NodeRoute {
 	rs.t.Helper()
-	var route database.AppRoute
+	var route database.NodeRoute
 	rs.inTx(func(ctx context.Context, tx *database.Tx) error {
-		tunnelID, generation, err := nodeTunnelIdentity(ctx, tx, rs.node.ID)
+		tunnelID, generation, err := nodeTunnelIdentity(ctx, tx, rs.node)
 		if err != nil {
 			return err
 		}
@@ -79,35 +64,37 @@ func (rs *routeSetting) addRoute(hostname string, port int, access string, phase
 		if err != nil {
 			return err
 		}
-		route, err = database.InsertAppRoute(ctx, tx, database.AppRoute{
-			ID: rs.ids.NewID(), AppTargetID: rs.target.ID, NodeID: rs.node.ID, Hostname: hostname, Service: "web", Port: port,
+		route, err = database.InsertNodeRoute(ctx, tx, database.NodeRoute{
+			ID: rs.ids.NewID(), NodeID: rs.node.ID, Hostname: hostname, Port: port,
 			Access: access, AccountID: cffake.DefaultAccountID, Zone: cffake.DefaultZone, InstanceID: instance.ID.String(),
 			TunnelID: tunnelID, TunnelGeneration: generation, CreatedBy: rs.admin, CreatedAt: rs.clock.Now(),
 		})
-		if err != nil || phase == database.AppRouteWaiting {
-			return err
+		for _, next := range []database.NodeRoutePhase{database.NodeRouteProvisioning, phase} {
+			if err != nil || route.Phase == phase {
+				break
+			}
+			rs.clock.Advance(1)
+			route, err = database.AdvanceNodeRoutePhase(ctx, tx, route.ID, route.Phase, next, database.NodeRouteObjects{}, rs.clock.Now())
 		}
-		rs.clock.Advance(1)
-		route, err = database.AdvanceAppRoutePhase(ctx, tx, route.ID, database.AppRouteWaiting, phase, database.AppRouteObjects{}, rs.clock.Now())
 		return err
 	})
 	return route
 }
 
-func (rs *routeSetting) route(id domain.ID) database.AppRoute {
+func (rs *routeSetting) route(id domain.ID) database.NodeRoute {
 	rs.t.Helper()
-	r, err := database.GetAppRoute(context.Background(), rs.db.Reader(), id)
-	mustf(rs.t, err, "GetAppRoute")
+	r, err := database.GetNodeRoute(context.Background(), rs.db.Reader(), id)
+	mustf(rs.t, err, "GetNodeRoute")
 	return r
 }
 
 // enqueue plans, submits and approves the action for route as the admin, the way the request path does, and
 // makes attempt run its job. The plan is what the claim revalidates.
-func (rs *routeSetting) enqueue(action string, route database.AppRoute) jobs.Job {
+func (rs *routeSetting) enqueue(action string, route database.NodeRoute) jobs.Job {
 	rs.t.Helper()
-	params := appRouteParams{Hostname: route.Hostname, RouteID: route.ID.String()}
-	if action == appRouteExposeAction {
-		params = appRouteParams{Hostname: route.Hostname, Service: route.Service, Port: fmt.Sprint(route.Port), Access: route.Access}
+	params := nodeRouteParams{Hostname: route.Hostname, RouteID: route.ID.String()}
+	if action == nodeRouteExposeAction {
+		params = nodeRouteParams{Hostname: route.Hostname, Port: fmt.Sprint(route.Port), Access: route.Access}
 	}
 	raw, err := toParams(params)
 	mustf(rs.t, err, "toParams")
@@ -118,7 +105,7 @@ func (rs *routeSetting) enqueue(action string, route database.AppRoute) jobs.Job
 		if err != nil {
 			return err
 		}
-		b, err := build(ctx, tx, action, rs.admin, appTargetRef(rs.target.ID), raw)
+		b, err := build(ctx, tx, action, rs.admin, nodeRef(rs.node.ID), raw)
 		if err != nil {
 			return err
 		}
@@ -127,10 +114,10 @@ func (rs *routeSetting) enqueue(action string, route database.AppRoute) jobs.Job
 			return err
 		}
 		sub, err = rs.plans.planAndSubmit(ctx, tx, by, actor, b, res)
-		if err != nil || action != appRouteExposeAction {
+		if err != nil || action != nodeRouteExposeAction {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE app_routes SET plan_id = ? WHERE id = ?`, sub.Job.PlanID, route.ID) // as admission does
+		_, err = tx.ExecContext(ctx, `UPDATE node_routes SET plan_id = ? WHERE id = ?`, sub.Job.PlanID, route.ID) // as admission does
 		return err
 	})
 	job := sub.Job
@@ -167,7 +154,11 @@ func (rs *routeSetting) wantIngress(hostnames ...string) {
 	rs.t.Helper()
 	want := []cffake.Ingress{{Hostname: rs.hostname(), Service: cloudflare.ServiceSSH}}
 	for _, h := range hostnames {
-		want = append(want, cffake.Ingress{Hostname: h, Service: "http://127.0.0.1:8080"})
+		port := 8080
+		if route, err := rs.liveRoute(h); err == nil {
+			port = route.Port
+		}
+		want = append(want, cffake.Ingress{Hostname: h, Service: fmt.Sprintf("http://127.0.0.1:%d", port)})
 	}
 	want = append(want, cffake.Ingress{Service: cloudflare.ServiceNotFound})
 	if got := rs.ingress(); !slices.Equal(got, want) {
@@ -199,8 +190,8 @@ const shop = "shop.example.test"
 
 func TestExposeAPublicRouteWritesTheRuleAndTheMarkedCNAME(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 
 	mustf(t, rs.attempt(), "expose")
 
@@ -215,18 +206,18 @@ func TestExposeAPublicRouteWritesTheRuleAndTheMarkedCNAME(t *testing.T) {
 		t.Errorf("record = %+v", record)
 	}
 	got := rs.route(route.ID)
-	if got.Phase != database.AppRouteActive || got.Objects.DNSRecordID != record.ID || got.Objects.AccessAppID != "" {
+	if got.Phase != database.NodeRouteActive || got.Objects.DNSRecordID != record.ID || got.Objects.AccessAppID != "" {
 		t.Errorf("route = %+v", got)
 	}
-	if events := rs.events("app_route.exposed"); len(events) != 1 || events[0].Data["hostname"] != shop || events[0].Data["access"] != "public" {
-		t.Errorf("app_route.exposed events = %+v", events)
+	if events := rs.events("node_route.exposed"); len(events) != 1 || events[0].Data["hostname"] != shop || events[0].Data["access"] != "public" {
+		t.Errorf("node_route.exposed events = %+v", events)
 	}
 }
 
 func TestExposeAnOwnersRouteGuardsItBeforeItHasDNS(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 
 	mustf(t, rs.attempt(), "expose")
 
@@ -248,15 +239,15 @@ func TestExposeAnOwnersRouteGuardsItBeforeItHasDNS(t *testing.T) {
 	if routable := rs.cf.EverRoutableWithoutAccess(); len(routable) != 0 {
 		t.Errorf("routable without Access: %v", routable)
 	}
-	if got := rs.route(route.ID); got.Phase != database.AppRouteActive || got.Objects.AccessAppID != app.ID {
+	if got := rs.route(route.ID); got.Phase != database.NodeRouteActive || got.Objects.AccessAppID != app.ID {
 		t.Errorf("route = %+v", got)
 	}
 }
 
 func TestExposeLeavesNoDNSRecordWhenItDiesAfterTheIngressStep(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 	rs.arm("crash", 1) // the ingress write
 
 	if err := rs.attempt(); err == nil {
@@ -266,7 +257,7 @@ func TestExposeLeavesNoDNSRecordWhenItDiesAfterTheIngressStep(t *testing.T) {
 	if rules, apps, records := rs.routeObjects(shop); rules != 1 || apps != 0 || records != 0 {
 		t.Errorf("rules, apps, records = %d, %d, %d; want 1, 0, 0", rules, apps, records)
 	}
-	if got := rs.route(route.ID).Phase; got != database.AppRouteProvisioning {
+	if got := rs.route(route.ID).Phase; got != database.NodeRouteProvisioning {
 		t.Errorf("phase = %s: the write was not recorded", got)
 	}
 }
@@ -281,8 +272,8 @@ func TestExposeResumesAfterEveryFaultAfterEveryMutationWithEachObjectOnce(t *tes
 			for k := 1; k <= mutations; k++ {
 				t.Run(fmt.Sprintf("%s %s at mutation %d", access, mode, k), func(t *testing.T) {
 					rs := newRouteSetting(t)
-					route := rs.addRoute(shop, 8080, access, database.AppRouteProvisioning)
-					rs.enqueue(appRouteExposeAction, route)
+					route := rs.addRoute(shop, 8080, access, database.NodeRouteProvisioning)
+					rs.enqueue(nodeRouteExposeAction, route)
 					rs.arm(mode, k)
 
 					rs.converge(4)
@@ -295,7 +286,7 @@ func TestExposeResumesAfterEveryFaultAfterEveryMutationWithEachObjectOnce(t *tes
 					if rules, apps, records := rs.routeObjects(shop); rules != 1 || apps != wantApps || records != 1 {
 						t.Errorf("rules, apps, records = %d, %d, %d; want 1, %d, 1", rules, apps, records, wantApps)
 					}
-					if got := rs.route(route.ID).Phase; got != database.AppRouteActive {
+					if got := rs.route(route.ID).Phase; got != database.NodeRouteActive {
 						t.Errorf("phase = %s", got)
 					}
 					if routable := rs.cf.EverRoutableWithoutAccess(); access == "owners" && len(routable) != 0 {
@@ -310,8 +301,8 @@ func TestExposeResumesAfterEveryFaultAfterEveryMutationWithEachObjectOnce(t *tes
 func TestAForeignDNSRecordHaltsTheRouteBeforeAnyMutationAndIsLeftAlone(t *testing.T) {
 	rs := newRouteSetting(t)
 	foreign := rs.cf.SeedDNSRecord(shop, "elsewhere.example.net", "")
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteAdmitted)
+	rs.enqueue(nodeRouteExposeAction, route)
 	before := len(rs.cf.Mutations())
 
 	err := rs.attempt()
@@ -324,21 +315,21 @@ func TestAForeignDNSRecordHaltsTheRouteBeforeAnyMutationAndIsLeftAlone(t *testin
 	}
 	rs.wantIngress()
 	halted := rs.route(route.ID)
-	if halted.Phase != database.AppRouteConflict || halted.HaltedPhase != database.AppRouteProvisioning {
+	if halted.Phase != database.NodeRouteConflict || halted.HaltedPhase != database.NodeRouteAdmitted {
 		t.Errorf("route = %s (halted in %s)", halted.Phase, halted.HaltedPhase)
 	}
 	if kept := rs.cf.DNSRecords(); !slices.ContainsFunc(kept, func(d cffake.DNSRecord) bool { return d.ID == foreign.ID && d.Content == foreign.Content }) {
 		t.Error("the foreign record was changed or deleted")
 	}
-	if len(rs.events("app_route.halted")) != 1 {
+	if len(rs.events("node_route.halted")) != 1 {
 		t.Error("no app_route.halted event")
 	}
 }
 
 func TestASiblingRecordThatAppearsBeforeTheCreateHaltsTheRouteAndWithdrawsTheRule(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 	seeded := false
 	rs.chaos.afterMutation = func() {
 		if !seeded && len(rs.cf.Apps()) > 1 { // after the route's Access application
@@ -350,7 +341,7 @@ func TestASiblingRecordThatAppearsBeforeTheCreateHaltsTheRouteAndWithdrawsTheRul
 	err := rs.attempt()
 
 	var halt *routeHalt
-	if !errors.As(err, &halt) || halt.halt != database.AppRouteConflict {
+	if !errors.As(err, &halt) || halt.halt != database.NodeRouteConflict {
 		t.Fatalf("error = %v, want a conflict halt", err)
 	}
 	rs.wantIngress()
@@ -361,8 +352,8 @@ func TestASiblingRecordThatAppearsBeforeTheCreateHaltsTheRouteAndWithdrawsTheRul
 
 func TestASetupRerunKeepsTheRouteRules(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 	mustf(t, rs.attempt(), "expose")
 
 	rs.current = nil
@@ -370,25 +361,25 @@ func TestASetupRerunKeepsTheRouteRules(t *testing.T) {
 	mustf(t, rs.attempt(), "setup rerun")
 
 	rs.wantIngress(shop)
-	if got := rs.route(route.ID).Phase; got != database.AppRouteActive {
+	if got := rs.route(route.ID).Phase; got != database.NodeRouteActive {
 		t.Errorf("phase = %s: a rerun must not invalidate the route", got)
 	}
 	// the route survives the rerun's new generation: the identity check still holds
-	rs.enqueue(appRouteUnexposeAction, route)
+	rs.enqueue(nodeRouteUnexposeAction, route)
 	mustf(t, rs.attempt(), "unexpose after the rerun")
 }
 
 func TestUnexposeRemovesDNSThenTheRuleThenAccessAndReleasesTheHostname(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 	mustf(t, rs.attempt(), "expose")
-	other := rs.addRoute("blog.example.test", 8080, "public", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, other)
+	other := rs.addRoute("blog.example.test", 8081, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, other)
 	mustf(t, rs.attempt(), "expose the second route")
 	skip := len(rs.cf.Mutations())
 
-	rs.enqueue(appRouteUnexposeAction, rs.route(route.ID))
+	rs.enqueue(nodeRouteUnexposeAction, rs.route(route.ID))
 	mustf(t, rs.attempt(), "unexpose")
 
 	ops := rs.committedOps(skip)
@@ -400,13 +391,13 @@ func TestUnexposeRemovesDNSThenTheRuleThenAccessAndReleasesTheHostname(t *testin
 	if rules, apps, records := rs.routeObjects(shop); rules+apps+records != 0 {
 		t.Errorf("rules, apps, records = %d, %d, %d; want none", rules, apps, records)
 	}
-	if got := rs.route(route.ID).Phase; got != database.AppRouteRemoved {
+	if got := rs.route(route.ID).Phase; got != database.NodeRouteRemoved {
 		t.Errorf("phase = %s", got)
 	}
-	if events := rs.events("app_route.removed"); len(events) != 1 {
-		t.Errorf("app_route.removed events = %d", len(events))
+	if events := rs.events("node_route.removed"); len(events) != 1 {
+		t.Errorf("node_route.removed events = %d", len(events))
 	}
-	rs.addRoute(shop, 8080, "public", database.AppRouteWaiting) // the hostname is free again
+	rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning) // the hostname is free again
 }
 
 func TestUnexposeResumesAfterEveryFaultAfterEveryMutation(t *testing.T) {
@@ -414,10 +405,10 @@ func TestUnexposeResumesAfterEveryFaultAfterEveryMutation(t *testing.T) {
 		for k := 1; k <= 3; k++ {
 			t.Run(fmt.Sprintf("%s at mutation %d", mode, k), func(t *testing.T) {
 				rs := newRouteSetting(t)
-				route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
-				rs.enqueue(appRouteExposeAction, route)
+				route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
+				rs.enqueue(nodeRouteExposeAction, route)
 				mustf(t, rs.attempt(), "expose")
-				rs.enqueue(appRouteUnexposeAction, rs.route(route.ID))
+				rs.enqueue(nodeRouteUnexposeAction, rs.route(route.ID))
 				rs.arm(mode, k)
 
 				rs.converge(4)
@@ -426,7 +417,7 @@ func TestUnexposeResumesAfterEveryFaultAfterEveryMutation(t *testing.T) {
 				if rules, apps, records := rs.routeObjects(shop); rules+apps+records != 0 {
 					t.Errorf("rules, apps, records = %d, %d, %d; want none", rules, apps, records)
 				}
-				if got := rs.route(route.ID).Phase; got != database.AppRouteRemoved {
+				if got := rs.route(route.ID).Phase; got != database.NodeRouteRemoved {
 					t.Errorf("phase = %s", got)
 				}
 				if routable := rs.cf.EverRoutableWithoutAccess(); len(routable) != 0 {
@@ -439,8 +430,8 @@ func TestUnexposeResumesAfterEveryFaultAfterEveryMutation(t *testing.T) {
 
 func TestACrashAfterTheIngressWriteIsCleanedUpByUnexposeAndSurvivesAnotherWriter(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 	rs.arm("crash", 1)
 	if err := rs.attempt(); err == nil {
 		t.Fatal("the crash changed nothing")
@@ -452,29 +443,29 @@ func TestACrashAfterTheIngressWriteIsCleanedUpByUnexposeAndSurvivesAnotherWriter
 		t.Fatalf("another writer would drop the unrecorded rule: %+v", want)
 	}
 	rs.dropQueued(rs.queued)
-	rs.enqueue(appRouteUnexposeAction, rs.route(route.ID))
+	rs.enqueue(nodeRouteUnexposeAction, rs.route(route.ID))
 	mustf(t, rs.attempt(), "unexpose")
 
 	rs.wantIngress()
-	if got := rs.route(route.ID).Phase; got != database.AppRouteRemoved {
+	if got := rs.route(route.ID).Phase; got != database.NodeRouteRemoved {
 		t.Errorf("phase = %s", got)
 	}
 }
 
 func TestUnexposeFindsAnAccessApplicationCreatedButNeverRecorded(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, route)
 	rs.arm("crash", 2) // the Access application
 	if err := rs.attempt(); err == nil {
 		t.Fatal("the crash changed nothing")
 	}
-	if got := rs.route(route.ID); got.Phase != database.AppRouteIngressReady || got.Objects.AccessAppID != "" {
+	if got := rs.route(route.ID); got.Phase != database.NodeRouteIngressReady || got.Objects.AccessAppID != "" {
 		t.Fatalf("route = %+v", got)
 	}
 	rs.dropQueued(rs.queued)
 
-	rs.enqueue(appRouteUnexposeAction, rs.route(route.ID))
+	rs.enqueue(nodeRouteUnexposeAction, rs.route(route.ID))
 	mustf(t, rs.attempt(), "unexpose")
 
 	if rules, apps, records := rs.routeObjects(shop); rules+apps+records != 0 {
@@ -482,42 +473,42 @@ func TestUnexposeFindsAnAccessApplicationCreatedButNeverRecorded(t *testing.T) {
 	}
 }
 
-func TestUnexposeOfAWaitingRouteCallsNothingInCloudflare(t *testing.T) {
+func TestUnexposeOfARouteThatNeverReachedCloudflareChangesNothingThere(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteWaiting)
-	rs.enqueue(appRouteUnexposeAction, route)
-	requests := len(rs.cf.Requests())
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteUnexposeAction, route)
+	mutations := len(rs.cf.Mutations())
 
 	mustf(t, rs.attempt(), "unexpose")
 
-	if got := len(rs.cf.Requests()); got != requests {
-		t.Errorf("%d Cloudflare requests, want none", got-requests)
+	if got := len(rs.cf.Mutations()); got != mutations {
+		t.Errorf("%d Cloudflare mutations, want none", got-mutations)
 	}
-	if got := rs.route(route.ID).Phase; got != database.AppRouteRemoved {
+	if got := rs.route(route.ID).Phase; got != database.NodeRouteRemoved {
 		t.Errorf("phase = %s", got)
 	}
 }
 
 func TestAChangedTunnelHaltsTheRouteBeforeAnyMutation(t *testing.T) {
-	for name, change := range map[string]func(rs *routeSetting, route database.AppRoute){
-		"another zone": func(rs *routeSetting, route database.AppRoute) {
-			rs.exec("DROP TRIGGER app_routes_ids_once")
-			rs.exec("UPDATE app_routes SET zone = 'other.example' WHERE id = ?", route.ID)
+	for name, change := range map[string]func(rs *routeSetting, route database.NodeRoute){
+		"another zone": func(rs *routeSetting, route database.NodeRoute) {
+			rs.exec("DROP TRIGGER node_routes_ids_once")
+			rs.exec("UPDATE node_routes SET zone = 'other.example' WHERE id = ?", route.ID)
 		},
-		"another tunnel": func(rs *routeSetting, route database.AppRoute) {
-			rs.exec("DROP TRIGGER app_routes_ids_once")
-			rs.exec("UPDATE app_routes SET tunnel_id = 'recreated' WHERE id = ?", route.ID)
+		"another tunnel": func(rs *routeSetting, route database.NodeRoute) {
+			rs.exec("DROP TRIGGER node_routes_ids_once")
+			rs.exec("UPDATE node_routes SET tunnel_id = 'recreated' WHERE id = ?", route.ID)
 		},
-		"a generation that is gone": func(rs *routeSetting, route database.AppRoute) {
-			rs.exec("DROP TRIGGER app_routes_ids_once")
-			rs.exec("UPDATE app_routes SET tunnel_generation = 99 WHERE id = ?", route.ID)
+		"a generation that is gone": func(rs *routeSetting, route database.NodeRoute) {
+			rs.exec("DROP TRIGGER node_routes_ids_once")
+			rs.exec("UPDATE node_routes SET tunnel_generation = 99 WHERE id = ?", route.ID)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rs := newRouteSetting(t)
-			route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
+			route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
 			change(rs, route)
-			rs.enqueue(appRouteExposeAction, route)
+			rs.enqueue(nodeRouteExposeAction, route)
 			before := len(rs.cf.Mutations())
 
 			err := rs.attempt()
@@ -528,7 +519,7 @@ func TestAChangedTunnelHaltsTheRouteBeforeAnyMutation(t *testing.T) {
 			if got := len(rs.cf.Mutations()); got != before {
 				t.Errorf("%d Cloudflare mutations before the halt", got-before)
 			}
-			if got := rs.route(route.ID); got.Phase != database.AppRouteFailed || got.HaltedPhase != database.AppRouteProvisioning {
+			if got := rs.route(route.ID); got.Phase != database.NodeRouteFailed || got.HaltedPhase != database.NodeRouteProvisioning {
 				t.Errorf("route = %s (halted in %s)", got.Phase, got.HaltedPhase)
 			}
 		})
@@ -546,8 +537,8 @@ func (rs *routeSetting) exec(query string, args ...any) {
 func TestADisableIsRefusedWhileTheNodeHasRoutesAndNamesThem(t *testing.T) {
 	rs := newRouteSetting(t)
 	rs.planDisable() // asked before the routes were admitted: the job refuses them itself
-	rs.addRoute(shop, 8080, "public", database.AppRouteWaiting)
-	rs.addRoute("blog.example.test", 8080, "public", database.AppRouteWaiting)
+	rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	rs.addRoute("blog.example.test", 8081, "public", database.NodeRouteProvisioning)
 	before := len(rs.cf.Mutations())
 
 	err := rs.attempt()
@@ -565,8 +556,8 @@ func TestADisableIsRefusedWhileTheNodeHasRoutesAndNamesThem(t *testing.T) {
 
 func TestADisableProceedsOnceTheRoutesAreRemoved(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteWaiting)
-	rs.enqueue(appRouteUnexposeAction, route)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteUnexposeAction, route)
 	mustf(t, rs.attempt(), "unexpose")
 	before := rs.instanceObjects()
 
@@ -579,19 +570,24 @@ func TestADisableProceedsOnceTheRoutesAreRemoved(t *testing.T) {
 func TestRouteJobsAndDisableHoldTheIngressLock(t *testing.T) {
 	rs := newRouteSetting(t)
 	disable := rs.planDisable()
-	route := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
 	held := func(job jobs.Job) []domain.LockSpec {
 		specs, err := LockPlanner{}.PlanLocks(context.Background(), rs.db.Reader(), job)
 		mustf(t, err, "PlanLocks")
 		return specs
 	}
-	for _, action := range []string{appRouteExposeAction, appRouteUnexposeAction} {
+	for _, action := range []string{nodeRouteExposeAction, nodeRouteUnexposeAction} {
 		specs := held(rs.enqueue(action, route))
 		if !slices.Contains(specs, cloudflareInstanceLock) {
 			t.Errorf("%s locks = %+v, want the instance lock", action, specs)
 		}
-		if !slices.Contains(specs, domain.ResourceLock(appTargetRef(rs.target.ID), domain.LockExclusive)) {
-			t.Errorf("%s locks = %+v, want the app target", action, specs)
+		if !slices.Contains(specs, nodeRouteLock(shop)) {
+			t.Errorf("%s locks = %+v, want the lock of the route", action, specs)
+		}
+		for _, spec := range specs {
+			if spec.Key == domain.ResourceLock(nodeRef(rs.node.ID), domain.LockShared).Key {
+				t.Errorf("%s locks = %+v: a route job must not lock its node", action, specs)
+			}
 		}
 	}
 	if specs := held(disable); !slices.Contains(specs, cloudflareInstanceLock) {
@@ -599,19 +595,45 @@ func TestRouteJobsAndDisableHoldTheIngressLock(t *testing.T) {
 	}
 }
 
+func TestARouteJobDoesNotBlockTheActionsOfItsNode(t *testing.T) {
+	rs := newRouteSetting(t)
+	route := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	expose := rs.enqueue(nodeRouteExposeAction, route)
+	routing, ok := rs.claim()
+	if !ok || routing.Job.ID != expose.ID {
+		t.Fatalf("claimed %v (found %v), want the expose job %s", routing.Job.ID, ok, expose.ID)
+	}
+
+	for _, action := range []string{"node.probe", "node.reboot"} {
+		queued := rs.actionPlan(action, rs.nodeRef())
+		claimed, ok := rs.claim()
+		if !ok || claimed.Job.ID != queued.ID {
+			t.Fatalf("%s was not claimable while a route job runs (claimed %v, found %v)", action, claimed.Job.ID, ok)
+		}
+		mustf(t, rs.store.Succeed(context.Background(), claimed.Lease), "Succeed")
+	}
+
+	rs.enqueue(nodeRouteUnexposeAction, route) // the same route is serialised by design
+	if claimed, ok := rs.claim(); ok {
+		t.Errorf("a second job of the same route was claimed: %s", claimed.Job.ID)
+	}
+}
+
 func TestDesiredIngressListsTheRoutesThatServe(t *testing.T) {
 	rs := newRouteSetting(t)
-	phases := map[string]database.AppRoutePhase{
-		"a-waiting.example.test": database.AppRouteWaiting, "b-prov.example.test": database.AppRouteProvisioning,
-		"c-active.example.test": database.AppRouteActive, "d-removing.example.test": database.AppRouteRemoving,
+	phases := map[string]database.NodeRoutePhase{
+		"b-prov.example.test":   database.NodeRouteProvisioning,
+		"c-active.example.test": database.NodeRouteActive, "d-removing.example.test": database.NodeRouteRemoving,
 	}
-	for host, phase := range phases {
-		rs.addRoute(host, 8080, "public", phase)
+	port := 8080
+	for _, host := range slices.Sorted(maps.Keys(phases)) {
+		rs.addRoute(host, port, "public", phases[host])
+		port++
 	}
-	halted := rs.addRoute("e-halted-expose.example.test", 8080, "public", database.AppRouteAccessReady)
-	rs.exec("UPDATE app_routes SET phase = 'conflict', halted_phase = 'access_ready' WHERE id = ?", halted.ID)
-	haltedRemoval := rs.addRoute("f-halted-removal.example.test", 8080, "public", database.AppRouteDNSRemoved)
-	rs.exec("UPDATE app_routes SET phase = 'failed', halted_phase = 'dns_removed' WHERE id = ?", haltedRemoval.ID)
+	halted := rs.addRoute("e-halted-expose.example.test", 8090, "public", database.NodeRouteAccessReady)
+	rs.exec("UPDATE node_routes SET phase = 'conflict', halted_phase = 'access_ready' WHERE id = ?", halted.ID)
+	haltedRemoval := rs.addRoute("f-halted-removal.example.test", 8091, "public", database.NodeRouteDNSRemoved)
+	rs.exec("UPDATE node_routes SET phase = 'failed', halted_phase = 'dns_removed' WHERE id = ?", haltedRemoval.ID)
 
 	got, err := desiredIngress(context.Background(), rs.db.Reader(), rs.node.ID, rs.hostname(), "")
 	mustf(t, err, "desiredIngress")
@@ -631,37 +653,25 @@ func TestDesiredIngressListsTheRoutesThatServe(t *testing.T) {
 
 func TestExposeCatalogRiskFollowsTheAccessMode(t *testing.T) {
 	for access, want := range map[string]domain.RiskClass{"public": domain.RiskHigh, "owners": domain.RiskOperational} {
-		got, err := policy.RiskFor(policy.ActionAppRouteExpose, map[string]any{
-			"hostname": shop, "service": "web", "port": "8080", "access": access,
+		got, err := policy.RiskFor(policy.ActionNodeRouteExpose, map[string]any{
+			"hostname": shop, "port": "8080", "access": access,
 		})
 		if err != nil || got != want {
 			t.Errorf("access %s: risk = %q, %v; want %q", access, got, err, want)
 		}
 	}
-	if got, err := policy.RiskFor(policy.ActionAppRouteUnexpose, map[string]any{"hostname": shop}); err != nil || got != domain.RiskOperational {
+	if got, err := policy.RiskFor(policy.ActionNodeRouteUnexpose, map[string]any{"hostname": shop}); err != nil || got != domain.RiskOperational {
 		t.Errorf("unexpose risk = %q, %v", got, err)
 	}
 }
 
-// ---- a route is published only by its own job ------------------------------------------------------------
+// ---- a route halts before its job publishes it ------------------------------------------------------------
 
-func TestAnotherWritersIngressLeavesOutAWaitingRouteWhoseDNSWasNeverChecked(t *testing.T) {
+func TestAnAdmittedRouteWithAForeignRecordHaltsBeforeItsJobPublishesIt(t *testing.T) {
 	rs := newRouteSetting(t)
-	rs.cf.SeedDNSRecord(shop, cloudflare.TunnelTarget(rs.addRoute(shop, 8080, "owners", database.AppRouteWaiting).TunnelID), "left behind")
-	other := rs.addRoute(apiHost, 8080, "public", database.AppRouteProvisioning)
-	rs.enqueue(appRouteExposeAction, other)
-
-	mustf(t, rs.attempt(), "expose of the other route")
-
-	rs.wantIngress(apiHost)
-}
-
-func TestAWaitingRouteWithAForeignRecordHaltsBeforeItIsEverPublished(t *testing.T) {
-	rs := newRouteSetting(t)
-	rs.seedKnownGood(tcpPort("web", "127.0.0.1", 8080))
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteWaiting)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteAdmitted)
 	foreign := rs.cf.SeedDNSRecord(shop, "elsewhere.example.net", "")
-	rs.enqueue(appRouteExposeAction, route)
+	rs.enqueue(nodeRouteExposeAction, route)
 	before := len(rs.cf.Mutations())
 
 	err := rs.attempt()
@@ -670,8 +680,8 @@ func TestAWaitingRouteWithAForeignRecordHaltsBeforeItIsEverPublished(t *testing.
 		t.Fatalf("error = %v, want it to name the record %s", err, foreign.ID)
 	}
 	got := rs.route(route.ID)
-	if got.Phase != database.AppRouteConflict || got.HaltedPhase != database.AppRouteWaiting {
-		t.Errorf("route = %s (halted in %s), want a conflict held in waiting", got.Phase, got.HaltedPhase)
+	if got.Phase != database.NodeRouteConflict || got.HaltedPhase != database.NodeRouteAdmitted {
+		t.Errorf("route = %s (halted in %s), want a conflict held in admitted", got.Phase, got.HaltedPhase)
 	}
 	if len(rs.cf.Mutations()) != before {
 		t.Error("the halt was preceded by a Cloudflare mutation")
@@ -679,24 +689,58 @@ func TestAWaitingRouteWithAForeignRecordHaltsBeforeItIsEverPublished(t *testing.
 	rs.wantIngress()
 }
 
+func TestAnotherWritersIngressLeavesOutAnAdmittedRouteWhoseDNSWasNeverChecked(t *testing.T) {
+	rs := newRouteSetting(t)
+	admitted := rs.addRoute(shop, 8080, "owners", database.NodeRouteAdmitted)
+	rs.cf.SeedDNSRecord(shop, cloudflare.TunnelTarget(admitted.TunnelID), "left behind")
+	other := rs.addRoute(apiHost, 8081, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, other)
+
+	mustf(t, rs.attempt(), "expose of the other route")
+
+	rs.wantIngress(apiHost)
+	if got := rs.route(admitted.ID).Phase; got != database.NodeRouteAdmitted {
+		t.Errorf("admitted route = %s, want it untouched by another route's job", got)
+	}
+}
+
+func TestAnOwnersRouteIsNeverReachableWithoutAccessWhateverWritesTheIngressFirst(t *testing.T) {
+	rs := newRouteSetting(t)
+	owners := rs.addRoute(shop, 8080, "owners", database.NodeRouteAdmitted)
+	other := rs.addRoute(apiHost, 8081, "public", database.NodeRouteProvisioning)
+	rs.enqueue(nodeRouteExposeAction, other)
+	mustf(t, rs.attempt(), "expose of the other route")
+	rs.wantIngress(apiHost)
+
+	rs.enqueue(nodeRouteExposeAction, owners)
+	mustf(t, rs.attempt(), "expose of the owners route")
+
+	if got := rs.route(owners.ID).Phase; got != database.NodeRouteActive {
+		t.Fatalf("owners route = %s (%s), want active", got, rs.route(owners.ID).LastError)
+	}
+	if routable := rs.cf.EverRoutableWithoutAccess(); slices.Contains(routable, shop) {
+		t.Errorf("the owners route was routable without Access: %v", routable)
+	}
+}
+
 // ---- the Access application is checked again before the record exists ----------------------------------
 
 // atAccessReady puts an owners route in access_ready with the Access application app recorded, as an earlier
 // attempt that stopped before the DNS record would have left it.
-func (rs *routeSetting) atAccessReady(route database.AppRoute, appID string) {
-	rs.exec(`UPDATE app_routes SET phase = 'access_ready', access_app_id = ? WHERE id = ?`, appID, route.ID)
+func (rs *routeSetting) atAccessReady(route database.NodeRoute, appID string) {
+	rs.exec(`UPDATE node_routes SET phase = 'access_ready', access_app_id = ? WHERE id = ?`, appID, route.ID)
 }
 
 func TestAnOwnersRouteResumedAtAccessReadyHaltsWhenItsAccessApplicationIsGone(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
 	rs.atAccessReady(route, "deleted-in-the-dashboard")
-	rs.enqueue(appRouteExposeAction, route)
+	rs.enqueue(nodeRouteExposeAction, route)
 
 	err := rs.attempt()
 
 	var halt *routeHalt
-	if !errors.As(err, &halt) || halt.halt != database.AppRouteFailed {
+	if !errors.As(err, &halt) || halt.halt != database.NodeRouteFailed {
 		t.Fatalf("error = %v, want a failed halt", err)
 	}
 	if _, _, records := rs.routeObjects(shop); records != 0 {
@@ -705,20 +749,20 @@ func TestAnOwnersRouteResumedAtAccessReadyHaltsWhenItsAccessApplicationIsGone(t 
 }
 
 func TestAnOwnersRouteResumedAtAccessReadyRepairsADriftedAccessApplicationBeforeTheRecord(t *testing.T) {
-	for name, drift := range map[string]func(rs *routeSetting, route database.AppRoute) cffake.App{
-		"policies": func(rs *routeSetting, route database.AppRoute) cffake.App {
+	for name, drift := range map[string]func(rs *routeSetting, route database.NodeRoute) cffake.App{
+		"policies": func(rs *routeSetting, route database.NodeRoute) cffake.App {
 			return rs.cf.SeedApp(cloudflare.RouteAccessAppName(rs.instanceID(), route.ID.String()), shop, rs.cf.SeedPolicy("everyone", "anyone@example.test").ID)
 		},
-		"domain": func(rs *routeSetting, route database.AppRoute) cffake.App {
+		"domain": func(rs *routeSetting, route database.NodeRoute) cffake.App {
 			return rs.cf.SeedApp(cloudflare.RouteAccessAppName(rs.instanceID(), route.ID.String()), "elsewhere.example.test", rs.ownersPolicy())
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rs := newRouteSetting(t)
-			route := rs.addRoute(shop, 8080, "owners", database.AppRouteProvisioning)
+			route := rs.addRoute(shop, 8080, "owners", database.NodeRouteProvisioning)
 			app := drift(rs, route)
 			rs.atAccessReady(route, app.ID)
-			rs.enqueue(appRouteExposeAction, route)
+			rs.enqueue(nodeRouteExposeAction, route)
 
 			mustf(t, rs.attempt(), "expose")
 
@@ -727,7 +771,7 @@ func TestAnOwnersRouteResumedAtAccessReadyRepairsADriftedAccessApplicationBefore
 					t.Errorf("app = %+v, want %s behind the owners policy only", got, shop)
 				}
 			}
-			if got := rs.route(route.ID).Phase; got != database.AppRouteActive {
+			if got := rs.route(route.ID).Phase; got != database.NodeRouteActive {
 				t.Errorf("phase = %s", got)
 			}
 		})
@@ -749,13 +793,13 @@ func (rs *routeSetting) ownersPolicy() string {
 }
 
 func TestAHaltedRouteNeverServesTheIngressWhateverPhaseItHaltedIn(t *testing.T) {
-	phases := []database.AppRoutePhase{
-		database.AppRouteWaiting, database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady,
-		database.AppRouteActive, database.AppRouteRemoving, database.AppRouteDNSRemoved,
+	phases := []database.NodeRoutePhase{
+		database.NodeRouteProvisioning, database.NodeRouteProvisioning, database.NodeRouteIngressReady, database.NodeRouteAccessReady,
+		database.NodeRouteActive, database.NodeRouteRemoving, database.NodeRouteDNSRemoved,
 	}
-	for _, halted := range []database.AppRoutePhase{database.AppRouteFailed, database.AppRouteConflict} {
+	for _, halted := range []database.NodeRoutePhase{database.NodeRouteFailed, database.NodeRouteConflict} {
 		for _, in := range phases {
-			if servesIngress(database.AppRoute{Phase: halted, HaltedPhase: in}) {
+			if servesIngress(database.NodeRoute{Phase: halted, HaltedPhase: in}) {
 				t.Errorf("a route %s while %s serves the ingress", halted, in)
 			}
 		}
@@ -764,8 +808,8 @@ func TestAHaltedRouteNeverServesTheIngressWhateverPhaseItHaltedIn(t *testing.T) 
 
 func TestAnExhaustedJobThatFailsBeforeItsRunExistsStillHaltsTheRoute(t *testing.T) {
 	rs := newRouteSetting(t)
-	route := rs.addRoute(shop, 8080, "owners", database.AppRouteIngressReady) // an earlier attempt wrote the rule
-	job := rs.enqueue(appRouteExposeAction, route)
+	route := rs.addRoute(shop, 8080, "owners", database.NodeRouteIngressReady) // an earlier attempt wrote the rule
+	job := rs.enqueue(nodeRouteExposeAction, route)
 	rs.exec(`UPDATE jobs SET attempts = max_attempts - 1 WHERE id = ?`, job.ID) // the claim makes this the last attempt
 	rs.cf.Inject(cffake.OpZoneList, cffake.FailBefore, -1)                      // the zone lookup of the run fails
 
@@ -774,7 +818,7 @@ func TestAnExhaustedJobThatFailsBeforeItsRunExistsStillHaltsTheRoute(t *testing.
 	}
 
 	got := rs.route(route.ID)
-	if got.Phase != database.AppRouteFailed || got.HaltedPhase != database.AppRouteIngressReady {
+	if got.Phase != database.NodeRouteFailed || got.HaltedPhase != database.NodeRouteIngressReady {
 		t.Errorf("route = %s (halted in %s), want failed in ingress_ready", got.Phase, got.HaltedPhase)
 	}
 }

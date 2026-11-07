@@ -171,6 +171,8 @@ func (f *secretsFixture) serve(ctx context.Context) *api.Server {
 	mcpRigMust(t, err)
 	svc.Apps, err = app.NewApps(cfg, store, mcpRigGitHub{})
 	mcpRigMust(t, err)
+	svc.Routes, err = app.NewNodeRoutes(cfg, store)
+	mcpRigMust(t, err)
 	svc.Repositories, err = app.NewRepositories(cfg, mcpRigGitHub{})
 	mcpRigMust(t, err)
 	deployments, err := app.NewDeployments(cfg, svc.Governance, app.CIPolling{})

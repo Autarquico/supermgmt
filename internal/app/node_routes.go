@@ -3,14 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
-	"net/netip"
 	"strconv"
 	"strings"
 
 	"github.com/autarquico/supermgmt/internal/database"
-	"github.com/autarquico/supermgmt/internal/deployments/compose"
 	"github.com/autarquico/supermgmt/internal/domain"
-	"github.com/autarquico/supermgmt/internal/domain/plan"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
@@ -22,120 +19,126 @@ const maxRoutesPerNode = 98
 // reservedSSHLabelPrefix marks the namespace of node SSH hostnames (ssh-<node>.<zone>).
 const reservedSSHLabelPrefix = "ssh-"
 
-// AppRoutes exposes an app target's published port through its node's Cloudflare Tunnel (ADR-0040). A request
-// is a plan of app_route.expose or app_route.unexpose. The route row is written when the request is admitted:
+// NodeRoutes exposes a local port of a node through the node's Cloudflare Tunnel (ADR-0040, ADR-0043). A request
+// is a plan of node_route.expose or node_route.unexpose. The route row is written when the request is admitted:
 // in the request transaction when policy needs no approval, else by the apply step of the approved job, always
-// in waiting. The Cloudflare work itself runs in that same control_plane.apply job (app_routes_job.go), which
-// is the only writer of the route's progress from then on.
-type AppRoutes struct {
+// in admitted. The Cloudflare work itself runs in that same control_plane.apply job (node_routes_job.go),
+// which is the only writer of the route's progress from then on.
+type NodeRoutes struct {
 	core
 	plans *Plans
 }
 
-// Routes returns the app routes service of the catalog.
-func (a *Apps) Routes() *AppRoutes { return &AppRoutes{core: a.core, plans: a.plans} }
+// NewNodeRoutes validates cfg and builds the node routes service. The job store is the one built with this
+// package's Revalidator and LockPlanner.
+func NewNodeRoutes(cfg Config, jobStore *jobs.Store) (*NodeRoutes, error) {
+	plans, err := NewPlans(cfg, jobStore)
+	if err != nil {
+		return nil, err
+	}
+	return &NodeRoutes{core: plans.core, plans: plans}, nil
+}
 
-// ExposeRouteRequest asks to publish a service port of an app target under a hostname.
+// ExposeRouteRequest asks to publish a port of a node under a hostname.
 type ExposeRouteRequest struct {
 	Hostname string
-	Service  string
 	Port     int
 	// Access is public or owners. Empty means public: the omitted value is normalised before policy evaluates.
 	Access string
 }
 
-// AppRouteResult is the outcome of an expose or unexpose request. Submission is the plan's job, which waits for
+// NodeRouteResult is the outcome of an expose or unexpose request. Submission is the plan's job, which waits for
 // approval when policy asks. Route is nil while an expose waits for approval: nothing is written before it.
-type AppRouteResult struct {
-	Route      *database.AppRoute
+type NodeRouteResult struct {
+	Route      *database.NodeRoute
 	Submission Submission
 }
 
-func (r AppRouteResult) createdJob() *domain.ID { return &r.Submission.Job.ID }
+func (r NodeRouteResult) createdJob() *domain.ID { return &r.Submission.Job.ID }
 
-// Expose requests a route for the target (action app_route.expose).
-func (s *AppRoutes) Expose(ctx context.Context, by Caller, targetID domain.ID, r ExposeRouteRequest) (AppRouteResult, error) {
+// Expose requests a route for the node (action node_route.expose).
+func (s *NodeRoutes) Expose(ctx context.Context, by Caller, nodeID domain.ID, r ExposeRouteRequest) (NodeRouteResult, error) {
 	p, err := s.exposeParams(r)
 	if err != nil {
-		return AppRouteResult{}, err
+		return NodeRouteResult{}, err
 	}
-	return commit(ctx, s.core, by, func(ctx context.Context, tx *database.Tx) (AppRouteResult, error) {
+	return commit(ctx, s.core, by, func(ctx context.Context, tx *database.Tx) (NodeRouteResult, error) {
 		actor, err := s.beginRequest(ctx, tx, by)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
-		b, err := s.planOf(ctx, tx, by, appRouteExposeAction, targetID, p)
+		b, err := s.planOf(ctx, tx, by, nodeRouteExposeAction, nodeID, p)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
 		res, err := s.evaluate(ctx, tx, actor, b)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
 		if res.ApprovalRequired {
 			// Nothing is written before the approval, but an expose that cannot be admitted is refused now.
-			if _, _, err := s.assess(ctx, tx, targetID, p, true); err != nil {
-				return AppRouteResult{}, err
+			if _, _, err := s.assess(ctx, tx, nodeID, p, true); err != nil {
+				return NodeRouteResult{}, err
 			}
 		}
 		submission, err := s.plans.planAndSubmit(ctx, tx, by, actor, b, res)
 		if err != nil || res.ApprovalRequired {
-			return AppRouteResult{Submission: submission}, err
+			return NodeRouteResult{Submission: submission}, err
 		}
-		row, err := s.admit(ctx, tx, actor, targetID, *submission.Job.PlanID, p, true)
-		return AppRouteResult{Route: &row, Submission: submission}, err
+		row, err := s.admit(ctx, tx, actor, nodeID, *submission.Job.PlanID, p, true)
+		return NodeRouteResult{Route: &row, Submission: submission}, err
 	})
 }
 
-// Unexpose requests the removal of the target's route for hostname (action app_route.unexpose).
-func (s *AppRoutes) Unexpose(ctx context.Context, by Caller, targetID domain.ID, hostname string) (AppRouteResult, error) {
-	p := appRouteParams{Hostname: canonicalHostname(hostname)}
-	return commit(ctx, s.core, by, func(ctx context.Context, tx *database.Tx) (AppRouteResult, error) {
+// Unexpose requests the removal of the node's route for hostname (action node_route.unexpose).
+func (s *NodeRoutes) Unexpose(ctx context.Context, by Caller, nodeID domain.ID, hostname string) (NodeRouteResult, error) {
+	p := nodeRouteParams{Hostname: canonicalHostname(hostname)}
+	return commit(ctx, s.core, by, func(ctx context.Context, tx *database.Tx) (NodeRouteResult, error) {
 		actor, err := s.beginRequest(ctx, tx, by)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
-		route, err := s.routeOf(ctx, tx, targetID, p.Hostname)
+		route, err := s.routeOf(ctx, tx, nodeID, p.Hostname)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
 		p.RouteID = route.ID.String()
-		b, err := s.planOf(ctx, tx, by, appRouteUnexposeAction, targetID, p)
+		b, err := s.planOf(ctx, tx, by, nodeRouteUnexposeAction, nodeID, p)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
 		res, err := s.evaluate(ctx, tx, actor, b)
 		if err != nil {
-			return AppRouteResult{}, err
+			return NodeRouteResult{}, err
 		}
 		submission, err := s.plans.planAndSubmit(ctx, tx, by, actor, b, res)
-		return AppRouteResult{Route: &route, Submission: submission}, err
+		return NodeRouteResult{Route: &route, Submission: submission}, err
 	})
 }
 
-// List returns the routes that are not removed, of one target or of every target when targetID is empty,
-// those the caller may read.
-func (s *AppRoutes) List(ctx context.Context, by Caller, targetID domain.ID) ([]database.AppRoute, error) {
+// List returns the routes of one node or of every node when nodeID is empty, those the caller may read. Removed
+// routes are left out unless includeRemoved is set.
+func (s *NodeRoutes) List(ctx context.Context, by Caller, nodeID domain.ID, includeRemoved bool) ([]database.NodeRoute, error) {
 	q := s.cfg.DB.Reader()
 	actor, err := s.beginRequest(ctx, q, by)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := database.ListAppRoutes(ctx, q, database.AppRouteFilter{TargetID: targetID})
+	rows, err := database.ListNodeRoutes(ctx, q, database.NodeRouteFilter{NodeID: nodeID, IncludeRemoved: includeRemoved})
 	if err != nil {
 		return nil, err
 	}
 	readable := map[domain.ID]bool{}
-	out := make([]database.AppRoute, 0, len(rows))
+	out := make([]database.NodeRoute, 0, len(rows))
 	for _, row := range rows {
-		allowed, known := readable[row.AppTargetID]
+		allowed, known := readable[row.NodeID]
 		if !known {
-			resolved, err := resolveAppTarget(ctx, q, row.AppTargetID)
+			resolved, err := resolveNode(ctx, q, row.NodeID)
 			if err != nil {
 				return nil, err
 			}
-			allowed = s.authorize(policy.Request{Actor: actor, Action: "app_target.read", Targets: []policy.Target{resolved.target}}).Decision == policy.DecisionAllow
-			readable[row.AppTargetID] = allowed
+			allowed = s.authorize(policy.Request{Actor: actor, Action: "node_route.read", Targets: []policy.Target{resolved.target}}).Decision == policy.DecisionAllow
+			readable[row.NodeID] = allowed
 		}
 		if allowed {
 			out = append(out, row)
@@ -144,23 +147,23 @@ func (s *AppRoutes) List(ctx context.Context, by Caller, targetID domain.ID) ([]
 	return out, nil
 }
 
-func (s *AppRoutes) planOf(ctx context.Context, q database.Querier, by Caller, action string, targetID domain.ID, p appRouteParams) (built, error) {
+func (s *NodeRoutes) planOf(ctx context.Context, q database.Querier, by Caller, action string, nodeID domain.ID, p nodeRouteParams) (built, error) {
 	params, err := toParams(p)
 	if err != nil {
 		return built{}, err
 	}
-	return build(ctx, q, action, by.ID, appTargetRef(targetID), params)
+	return build(ctx, q, action, by.ID, nodeRef(nodeID), params)
 }
 
-// routeOf is the live route of hostname on the target; NOT_FOUND when the hostname belongs to nobody or to
-// another target (the caller cannot tell which).
-func (s *AppRoutes) routeOf(ctx context.Context, q database.Querier, targetID domain.ID, hostname string) (database.AppRoute, error) {
-	route, err := database.GetLiveAppRouteByHostname(ctx, q, hostname)
-	if err == nil && route.AppTargetID != targetID {
-		return database.AppRoute{}, smerr.New(smerr.CodeNotFound, "", "the target has no route for "+hostname)
+// routeOf is the live route of hostname on the node; NOT_FOUND when the hostname belongs to nobody or to
+// another node (the caller cannot tell which).
+func (s *NodeRoutes) routeOf(ctx context.Context, q database.Querier, nodeID domain.ID, hostname string) (database.NodeRoute, error) {
+	route, err := database.GetLiveNodeRouteByHostname(ctx, q, hostname)
+	if err == nil && route.NodeID != nodeID {
+		return database.NodeRoute{}, smerr.New(smerr.CodeNotFound, "", "the node has no route for "+hostname)
 	}
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
-		return database.AppRoute{}, smerr.New(smerr.CodeNotFound, "", "the target has no route for "+hostname)
+		return database.NodeRoute{}, smerr.New(smerr.CodeNotFound, "", "the node has no route for "+hostname)
 	}
 	return route, err
 }
@@ -168,19 +171,19 @@ func (s *AppRoutes) routeOf(ctx context.Context, q database.Querier, targetID do
 // ---- parameters -------------------------------------------------------------------------------------
 
 // exposeParams validates the shape of a request and writes it in its canonical form, before policy sees it.
-func (s *AppRoutes) exposeParams(r ExposeRouteRequest) (appRouteParams, error) {
+func (s *NodeRoutes) exposeParams(r ExposeRouteRequest) (nodeRouteParams, error) {
 	if s.cfg.Cloudflare == nil {
-		return appRouteParams{}, requireTunnelAllowed(false, domain.Node{})
+		return nodeRouteParams{}, requireTunnelAllowed(false, domain.Node{})
 	}
 	hostname, err := routeHostname(r.Hostname, s.cfg.Cloudflare.Zone)
 	if err != nil {
-		return appRouteParams{}, err
+		return nodeRouteParams{}, err
 	}
 	access := r.Access
 	if access == "" {
 		access = "public"
 	}
-	p := appRouteParams{Hostname: hostname, Service: strings.TrimSpace(r.Service), Port: strconv.Itoa(r.Port), Access: access}
+	p := nodeRouteParams{Hostname: hostname, Port: strconv.Itoa(r.Port), Access: access}
 	return p, p.validate(true)
 }
 
@@ -226,44 +229,42 @@ func validDNSLabel(label string) bool {
 
 // assess runs the refusals of spec item 1 and says what the admitted route would start as: nothing when
 // the hostname already belongs to this very route, else its tunnel identity.
-func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID domain.ID, p appRouteParams, request bool) (*admission, *database.AppRoute, error) {
+func (s *NodeRoutes) assess(ctx context.Context, q database.Querier, nodeID domain.ID, p nodeRouteParams, request bool) (*admission, *database.NodeRoute, error) {
 	if s.cfg.Cloudflare == nil {
 		return nil, nil, requireTunnelAllowed(false, domain.Node{})
 	}
-	port, _ := strconv.Atoi(p.Port) // validated by exposeParams and by the plan's target
-	existing, err := database.GetLiveAppRouteByHostname(ctx, q, p.Hostname)
+	existing, err := database.GetLiveNodeRouteByHostname(ctx, q, p.Hostname)
 	switch {
 	case err == nil:
-		switch {
-		case !routeHas(existing, targetID, p):
-			return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf("the hostname %s is already routed", p.Hostname))
-		case request && !existing.Phase.Halted():
-			return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf("the hostname %s is already routed (%s)", p.Hostname, existing.Phase))
+		if routeHas(existing, nodeID, p) && (!request || existing.Phase.Halted()) {
+			return nil, &existing, nil
 		}
-		return nil, &existing, nil
+		holder, err := database.GetNode(ctx, q, existing.NodeID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+			"the hostname %s is already routed on the node %s (%s); to free it, run `sm nodes unexpose %s --hostname %s`",
+			p.Hostname, holder.Name, existing.Phase, holder.Name, p.Hostname))
 	case smerr.CodeOf(err) != smerr.CodeNotFound:
 		return nil, nil, err
 	}
-	target, err := database.GetAppTarget(ctx, q, targetID)
+	node, err := database.GetNode(ctx, q, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}
-	node, err := database.GetNode(ctx, q, target.NodeID)
-	if err != nil {
+	port, _ := strconv.Atoi(p.Port) // validated by exposeParams and by the plan's target
+	if err := requireRoutableNode(node); err != nil {
 		return nil, nil, err
 	}
-	if node.Endpoint.Transport.Effective() != domain.TransportCloudflare {
-		return nil, nil, smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf(
-			"the node %s has no Cloudflare connector; run `sm nodes setup %s --tunnel`", node.Name, node.Name))
+	if err := requirePublishablePort(ctx, q, node, port); err != nil {
+		return nil, nil, err
 	}
-	tunnelID, generation, err := nodeTunnelIdentity(ctx, q, node.ID)
+	tunnelID, generation, err := nodeTunnelIdentity(ctx, q, node)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := requireRouteCapacity(ctx, q, node, 1); err != nil {
-		return nil, nil, err
-	}
-	if err := requireKnownGoodServes(ctx, q, targetID, p.Service, port); err != nil {
 		return nil, nil, err
 	}
 	instance, err := database.GetInstance(ctx, q)
@@ -275,10 +276,43 @@ func (s *AppRoutes) assess(ctx context.Context, q database.Querier, targetID dom
 	}, nil, nil
 }
 
+// requireRoutableNode holds a route to a managed node reached through a Cloudflare connector.
+func requireRoutableNode(node domain.Node) error {
+	if node.ManagementState != domain.ManagementManaged {
+		return invalidArgument("node %s is not managed", node.Name)
+	}
+	if node.Endpoint.Transport.Effective() != domain.TransportCloudflare {
+		return errNoConnector(node)
+	}
+	return nil
+}
+
+// tunnelSSHPort is the local port the tunnel's SSH rule serves (cloudflare.ServiceSSH).
+const tunnelSSHPort = 22
+
+// requirePublishablePort refuses the node's SSH ports, the one of its direct route and the one the tunnel
+// already serves under the SSH hostname, and a port another route of the node publishes, a halted one
+// included: it may still own objects.
+func requirePublishablePort(ctx context.Context, q database.Querier, node domain.Node, port int) error {
+	if port == node.Endpoint.Port || port == tunnelSSHPort {
+		return invalidArgument("port %d is the SSH port of the node %s and is not routable", port, node.Name)
+	}
+	other, err := database.GetLiveNodeRouteByNodePort(ctx, q, node.ID, port)
+	if smerr.CodeOf(err) == smerr.CodeNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+		"port %d of the node %s is already routed as %s (%s); to free it, run `sm nodes unexpose %s --hostname %s`",
+		port, node.Name, other.Hostname, other.Phase, node.Name, other.Hostname))
+}
+
 // requireRouteCapacity is the one transactional capacity check of a node's tunnel: the node's live routes and the
 // routes being added must fit in the tunnel's ingress.
 func requireRouteCapacity(ctx context.Context, q database.Querier, node domain.Node, adding int) error {
-	live, err := database.CountLiveAppRoutesByNode(ctx, q, node.ID)
+	live, err := database.CountLiveNodeRoutesByNode(ctx, q, node.ID)
 	if err != nil {
 		return err
 	}
@@ -298,128 +332,56 @@ type admission struct {
 	instanceID string
 }
 
-// newestKnownGoodServes reports whether the target has a known-good deployment and whether the newest one
-// publishes service:port for the tunnel.
-func newestKnownGoodServes(ctx context.Context, q database.Querier, targetID domain.ID, service string, port int) (known, serves bool, err error) {
-	good, err := database.NewestKnownGood(ctx, q, targetID, nil)
-	if smerr.CodeOf(err) == smerr.CodeNotFound {
-		return false, false, nil
-	}
-	if err != nil {
-		return false, false, err
-	}
-	ports, err := deploymentHostPorts(ctx, q, good)
-	if err != nil {
-		return false, false, err
-	}
-	return true, routeServed(ports, service, port), nil
-}
-
-// requireKnownGoodServes refuses a route when the newest known-good deployment of the target does not publish
-// its port. A target with none yet is accepted: the route waits for one.
-func requireKnownGoodServes(ctx context.Context, q database.Querier, targetID domain.ID, service string, port int) error {
-	known, serves, err := newestKnownGoodServes(ctx, q, targetID, service, port)
-	if err != nil || !known || serves {
-		return err
-	}
-	return invalidArgument(
-		"the newest known-good deployment does not publish service %q on port %d over TCP at 127.0.0.1 or 0.0.0.0, the only addresses the tunnel connector dials", service, port)
-}
-
-// admit writes the route of p for the target, in waiting, and returns it. A plan admits one route: when the
+// admit writes the route of p for the node, in admitted, and returns it. A plan admits one route: when the
 // plan wrote one already, in any phase, that row comes back and nothing is written, so a retried or late job
 // never admits again. Else the route that carries the hostname for this same request is returned. The count of
 // the node's routes and the insert share the caller's transaction.
-func (s *AppRoutes) admit(ctx context.Context, q database.Querier, actor domain.Actor, targetID, planID domain.ID, p appRouteParams, request bool) (database.AppRoute, error) {
-	admitted, err := database.GetAppRouteByPlan(ctx, q, planID)
+func (s *NodeRoutes) admit(ctx context.Context, q database.Querier, actor domain.Actor, nodeID, planID domain.ID, p nodeRouteParams, request bool) (database.NodeRoute, error) {
+	admitted, err := database.GetNodeRouteByPlan(ctx, q, planID)
 	if err == nil || smerr.CodeOf(err) != smerr.CodeNotFound {
 		return admitted, err
 	}
-	adm, existing, err := s.assess(ctx, q, targetID, p, request)
+	adm, existing, err := s.assess(ctx, q, nodeID, p, request)
 	if err != nil || existing != nil {
 		if existing != nil {
 			return *existing, nil
 		}
-		return database.AppRoute{}, err
+		return database.NodeRoute{}, err
 	}
 	port, _ := strconv.Atoi(p.Port)
 	now := s.cfg.Clock.Now()
-	return database.InsertAppRoute(ctx, q, database.AppRoute{
-		ID: s.cfg.IDs.NewID(), AppTargetID: targetID, NodeID: adm.node.ID, Hostname: p.Hostname, Service: p.Service, Port: port,
+	return database.InsertNodeRoute(ctx, q, database.NodeRoute{
+		ID: s.cfg.IDs.NewID(), NodeID: adm.node.ID, Hostname: p.Hostname, Port: port,
 		Access: p.Access, AccountID: s.cfg.Cloudflare.AccountID, Zone: s.cfg.Cloudflare.Zone, InstanceID: adm.instanceID,
 		TunnelID: adm.tunnelID, TunnelGeneration: adm.generation, PlanID: &planID, CreatedBy: actor.ID, CreatedAt: now,
 	})
 }
 
-// routeHas reports whether route is the one targetID's expose with parameters p asks for.
-func routeHas(route database.AppRoute, targetID domain.ID, p appRouteParams) bool {
+// routeHas reports whether route is the one nodeID's expose with parameters p asks for.
+func routeHas(route database.NodeRoute, nodeID domain.ID, p nodeRouteParams) bool {
 	port, _ := strconv.Atoi(p.Port) // validated by exposeParams and by the plan's target
-	return route.AppTargetID == targetID && route.Service == p.Service && route.Port == port && route.Access == p.Access
+	return route.NodeID == nodeID && route.Port == port && route.Access == p.Access
 }
 
-// applyApprovedAppRoute is the apply step of the control_plane.apply job of an app route plan. It admits the
+// applyApproved is the apply step of the control_plane.apply job of a node route plan. It admits the
 // route of an expose that waited for approval, and only that one: with no approval the request admitted the route
-// itself, and the system's activation is for a route admitted already, so a retry or a late job of those never
-// admits again. It does nothing for an unexpose either. The Cloudflare work follows in the same job
-// (appRouteHandler).
-func (a *Apps) applyApprovedAppRoute(ctx context.Context, q database.Querier, actor domain.Actor, action string, job jobs.Job) error {
-	if action == appRouteUnexposeAction || actor.Type == domain.ActorSystem {
-		return nil // the system activates a route admitted already; it admits none, even one a human approved
+// itself, so a retry or a late job of that never admits again. It does nothing for an unexpose either. The
+// Cloudflare work follows in the same job (nodeRouteHandler).
+func (s *NodeRoutes) applyApproved(ctx context.Context, q database.Querier, actor domain.Actor, action string, job jobs.Job) error {
+	if action == nodeRouteUnexposeAction {
+		return nil
 	}
 	if job.PlanID == nil {
-		return smerr.New(smerr.CodeInternal, "", "app route job has no plan")
+		return smerr.New(smerr.CodeInternal, "", "node route job has no plan")
 	}
 	decisions, err := database.ListDecisions(ctx, q, job.ID, job.PlanHash)
 	if err != nil || len(decisions) == 0 {
 		return err
 	}
-	p, err := payloadOf[appRouteParams](job)
+	p, err := payloadOf[nodeRouteParams](job)
 	if err != nil {
 		return err
 	}
-	_, err = a.Routes().admit(ctx, q, actor, job.Resource.ID, *job.PlanID, p, false)
+	_, err = s.admit(ctx, q, actor, job.Resource.ID, *job.PlanID, p, false)
 	return err
-}
-
-// ---- what a model publishes -------------------------------------------------------------------------
-
-var loopback = netip.AddrFrom4([4]byte{127, 0, 0, 1})
-
-// routeServed reports whether ports has service:port over TCP on an address the connector dials: it
-// connects to 127.0.0.1, so a port bound to 127.0.0.1 or to every IPv4 interface is reachable, and an IPv6 or
-// other-interface binding is not.
-func routeServed(ports []compose.HostPort, service string, port int) bool {
-	for _, p := range ports {
-		addr := p.Addr.Unmap()
-		if p.Service == service && int(p.Port) == port && p.Proto == "tcp" && (addr == loopback || addr == netip.IPv4Unspecified()) {
-			return true
-		}
-	}
-	return false
-}
-
-// deploymentHostPorts are the host ports of the model a deployment's plan froze.
-func deploymentHostPorts(ctx context.Context, q database.Querier, dep database.Deployment) ([]compose.HostPort, error) {
-	if dep.PlanID == nil {
-		return nil, smerr.New(smerr.CodeInternal, "", "deployment "+dep.ID.String()+" has no plan")
-	}
-	rec, err := database.GetPlan(ctx, q, *dep.PlanID)
-	if err != nil {
-		return nil, err
-	}
-	stored, err := plan.Parse(rec.PlanJSON)
-	if err != nil {
-		return nil, err
-	}
-	return frozenHostPorts(ctx, q, stored.Content.ComposeHash)
-}
-
-// frozenHostPorts are the host ports of the compose_model snapshot with the given hash.
-func frozenHostPorts(ctx context.Context, q database.Querier, composeHash *string) ([]compose.HostPort, error) {
-	model, err := readSnapshotJSON[composeSnapshot](ctx, q, composeHash)
-	if err != nil {
-		return nil, err
-	}
-	frozen, err := model.Frozen(*composeHash)
-	return frozen.HostPorts, err
 }

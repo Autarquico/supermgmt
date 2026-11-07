@@ -155,7 +155,7 @@ github.com/autarquico/supermgmt/internal/database.readSchemaVersion  exempt: SQL
 github.com/autarquico/supermgmt/internal/database.readSnapshot  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.readerQuery  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanAPIToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself
-github.com/autarquico/supermgmt/internal/database.scanAppRoute  FuzzScanAppRoute
+github.com/autarquico/supermgmt/internal/database.scanNodeRoute  FuzzScanNodeRoute
 github.com/autarquico/supermgmt/internal/database.scanDeployment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanEnvironment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanJoinToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself

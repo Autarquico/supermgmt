@@ -89,7 +89,6 @@ func TestMigration000013RebuildsAppRoutesAsNodeRoutes(t *testing.T) {
 }
 
 func TestMigration000013RefusesTwoLiveRoutesOnOnePort(t *testing.T) {
-	ctx := context.Background()
 	for name, second := range map[string]string{
 		"active and active": routeAt12("two", 8001, "active", "NULL", "dns-2", ""),
 		"active and halted": routeAt12("two", 8001, "failed", "ingress_ready", "", "boom"),
@@ -97,7 +96,7 @@ func TestMigration000013RefusesTwoLiveRoutesOnOnePort(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db := nodeRoutesWorld(t, routeAt12("one", 8001, "active", "NULL", "dns-1", ""), second)
 			before := dump(t, db.Reader(), `SELECT type, name, sql FROM sqlite_master ORDER BY type, name`) + dump(t, db.Reader(), `SELECT * FROM app_routes ORDER BY id`)
-			err := db.Migrate(ctx)
+			err := db.Migrate(context.Background())
 			if err == nil || !strings.Contains(err.Error(), "unexpose one of them with the previous SuperMgmt version") {
 				t.Fatalf("Migrate: err = %v, want the guidance", err)
 			}
@@ -129,7 +128,6 @@ func routeJobAt12(id, action, state string) []string {
 }
 
 func TestMigration000013RefusesOpenRouteJobs(t *testing.T) {
-	ctx := context.Background()
 	intent := `INSERT INTO operation_intents (id, job_id, step, lease_generation, state, operation, target_type, target_id, marker, deadline_at, dispatched_at)
 		VALUES ('intent-1', 'job-1', 'dns', 1, 'recorded', 'dns.create', 'app_target', 'target-1', 'marker-1', 9, 8)`
 	for name, setup := range map[string][]string{
@@ -141,7 +139,7 @@ func TestMigration000013RefusesOpenRouteJobs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db := nodeRoutesWorld(t, append([]string{routeAt12("one", 8001, "active", "NULL", "dns-1", "")}, setup...)...)
 			before := routesStateOf(t, db)
-			err := db.Migrate(ctx)
+			err := db.Migrate(context.Background())
 			if err == nil || !strings.Contains(err.Error(), routeJobGuidance) {
 				t.Fatalf("Migrate: err = %v, want the guidance", err)
 			}

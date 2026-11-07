@@ -15,32 +15,24 @@ const accessAppType = "self_hosted"
 
 // exposeRoute walks the route from where it stopped to active, in the ADR-0037 order: the ingress rule, the
 // Access application (owners only) and the proxied CNAME last, so the hostname is never routable without
-// its Access application. A waiting route starts only when the newest known-good deployment publishes its port
-// and its DNS preflight passed; it then persists provisioning, which puts its rule in the desired ingress, and
-// the first PUT follows at once. Until then no other writer publishes the rule.
+// its Access application. The DNS preflight runs before the first mutation, on every run, resumes included.
+// An admitted route serves no rule: only after its preflight passed, and under the ingress lock, does it persist
+// provisioning, which puts its rule in the desired ingress, and the first PUT follows at once.
 func (r *routeRun) exposeRoute(ctx context.Context) error {
-	waiting := r.route.Phase == database.AppRouteWaiting
-	if waiting {
-		_, serves, err := newestKnownGoodServes(ctx, r.cfg.DB.Reader(), r.route.AppTargetID, r.route.Service, r.route.Port)
-		if err != nil || !serves {
-			return err // the route keeps waiting; a succeeded deployment that publishes the port schedules a new job
-		}
-	}
-	// Checked on every run, resumes included, and before the first mutation.
 	if _, err := r.checkDNS(ctx, r.route.Phase); err != nil {
 		return err
 	}
-	if waiting {
+	if r.route.Phase == database.NodeRouteAdmitted {
 		if err := r.guard(ctx); err != nil {
 			return err
 		}
-		if err := r.advance(ctx, database.AppRouteProvisioning, database.AppRouteObjects{}, "", nil); err != nil {
+		if err := r.advance(ctx, database.NodeRouteProvisioning, database.NodeRouteObjects{}, "", nil); err != nil {
 			return err
 		}
 	}
-	if r.route.Phase == database.AppRouteIngressReady || r.route.Phase == database.AppRouteAccessReady {
+	if r.route.Phase == database.NodeRouteIngressReady || r.route.Phase == database.NodeRouteAccessReady {
 		// A resumed route lost its rule when it halted, and no step below writes it again.
-		if r.route.Phase == database.AppRouteAccessReady && r.route.Access == "owners" {
+		if r.route.Phase == database.NodeRouteAccessReady && r.route.Access == "owners" {
 			if err := r.run("Access application", r.requireAccessApp(ctx)); err != nil {
 				return err
 			}
@@ -50,13 +42,13 @@ func (r *routeRun) exposeRoute(ctx context.Context) error {
 		}
 	}
 	steps := []struct {
-		from database.AppRoutePhase
+		from database.NodeRoutePhase
 		name string
 		run  func(context.Context) error
 	}{
-		{database.AppRouteProvisioning, "tunnel ingress", r.exposeIngress},
-		{database.AppRouteIngressReady, "Access application", r.exposeAccess},
-		{database.AppRouteAccessReady, "DNS record", r.exposeDNS},
+		{database.NodeRouteProvisioning, "tunnel ingress", r.exposeIngress},
+		{database.NodeRouteIngressReady, "Access application", r.exposeAccess},
+		{database.NodeRouteAccessReady, "DNS record", r.exposeDNS},
 	}
 	for _, s := range steps {
 		if r.route.Phase != s.from {
@@ -86,7 +78,7 @@ func (r *routeRun) dnsComment() string {
 // after an earlier check, one that changed) halts the route and is never touched. It returns the route's
 // record, nil when there is none. The record may exist only once the Access application is in place, which
 // phase says: a halted route is checked against the phase it will resume at.
-func (r *routeRun) checkDNS(ctx context.Context, phase database.AppRoutePhase) (*cloudflare.DNSRecord, error) {
+func (r *routeRun) checkDNS(ctx context.Context, phase database.NodeRoutePhase) (*cloudflare.DNSRecord, error) {
 	records, err := r.tun.api.FindDNSRecords(ctx, r.tun.zoneID, r.route.Hostname)
 	if err != nil {
 		return nil, err
@@ -106,14 +98,14 @@ func (r *routeRun) checkDNS(ctx context.Context, phase database.AppRoutePhase) (
 	if recorded := r.route.Objects.DNSRecordID; recorded != "" && (own == nil || own.ID != recorded) {
 		return nil, routeFailed("the DNS record recorded for this route changed or no longer exists; unexpose the route and expose it again")
 	}
-	if own != nil && phase != database.AppRouteAccessReady && phase != database.AppRouteActive {
+	if own != nil && phase != database.NodeRouteAccessReady && phase != database.NodeRouteActive {
 		return nil, routeConflictRecord(*own, "exists before the Access application of this route")
 	}
 	return own, nil
 }
 
 func routeConflictRecord(rec cloudflare.DNSRecord, why string) error {
-	return &routeHalt{halt: database.AppRouteConflict, inner: smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
+	return &routeHalt{halt: database.NodeRouteConflict, inner: smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
 		"the %s record %s for %s %s; it was left alone. Resolve it in Cloudflare and expose the route again", rec.Type, rec.ID, rec.Name, why))}
 }
 
@@ -121,7 +113,7 @@ func (r *routeRun) exposeIngress(ctx context.Context) error {
 	if err := r.syncIngress(ctx, ""); err != nil {
 		return err
 	}
-	return r.advance(ctx, database.AppRouteIngressReady, database.AppRouteObjects{}, eventIngressSet,
+	return r.advance(ctx, database.NodeRouteIngressReady, database.NodeRouteObjects{}, eventIngressSet,
 		map[string]any{"tunnel_id": r.route.TunnelID})
 }
 
@@ -170,7 +162,7 @@ func (r *routeRun) repairAccessApp(ctx context.Context, app cloudflare.AccessApp
 
 func (r *routeRun) exposeAccess(ctx context.Context) error {
 	if r.route.Access != "owners" {
-		return r.advance(ctx, database.AppRouteAccessReady, database.AppRouteObjects{}, "", nil)
+		return r.advance(ctx, database.NodeRouteAccessReady, database.NodeRouteObjects{}, "", nil)
 	}
 	spec, err := r.accessSpec(ctx)
 	if err != nil {
@@ -194,7 +186,7 @@ func (r *routeRun) exposeAccess(ctx context.Context) error {
 			return err
 		}
 	}
-	return r.advance(ctx, database.AppRouteAccessReady, database.AppRouteObjects{AccessAppID: app.ID},
+	return r.advance(ctx, database.NodeRouteAccessReady, database.NodeRouteObjects{AccessAppID: app.ID},
 		tunnelEvent(how, eventAccessAppCreated, eventAccessAppAdopted), map[string]any{"access_app_id": app.ID, "name": name})
 }
 
@@ -244,6 +236,6 @@ func (r *routeRun) exposeDNS(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return r.advance(ctx, database.AppRouteActive, database.AppRouteObjects{DNSRecordID: record.ID}, eventAppRouteExposed,
+	return r.advance(ctx, database.NodeRouteActive, database.NodeRouteObjects{DNSRecordID: record.ID}, eventNodeRouteExposed,
 		map[string]any{"dns_record_id": record.ID, "how": tunnelEvent(how, "created", "adopted")})
 }

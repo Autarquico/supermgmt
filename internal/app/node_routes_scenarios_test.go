@@ -7,7 +7,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/database"
+	"github.com/autarquico/supermgmt/internal/deployments"
 	"github.com/autarquico/supermgmt/internal/jobs"
 )
 
@@ -17,10 +19,10 @@ const apiHost = "api.example.test"
 // last one still sees the rules of the others.
 func TestTwoExposesRacingASetupLeaveTheSSHRuleAndBothRoutes(t *testing.T) {
 	rs := newRouteSetting(t)
-	first := rs.addRoute(shop, 8080, "public", database.AppRouteProvisioning)
-	second := rs.addRoute(apiHost, 8080, "public", database.AppRouteProvisioning)
-	exposeFirst := rs.enqueue(appRouteExposeAction, first)
-	exposeSecond := rs.enqueue(appRouteExposeAction, second)
+	first := rs.addRoute(shop, 8080, "public", database.NodeRouteProvisioning)
+	second := rs.addRoute(apiHost, 8081, "public", database.NodeRouteProvisioning)
+	exposeFirst := rs.enqueue(nodeRouteExposeAction, first)
+	exposeSecond := rs.enqueue(nodeRouteExposeAction, second)
 	setup := rs.plan()
 	handlers := map[string]jobs.Handler{exposeFirst.ID.String(): rs.routes, exposeSecond.ID.String(): rs.routes, setup.ID.String(): rs.handler}
 
@@ -38,8 +40,8 @@ func TestTwoExposesRacingASetupLeaveTheSSHRuleAndBothRoutes(t *testing.T) {
 	}
 
 	rs.wantIngress(apiHost, shop) // sorted by hostname
-	for _, route := range []database.AppRoute{first, second} {
-		if got := rs.route(route.ID).Phase; got != database.AppRouteActive {
+	for _, route := range []database.NodeRoute{first, second} {
+		if got := rs.route(route.ID).Phase; got != database.NodeRouteActive {
 			t.Errorf("%s = %s, want active", route.Hostname, got)
 		}
 	}
@@ -75,4 +77,74 @@ func FuzzRouteHostname(f *testing.F) {
 			t.Errorf("accepted %q", host)
 		}
 	})
+}
+
+// addActiveRoute puts an active route of the fixture's node on port, which the fixture's model does not publish.
+func (f *finFixture) addActiveRoute(port int) database.NodeRoute {
+	f.t.Helper()
+	var route database.NodeRoute
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		inserted, err := database.InsertNodeRoute(ctx, tx, database.NodeRoute{
+			ID: f.ids.NewID(), NodeID: f.node.ID, Hostname: shop, Port: port, Access: "public",
+			AccountID: "acct", Zone: "example.test", InstanceID: "inst", TunnelID: "tunnel", TunnelGeneration: 1,
+			CreatedBy: f.deployer, CreatedAt: f.clock.Now(),
+		})
+		if err != nil {
+			return err
+		}
+		for _, step := range [][2]database.NodeRoutePhase{
+			{database.NodeRouteAdmitted, database.NodeRouteProvisioning},
+			{database.NodeRouteProvisioning, database.NodeRouteIngressReady},
+			{database.NodeRouteIngressReady, database.NodeRouteActive},
+		} {
+			if inserted, err = database.AdvanceNodeRoutePhase(ctx, tx, inserted.ID, step[0], step[1], database.NodeRouteObjects{}, f.clock.Now()); err != nil {
+				return err
+			}
+		}
+		route = inserted
+		return nil
+	})
+	return route
+}
+
+// A deployment is not held to the ports the node routes: the route answers whatever listens there.
+func TestADeploymentThatDoesNotPublishARoutedPortIsAcceptedAndTheRouteStaysActive(t *testing.T) {
+	w := newDeployWorld(t) // its model publishes web on 127.0.0.1:8080 only
+	route := w.addActiveRoute(9090)
+
+	dep := w.queued()
+	mustf(t, w.run(), "Run")
+
+	w.want(dep.ID, deployments.StateSucceeded)
+	got, err := database.GetNodeRoute(context.Background(), w.db.Reader(), route.ID)
+	mustf(t, err, "GetNodeRoute")
+	if got.Phase != database.NodeRouteActive {
+		t.Errorf("route = %s, want active", got.Phase)
+	}
+}
+
+func TestFinalizingADeploymentAndItsAutomaticRollbackIgnoreTheRoutedPorts(t *testing.T) {
+	f := newFinFixture(t, finOptions{pinned: true})
+	f.goodDeployment(depCommit) // the automatic rollback target
+	f.addActiveRoute(9090)
+	created := f.create(func(r *CreateDeployment) { r.CommitSHA = depOtherCommit })
+
+	got := f.mustFinalize(created.ID)
+
+	if got.State != deployments.StateQueued || f.planOf(created.ID).Content.RollbackTarget == nil {
+		t.Errorf("deployment = %s with rollback target %v, want it queued with a plan that can roll back", got.State, f.planOf(created.ID).Content.RollbackTarget)
+	}
+}
+
+func TestARollbackToAVersionThatDoesNotPublishTheRoutedPortIsAccepted(t *testing.T) {
+	f := newFinFixture(t, finOptions{pinned: true})
+	good := f.goodDeployment(depCommit)
+	newer := f.goodDeployment(depOtherCommit)
+	f.addActiveRoute(9090)
+
+	view := f.mustRollback(newer.ID, wire.RollbackRequest{ToDeploymentID: &good.ID})
+
+	if view.State != string(deployments.StateQueued) {
+		t.Errorf("rollback = %s, want queued", view.State)
+	}
 }

@@ -2,6 +2,7 @@ package policy
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -180,5 +181,277 @@ func TestRetiredActionsAreNotInTheCatalog(t *testing.T) {
 		if _, ok := Lookup(name); ok {
 			t.Errorf("%s is retired and still in the catalog", name)
 		}
+	}
+}
+
+func TestRetiredRouteActionsPointToTheirReplacement(t *testing.T) {
+	_, warnings, err := parseWarnings(t, `{name: old, subjects: ['*'], allow: ['app_route.expose', 'app_route.unexpose']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Warning{
+		{Action: "app_route.expose", ADR: "ADR-0043", Replacement: "node_route.expose", Rules: []string{"old"}},
+		{Action: "app_route.unexpose", ADR: "ADR-0043", Replacement: "node_route.unexpose", Rules: []string{"old"}},
+	}
+	if !reflect.DeepEqual(warnings, want) {
+		t.Fatalf("warnings = %+v, want %+v", warnings, want)
+	}
+	if got := warnings[0].String(); !strings.Contains(got, "use node_route.expose") {
+		t.Errorf("warning %q does not name the replacement", got)
+	}
+}
+
+func nodeRoute(action string) Request {
+	params := map[string]any{ParamHostname: "a.example.com"}
+	if action == ActionNodeRouteExpose {
+		params[ParamPort] = "8080"
+	}
+	return Request{Actor: human(), Action: action, Targets: []Target{target(domain.ResourceNode, "n", stagingAttrs)}, Params: params}
+}
+
+func TestRetiredRouteDenyBecomesDenyOfReplacement(t *testing.T) {
+	p, warnings, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['*'], deny: ['app_route.expose']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Evaluate(nodeRoute("node_route.expose")); got.Decision != DecisionDeny {
+		t.Errorf("node_route.expose = %s, want deny", got.Decision)
+	}
+	if got := p.Evaluate(nodeRoute("node_route.unexpose")); got.Decision == DecisionDeny {
+		t.Errorf("node_route.unexpose = deny, want the broad allow untouched")
+	}
+	if len(warnings) != 1 || !reflect.DeepEqual(warnings[0].Denied, []string{"carve"}) || len(warnings[0].AllNodes) != 0 {
+		t.Fatalf("warnings = %+v", warnings)
+	}
+	if got := warnings[0].String(); !strings.Contains(got, `deny now denies node_route.expose in rules: "carve"`) {
+		t.Errorf("warning %q does not say the deny was carried over", got)
+	}
+}
+
+func TestRetiredRouteAllowGrantsNothing(t *testing.T) {
+	p, _, err := parseWarnings(t, `{name: old, subjects: ['*'], allow: ['app_route.expose', 'app_route.unexpose']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"node_route.expose", "node_route.unexpose"} {
+		if got := p.Evaluate(nodeRoute(action)); got.Decision == DecisionAllow {
+			t.Errorf("%s = allow, want nothing granted", action)
+		}
+	}
+}
+
+func TestRetiredRouteWildcardDenyDeniesBothReplacements(t *testing.T) {
+	p, warnings, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['*'], deny: ['app_route.*']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"node_route.expose", "node_route.unexpose"} {
+		if got := p.Evaluate(nodeRoute(action)); got.Decision != DecisionDeny {
+			t.Errorf("%s = %s, want deny", action, got.Decision)
+		}
+	}
+	if len(warnings) != 2 {
+		t.Errorf("warnings = %+v", warnings)
+	}
+}
+
+func TestRetiredRouteDenyScopedToAppsDeniesEveryNode(t *testing.T) {
+	p, warnings, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['*'], resources: ['app:web', 'environment:production'], deny: ['app_route.expose']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Evaluate(nodeRoute("node_route.expose")); got.Decision != DecisionDeny {
+		t.Errorf("node_route.expose on a staging node = %s, want deny", got.Decision)
+	}
+	if !reflect.DeepEqual(warnings[0].AllNodes, []string{"carve"}) || !strings.Contains(warnings[0].String(), "on every node") {
+		t.Errorf("warning = %+v", warnings[0])
+	}
+}
+
+func TestRetiredRouteDenyScopedToAppsLeavesLiveActionsScoped(t *testing.T) {
+	const rule = `{name: carve, subjects: ['*'], resources: ['app:shop'], allow: ['service.restart'], deny: ['app_route.expose']}`
+	p, _, err := parseWarnings(t, rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := parseWarnings(t, `{name: carve, subjects: ['*'], resources: ['app:shop'], allow: ['service.restart']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restart := Request{Actor: human(), Action: "service.restart", Targets: []Target{target(domain.ResourceNode, "n", stagingAttrs)}}
+	scoped := restart
+	scoped.Targets = []Target{target(domain.ResourceNode, "n", Attributes{App: "shop"})}
+	for _, req := range []Request{restart, scoped} {
+		if got, want := p.Evaluate(req).Decision, before.Evaluate(req).Decision; got != want {
+			t.Errorf("service.restart on %+v = %s, want %s as without the retired deny", req.Targets[0], got, want)
+		}
+	}
+	if got := p.Evaluate(nodeRoute("node_route.expose")); got.Decision != DecisionDeny {
+		t.Errorf("node_route.expose = %s, want deny on every node", got.Decision)
+	}
+	rules := p.Rules()
+	if len(rules) != 2 || !reflect.DeepEqual(rules[0].Resources, []string{"app:shop"}) || !reflect.DeepEqual(rules[0].Allow, []string{"service.restart"}) || len(rules[0].Deny) != 0 {
+		t.Errorf("rules = %+v, want the original untouched", rules)
+	}
+}
+
+func TestRetiredRouteDenyUnscopedJoinsTheSameRule(t *testing.T) {
+	p, _, err := parseWarnings(t, `{name: carve, subjects: ['*'], allow: ['service.restart'], deny: ['app_route.expose']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rules := p.Rules(); len(rules) != 1 || !reflect.DeepEqual(rules[0].Deny, []string{"node_route.expose"}) {
+		t.Errorf("rules = %+v, want one rule denying the replacement", rules)
+	}
+}
+
+func TestRetiredRouteDenyKeepsNodeScopedResources(t *testing.T) {
+	p, warnings, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['*'], resources: ['tag:edge'], deny: ['app_route.expose']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Evaluate(nodeRoute("node_route.expose")); got.Decision == DecisionDeny {
+		t.Errorf("untagged node = deny, want the tag scope kept")
+	}
+	edge := nodeRoute("node_route.expose")
+	edge.Targets = []Target{target(domain.ResourceNode, "n", Attributes{Tags: []string{"edge"}})}
+	if got := p.Evaluate(edge); got.Decision != DecisionDeny {
+		t.Errorf("edge node = %s, want deny", got.Decision)
+	}
+	if len(warnings[0].AllNodes) != 0 {
+		t.Errorf("AllNodes = %v, want none", warnings[0].AllNodes)
+	}
+}
+
+func TestRetiredRouteDenyEnvironmentScopeDeniesOnEveryNode(t *testing.T) {
+	p, warnings, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['*'], resources: ['environment:production'], deny: ['app_route.expose']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging := nodeRoute("node_route.expose")
+	staging.Targets = []Target{target(domain.ResourceNode, "n", Attributes{Environment: "staging"})}
+	for name, req := range map[string]Request{"no environment": nodeRoute("node_route.expose"), "staging": staging} {
+		if got := p.Evaluate(req); got.Decision != DecisionDeny {
+			t.Errorf("%s node = %s, want deny", name, got.Decision)
+		}
+	}
+	if got := p.Evaluate(nodeRoute("node_route.unexpose")); got.Decision == DecisionDeny {
+		t.Errorf("node_route.unexpose = deny, want it decided as before")
+	}
+	if len(warnings[0].AllNodes) != 1 {
+		t.Errorf("AllNodes = %v, want the carve rule", warnings[0].AllNodes)
+	}
+}
+
+func TestRetiredRouteDenyKeepsSubjects(t *testing.T) {
+	p, _, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['role:admin'], deny: ['app_route.expose']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Evaluate(nodeRoute("node_route.expose")); got.Decision == DecisionDeny {
+		t.Errorf("a non-admin = deny, want the rule's subjects kept")
+	}
+	admin := nodeRoute("node_route.expose")
+	admin.Actor = human("admin")
+	if got := p.Evaluate(admin); got.Decision != DecisionDeny {
+		t.Errorf("admin = %s, want deny", got.Decision)
+	}
+}
+
+func TestRetiredMoveDenyStaysDropped(t *testing.T) {
+	p, warnings, err := parseWarnings(t, `{name: r, subjects: ['*'], deny: ['app_target.move']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rule := p.Rules()[0]; len(rule.Deny) != 0 || len(warnings[0].Denied) != 0 {
+		t.Errorf("rule = %+v, warning = %+v", rule, warnings[0])
+	}
+}
+
+func TestRetiredWarningSanitisesRuleNames(t *testing.T) {
+	w := Warning{
+		Action: "app_route.expose", ADR: "ADR-0043", Replacement: "node_route.expose",
+		Rules: []string{"a\nb"}, Denied: []string{"a\nb"}, AllNodes: []string{"a\nb"},
+	}
+	if got := w.String(); strings.ContainsAny(got, "\n\r") {
+		t.Errorf("warning %q has a raw newline", got)
+	}
+}
+
+func TestRetiredRouteWildcardDenyScopedToAppsOrEnvironmentsDeniesEveryNode(t *testing.T) {
+	staging := nodeRoute("node_route.expose")
+	staging.Targets = []Target{target(domain.ResourceNode, "n", Attributes{Environment: "staging"})}
+	for _, pattern := range []string{"*.expose", "*.*", "*"} {
+		for _, scope := range []string{"environment:production", "app:shop"} {
+			p, warnings, err := parseWarnings(t,
+				`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+				`{name: carve, subjects: ['*'], resources: ['`+scope+`'], deny: ['`+pattern+`']}`,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, req := range map[string]Request{"no environment": nodeRoute("node_route.expose"), "staging": staging} {
+				if got := p.Evaluate(req); got.Decision != DecisionDeny {
+					t.Errorf("%s %s: node_route.expose on %s node = %s, want deny", pattern, scope, name, got.Decision)
+				}
+			}
+			restart := Request{Actor: human(), Action: "service.restart", Targets: []Target{target(domain.ResourceNode, "n", stagingAttrs)}}
+			if got := p.Evaluate(restart); got.Decision == DecisionDeny {
+				t.Errorf("%s %s: service.restart = deny, want it decided as before", pattern, scope)
+			}
+			if len(warnings) == 0 || !reflect.DeepEqual(warnings[0].AllNodes, []string{"carve"}) {
+				t.Errorf("%s %s: warnings = %+v, want carve denying on every node", pattern, scope, warnings)
+			}
+			if rules := p.Rules(); len(rules) != 3 || !slices.Contains(rules[1].Deny, pattern) {
+				t.Errorf("%s %s: rules = %+v, want the pattern kept plus one synthetic rule", pattern, scope, rules)
+			}
+		}
+	}
+}
+
+func TestRetiredRouteWildcardDenyBothCasesShareOneSyntheticRule(t *testing.T) {
+	p, _, err := parseWarnings(t, `{name: carve, subjects: ['*'], resources: ['app:shop'], deny: ['*.expose', 'app_route.unexpose']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rules := p.Rules(); len(rules) != 2 || !reflect.DeepEqual(rules[1].Deny, []string{"node_route.unexpose", "node_route.expose"}) {
+		t.Errorf("rules = %+v, want one synthetic rule denying both replacements", rules)
+	}
+}
+
+func TestRetiredRouteWildcardDenyUnscopedNeedsNoSyntheticRule(t *testing.T) {
+	p, warnings, err := parseWarnings(t,
+		`{name: broad, subjects: ['*'], allow: ['*.*'], allow_destructive: true}`,
+		`{name: carve, subjects: ['*'], deny: ['*.expose']}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Evaluate(nodeRoute("node_route.expose")); got.Decision != DecisionDeny {
+		t.Errorf("node_route.expose = %s, want deny", got.Decision)
+	}
+	if rules := p.Rules(); len(rules) != 2 {
+		t.Errorf("rules = %+v, want no synthetic rule", rules)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %+v, want none", warnings)
 	}
 }

@@ -359,6 +359,8 @@ func (rig *mcpRig) startServer(ctx context.Context, cfg app.Config) *api.Server 
 	mcpRigMust(t, err)
 	svc.Apps, err = app.NewApps(cfg, store, mcpRigGitHub{})
 	mcpRigMust(t, err)
+	svc.Routes, err = app.NewNodeRoutes(cfg, store)
+	mcpRigMust(t, err)
 	svc.Repositories, err = app.NewRepositories(cfg, mcpRigGitHub{})
 	mcpRigMust(t, err)
 	deployments, err := app.NewDeployments(cfg, svc.Governance, app.CIPolling{})
@@ -600,16 +602,11 @@ const (
 	mcpRigZone    = "example.com"
 )
 
-// seedRoute adds a node that already has a Cloudflare connector, an app target on it and a waiting route of that
-// target, so that the route routes address a real row and the expose request reaches policy. The tunnel is
+// seedRoute adds a node that already has a Cloudflare connector and a provisioning route on port 80, so that the
+// route routes address a real row and the expose request reaches policy. The tunnel is
 // committed as the tunnel jobs leave it; no Cloudflare object exists, because no route here reaches Cloudflare.
 func (rig *mcpRig) seedRoute() {
 	rig.t.Helper()
-	var app struct {
-		Applied wire.App `json:"applied"`
-	}
-	rig.fixture(http.MethodPost, wire.PathApps, `{"name":"tunnel-shop","deployed_service":"web","compose_source":"control-plane",`+
-		`"compose_content":"services:\n  web:\n    image: example/web\n","image_policy":{"deployed":"web"}}`).data(rig.t, &app)
 	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
 		now := rig.clock.Now()
 		instance, err := database.GetInstance(ctx, tx)
@@ -635,16 +632,9 @@ func (rig *mcpRig) seedRoute() {
 		}); err != nil {
 			return err
 		}
-		target, err := database.CreateAppTarget(ctx, tx, database.AppTarget{
-			ID: rig.ids.NewID(), AppID: app.Applied.ID, EnvironmentID: env.ID, NodeID: node.ID, ComposeProject: "sm-tunnel-shop-dev",
-			DeploymentPolicyJSON: []byte(`{}`), CreatedAt: now, UpdatedAt: now,
-		})
-		if err != nil {
-			return err
-		}
-		rig.fixtures["route_target"] = target.ID.String()
-		_, err = database.InsertAppRoute(ctx, tx, database.AppRoute{
-			ID: rig.ids.NewID(), AppTargetID: target.ID, NodeID: node.ID, Hostname: "app." + mcpRigZone, Service: "web", Port: 80,
+		rig.fixtures["route_node"] = node.ID.String()
+		_, err = database.InsertNodeRoute(ctx, tx, database.NodeRoute{
+			ID: rig.ids.NewID(), NodeID: node.ID, Hostname: "app." + mcpRigZone, Port: 80,
 			Access: "owners", AccountID: mcpRigAccount, Zone: mcpRigZone, InstanceID: instance.ID.String(),
 			TunnelID: "tunnel-edge-1", TunnelGeneration: 1, CreatedBy: rig.admin.ID, CreatedAt: now,
 		})

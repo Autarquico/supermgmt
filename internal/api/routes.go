@@ -95,6 +95,7 @@ func (s *Server) buildRoutes() []route {
 	r.proxmox()
 	r.repositories()
 	r.apps()
+	r.nodeRoutes()
 	r.deployments()
 	r.mcpClients()
 	r.webhook()

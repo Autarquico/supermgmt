@@ -17,7 +17,7 @@ type fakeAPI struct {
 	nodes       []wire.Node
 	services    map[domain.ID][]wire.Service
 	apps        []wire.App
-	routes      []wire.AppRoute
+	routes      []wire.NodeRoute
 	deployments []wire.Deployment
 	events      []wire.Event
 	logs        wire.LogChunk
@@ -117,6 +117,6 @@ func (f *fakeAPI) ListEvents(_ context.Context, q wire.EventQuery) (wire.Page[wi
 	return pageOf(f.events, q.PageQuery, f.pageSize), f.enter("ListEvents")
 }
 
-func (f *fakeAPI) ListAppRoutes(context.Context) (wire.Page[wire.AppRoute], error) {
-	return wire.Page[wire.AppRoute]{Items: f.routes}, f.enter("ListAppRoutes")
+func (f *fakeAPI) ListAllNodeRoutes(context.Context, bool) (wire.Page[wire.NodeRoute], error) {
+	return wire.Page[wire.NodeRoute]{Items: f.routes}, f.enter("ListAllNodeRoutes")
 }

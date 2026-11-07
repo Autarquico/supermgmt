@@ -153,7 +153,7 @@ func adoptOrCreate[T any](ctx context.Context, f fencedCreate, o namedObject[T],
 	return zero, 0, err
 }
 
-// ensureRouteNamed is ensureNamed for the objects of an app route (ADR-0040). A recorded object that no
+// ensureRouteNamed is ensureNamed for the objects of a node route (ADR-0040). A recorded object that no
 // longer exists is drift the route cannot repair, because its IDs are written once: gone says so instead of
 // creating the object again. Adoption still needs the caller's adoptable rule, which fences it to objects
 // created since the phase started.

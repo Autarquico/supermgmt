@@ -29,10 +29,11 @@ func TestNodeRouteLifecycle(t *testing.T) {
 	f.tx(func(ctx context.Context, q Querier) {
 		node, by := nodeRouteWorld(ctx, f, q)
 		r := must(InsertNodeRoute(ctx, q, nodeRouteOf(f, node, by, "app.example.com")))
-		if r.Phase != NodeRouteProvisioning || r.Port != 8080 || r.TunnelGeneration != 1 || !r.PhaseStartedAt.Equal(testEpoch) {
+		if r.Phase != NodeRouteAdmitted || r.Port != 8080 || r.TunnelGeneration != 1 || !r.PhaseStartedAt.Equal(testEpoch) {
 			t.Fatalf("inserted = %+v", r)
 		}
 		later := testEpoch.Add(time.Minute)
+		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteAdmitted, NodeRouteProvisioning, NodeRouteObjects{}, later))
 		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteProvisioning, NodeRouteIngressReady, NodeRouteObjects{DNSRecordID: "dns"}, later))
 		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteIngressReady, NodeRouteAccessReady, NodeRouteObjects{AccessAppID: "app"}, later))
 		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteAccessReady, NodeRouteActive, NodeRouteObjects{}, later))
@@ -49,7 +50,7 @@ func TestNodeRouteLifecycle(t *testing.T) {
 		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteIngressRemoved, NodeRouteRemoved, NodeRouteObjects{}, later))
 		_, err := GetLiveNodeRouteByHostname(ctx, q, "app.example.com")
 		wantError(t, err, smerr.CodeNotFound, "")
-		_, err = AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteRemoved, NodeRouteProvisioning, NodeRouteObjects{}, later)
+		_, err = AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteRemoved, NodeRouteAdmitted, NodeRouteObjects{}, later)
 		if err == nil || !strings.Contains(err.Error(), "does not change phase") {
 			t.Fatalf("a removed route moved: %v", err)
 		}
@@ -66,10 +67,10 @@ func TestNodeRouteAdvanceIsFencedOnPhase(t *testing.T) {
 		_, err := AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteIngressReady, NodeRouteAccessReady, NodeRouteObjects{}, testEpoch)
 		wantError(t, err, smerr.CodeConflict, "")
 		var e *smerr.Error
-		if !errors.As(err, &e) || e.Details["current_phase"] != "provisioning" || e.Details["expected_phase"] != "ingress_ready" {
+		if !errors.As(err, &e) || e.Details["current_phase"] != "admitted" || e.Details["expected_phase"] != "ingress_ready" {
 			t.Fatalf("conflict details = %v", err)
 		}
-		_, err = AdvanceNodeRoutePhase(ctx, q, "missing", NodeRouteProvisioning, NodeRouteProvisioning, NodeRouteObjects{}, testEpoch)
+		_, err = AdvanceNodeRoutePhase(ctx, q, "missing", NodeRouteAdmitted, NodeRouteAdmitted, NodeRouteObjects{}, testEpoch)
 		wantError(t, err, smerr.CodeNotFound, "")
 	})
 }
@@ -80,7 +81,7 @@ func TestNodeRouteHaltAndResumeKeepPhaseStart(t *testing.T) {
 		node, by := nodeRouteWorld(ctx, f, q)
 		r := must(InsertNodeRoute(ctx, q, nodeRouteOf(f, node, by, "app.example.com")))
 		started := testEpoch.Add(time.Minute)
-		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteProvisioning, NodeRouteIngressReady, NodeRouteObjects{}, started))
+		r = must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteAdmitted, NodeRouteIngressReady, NodeRouteObjects{}, started))
 		r = must(HaltNodeRoute(ctx, q, r.ID, NodeRouteIngressReady, NodeRouteConflict, "dns record owned by another", started.Add(time.Minute)))
 		if r.Phase != NodeRouteConflict || r.HaltedPhase != NodeRouteIngressReady || r.LastError == "" {
 			t.Fatalf("halted = %+v", r)
@@ -113,7 +114,7 @@ func TestNodeRouteHostnameIsUniqueAmongLiveRoutes(t *testing.T) {
 		_, err := InsertNodeRoute(ctx, q, nodeRouteOf(f, node, by, "app.example.com"))
 		wantError(t, err, smerr.CodeConflict, "")
 
-		must(MarkNodeRouteRemoving(ctx, q, first.ID, NodeRouteProvisioning, testEpoch))
+		must(MarkNodeRouteRemoving(ctx, q, first.ID, NodeRouteAdmitted, testEpoch))
 		for _, p := range [][2]NodeRoutePhase{{NodeRouteRemoving, NodeRouteDNSRemoved}, {NodeRouteDNSRemoved, NodeRouteIngressRemoved}, {NodeRouteIngressRemoved, NodeRouteRemoved}} {
 			must(AdvanceNodeRoutePhase(ctx, q, first.ID, p[0], p[1], NodeRouteObjects{}, testEpoch))
 		}
@@ -164,7 +165,7 @@ func TestNodeRouteIdentityAndObjectIDsAreWriteOnce(t *testing.T) {
 	f.tx(func(ctx context.Context, q Querier) {
 		node, by := nodeRouteWorld(ctx, f, q)
 		r := must(InsertNodeRoute(ctx, q, nodeRouteOf(f, node, by, "app.example.com")))
-		must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteProvisioning, NodeRouteIngressReady, NodeRouteObjects{DNSRecordID: "dns"}, testEpoch))
+		must(AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteAdmitted, NodeRouteIngressReady, NodeRouteObjects{DNSRecordID: "dns"}, testEpoch))
 
 		_, err := AdvanceNodeRoutePhase(ctx, q, r.ID, NodeRouteIngressReady, NodeRouteAccessReady, NodeRouteObjects{DNSRecordID: "other"}, testEpoch)
 		if err == nil || !strings.Contains(err.Error(), "recorded object IDs") {
@@ -178,7 +179,7 @@ func TestNodeRouteIdentityAndObjectIDsAreWriteOnce(t *testing.T) {
 			"hostname = 'x.example.com'", "port = 9", "access = 'owners'", "account_id = 'x'", "zone = 'x'",
 			"instance_id = 'x'", "tunnel_id = 'x'", "tunnel_generation = 2", "node_id = 'x'",
 		} {
-			if _, err := q.ExecContext(ctx, `UPDATE app_routes SET `+col+` WHERE id = ?`, r.ID); err == nil {
+			if _, err := q.ExecContext(ctx, `UPDATE node_routes SET `+col+` WHERE id = ?`, r.ID); err == nil {
 				t.Errorf("UPDATE %s succeeded, want the identity to be frozen", col)
 			}
 		}
@@ -211,13 +212,13 @@ func TestGetLiveNodeRouteByNodePort(t *testing.T) {
 		_, err = GetLiveNodeRouteByNodePort(ctx, q, "other", 8080)
 		wantError(t, err, smerr.CodeNotFound, "")
 
-		must(HaltNodeRoute(ctx, q, route.ID, NodeRouteProvisioning, NodeRouteConflict, "boom", testEpoch))
+		must(HaltNodeRoute(ctx, q, route.ID, NodeRouteAdmitted, NodeRouteConflict, "boom", testEpoch))
 		if got := must(GetLiveNodeRouteByNodePort(ctx, q, node.ID, 8080)); got.ID != route.ID {
 			t.Fatalf("a halted route must stay live, got %s", got.ID)
 		}
 
 		must(ResumeHaltedNodeRoute(ctx, q, route.ID, NodeRouteConflict, testEpoch))
-		must(MarkNodeRouteRemoving(ctx, q, route.ID, NodeRouteProvisioning, testEpoch))
+		must(MarkNodeRouteRemoving(ctx, q, route.ID, NodeRouteAdmitted, testEpoch))
 		for _, p := range [][2]NodeRoutePhase{{NodeRouteRemoving, NodeRouteDNSRemoved}, {NodeRouteDNSRemoved, NodeRouteIngressRemoved}, {NodeRouteIngressRemoved, NodeRouteRemoved}} {
 			must(AdvanceNodeRoutePhase(ctx, q, route.ID, p[0], p[1], NodeRouteObjects{}, testEpoch))
 		}

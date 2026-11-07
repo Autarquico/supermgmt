@@ -254,6 +254,8 @@ func (i *Inventory) applyApproved(ctx context.Context, q database.Querier, actor
 		}
 		_, err = i.applyNodeRemove(ctx, q, actor, node)
 		return err
+	case nodeRouteExposeAction, nodeRouteUnexposeAction:
+		return (&NodeRoutes{core: i.core, plans: i.plans}).applyApproved(ctx, q, actor, action, job)
 	case actionProviderWite:
 		p, err := payloadOf[localParams](job)
 		if err != nil {
@@ -292,12 +294,12 @@ func payloadOf[T any](job jobs.Job) (T, error) {
 // ---- approved changes of the apps catalog -------------------------------------
 
 // handles reports whether the approved change belongs to the apps catalog: app
-// and app target writes, app routes, and the registration of a GitHub provider.
+// and app target writes and the registration of a GitHub provider.
 func (a *Apps) handles(action string, job jobs.Job) bool {
 	switch {
 	case a == nil:
 		return false
-	case action == appWriteAction, action == appTargetWriteAction, action == appRouteExposeAction, action == appRouteUnexposeAction:
+	case action == appWriteAction, action == appTargetWriteAction:
 		return true
 	case action == actionProviderWite:
 		return payloadHasKey(job, githubAPIURLKey)
@@ -320,8 +322,6 @@ func (a *Apps) applyApproved(ctx context.Context, q database.Querier, actor doma
 		return a.applyApprovedApp(ctx, q, actor, job)
 	case appTargetWriteAction:
 		return a.applyApprovedTarget(ctx, q, actor, job)
-	case appRouteExposeAction, appRouteUnexposeAction:
-		return a.applyApprovedAppRoute(ctx, q, actor, action, job)
 	case actionProviderWite:
 		p, err := payloadOf[githubProviderParams](job)
 		if err != nil {

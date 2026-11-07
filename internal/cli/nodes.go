@@ -30,7 +30,8 @@ func newNodesCmd(env []string) *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(newNodesListCmd(env), newNodesGetCmd(env), newNodesAddCmd(env), newNodesRemoveCmd(env), newNodesProbeCmd(env),
-		newNodesSetupCmd(env), newNodesTunnelCmd(env), newNodesRepinCmd(env), newNodesPowerCmd(env))
+		newNodesSetupCmd(env), newNodesTunnelCmd(env), newNodesRepinCmd(env), newNodesPowerCmd(env),
+		newNodesExposeCmd(env), newNodesUnexposeCmd(env), newNodesRoutesCmd(env))
 	return cmd
 }
 

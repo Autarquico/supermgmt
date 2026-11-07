@@ -238,18 +238,17 @@ func ViewApp(a wire.App) AppView {
 	}
 }
 
-// ---- app routes --------------------------------------------------------------
+// ---- node routes --------------------------------------------------------------
 
 type RouteView struct {
-	ID          domain.ID   `json:"id"`
-	AppTargetID domain.ID   `json:"app_target_id"`
-	Hostname    string      `json:"hostname"`
-	Service     string      `json:"service"`
-	Port        int         `json:"port"`
-	Access      string      `json:"access"`
-	Phase       string      `json:"phase"`
-	CreatedAt   time.Time   `json:"created_at"`
-	Remote      RouteRemote `json:"remote"`
+	ID        domain.ID   `json:"id"`
+	NodeID    domain.ID   `json:"node_id"`
+	Hostname  string      `json:"hostname"`
+	Port      int         `json:"port"`
+	Access    string      `json:"access"`
+	Phase     string      `json:"phase"`
+	CreatedAt time.Time   `json:"created_at"`
+	Remote    RouteRemote `json:"remote"`
 }
 
 // RouteRemote is why a halted route is not moving, which Cloudflare's answers can shape.
@@ -258,20 +257,19 @@ type RouteRemote struct {
 	LastError string `json:"last_error"`
 }
 
-func ViewRoute(r wire.AppRoute) RouteView {
+func ViewRoute(r wire.NodeRoute) RouteView {
 	var b remoteBuilder
 	remote := RouteRemote{LastError: b.scalar(r.LastError)}
 	remote.remoteMark = b.mark()
 	return RouteView{
-		ID:          r.ID,
-		AppTargetID: r.AppTargetID,
-		Hostname:    operatorLine(r.Hostname),
-		Service:     operatorLine(r.Service),
-		Port:        r.Port,
-		Access:      r.Access,
-		Phase:       r.Phase,
-		CreatedAt:   r.CreatedAt,
-		Remote:      remote,
+		ID:        r.ID,
+		NodeID:    r.NodeID,
+		Hostname:  operatorLine(r.Hostname),
+		Port:      r.Port,
+		Access:    r.Access,
+		Phase:     r.Phase,
+		CreatedAt: r.CreatedAt,
+		Remote:    remote,
 	}
 }
 

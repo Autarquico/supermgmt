@@ -49,8 +49,26 @@ var lockModeByJobType = map[string]domain.LockMode{
 // Cloudflare objects (service token, reusable policies) across every node. It
 // is also the ingress lock: every job that writes a node tunnel's ingress
 // (setup, disable, expose, unexpose) holds it and recomputes the list after
-// acquiring it (ADR-0040).
+// acquiring it (ADR-0040). A route job holds it next to its route's lock, not the node's.
 var cloudflareInstanceLock = domain.LockSpec{Key: "cloudflare:instance", Mode: domain.LockExclusive}
+
+// nodeRouteLock is the lock of one route's jobs. A route job locks its hostname, not the node it publishes a
+// port of: the Cloudflare walk is long and must not hold up the node's own actions. The hostname is in the
+// plan of an expose and of an unexpose alike, and it is known before the route row exists (an approved expose
+// admits its row inside the job). The ingress it shares with the node's other routes is serialised by
+// cloudflareInstanceLock.
+func nodeRouteLock(hostname string) domain.LockSpec {
+	return domain.LockSpec{Key: "node_route:" + hostname, Mode: domain.LockExclusive}
+}
+
+// lockedHostname is the hostname a route plan locks; a plan without one cannot be locked.
+func lockedHostname(stored plan.Plan) (string, error) {
+	hostname, _ := stored.Parameters[policy.ParamHostname].(string)
+	if hostname == "" {
+		return "", smerr.New(smerr.CodeInternal, "", stored.Action+" plan has no hostname to lock")
+	}
+	return hostname, nil
+}
 
 // ownLock is the lock on the job's own resource. A service is locked through
 // what runs it (spec §20.5): its Compose project on the node when the service
@@ -105,12 +123,11 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	if err != nil {
 		return nil, err
 	}
-	specs := []domain.LockSpec{own}
 	if job.PlanID == nil {
 		if isDeploymentJob(job.Type) {
 			return nil, smerr.New(smerr.CodeInternal, "", job.Type+" job has no plan to take its locks from")
 		}
-		return specs, nil
+		return []domain.LockSpec{own}, nil
 	}
 	rec, err := database.GetPlan(ctx, q, *job.PlanID)
 	if err != nil {
@@ -120,6 +137,15 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	if err != nil {
 		return nil, err
 	}
+	routeJob := job.Type == JobControlPlaneApply && isNodeRouteAction(stored.Action)
+	if routeJob {
+		hostname, err := lockedHostname(*stored)
+		if err != nil {
+			return nil, err
+		}
+		own = nodeRouteLock(hostname)
+	}
+	specs := []domain.LockSpec{own}
 	if isDeploymentJob(job.Type) {
 		held, err := deploymentLocks(ctx, q, job, *stored)
 		if err != nil {
@@ -128,9 +154,8 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 		specs = append(specs, held...)
 	}
 	tunnelSetup := job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true"
-	if tunnelSetup ||
-		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable ||
-		job.Type == JobControlPlaneApply && isAppRouteAction(stored.Action) { // the route job moves its route under the app target's lock
+	if tunnelSetup || routeJob ||
+		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable {
 		specs = append(specs, cloudflareInstanceLock)
 	}
 	instance, err := enrollmentInstanceLock(ctx, q, job, *stored)

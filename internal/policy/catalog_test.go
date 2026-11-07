@@ -14,6 +14,7 @@ import (
 // retry, capability, max attempts. "-" means the table shows "—".
 const specCatalog = `
 node.read                  node        read         query       -              -                        -
+node_route.read            node        read         query       -              -                        -
 service.read               service     read         query       -              service.read             -
 service.logs               service     read         query       -              service.logs             -
 app.read                   app         read         query       -              -                        -
@@ -57,8 +58,8 @@ provider.delete            provider    destructive  direct      -              -
 environment.write          environment high         direct      -              -                        -
 app.write                  app         operational  direct      -              -                        -
 app_target.write           app_target  operational  direct      -              -                        -
-app_route.expose           app_target  operational  direct      -              -                        -
-app_route.unexpose         app_target  operational  direct      -              -                        -
+node_route.expose          node        operational  direct      -              -                        -
+node_route.unexpose        node        operational  direct      -              -                        -
 config.write               instance    high         direct      -              -                        -
 secret.write               secret      high         direct      -              -                        -
 identity.write             identity    high         direct      -              -                        -

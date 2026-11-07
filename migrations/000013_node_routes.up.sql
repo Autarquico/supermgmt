@@ -41,11 +41,11 @@ CREATE TABLE node_routes (
     port              INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
     access            TEXT NOT NULL CHECK (access IN ('public', 'owners')),
     phase             TEXT NOT NULL CHECK (phase IN (
-                          'provisioning', 'ingress_ready', 'access_ready', 'active',  -- expose, in order
+                          'admitted', 'provisioning', 'ingress_ready', 'access_ready', 'active',  -- expose, in order; admitted serves no rule
                           'removing', 'dns_removed', 'ingress_removed', 'removed',     -- unexpose, in order
                           'failed', 'conflict')),                 -- halted: see halted_phase
     halted_phase      TEXT CHECK (halted_phase IS NULL OR halted_phase IN (
-                          'provisioning', 'ingress_ready', 'access_ready', 'active',
+                          'admitted', 'provisioning', 'ingress_ready', 'access_ready', 'active',
                           'removing', 'dns_removed', 'ingress_removed', 'removed')), -- phase held when the route halted; NULL otherwise
     phase_started_at  INTEGER NOT NULL,                          -- adoption of an object requires created_at >= this
     account_id        TEXT NOT NULL,                             -- Cloudflare account the objects live in

@@ -16,6 +16,7 @@ import (
 type NodeRoutePhase string
 
 const (
+	NodeRouteAdmitted       NodeRoutePhase = "admitted"
 	NodeRouteProvisioning   NodeRoutePhase = "provisioning"
 	NodeRouteIngressReady   NodeRoutePhase = "ingress_ready"
 	NodeRouteAccessReady    NodeRoutePhase = "access_ready"
@@ -94,14 +95,14 @@ func scanNodeRoute(s scanner) (NodeRoute, error) {
 	return r, nil
 }
 
-// InsertNodeRoute records an accepted route. The phase is always provisioning; every field of r but Phase,
+// InsertNodeRoute records an accepted route. The phase is always admitted; every field of r but Phase,
 // HaltedPhase, PhaseStartedAt, Objects, LastError and UpdatedAt is used. A nil PlanID stores NULL. A hostname or node port that has a live route
 // yields CONFLICT.
 func InsertNodeRoute(ctx context.Context, q Querier, r NodeRoute) (NodeRoute, error) {
 	_, err := q.ExecContext(ctx, `
 		INSERT INTO node_routes (id, node_id, hostname, port, access, phase, phase_started_at,
 			account_id, zone, instance_id, tunnel_id, tunnel_generation, plan_id, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, 'admitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.NodeID, r.Hostname, r.Port, r.Access, millis(r.CreatedAt),
 		r.AccountID, r.Zone, r.InstanceID, r.TunnelID, r.TunnelGeneration, r.PlanID, r.CreatedBy, millis(r.CreatedAt), millis(r.CreatedAt))
 	if err != nil {
