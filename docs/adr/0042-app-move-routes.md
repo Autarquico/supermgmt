@@ -1,7 +1,7 @@
 # ADR-0042: Moving an app target's routes with it
 
-- Status: Proposed
-- Spec: spec `docs/specs/app-move-routes.md`; ADR-0040, ADR-0041
+- Status: Superseded by ADR-0043
+- Spec: spec `docs/specs/archive/2026-11-07-app-move-routes.md`; ADR-0040, ADR-0041
 
 ## Context
 

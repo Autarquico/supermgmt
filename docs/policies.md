@@ -155,6 +155,8 @@ A policy file has `version: 1` and a list of `rules`. Decoding is strict: an unk
 
 **Action patterns** are dot-separated names such as `service.restart`. A `*` segment matches exactly one segment: `*.read` matches `node.read` and `deployment.read`, but not `service.logs` or `node.connect`. A bare `*` matches every action. An exact name must exist in the catalog, and a pattern with `*` must match at least one catalog action.
 
+**Retired actions.** An action removed from the catalog is retired rather than unknown, so a policy file written before its removal still loads. A rule that names a retired action, or a pattern that matches only retired actions, loads with a warning (in the daemon log at start and in `sm config validate`), and that entry grants or denies nothing; a pattern that also matches live actions keeps exactly those. Any other name that is not in the catalog is still an error. Retired in this version, with app moves: `app_target.move`, `app_target.cleanup_source`, `app_target.abandon_move`.
+
 ### Actions and their risk
 
 The catalog is the complete list of actions a rule can name ([`internal/policy/catalog.go`](../internal/policy/catalog.go)). It also names actions for features that are not built yet; a rule may name them, but nothing asks for them.

@@ -1089,8 +1089,7 @@ rules:
             "token.create", "token.revoke", "enrollment.create", "secret.write",
             "backup.create", "node.setup", "sudoers.write", "log_broker.install",
             "node.tunnel.disable", "cloudflare.access_token.rotate",
-            "app_route.expose", "app_route.unexpose", "app_target.move",
-            "app_target.cleanup_source", "app_target.abandon_move"]
+            "app_route.expose", "app_route.unexpose"]
   - name: builtin-mcp-read
     subjects: ["type:mcp"]
     allow: ["*.read", "plan.create"]
@@ -1134,9 +1133,6 @@ proxmox.backup.create      node         operational   job         non_retryable 
 node.backup_template.run   node         operational   sub-action  —              node.exec.template       —
 deployment.create          app_target   operational   job         resumable      docker.compose.deploy    3
 deployment.rollback        app_target   operational   job         resumable      docker.compose.deploy    3
-app_target.move            app_target   high          job         resumable      docker.compose.deploy    3
-app_target.cleanup_source  app_target   operational   job         idempotent     docker.compose.deploy    3
-app_target.abandon_move    app_target   operational   job         idempotent     —                        3
 node.setup                 node         high          job         idempotent     node.ssh                 3
 node.tunnel.disable        node         high          job         idempotent     node.ssh                 3
 cloudflare.access_token.rotate  instance  high         job         idempotent     —                        3

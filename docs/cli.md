@@ -159,43 +159,6 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
-#### sm apps move
-
-Move an application to another node (experimental)
-
-Request the move of the target to a destination node. The destination is checked first and the target keeps
-running on its node until the destination passes its health checks, except that a move of an app with
-volumes stops the app while their data is copied. The request prints whether the app stops and which
-volumes are copied, and waits for approval when policy asks. The routes of the target are repointed to the
-new node inside the move; the request lists their hostnames. While a routed move is open the target cannot
-be exposed or unexposed, and tunnel setup, rotation and disable are refused on both nodes.
-
---cleanup-source removes the containers a finished move left stopped on the old node; volumes are never
-removed. --abandon records a move that halted while it was undoing itself as rolled back, leaving both
-nodes as they are. A move whose job ended is resumed by running the same command again.
-
-```text
-sm apps move <app> <environment> (--to <node> | --cleanup-source | --abandon) [flags]
-```
-
-Flags:
-
-- `--abandon` (bool): record a move halted while undoing itself as rolled back
-- `--cleanup-source` (bool): remove the containers a finished move left on the old node
-- `--to` (string): destination node (name or id)
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps moves
-
-List the moves of an application target (experimental)
-
-```text
-sm apps moves <app> <environment>
-```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
 #### sm apps routes
 
 List the routes of applications (experimental)
