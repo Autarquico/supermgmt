@@ -271,7 +271,7 @@ func TestDNS_Lifecycle(t *testing.T) {
 }
 
 func TestAccess_PoliciesAppsAndTokens(t *testing.T) {
-	f, c := newEnv(t)
+	f, c := newEnv(t, cffake.WithOneTimePIN())
 	host := "ssh-web1.example.test"
 	tok := must[NewServiceToken](t)(c.CreateServiceToken(ctx(t), ServiceTokenName(instanceID)))
 	if tok.ClientSecret.Reveal() == "" || tok.ClientID == "" || tok.ExpiresAt.Sub(tok.CreatedAt) != 8760*time.Hour {
@@ -580,7 +580,7 @@ func TestFailBefore_AppliesNothing(t *testing.T) {
 }
 
 func TestInvariant_DNSBeforeAccessIsCaught(t *testing.T) {
-	f, c := newEnv(t)
+	f, c := newEnv(t, cffake.WithOneTimePIN())
 	host := "ssh-web1.example.test"
 	_, zoneID := f.Zone()
 	must[DNSRecord](t)(c.CreateTunnelCNAME(ctx(t), zoneID, host, "tun-1", "m"))
@@ -669,7 +669,7 @@ func provision(c *Client, zoneID, host string) error {
 
 func TestProvision_ConvergesAfterEveryInjectedFault(t *testing.T) {
 	host := "ssh-web1.example.test"
-	clean, cc := newEnv(t)
+	clean, cc := newEnv(t, cffake.WithOneTimePIN())
 	_, zoneID := clean.Zone()
 	if err := provision(cc, zoneID, host); err != nil {
 		t.Fatal(err)
@@ -682,7 +682,7 @@ func TestProvision_ConvergesAfterEveryInjectedFault(t *testing.T) {
 
 	for _, fault := range []cffake.Fault{cffake.FailBefore, cffake.LostResponse} {
 		for k := 1; k <= total; k++ {
-			f, c := newEnv(t, cffake.WithPropagationDelay(1))
+			f, c := newEnv(t, cffake.WithOneTimePIN(), cffake.WithPropagationDelay(1))
 			f.Plan(func(m cffake.Mutation) cffake.Fault {
 				if m.Seq == k {
 					return fault
@@ -765,7 +765,7 @@ func TestVerifyToken_FallsBackToTheUserEndpoint(t *testing.T) {
 // SEC-1: an empty access_identity_providers means one-time PIN only; Cloudflare
 // reads a missing allowed_idps as every provider of the organisation.
 func TestAccess_EmptyIdentityProvidersMeanOneTimePINOnly(t *testing.T) {
-	f, c := newEnv(t)
+	f, c := newEnv(t, cffake.WithOneTimePIN())
 	zone, _ := f.Zone()
 	f.SeedIdentityProvider("Company SSO", "oidc")
 	pol := must[AccessPolicy](t)(c.CreateAccessPolicy(ctx(t), PolicySpec{Name: OwnersPolicyName(instanceID), Kind: PolicyAllow, Emails: []string{"o@example.com"}}))
@@ -788,7 +788,6 @@ func TestAccess_EmptyIdentityProvidersMeanOneTimePINOnly(t *testing.T) {
 func TestAccess_NoOneTimePINFailsBeforeTheApplicationIsCreated(t *testing.T) {
 	f, c := newEnv(t)
 	zone, _ := f.Zone()
-	f.ClearIdentityProviders()
 	f.SeedIdentityProvider("Company SSO", "oidc")
 	pol := must[AccessPolicy](t)(c.CreateAccessPolicy(ctx(t), PolicySpec{Name: OwnersPolicyName(instanceID), Kind: PolicyAllow, Emails: []string{"o@example.com"}}))
 	_, err := c.CreateAccessApp(ctx(t), AppSpec{Name: AccessAppName(instanceID, nodeID), Domain: "ssh-a." + zone, PolicyIDs: []string{pol.ID}})

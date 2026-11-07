@@ -163,11 +163,11 @@ func (s *TunnelEnrollments) provision(ctx context.Context, lease jobs.Lease, job
 	if err != nil {
 		return err
 	}
-	token, err := r.provisionCloudflare(ctx)
-	if err != nil {
-		return err
+	r.keepToken = func(ctx context.Context, token audit.Secret) error {
+		return s.storeToken(ctx, rec.Enrollment(), token)
 	}
-	return s.storeToken(ctx, rec.Enrollment(), token)
+	_, err = r.provisionCloudflare(ctx)
+	return err
 }
 
 // storeToken keeps the connector token in the secret store under the enrollment, unless it is there.
@@ -224,18 +224,29 @@ func scanTarget(row database.TunnelEnrollment) ssh.Target {
 	}
 }
 
-// scan reads the host key once. A node that is not there yet is the normal case, not a failure: the reason
-// is noted on the enrollment and the scheduler tries again with backoff until the expiry.
+// scan reads the host key once, after Cloudflare serves the hostname (the phase dns_created is the gate, so
+// a restart applies it again). A hostname that is not served yet, like a node that is not there yet, is the
+// normal case, not a failure: the reason is noted on the enrollment and the scheduler tries again with
+// backoff until the expiry.
 func (s *TunnelEnrollments) scan(ctx context.Context, lease jobs.Lease, job jobs.Job, row database.TunnelEnrollment) error {
 	if err := s.ensureToken(ctx, lease, job, row); err != nil {
 		return err
+	}
+	budget := s.engine.newBudget(enrollmentPublicationBudget)
+	waiting, err := s.engine.awaitPublication(ctx, row.Hostname, func(context.Context) time.Time { return row.PhaseStartedAt }, budget)
+	if err != nil || waiting != "" {
+		if err != nil {
+			return err
+		}
+		return s.note(ctx, lease, row, waiting)
 	}
 	key, err := s.opts.Scan(ctx, scanTarget(row))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return s.note(ctx, lease, row, "waiting for the node: "+sanitizedError(err))
+		err = s.engine.diagnose(ctx, row.Hostname, err)
+		return s.note(ctx, lease, row, "waiting for the node: "+sanitizedErrorUpTo(err, 2*maxRecordedErrorLength))
 	}
 	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		if err := lease.Fence(ctx, tx); err != nil {
@@ -270,10 +281,12 @@ func (s *TunnelEnrollments) note(ctx context.Context, lease jobs.Lease, row data
 	})
 }
 
-func sanitizedError(err error) string {
+func sanitizedError(err error) string { return sanitizedErrorUpTo(err, maxRecordedErrorLength) }
+
+func sanitizedErrorUpTo(err error, limit int) string {
 	message := textsafe.Line(audit.ScrubString(err.Error()))
-	if runes := []rune(message); len(runes) > maxRecordedErrorLength {
-		message = string(runes[:maxRecordedErrorLength])
+	if runes := []rune(message); len(runes) > limit {
+		message = string(runes[:limit])
 	}
 	return message
 }

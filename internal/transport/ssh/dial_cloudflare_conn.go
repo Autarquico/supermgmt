@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -38,6 +39,7 @@ type childConn struct {
 	out     *os.File // our read end of the child's stdout
 	errRead *os.File // our read end of the child's stderr
 	addr    childAddr
+	host    string
 	grace   time.Duration
 	secrets []string
 	// heard is set once the node's side sent a byte. A stream that ends
@@ -99,7 +101,7 @@ func startChild(s childSpec) (*childConn, error) {
 	}
 
 	c := &childConn{
-		cmd: cmd, in: inW, out: outR, errRead: errR, addr: childAddr("cloudflared:" + s.hostname), grace: s.grace,
+		cmd: cmd, in: inW, out: outR, errRead: errR, addr: childAddr("cloudflared:" + s.hostname), host: s.hostname, grace: s.grace,
 		secrets: []string{s.token.ClientID, s.token.ClientSecret.Reveal()},
 		exited:  make(chan struct{}), stderrDone: make(chan struct{}),
 	}
@@ -149,7 +151,22 @@ func (c *childConn) markCarrierFailure(err error) error {
 	if err == nil || c.heard.Load() || errors.Is(err, os.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded) {
 		return err
 	}
+	if c.lookupFailed() {
+		err = fmt.Errorf("%w: %w", err, &net.DNSError{Err: "no such host", Name: c.host, IsNotFound: true})
+	}
 	return CarrierFailure(err)
+}
+
+// lookupFailed reports whether the child said its own lookup of the tunnel
+// hostname found no such host. The stream ends before the stderr reader has
+// necessarily seen that, so it waits a bounded time for it.
+func (c *childConn) lookupFailed() bool {
+	select {
+	case <-c.stderrDone:
+	case <-time.After(diagnosticsWaitF):
+	}
+	said := strings.ToLower(c.tail.String())
+	return strings.Contains(said, "no such host") && strings.Contains(said, strings.ToLower(c.host))
 }
 
 func (c *childConn) LocalAddr() net.Addr  { return c.addr }

@@ -506,7 +506,8 @@ func (s *TunnelEnrollments) Token(ctx context.Context, by Caller, name string) (
 	token, err := s.engine.opts.Secrets.Get(ctx, secrets.Ref{Name: secretRef})
 	switch {
 	case smerr.CodeOf(err) == smerr.CodeNotFound:
-		return "", smerr.New(smerr.CodeConflict, "", "the Cloudflare side of the enrollment is still being built: ask again in a moment")
+		// Past the provisioning phases the token was stored before the record; the scan restores a lost one.
+		return "", smerr.New(smerr.CodeConflict, "", "the connector token is not in the secret store: the next step of the enrollment restores it, ask again in a moment")
 	case err != nil:
 		return "", err
 	}

@@ -297,7 +297,7 @@ func compositeOf(action string, params map[string]any, target policy.Target) ([]
 
 // rebuildCurrent recomputes a stored plan's action on its target from the
 // current database state. A target that no longer exists makes the plan stale.
-func rebuildCurrent(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
+func (c core) rebuildCurrent(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
 	if isMoveAction(rec.Action) {
 		return rebuildMoveAction(ctx, q, rec) // frozen nodes and move record, not the target's live node (spec §9)
 	}
@@ -313,6 +313,9 @@ func rebuildCurrent(ctx context.Context, q database.Querier, rec database.PlanRe
 	current, err := build(ctx, q, rec.Action, rec.ActorID, ref, stored.Parameters)
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
 		return built{}, planStale()
+	}
+	if err == nil {
+		current.plan.Steps, err = c.tunnelSetupSteps(ctx, q, rec.Action, ref.ID, stored.Parameters)
 	}
 	if err == nil && rec.Action == policy.ActionNodeTunnelDisable {
 		err = acceptOwnSwitch(ctx, q, current, t)
@@ -343,8 +346,8 @@ func acceptOwnSwitch(ctx context.Context, q database.Querier, current built, sto
 // rebuild is rebuildCurrent plus the staleness check: the plan hash covers
 // every input, so a recomputed hash that differs from the stored one means a
 // configured input changed. Observations never change it (spec §6.4).
-func rebuild(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
-	current, err := rebuildCurrent(ctx, q, rec)
+func (c core) rebuild(ctx context.Context, q database.Querier, rec database.PlanRecord) (built, error) {
+	current, err := c.rebuildCurrent(ctx, q, rec)
 	if isMoveAction(rec.Action) {
 		return current, err // it compares the hash itself, and not after the commit (spec §9)
 	}

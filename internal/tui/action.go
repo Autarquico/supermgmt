@@ -247,7 +247,7 @@ func (m *Model) setupNode(n wire.Node, words []string) tea.Cmd {
 		params["tunnel"] = "true"
 		details = append([]string{textsafe.Line(transportPreview(n.Endpoint.TunnelHostname))}, details...)
 	}
-	if wire.SetupProxmox(n, w.proxmox) {
+	if w.proxmox.Set && w.proxmox.Value {
 		params["proxmox"] = "true"
 		details = append(details, textsafe.Line(wire.ProxmoxPreview(n.Name)))
 	}

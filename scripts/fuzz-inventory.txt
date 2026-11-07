@@ -104,6 +104,7 @@ github.com/autarquico/supermgmt/internal/backup.readJournal  FuzzReadJournal
 github.com/autarquico/supermgmt/internal/backup.readKeyFile  exempt: reads local archive metadata and raw key files; manifests are parsed by FuzzParseManifest/FuzzReadArchive
 github.com/autarquico/supermgmt/internal/backup.readManifestMember  FuzzReadArchive
 github.com/autarquico/supermgmt/internal/cli.adminCall  exempt: operator-local CLI input or file; trusted by the operator running the command
+github.com/autarquico/supermgmt/internal/cli.describePlan  exempt: reads the plan the daemon returned to its own CLI; every step is printed through textsafe.Line
 github.com/autarquico/supermgmt/internal/cli.describePowerRisk  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.loadCAPool  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.loadDaemonConfig  exempt: thin wrapper over config.Load/LoadBytes (FuzzLoadBytes)
@@ -260,6 +261,7 @@ github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessPolici
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeAccessPolicy  FuzzDecodeAccessPolicy
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDNSRecord  FuzzDecodeDNS
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDNSRecords  FuzzDecodeDNS
+github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeDoH  FuzzDecodeDoH
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeEnvelope  FuzzDecodeEnvelope
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeIdentityProviders  FuzzDecodeIdentityProviders
 github.com/autarquico/supermgmt/internal/providers/cloudflare.decodeObject  FuzzDecodeTunnel

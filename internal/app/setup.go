@@ -155,6 +155,12 @@ func (h setupHandler) runTunnel(ctx context.Context, lease jobs.Lease, job jobs.
 	if err := run.mayMutate(ctx); err != nil {
 		return err
 	}
+	if node.Endpoint.Transport.Effective() == domain.TransportCloudflare {
+		// the admin session below is the first connection through the hostname
+		if err := run.awaitServed(ctx, run.newBudget(setupStepBudget)); err != nil {
+			return run.step("publication of the tunnel hostname", err)
+		}
+	}
 	outcome, err := h.provision(ctx, lease, job, node, req, deployRoot, id, &systemd.TunnelParams{Token: token}, run)
 	if err != nil {
 		return run.step("node install", err)

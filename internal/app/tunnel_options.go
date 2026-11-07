@@ -68,6 +68,9 @@ type TunnelOptions struct {
 	// Sleep waits between lookups of an object whose creation was ambiguous;
 	// nil is a real timer.
 	Sleep func(ctx context.Context, d time.Duration)
+	// Edge asks Cloudflare's resolver whether a new hostname is served before
+	// anything dials it; nil skips the wait (tests that do not model the edge).
+	Edge EdgePublication
 }
 
 func (o TunnelOptions) sleep(ctx context.Context, d time.Duration) error {

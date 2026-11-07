@@ -85,6 +85,9 @@ type stack struct {
 
 	// denyAccess makes Access refuse every service token.
 	denyAccess atomic.Bool
+
+	skew     *skewClock      // nil unless stackOptions.skewed
+	resolver *systemResolver // nil unless stackOptions.systemResolver
 }
 
 type stackOptions struct {
@@ -99,6 +102,16 @@ type stackOptions struct {
 	cfOptions []cffake.Option
 	// poolConfig overrides the pool settings.
 	poolConfig *sshtransport.PoolConfig
+	// cloudflareLogin leaves the Cloudflare account as a new organisation is, with the Cloudflare login and no
+	// One-time PIN; without it the account has One-time PIN, which the empty access_identity_providers needs.
+	cloudflareLogin bool
+	// edge is Cloudflare's resolver as the publication gate asks it; nil does not gate.
+	edge app.EdgePublication
+	// skewed runs the instance on a clock that its waits move forward instead of taking real time.
+	skewed bool
+	// systemResolver models the resolver of the control plane: the Access preflight and the cloudflared stand-in
+	// look the tunnel hostname up in it, and it answers NXDOMAIN until the test serves the name.
+	systemResolver bool
 }
 
 // newStack assembles the instance and starts its job engine.
@@ -108,8 +121,14 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	dir, err := os.MkdirTemp("", "smt") // short: the SSH agent socket path is limited on macOS
 	must(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	clock := domain.SystemClock{}
-	s := &stack{t: t, dir: dir, clock: clock, ids: domaintest.NewSequentialIDs(), keysDir: filepath.Join(dir, "keys"), home: filepath.Join(dir, "carrier-home")}
+	var clock domain.Clock = domain.SystemClock{}
+	var skew *skewClock
+	leaseTTL := 30 * time.Second
+	if o.skewed {
+		skew = &skewClock{}
+		clock, leaseTTL = skew, time.Hour // a wait that jumps the clock must not expire the job's lease
+	}
+	s := &stack{t: t, dir: dir, clock: clock, skew: skew, ids: domaintest.NewSequentialIDs(), keysDir: filepath.Join(dir, "keys"), home: filepath.Join(dir, "carrier-home")}
 	must(t, os.MkdirAll(s.home, 0o700))
 
 	s.db, err = database.Open(ctx, filepath.Join(dir, "sm.db"), database.Options{Clock: clock})
@@ -140,9 +159,17 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	s.pool = sshtransport.NewPool(poolCfg, sshtransport.NewCredentials(s.store), clock)
 	t.Cleanup(s.pool.Close)
 
+	if o.systemResolver {
+		s.resolver = newSystemResolver(s.home, clock.Now)
+	}
+
 	var tunnelOptions *app.TunnelOptions
 	if !o.withoutCloudflare {
-		s.cf = cffake.New(t, append([]cffake.Option{cffake.WithToken(seededAPIToken), cffake.WithClock(clock.Now)}, o.cfOptions...)...)
+		cfOptions := []cffake.Option{cffake.WithToken(seededAPIToken), cffake.WithClock(clock.Now)}
+		if !o.cloudflareLogin {
+			cfOptions = append(cfOptions, cffake.WithOneTimePIN())
+		}
+		s.cf = cffake.New(t, append(cfOptions, o.cfOptions...)...)
 		s.cfgBlk = config.Cloudflare{
 			AccountID: s.cf.AccountID(), Zone: zoneOf(s.cf), APITokenRef: config.DefaultCloudflareAPITokenRef,
 			AccessTokenRef: config.DefaultCloudflareAccessTokenRef, OwnerEmails: []string{"owner@example.test"},
@@ -157,7 +184,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		}
 		s.dialer = sshtransport.NewCloudflareDialer(sshtransport.CloudflareConfig{
 			Path: carrier, HomeDir: s.home, Tokens: app.AccessTokens(s.store, s.cfgBlk.AccessTokenRef),
-			Preflight: s.preflight(), KillGrace: time.Second,
+			Preflight: s.preflightClient(), KillGrace: time.Second,
 		})
 		t.Cleanup(s.dialer.Close)
 		s.pool.UseDialer(domain.TransportCloudflare, s.dialer)
@@ -165,17 +192,20 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		roots := x509.NewCertPool()
 		roots.AppendCertsFromPEM(s.cf.CAPEM())
 		tunnelOptions = &app.TunnelOptions{
-			Config: s.cfgBlk, Secrets: s.store,
+			Config: s.cfgBlk, Secrets: s.store, Edge: o.edge,
 			NewAPI: func(account string, token audit.Secret) (app.CloudflareAPI, error) {
 				return s.cloudflareClient(roots, account, token)
 			},
+		}
+		if skew != nil {
+			tunnelOptions.Sleep = skew.sleep
 		}
 	}
 
 	reval, err := app.NewRevalidator(s.appCfg)
 	must(t, err)
 	s.jobs, err = jobs.NewStore(jobs.Config{
-		DB: s.db, Clock: clock, IDs: s.ids, Revalidator: reval, LockPlanner: app.LockPlanner{}, LeaseTTL: 30 * time.Second,
+		DB: s.db, Clock: clock, IDs: s.ids, Revalidator: reval, LockPlanner: app.LockPlanner{}, LeaseTTL: leaseTTL,
 		BackoffBase: 10 * time.Millisecond, BackoffMax: 50 * time.Millisecond, // retries of an idempotent job do not wait seconds
 	})
 	must(t, err)

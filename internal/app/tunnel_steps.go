@@ -34,7 +34,8 @@ func (r *tunnelRun) known() database.TunnelObjects {
 // the ADR-0037 order and returns the tunnel token for the node. Every step
 // looks at what already exists first, so a retry or takeover converges and no
 // object is created twice. The DNS record is created last: the hostname is
-// never routable without its Access application.
+// never routable without its Access application. The tunnel token is fetched
+// and kept just before it, so no record is waited on without its token.
 func (r *tunnelRun) provisionCloudflare(ctx context.Context) (audit.Secret, error) {
 	steps := []struct {
 		name string
@@ -43,7 +44,6 @@ func (r *tunnelRun) provisionCloudflare(ctx context.Context) (audit.Secret, erro
 		{"tunnel", r.ensureTunnel},
 		{"tunnel ingress", r.ensureIngress},
 		{"Access application", r.ensureAccessApp},
-		{"DNS record", r.ensureDNS},
 	}
 	state, err := r.ensureInstanceAccess(ctx)
 	if err != nil {
@@ -60,6 +60,14 @@ func (r *tunnelRun) provisionCloudflare(ctx context.Context) (audit.Secret, erro
 	token, err := r.api.TunnelToken(ctx, r.known().TunnelID)
 	if err != nil {
 		return "", r.step("tunnel token", err)
+	}
+	if r.keepToken != nil {
+		if err := r.keepToken(ctx, token); err != nil {
+			return "", r.step("store the connector token", err)
+		}
+	}
+	if err := r.ensureDNS(ctx, state); err != nil {
+		return "", r.fail(ctx, r.step("DNS record", err))
 	}
 	return token, nil
 }
@@ -241,7 +249,10 @@ func (r *tunnelRun) candidate() domain.Node {
 // transport, so a pooled direct connection cannot answer for it, and the
 // host key pinned for the node is enforced over the tunnel.
 func (h setupHandler) verifyTunnelPath(ctx context.Context, r *tunnelRun, req setupRequest, id secrets.Identity, outcome systemd.SetupOutcome) error {
-	if err := h.verify(ctx, r.candidate(), req, id, outcome); err != nil {
+	err := r.verifyWhenServed(ctx, func(ctx context.Context) error {
+		return h.verify(ctx, r.candidate(), req, id, outcome)
+	})
+	if err != nil {
 		return r.step("verification over the tunnel", err)
 	}
 	return r.advance(ctx, database.PhaseVerified, database.TunnelObjects{}, "", nil)

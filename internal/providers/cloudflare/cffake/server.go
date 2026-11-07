@@ -52,8 +52,10 @@ const (
 	DefaultAccountID = "0123456789abcdef0123456789abcdef"
 	DefaultZone      = "example.test"
 	DefaultZoneID    = "fedcba9876543210fedcba9876543210"
-	// DefaultOneTimePINID is the one-time PIN identity provider every fake
-	// account starts with, as a Zero Trust organisation does.
+	// DefaultOneTimePINID is the one-time PIN identity provider WithOneTimePIN
+	// adds. A new fake account does not have it: since June 2026 a new Zero
+	// Trust organisation starts with the Cloudflare login, which is no entry
+	// of the identity provider list.
 	DefaultOneTimePINID = "0a1b2c3d-0000-4000-8000-0000000000aa"
 
 	maxPerPage = 1000
@@ -126,6 +128,14 @@ func WithPropagationDelay(n int) Option { return func(f *Fake) { f.delay = n } }
 // 2026-01-01T00:00:00Z and advances one second per reading.
 func WithClock(now func() time.Time) Option { return func(f *Fake) { f.clock = now } }
 
+// WithOneTimePIN gives the account the One-time PIN login, as an organisation
+// that enabled it (or was created before June 2026) has.
+func WithOneTimePIN() Option {
+	return func(f *Fake) {
+		f.idps = append(f.idps, IdentityProvider{ID: DefaultOneTimePINID, Name: "One-time PIN", Type: "onetimepin"})
+	}
+}
+
 // WithUserOwnedToken makes the account token endpoint refuse the token, as it
 // does for a user-owned one; only /user/tokens/verify answers.
 func WithUserOwnedToken() Option { return func(f *Fake) { f.userToken = true } }
@@ -174,7 +184,6 @@ func New(t testing.TB, opts ...Option) *Fake {
 		t: t, mux: http.NewServeMux(), token: DefaultToken, account: DefaultAccountID,
 		zone: DefaultZone, zoneID: DefaultZoneID, pageSize: 100, faults: map[Op]*faultQueue{},
 	}
-	f.idps = []IdentityProvider{{ID: DefaultOneTimePINID, Name: "One-time PIN", Type: "onetimepin"}}
 	for _, opt := range opts {
 		opt(f)
 	}

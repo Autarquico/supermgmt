@@ -253,11 +253,3 @@ func (f *Fake) SeedIdentityProvider(name, kind string) IdentityProvider {
 	f.idps = append(f.idps, idp)
 	return idp
 }
-
-// ClearIdentityProviders removes every login method, one-time PIN included: an
-// organisation where nothing was ever enabled.
-func (f *Fake) ClearIdentityProviders() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.idps = nil
-}

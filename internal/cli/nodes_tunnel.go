@@ -46,6 +46,9 @@ func submitPlan(cmd *cobra.Command, api *client.Client, subject string, req wire
 	if err != nil {
 		return err
 	}
+	if submission.Policy.ApprovalRequired {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "to approve: sm jobs approve %s --plan-hash %s\n", submission.Job.ID, plan.PlanHash)
+	}
 	return submissionOutput(cmd, submission)
 }
 

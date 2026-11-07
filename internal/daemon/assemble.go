@@ -25,6 +25,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/netguard"
 	"github.com/autarquico/supermgmt/internal/policy"
+	"github.com/autarquico/supermgmt/internal/providers/cloudflare"
 	"github.com/autarquico/supermgmt/internal/providers/github"
 	"github.com/autarquico/supermgmt/internal/providers/local"
 	"github.com/autarquico/supermgmt/internal/runtimes"
@@ -209,6 +210,8 @@ type builder struct {
 
 	// oauthHTTP replaces the netguard client of the OAuth endpoints; tests only.
 	oauthHTTP *http.Client
+	// edge replaces Cloudflare's resolver for the publication gate of tunnel hostnames; tests only.
+	edge app.EdgePublication
 
 	plans     *app.Plans
 	queries   *app.Queries
@@ -540,7 +543,11 @@ func (b *builder) tunnelOptions() *app.TunnelOptions {
 	if b.cfg.Cloudflare == nil {
 		return nil
 	}
-	return &app.TunnelOptions{Config: *b.cfg.Cloudflare, Secrets: b.kit.store}
+	edge := b.edge
+	if edge == nil {
+		edge = cloudflare.NewPublicationChecker()
+	}
+	return &app.TunnelOptions{Config: *b.cfg.Cloudflare, Secrets: b.kit.store, Edge: edge}
 }
 
 func (b *builder) background(handlers map[string]jobs.Handler) (background, error) {

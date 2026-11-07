@@ -228,7 +228,17 @@ If the connector is down, its credential is invalid or the tunnel was deleted, r
 
 ### A tunnel node fails verification after setup
 
-The job names the step and leaves the transport `direct`. A different SSH host key over the tunnel is refused like any host-key mismatch ([`SSH_HOST_KEY_MISMATCH`](#ssh_host_key_mismatch)); it is never repinned for you. If the dedicated account fails over the tunnel, the transport also stays `direct` (`TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`).
+The job names the step and leaves the transport `direct`. A different SSH host key over the tunnel is refused like any host-key mismatch ([`SSH_HOST_KEY_MISMATCH`](#ssh_host_key_mismatch)); it is never repinned for you. If the dedicated account fails over the tunnel, the transport also stays `direct` (`TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`). A failed verification keeps its cause: the error carries the underlying dial or authentication failure, not only the step name.
+
+### A tunnel waits for Cloudflare to publish the hostname
+
+A hostname created a moment ago is not served at once. Before the first connection, setup and enrollment ask Cloudflare's public resolver (`cloudflare-dns.com`, see [egress](dependencies.md#egress)) whether the hostname answers. Setup waits up to 3 minutes; an enrollment waits 20 seconds per job run and shows the note `waiting for Cloudflare to publish <hostname>`, then tries again. Nothing is wrong unless the wait ends: then the job fails with `NODE_UNREACHABLE` and `not published after ...`; rerun the same command.
+
+If the resolver cannot be asked (it is blocked, or the request times out), the note starts with `Cloudflare's resolver cannot be asked` and ends with the cause. SuperMgmt then waits a fixed 60 s after the DNS record was created and tries the connection. The note does not mean the hostname is unpublished. Allow `cloudflare-dns.com` to avoid the fixed wait.
+
+### `TUNNEL_DNS_NEGATIVE_CACHE`
+
+The system resolver on the host running SuperMgmt answered NXDOMAIN, but Cloudflare already publishes the hostname. A resolver that was asked too early keeps that negative answer until its lifetime ends. The error gives an estimate ("it can last about ...") taken from the zone's SOA record: the smaller of the SOA TTL and its minimum. Wait that long, or flush the cache of the machine running the daemon (on macOS `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder`; on Linux with systemd-resolved `resolvectl flush-caches`), then rerun the command. A router or an upstream resolver may keep the answer longer than the flush; if the error returns, wait for the estimate to pass.
 
 ## Still stuck
 

@@ -238,13 +238,47 @@ func (r *enrollRun) showLine(view wire.TunnelEnrollment, attached bool) error {
 		r.say("The connector token is not shown again here: `sm nodes add --tunnel --name %s --show-token` prints it while the enrollment is open.", view.Name)
 		return nil
 	}
-	token, err := r.api.TunnelEnrollmentToken(r.ctx, view.Name)
+	token, err := r.tokenWhenBuilt(view)
 	if err != nil {
 		return err
 	}
 	r.say("The line asks for the connector token. Paste it at the node's prompt; it is shown only here (and by --show-token):")
 	_, _ = fmt.Fprintf(out, "\n%s\n\n", token.Token)
 	return nil
+}
+
+// tokenWhenBuilt asks for the connector token and keeps asking while the daemon answers that the
+// Cloudflare side is still being built, as long as the enrollment itself is still open.
+func (r *enrollRun) tokenWhenBuilt(view wire.TunnelEnrollment) (wire.TunnelEnrollmentToken, error) {
+	ticker := time.NewTicker(r.interval)
+	defer ticker.Stop()
+	for {
+		token, err := r.api.TunnelEnrollmentToken(r.ctx, view.Name)
+		if err == nil {
+			return token, nil
+		}
+		if r.ctx.Err() != nil {
+			return token, r.interrupted()
+		}
+		if smerr.CodeOf(err) != smerr.CodeConflict {
+			return token, err
+		}
+		select {
+		case <-r.ctx.Done():
+			return token, r.interrupted()
+		case <-ticker.C:
+		}
+		next, err := r.api.GetTunnelEnrollment(r.ctx, r.name)
+		if err != nil {
+			if r.ctx.Err() != nil {
+				return token, r.interrupted()
+			}
+			return token, err
+		}
+		if err := enrollmentFailure(next); err != nil {
+			return token, err
+		}
+	}
 }
 
 // confirmKey shows the scanned key's fingerprint and confirms it, bound to that exact key: with the

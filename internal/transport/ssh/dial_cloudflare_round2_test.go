@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/domain/domaintest"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
@@ -307,3 +308,26 @@ func TestPoolCloseClosesSlowCarriersInParallel(t *testing.T) {
 		t.Errorf("Close took %v for %d carriers of %v each: not parallel", took, nodes, delay)
 	}
 }
+
+// A preflight that outlives its own client timeout while the caller's context
+// is live is a CodeTimeout (retryable by the readiness loop), not a carrier
+// failure, and the error never carries the token.
+func TestPreflightOwnTimeoutIsCodeTimeoutWithoutTheToken(t *testing.T) {
+	stall := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	d := NewCloudflareDialer(CloudflareConfig{Preflight: &http.Client{Transport: stall, Timeout: 20 * time.Millisecond}})
+	err := d.checkAdmitted(context.Background(), testTunnelHost, AccessToken{ClientID: testTokenID, ClientSecret: audit.Secret(testTokenValue)})
+	requireCode(t, err, smerr.CodeTimeout)
+	if IsCarrierFailure(err) {
+		t.Error("a deadline must not be marked as a carrier failure")
+	}
+	if strings.Contains(err.Error(), testTokenValue) || strings.Contains(err.Error(), testTokenID) {
+		t.Errorf("error leaks the token: %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

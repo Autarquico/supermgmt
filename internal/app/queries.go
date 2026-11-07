@@ -106,7 +106,7 @@ func (q *Queries) Plan(ctx context.Context, by Caller, id domain.ID) (wire.Creat
 		return wire.CreatedPlan{}, err
 	}
 	verdict := wire.Policy{Decision: string(policy.DecisionDeny), Reason: smerr.ReasonPlanStale}
-	if current, err := rebuild(ctx, reader, rec); err == nil {
+	if current, err := q.rebuild(ctx, reader, rec); err == nil {
 		if requester, err := loadActor(ctx, reader, rec.ActorID, domain.CredentialContext{}); err == nil {
 			verdict = PolicyView(q.authorize(current.request(requester)))
 		}
@@ -232,7 +232,7 @@ func (q *Queries) environmentsOf(ctx context.Context, r database.Querier, p *pla
 // quorumOf is the quorum the requester's policy demands now; 1 when it cannot
 // be evaluated (the claim-time revalidation is the authority).
 func (q *Queries) quorumOf(ctx context.Context, r database.Querier, job jobs.Job, rec database.PlanRecord) int {
-	current, err := rebuildCurrent(ctx, r, rec)
+	current, err := q.rebuildCurrent(ctx, r, rec)
 	if err != nil {
 		return 1
 	}

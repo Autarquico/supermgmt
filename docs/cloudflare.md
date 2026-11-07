@@ -93,12 +93,12 @@ Run a plain `sm nodes setup <node>` first and make sure the node is reachable di
 sm nodes setup web1 --tunnel
 ```
 
-The plan shows `transport: cloudflare (experimental)`. The hostname is checked when the plan is created, before anyone approves it ([the rule](#what-gets-created)). The job waits for approval like any setup. While the node is still reachable directly it:
+The plan shows `transport: cloudflare (experimental)` and names the Cloudflare objects it will create: the tunnel, the Access application and the DNS record. When policy requires approval it prints `to approve: sm jobs approve <job> --plan-hash <hash>`. Proxmox steps appear only with `--proxmox`. The hostname is checked when the plan is created, before anyone approves it ([the rule](#what-gets-created)). The job waits for approval like any setup. While the node is still reachable directly it:
 
 1. Ensures the instance's Access service token (created on first use, serialised by an instance-wide lock).
 2. Creates or finds, in this order: the tunnel with its ingress rule, the Access application with its policies, and only then the proxied DNS record, so the hostname is never routable without its Access application.
 3. Installs `cloudflared` on the node from Cloudflare's package repository, writes the tunnel credential and starts the service.
-4. Verifies over a **fresh** connection through the tunnel, not a pooled one, with the pinned host key, and runs the same dedicated-account verification as setup (`TestTheTunnelPathIsVerifiedOverAFreshCloudflareConnectionWithThePinnedKey`).
+4. Waits until Cloudflare publishes the new hostname (up to 3 minutes, retrying the dial meanwhile; see [troubleshooting](troubleshooting.md#a-tunnel-waits-for-cloudflare-to-publish-the-hostname)), then verifies over a **fresh** connection through the tunnel, not a pooled one, with the pinned host key, and runs the same dedicated-account verification as setup (`TestTheTunnelPathIsVerifiedOverAFreshCloudflareConnectionWithThePinnedKey`).
 5. Only then commits `transport: cloudflare` and `tunnel_hostname` and retires the pooled direct connections (`TestTunnelSetupProvisionsEverythingProvesTheTunnelAndOnlyThenSwitches`).
 
 If any step fails, the job fails naming the step, the transport stays `direct`, and the operation is recorded so a rerun resumes it (`TestAFailedTunnelVerificationLeavesTheNodeDirectAndTheOperationResumable`, `TestADedicatedAccountThatFailsOverTheTunnelKeepsTheTransportDirect`). Rerunning is idempotent and repairs an object that vanished from Cloudflare (`TestEnableRepairsAnObjectThatVanishedFromCloudflare`). It also repairs a node whose connector is broken, as the next section describes. Tunnel steps on the node run after the dedicated-account checks and before the key is authorised.
@@ -174,7 +174,7 @@ sm nodes add --name vps1 --tunnel
    - prints the host key fingerprint.
 
    It never calls SuperMgmt. Running it again changes nothing; a new credential replaces the old one.
-4. **The fingerprint.** SuperMgmt scans the host key through the tunnel and shows its fingerprint. Compare it with the one the node printed, and answer. `--fingerprint SHA256:…` answers for you, and is required without a terminal. A different key ends the enrollment with `SSH_HOST_KEY_MISMATCH` and removes what it created.
+4. **The fingerprint.** SuperMgmt first waits for Cloudflare to publish the new hostname (20 seconds per job run; the enrollment shows what it waits for and tries again). It then scans the host key through the tunnel and shows its fingerprint. Compare it with the one the node printed, and answer. `--fingerprint SHA256:…` answers for you, and is required without a terminal. A different key ends the enrollment with `SSH_HOST_KEY_MISMATCH` and removes what it created.
 5. **The node.** With the key pinned, SuperMgmt probes the node as the dedicated account through the tunnel, then saves it with `transport: cloudflare`. If you interrupt the command, the enrollment keeps running; run the same command again to follow it.
 
 `sm nodes list` shows open enrollments with their expiry. `sm nodes add --tunnel --name vps1 --cancel` ends one. An enrollment that is cancelled, expires or finds a different key removes its DNS record, closes its ingress, then removes its Access application and its tunnel. It keeps the instance's service token and policies, and it is marked finished only when nothing is left.
