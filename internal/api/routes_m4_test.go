@@ -136,8 +136,6 @@ func m4Services(t *testing.T, cfg app.Config, store *jobs.Store) Services {
 	must(t, err)
 	svc.Repositories, err = app.NewRepositories(cfg, m4Clients{})
 	must(t, err)
-	svc.AppMoves, err = app.NewAppMoves(cfg, svc.Plans)
-	must(t, err)
 	deployments, err := app.NewDeployments(cfg, svc.Governance, app.CIPolling{Server: true})
 	must(t, err)
 	svc.Deployments, err = app.NewDeploymentFinalizer(deployments, app.FinalizerDeps{Clients: m4Clients{}, Jobs: store})
@@ -225,29 +223,25 @@ func errorReasonOf(t *testing.T, r reply) smerr.Reason {
 // wantM4Routes is the M4 surface (spec §23, ADR-0011) and the action each
 // route stands for.
 var wantM4Routes = map[string]string{
-	"GET " + wire.PathApps:                  "app.read",
-	"POST " + wire.PathApps:                 "app.write",
-	"GET " + wire.PathApp:                   "app.read",
-	"PATCH " + wire.PathApp:                 "app.write",
-	"GET " + wire.PathAppTargets:            "app_target.read",
-	"POST " + wire.PathAppTargets:           "app_target.write",
-	"GET " + wire.PathAppTarget:             "app_target.read",
-	"PATCH " + wire.PathAppTarget:           "app_target.write",
-	"GET " + wire.PathAppTargetRoutes:       "app_target.read",
-	"POST " + wire.PathAppTargetRoutes:      "app_route.expose",
-	"DELETE " + wire.PathAppTargetRoute:     "app_route.unexpose",
-	"GET " + wire.PathAppRoutes:             "app_target.read",
-	"GET " + wire.PathAppTargetMoves:        "app_target.read",
-	"POST " + wire.PathAppTargetMoves:       "app_target.move",
-	"POST " + wire.PathAppTargetMoveCleanup: "app_target.cleanup_source",
-	"POST " + wire.PathAppTargetMoveAbandon: "app_target.abandon_move",
-	"GET " + wire.PathProviderRepositories:  "provider.read",
-	"GET " + wire.PathDeployments:           "deployment.read",
-	"POST " + wire.PathDeployments:          "deployment.create",
-	"GET " + wire.PathDeployment:            "deployment.read",
-	"POST " + wire.PathDeploymentRollback:   "deployment.rollback",
-	"POST " + wire.PathDeploymentCancel:     "job.cancel",
-	"POST " + wire.PathGitHubWebhook:        ExemptWebhook,
+	"GET " + wire.PathApps:                 "app.read",
+	"POST " + wire.PathApps:                "app.write",
+	"GET " + wire.PathApp:                  "app.read",
+	"PATCH " + wire.PathApp:                "app.write",
+	"GET " + wire.PathAppTargets:           "app_target.read",
+	"POST " + wire.PathAppTargets:          "app_target.write",
+	"GET " + wire.PathAppTarget:            "app_target.read",
+	"PATCH " + wire.PathAppTarget:          "app_target.write",
+	"GET " + wire.PathAppTargetRoutes:      "app_target.read",
+	"POST " + wire.PathAppTargetRoutes:     "app_route.expose",
+	"DELETE " + wire.PathAppTargetRoute:    "app_route.unexpose",
+	"GET " + wire.PathAppRoutes:            "app_target.read",
+	"GET " + wire.PathProviderRepositories: "provider.read",
+	"GET " + wire.PathDeployments:          "deployment.read",
+	"POST " + wire.PathDeployments:         "deployment.create",
+	"GET " + wire.PathDeployment:           "deployment.read",
+	"POST " + wire.PathDeploymentRollback:  "deployment.rollback",
+	"POST " + wire.PathDeploymentCancel:    "job.cancel",
+	"POST " + wire.PathGitHubWebhook:       ExemptWebhook,
 }
 
 func TestEveryM4RouteMapsToExactlyOneCatalogActionOrExemption(t *testing.T) {
@@ -350,13 +344,6 @@ func TestM4RoutesValidateTheirInput(t *testing.T) {
 		{"expose with an unknown field", http.MethodPost, f.pathFor(wire.PathAppTargetRoutes), `{"x":1}`, key, http.StatusBadRequest},
 		{"unexpose without an Idempotency-Key", http.MethodDelete, wire.Path(wire.PathAppTargetRoute, f.ids.NewID().String(), "a.example.com"), "", nil, http.StatusBadRequest},
 		{"expose without cloudflare", http.MethodPost, f.pathFor(wire.PathAppTargetRoutes), `{"hostname":"a.example.com","service":"web","port":8080}`, key, http.StatusBadRequest},
-		{"moves of a target that is not an id", http.MethodGet, wire.Path(wire.PathAppTargetMoves, "nope"), "", nil, http.StatusBadRequest},
-		{"moves of an unknown target", http.MethodGet, f.pathFor(wire.PathAppTargetMoves), "", nil, http.StatusNotFound},
-		{"move without an Idempotency-Key", http.MethodPost, f.pathFor(wire.PathAppTargetMoves), `{}`, nil, http.StatusBadRequest},
-		{"move with an unknown field", http.MethodPost, f.pathFor(wire.PathAppTargetMoves), `{"x":1}`, key, http.StatusBadRequest},
-		{"move of an unknown target", http.MethodPost, f.pathFor(wire.PathAppTargetMoves), `{"to_node":"` + f.ids.NewID().String() + `"}`, key, http.StatusNotFound},
-		{"cleanup without an Idempotency-Key", http.MethodPost, f.pathFor(wire.PathAppTargetMoveCleanup), "", nil, http.StatusBadRequest},
-		{"abandon of an unknown target", http.MethodPost, f.pathFor(wire.PathAppTargetMoveAbandon), "", key, http.StatusNotFound},
 		{"cancel unknown deployment", http.MethodPost, f.pathFor(wire.PathDeploymentCancel), "", key, http.StatusNotFound},
 	}
 	for _, tc := range cases {

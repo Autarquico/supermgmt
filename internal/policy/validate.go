@@ -112,7 +112,7 @@ func splitEntry(entry string, kinds []string, what string) (kind, value string, 
 
 // validateActionPattern checks an allow/deny pattern against the catalog. An
 // exact name must be a catalog action; a wildcard pattern must be well formed
-// per segment and cover at least one catalog action.
+// per segment and cover at least one catalog or retired action.
 func validateActionPattern(pattern string) error {
 	if pattern == wildcard {
 		return nil
@@ -128,12 +128,15 @@ func validateActionPattern(pattern string) error {
 		}
 	}
 	if !hasWildcard {
+		if _, retired := retiredActions[pattern]; retired {
+			return nil
+		}
 		if _, ok := Lookup(pattern); !ok {
 			return unknownAction(pattern)
 		}
 		return nil
 	}
-	if !slices.ContainsFunc(Catalog(), func(s ActionSpec) bool { return matchAction(pattern, s.Name) }) {
+	if !coversLiveAction(pattern) && len(retiredMatches(pattern)) == 0 {
 		return fmt.Errorf("action pattern %q matches no catalog action", pattern)
 	}
 	return nil

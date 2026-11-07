@@ -40,8 +40,8 @@ type HandlersOptions struct {
 	// refuses it.
 	Tunnel *TunnelOptions
 
-	// Deploy enables deployment.create, deployment.rollback and the app move
-	// actions; without it the types have no handler.
+	// Deploy enables deployment.create, and deployment.rollback; without it the
+	// types have no handler.
 	Deploy *DeployOptions
 
 	// Enrollments runs the node.add jobs of a tunnel enrollment (ADR-0039); nil
@@ -60,7 +60,6 @@ type Handlers struct {
 	apply   applyHandler
 	power   *proxmoxPowerHandler // nil unless Proxmox is configured
 	deploy  *deployHandler       // nil unless deployments are configured
-	move    *appMoveHandler      // nil unless deployments are configured
 }
 
 // NewHandlers validates the options.
@@ -107,7 +106,6 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		if h.deploy, err = newDeployHandler(c, o.Store, o.Connector, *o.Deploy); err != nil {
 			return nil, err
 		}
-		h.move = &appMoveHandler{core: c, dep: h.deploy, conn: o.Connector, tunnel: tunnel}
 	}
 	return h, nil
 }
@@ -132,11 +130,6 @@ func (h *Handlers) Map() map[string]jobs.Handler {
 	if h.deploy != nil {
 		table[deploymentCreateAction] = h.deploy
 		table[deploymentRollbackAction] = h.deploy
-	}
-	if h.move != nil {
-		table[appMoveAction] = h.move
-		table[appMoveCleanupAction] = h.move
-		table[appMoveAbandonAction] = h.move
 	}
 	return table
 }

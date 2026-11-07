@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
 	"net/netip"
 	"os"
@@ -227,7 +226,6 @@ type builder struct {
 	governance *app.Governance
 	apps       *app.Apps
 	repos      *app.Repositories
-	moves      *app.AppMoves
 	finalizer  *app.DeploymentFinalizer // the deployments service of the API and the Finalizer of the CI watcher
 	ci         app.CIWatcher
 
@@ -265,7 +263,6 @@ func (b *builder) openGate(ctx context.Context) error {
 		return err
 	}
 	policies := deployPolicy.TypePolicies()
-	maps.Copy(policies, app.MovePolicy{}.TypePolicies())
 	cfg := b.cfg
 	b.jobs, err = jobs.NewStore(jobs.Config{
 		DB: b.db, Clock: b.o.Clock, IDs: b.o.IDs, Revalidator: revalidator, LockPlanner: app.LockPlanner{},
@@ -408,12 +405,6 @@ func (b *builder) deploymentServices() error {
 		return err
 	}
 	if b.repos, err = app.NewRepositories(b.app, clients); err != nil {
-		return err
-	}
-	if b.moves, err = app.NewAppMoves(b.app, b.plans); err != nil {
-		return err
-	}
-	if err = b.moves.UseTunnel(b.tunnelOptions()); err != nil {
 		return err
 	}
 	attestations, err := b.attestations()
@@ -565,12 +556,8 @@ func (b *builder) background(handlers map[string]jobs.Handler) (background, erro
 	if err != nil {
 		return background{}, err
 	}
-	moveEvidence, err := app.NewMoveEvidence(b.app, b.conn, evidence)
-	if err != nil {
-		return background{}, err
-	}
 	engine, err := jobs.NewEngine(jobs.EngineConfig{
-		Store: b.jobs, Handlers: handlers, Evidence: moveEvidence,
+		Store: b.jobs, Handlers: handlers, Evidence: evidence,
 		Workers: cfg.Jobs.Workers, HeartbeatInterval: cfg.Jobs.Heartbeat,
 		OnError: func(err error) { log.Error("job engine", slog.Any("error", err)) },
 	})
@@ -631,7 +618,7 @@ func (b *builder) apiServices() (api.Services, error) {
 		MCPClients: mcpClients,
 		Plans:      b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
-		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer, AppMoves: b.moves,
+		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments, TunnelEnrollments: b.enrollments,
 	}, nil
 }
@@ -651,7 +638,7 @@ func (b *builder) localServer(services api.Services, residency *Residency) (*api
 }
 
 func appConfig(db *database.DB, o Options) (app.Config, []byte, error) {
-	pol, policyBytes, err := loadPolicy(o.Config.Security.PolicyFile)
+	pol, policyBytes, err := loadPolicy(o.Config.Security.PolicyFile, o.Log)
 	if err != nil {
 		return app.Config{}, nil, err
 	}
@@ -666,7 +653,7 @@ func appConfig(db *database.DB, o Options) (app.Config, []byte, error) {
 // loadPolicy reads security.policy_file, which replaces the built-in default
 // entirely (spec §11.2); without one the embedded default applies and there
 // are no policy bytes to snapshot.
-func loadPolicy(path string) (*policy.Policy, []byte, error) {
+func loadPolicy(path string, log *slog.Logger) (*policy.Policy, []byte, error) {
 	if path == "" {
 		pol, err := policy.Default()
 		return pol, nil, err
@@ -675,7 +662,10 @@ func loadPolicy(path string) (*policy.Policy, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("read policy file: %w", err)
 	}
-	pol, err := policy.Parse(data)
+	pol, warnings, err := policy.ParseWithWarnings(data)
+	for _, w := range warnings {
+		log.Warn("policy names a retired action", slog.String("action", w.Action), slog.String("adr", w.ADR), slog.Any("rules", w.Rules))
+	}
 	return pol, data, err
 }
 

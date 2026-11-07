@@ -245,8 +245,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.onWizardStart(msg)
 	case routeStartMsg:
 		return m, m.onRouteStart(msg)
-	case moveStartMsg:
-		return m, m.onMoveStart(msg)
 	case handoffOpenedMsg:
 		return m, m.onHandoffOpened(msg)
 	case handoffReturnedMsg:

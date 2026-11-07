@@ -62,9 +62,6 @@ func (rs *routeSet) apps() {
 		direct(http.StatusOK, same[app.AppView])))
 	rs.appTargets()
 	rs.appRoutes()
-	if s.svc.AppMoves != nil {
-		rs.appMoves()
-	}
 }
 
 func (rs *routeSet) appTargets() {

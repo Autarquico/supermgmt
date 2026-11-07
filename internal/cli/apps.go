@@ -27,8 +27,7 @@ func newAppsCmd(env []string) *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(newAppsListCmd(env), newAppsGetCmd(env), newAppsCreateCmd(env), newAppsTargetCmd(env),
-		newAppsExposeCmd(env), newAppsUnexposeCmd(env), newAppsRoutesCmd(env),
-		newAppsMoveCmd(env), newAppsMovesCmd(env))
+		newAppsExposeCmd(env), newAppsUnexposeCmd(env), newAppsRoutesCmd(env))
 	return cmd
 }
 

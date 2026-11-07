@@ -189,9 +189,6 @@ func (d *Deployments) Create(ctx context.Context, by Caller, r CreateDeployment)
 		if err := d.authorizeAdmission(ctx, tx, actor, deploymentCreateAction, scope); err != nil {
 			return DeploymentView{}, err
 		}
-		if err := requireNoOpenMove(ctx, tx, scope.target.ID); err != nil {
-			return DeploymentView{}, err
-		}
 		if err := requireDeployedImage(scope, req.images); err != nil {
 			return DeploymentView{}, err
 		}

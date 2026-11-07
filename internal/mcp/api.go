@@ -37,8 +37,6 @@ type API interface {
 	ListAppRoutes(ctx context.Context) (wire.Page[wire.AppRoute], error)
 	ExposeAppRoute(ctx context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error)
 	UnexposeAppRoute(ctx context.Context, target domain.ID, hostname string) (wire.AppRouteSubmission, error)
-	MoveApp(ctx context.Context, target, to domain.ID) (wire.AppMoveSubmission, error)
-	ListAppMoves(ctx context.Context, target domain.ID) (wire.Page[wire.AppMove], error)
 }
 
 // Options configure the server. WriteTools is mcp.write_tools_enabled: the

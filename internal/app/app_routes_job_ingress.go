@@ -29,9 +29,7 @@ func servesIngress(r database.AppRoute) bool {
 
 // desiredIngress is the one builder of a node tunnel's ingress: the SSH rule, a rule per route that serves,
 // then the catch-all. Every writer calls it after taking the instance Cloudflare lock, so the list it
-// writes is the state at that moment. skip leaves one route out: the one being removed. A route that an open
-// move is bringing to the node counts as the node's while the move's row says so (ADR-0042), once: after the
-// commit the route names the node itself.
+// writes is the state at that moment. skip leaves one route out: the one being removed.
 func desiredIngress(ctx context.Context, q database.Querier, nodeID domain.ID, sshHostname string, skip domain.ID) ([]cloudflare.IngressRule, error) {
 	if nodeID == "" {
 		return cloudflare.NodeIngress(sshHostname, nil), nil // an enrollment has no node row, so no routes
@@ -39,15 +37,6 @@ func desiredIngress(ctx context.Context, q database.Querier, nodeID domain.ID, s
 	routes, err := database.ListAppRoutes(ctx, q, database.AppRouteFilter{NodeID: nodeID})
 	if err != nil {
 		return nil, err
-	}
-	incoming, err := database.IncomingMoveRoutes(ctx, q, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range incoming {
-		if !slices.ContainsFunc(routes, func(own database.AppRoute) bool { return own.ID == r.ID }) {
-			routes = append(routes, r)
-		}
 	}
 	var rules []cloudflare.RouteRule
 	for _, r := range routes {
