@@ -8,8 +8,6 @@ import (
 const (
 	upDeadline   = 10 * time.Minute
 	downDeadline = 5 * time.Minute
-	// createDeadline covers creating containers and volumes, nothing is started.
-	createDeadline = 5 * time.Minute
 )
 
 // composeCommand is `docker compose` on the materialized deployment directory
@@ -33,23 +31,6 @@ var composeRunTemplates = []Template{
 		Name: "compose.down", Params: deployDirectoryParams, Mutating: true, Locked: true,
 		Deadline: downDeadline, MaxBytes: 256 << 10, MaxLines: 2000,
 		Body: composeCommand("down --remove-orphans"),
-	},
-	{
-		// Creates the containers and their volumes without starting anything
-		// (app move: B is prepared while A keeps serving).
-		Name: "compose.create", Params: deployDirectoryParams, Mutating: true, Locked: true,
-		Deadline: createDeadline, MaxBytes: 256 << 10, MaxLines: 2000,
-		Body: composeCommand("create --pull never --no-build"),
-	},
-	{
-		Name: "compose.start", Params: deployDirectoryParams, Mutating: true, Locked: true,
-		Deadline: upDeadline, MaxBytes: 256 << 10, MaxLines: 2000,
-		Body: composeCommand("start"),
-	},
-	{
-		Name: "compose.stop", Params: deployDirectoryParams, Mutating: true, Locked: true,
-		Deadline: downDeadline, MaxBytes: 256 << 10, MaxLines: 2000,
-		Body: composeCommand("stop"),
 	},
 	{
 		// One JSON object per line for each container of the project: its ID,

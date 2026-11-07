@@ -80,8 +80,6 @@ type Services struct {
 	Apps         *app.Apps
 	Repositories *app.Repositories
 	Deployments  *app.DeploymentFinalizer
-	// AppMoves is optional: without it the app move routes are not served.
-	AppMoves *app.AppMoves
 	// MCPClients is optional (M5): without it the /mcp/clients routes are not served.
 	MCPClients app.MCPClients
 

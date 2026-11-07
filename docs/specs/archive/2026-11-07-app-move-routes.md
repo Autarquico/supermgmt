@@ -2,7 +2,9 @@
 codename: supermgmt
 title: Move an app target's Cloudflare routes with it
 type: epic
-status: shipped
+status: abandoned
+abandoned_at: 2026-11-07
+abandoned_reason: "retired by ADR-0043 (operations plane, not a deployer)"
 priority: P1
 size: XL
 issue: 56

@@ -15,9 +15,6 @@ import (
 // preflight, moves it on. An expose job still open for the route (the request that admitted it queued one
 // behind this deployment) is the job that will do the work, so no second one is submitted.
 func (h deployHandler) activateRoutes(ctx context.Context, tx *database.Tx, targetID domain.ID, ports []compose.HostPort) error {
-	if _, moving, err := routedMoveOf(ctx, tx, targetID); err != nil || moving {
-		return err // while the routes move they wait; the move activates them on its destination when it is done
-	}
 	waiting, err := database.ListWaitingAppRoutes(ctx, tx, targetID)
 	if err != nil {
 		return err

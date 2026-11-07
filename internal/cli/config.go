@@ -64,6 +64,7 @@ type policySection struct {
 	Source   string      `json:"source"`
 	Rules    int         `json:"rules"`
 	Problems []string    `json:"problems"`
+	Warnings []string    `json:"warnings,omitempty"`
 	Diff     *policyDiff `json:"diff,omitempty"`
 }
 
@@ -127,22 +128,25 @@ func validatePolicy(file string) *policySection {
 	}
 	section.Source = file
 	section.Rules = 0
-	custom, err := readPolicy(file)
+	custom, warnings, err := readPolicy(file)
 	if err != nil {
 		section.Problems = append(section.Problems, errorMessage(err))
 		return section
+	}
+	for _, w := range warnings {
+		section.Warnings = append(section.Warnings, w.String())
 	}
 	section.Rules = len(custom.Rules())
 	section.Diff = diffNames(policy.DiffPolicies(base, custom))
 	return section
 }
 
-func readPolicy(file string) (*policy.Policy, error) {
+func readPolicy(file string) (*policy.Policy, []policy.Warning, error) {
 	data, err := os.ReadFile(filepath.Clean(file))
 	if err != nil {
-		return nil, fmt.Errorf("read policy file: %w", err)
+		return nil, nil, fmt.Errorf("read policy file: %w", err)
 	}
-	return policy.Parse(data)
+	return policy.ParseWithWarnings(data)
 }
 
 func diffNames(d policy.Diff) *policyDiff {

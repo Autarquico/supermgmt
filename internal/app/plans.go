@@ -116,7 +116,7 @@ func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, 
 		if p.cfg.Cloudflare == nil {
 			return requireTunnelAllowed(false, domain.Node{})
 		}
-		return requireNoRoutedMoveAnywhere(ctx, q, "a service-token rotation")
+		return nil
 	case policy.ActionNodeTunnelDisable:
 	case policy.ActionNodeSetup:
 		if tunnel, err := tunnelRequested(req.Parameters[policy.ParamTunnel]); err != nil || !tunnel {
@@ -130,13 +130,6 @@ func (p *Plans) requireTunnelAvailable(ctx context.Context, q database.Querier, 
 		return err
 	}
 	if err := requireTunnelAllowed(p.cfg.Cloudflare != nil, node); err != nil {
-		return err
-	}
-	what := "a tunnel setup"
-	if req.Action == policy.ActionNodeTunnelDisable {
-		what = "a tunnel disable"
-	}
-	if err := requireNoRoutedMoveOnNode(ctx, q, node.ID, what); err != nil {
 		return err
 	}
 	if req.Action == policy.ActionNodeTunnelDisable {

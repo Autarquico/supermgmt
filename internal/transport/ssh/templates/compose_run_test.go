@@ -36,11 +36,8 @@ func TestRunTemplatesRenderTheirGoldenLines(t *testing.T) {
 		verb     string
 		deadline string
 	}{
-		"compose.up":     {"up --detach --pull never --no-build --remove-orphans", "600s"},
-		"compose.down":   {"down --remove-orphans", "300s"},
-		"compose.create": {"create --pull never --no-build", "300s"},
-		"compose.start":  {"start", "600s"},
-		"compose.stop":   {"stop", "300s"},
+		"compose.up":   {"up --detach --pull never --no-build --remove-orphans", "600s"},
+		"compose.down": {"down --remove-orphans", "300s"},
 	}
 	for name, tc := range locked {
 		c, err := RenderMutatingInput(name, "m1", deployArgs("/srv/supermgmt"), nil, testProject)
@@ -80,7 +77,7 @@ func TestFlockWrapsTheWholeMarkerCommand(t *testing.T) {
 }
 
 func TestRunTemplatesNeverRemoveVolumesRebuildOrPull(t *testing.T) {
-	for _, name := range []string{"compose.up", "compose.down", "compose.create", "compose.start", "compose.stop"} {
+	for _, name := range []string{"compose.up", "compose.down"} {
 		c, err := RenderMutatingInput(name, "m1", deployArgs("/srv/supermgmt"), nil, testProject)
 		if err != nil {
 			t.Fatal(err)
@@ -148,7 +145,6 @@ func TestEveryComposeCommandRunsUnderEnvDashI(t *testing.T) {
 	}
 	underEnv := map[string]bool{
 		"compose.up": true, "compose.down": true, "compose.ps": true, "compose.verify": true,
-		"compose.create": true, "compose.start": true, "compose.stop": true,
 		"health.http": true, "health.tcp": true,
 	}
 	seen := 0

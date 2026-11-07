@@ -33,6 +33,7 @@ func writeValidateReport(w io.Writer, r validateReport, asJSON bool) error {
 		}
 		b.WriteString("\n")
 		writeLines(&b, "  - ", p.Problems)
+		writeLines(&b, "  warning: ", p.Warnings)
 		writePolicyDiff(&b, p.Diff)
 	}
 	_, err := io.WriteString(w, b.String())

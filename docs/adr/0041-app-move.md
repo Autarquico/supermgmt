@@ -1,7 +1,7 @@
 # ADR-0041: Moving an app target to another node
 
-- Status: Proposed
-- Spec: spec `docs/specs/app-move.md`; ADR-0009, ADR-0029, ADR-0030, ADR-0040
+- Status: Superseded by ADR-0043
+- Spec: spec `docs/specs/archive/2026-11-07-app-move.md`; ADR-0009, ADR-0029, ADR-0030, ADR-0040
 
 ## Context
 

@@ -246,15 +246,7 @@ sm apps unexpose shop prod --hostname shop.example.com
 
 **If the node's tunnel changes** (it was recreated, or the zone or account in the configuration changed), a route halts before any change and tells you to unexpose and expose again. Unexposing a route whose tunnel was recreated removes its DNS record and Access application and skips the ingress rule, which went with the old tunnel. If the account, zone or instance changed, the route is marked removed with no Cloudflare call, and the `app_route.removed` audit event lists the object IDs left behind for you to delete by hand.
 
-Not covered: moving a route on its own (a route moves with its target, see below), changing access or port in place (unexpose, then expose), wildcard hostnames or hostnames outside the zone, non-HTTP origins, and drift detection of route objects (`sm nodes tunnel status` still checks only the SSH objects). The real-account checks are open: [Expose an app](manual-checks/app-expose-tunnel.md).
-
-### Moving a target with routes
-
-**Experimental, tested against fakes only.** `sm apps move <app> <env> --to <node>` repoints the target's routes to the destination node's tunnel inside the move ([the full order and rollback](deployments.md#moving-a-target-with-routes)). The destination must already have a committed tunnel (`sm nodes setup <node> --tunnel`).
-
-The order is: the destination's tunnel gets the route's ingress rule; for an `owners` route the Access application is checked again; the proxied CNAME is changed in place (same record, content only) from the source's tunnel to the destination's; the move commits; the source's ingress rule is removed; the source is parked and the move is `done`. A proxied CNAME is resolved at the Cloudflare edge, so the switch does not wait for client DNS caches. Between the repoint and the cleaning of the source, the source's rule is still there.
-
-While a routed move is open, `expose` and `unexpose` of the target and tunnel setup, rotation and disable on the source or the destination are refused. The destination's route limit counts the routes of open moves. If an answer from Cloudflare is lost, the daemon waits 2 minutes and reads the record before it does anything else; a record it does not own (another comment, a duplicate, other content) halts the move. Rules you added by hand to either tunnel are lost on the PUTs of the move, as for any other write of the ingress.
+Not covered: moving a route to another node, changing access or port in place (unexpose, then expose), wildcard hostnames or hostnames outside the zone, non-HTTP origins, and drift detection of route objects (`sm nodes tunnel status` still checks only the SSH objects). The real-account checks are open: [Expose an app](manual-checks/app-expose-tunnel.md).
 
 ### Stop using Cloudflare
 

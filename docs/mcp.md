@@ -79,7 +79,6 @@ Always registered (13): twelve read-only tools (`readOnlyHint`) and `infra_plan_
 | `infra_get_service` | one service, by id or `name@node` |
 | `infra_get_service_logs` | last log lines of a service (at most 500 lines, 64 KiB); needs `service.logs` |
 | `infra_list_apps` | applications |
-| `infra_list_app_moves` | the moves of an app target to other nodes, by app and environment (each an id or exact name), newest first, with phase, nodes, whether the move is stateful, its volumes and the state of each route |
 | `infra_list_app_routes` | the routes that publish an app's ports through its node's tunnel, optionally of one app and environment, with their phase |
 | `infra_list_deployments` | deployments, optionally by app, target, environment, state |
 | `infra_get_deployment` | one deployment with its steps |
@@ -97,7 +96,6 @@ Write tools (8, **registered only when `mcp.write_tools_enabled: true`**):
 | `infra_create_deployment` | creates a deployment (waits for CI, then approval where policy requires) |
 | `infra_rollback_deployment` | rolls a deployment back (waits for approval where policy requires) |
 | `infra_expose_app` | publishes a service port of an app target at a hostname through its node's tunnel; access is `public` unless `owners` is given, and a public route is high risk and waits for approval where policy requires |
-| `infra_move_app` | moves an app target to another node (id or exact name); high risk, waits for approval where policy requires, and nothing runs until then. The result says whether the app stops while its volumes are copied. It cannot clean up the old node or abandon a halted move |
 | `infra_unexpose_app` | removes the route of a hostname from an app target (waits for approval where policy requires) |
 
 With writes disabled the 8 write tools are absent from `tools/list` and calling one by name is an unknown-tool error (`TestNewServer_WritesDisabledListsReadToolsAndPlanOnly`, `TestNewServer_WritesDisabledRefusesWriteToolsByName`). No resources and no prompts are offered.

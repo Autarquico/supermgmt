@@ -132,6 +132,10 @@ That is the hold working: while `/var/lib/supermgmt/upgrade.json` exists the uni
 
 The binary is older than the installed one, or its version cannot be ordered. Use `--allow-downgrade` only deliberately: the database does not migrate backwards, so a downgrade after a migration needs the pre-upgrade archive restored ([releasing.md](releasing.md#yank-and-rollback)).
 
+### The upgrade stops with `an app move is unfinished`
+
+This version no longer moves apps between nodes, and it will not drop the record of a move that still has work to do: a move that is not `done` or `rolled_back`, or a move, cleanup or abandon job that has not finished. The database is left exactly as it was. Go back to the previous version, let the move finish (or abandon it where it halted), wait for its jobs to end, then upgrade again. A backup taken while a move was open fails to restore for the same reason.
+
 ## Restoring
 
 ### Every write returns `CONFLICT` with `RESTORE_HOLD`
