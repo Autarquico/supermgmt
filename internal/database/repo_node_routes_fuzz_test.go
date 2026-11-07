@@ -37,15 +37,15 @@ func (r rowOf) Scan(dest ...any) error {
 	return nil
 }
 
-func FuzzScanAppRoute(f *testing.F) {
+func FuzzScanNodeRoute(f *testing.F) {
 	f.Add("shop.example.test", int64(1_700_000_000_000), true)
 	f.Add("", int64(0), false)
 	f.Add("\x00\xff", int64(-1), true)
 	f.Add("failed", int64(1<<63-1), true)
 	f.Fuzz(func(t *testing.T, text string, number int64, null bool) {
-		r, err := scanAppRoute(rowOf{text: text, number: number, null: null})
+		r, err := scanNodeRoute(rowOf{text: text, number: number, null: null})
 		if err != nil {
-			t.Fatalf("scanAppRoute: %v", err)
+			t.Fatalf("scanNodeRoute: %v", err)
 		}
 		if got, want := string(r.HaltedPhase), map[bool]string{true: text, false: ""}[null]; got != want {
 			t.Errorf("halted phase = %q, want %q", got, want)

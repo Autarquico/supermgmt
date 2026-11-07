@@ -128,7 +128,7 @@ func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec
 	if err != nil {
 		return built{}, err
 	}
-	if isAppRouteAction(spec.Name) {
+	if isNodeRouteAction(spec.Name) {
 		if spec.Risk, err = policy.RiskFor(spec.Name, params); err != nil { // public raises the risk of an expose
 			return built{}, err
 		}
@@ -182,8 +182,8 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 		return appWriteTarget(ctx, q, ref, params)
 	case appTargetWriteAction:
 		return appTargetWriteTarget(ctx, q, ref, params)
-	case appRouteExposeAction, appRouteUnexposeAction:
-		return appRouteTarget(ctx, q, spec, ref, params)
+	case nodeRouteExposeAction, nodeRouteUnexposeAction:
+		return nodeRouteTarget(ctx, q, spec, ref, params)
 	case actionMCPClientRegister:
 		return mcpRegisterTarget(ref, params)
 	case actionMCPClientDelete:
@@ -620,9 +620,9 @@ type applyHandler struct {
 	inv         *Inventory
 	apps        *Apps
 	enrollments *TunnelEnrollments
-	// routes moves the app route of an app_route.expose or app_route.unexpose plan once the apply step
+	// routes moves the node route of a node_route.expose or node_route.unexpose plan once the apply step
 	// admitted it (ADR-0040); nil without a cloudflare: block.
-	routes *appRouteHandler
+	routes *nodeRouteHandler
 }
 
 func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
@@ -637,7 +637,7 @@ func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
-	if !isAppRouteAction(action) {
+	if !isNodeRouteAction(action) {
 		return h.inv.runApproved(ctx, lease, h.apps, action)
 	}
 	if h.routes == nil {

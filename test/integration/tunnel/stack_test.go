@@ -78,7 +78,7 @@ type stack struct {
 	appCfg app.Config
 	jobs   *jobs.Store
 	enroll *app.TunnelEnrollments // nil without a cloudflare: block
-	apps   *app.Apps              // nil unless stackOptions.withApps
+	routes *app.NodeRoutes
 	plans  *app.Plans
 	appr   *app.Approvals
 	admin  app.Caller
@@ -91,8 +91,6 @@ type stack struct {
 }
 
 type stackOptions struct {
-	// withApps builds the apps service, which exposes app routes; the job engine applies their plans.
-	withApps bool
 	// withoutCloudflare builds an instance with no cloudflare: block.
 	withoutCloudflare bool
 	// carrier is the path of the cloudflared stand-in; empty builds
@@ -229,11 +227,8 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		Store: s.jobs, Connector: conn, Inventory: inventory, Prober: prober,
 		Identity: app.SSHIdentityOf(s.store), Tunnel: tunnelOptions, Enrollments: s.enroll,
 	}
-	if o.withApps {
-		s.apps, err = app.NewApps(s.appCfg, s.jobs, noGitHub{})
-		must(t, err)
-		handlerOptions.Apps = s.apps
-	}
+	s.routes, err = app.NewNodeRoutes(s.appCfg, s.jobs)
+	must(t, err)
 	handlers, err := app.NewHandlers(s.appCfg, handlerOptions)
 	must(t, err)
 

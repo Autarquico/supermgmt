@@ -15,14 +15,15 @@ import (
 
 // servesIngress reports whether the route's rule belongs to the node's ingress (ADR-0040). A route that
 // halted never serves, in whichever phase it stopped: a halt fails closed, and the next writer drops its rule.
-// A removal that halts stops the app sooner, and the Access application still goes last.
-func servesIngress(r database.AppRoute) bool {
+// An admitted route does not serve either: its rule is published only by its own job, after its DNS preflight.
+// A removal that halts stops whatever listens on the port sooner, and the Access application still goes last.
+func servesIngress(r database.NodeRoute) bool {
 	switch r.Phase {
-	case database.AppRouteProvisioning, database.AppRouteIngressReady, database.AppRouteAccessReady, database.AppRouteActive,
-		database.AppRouteRemoving, database.AppRouteDNSRemoved:
+	case database.NodeRouteProvisioning, database.NodeRouteIngressReady, database.NodeRouteAccessReady, database.NodeRouteActive,
+		database.NodeRouteRemoving, database.NodeRouteDNSRemoved:
 		return true
-	case database.AppRouteWaiting, database.AppRouteIngressRemoved, database.AppRouteRemoved,
-		database.AppRouteFailed, database.AppRouteConflict:
+	case database.NodeRouteAdmitted, database.NodeRouteIngressRemoved, database.NodeRouteRemoved,
+		database.NodeRouteFailed, database.NodeRouteConflict:
 	}
 	return false
 }
@@ -34,7 +35,7 @@ func desiredIngress(ctx context.Context, q database.Querier, nodeID domain.ID, s
 	if nodeID == "" {
 		return cloudflare.NodeIngress(sshHostname, nil), nil // an enrollment has no node row, so no routes
 	}
-	routes, err := database.ListAppRoutes(ctx, q, database.AppRouteFilter{NodeID: nodeID})
+	routes, err := database.ListNodeRoutes(ctx, q, database.NodeRouteFilter{NodeID: nodeID})
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +51,7 @@ func desiredIngress(ctx context.Context, q database.Querier, nodeID domain.ID, s
 // requireNoLiveRoutes refuses to close the tunnel of a node that still has routes that are not removed. The
 // disable job repeats it after taking the ingress lock.
 func requireNoLiveRoutes(ctx context.Context, q database.Querier, nodeID domain.ID) error {
-	routes, err := database.ListAppRoutes(ctx, q, database.AppRouteFilter{NodeID: nodeID})
+	routes, err := database.ListNodeRoutes(ctx, q, database.NodeRouteFilter{NodeID: nodeID})
 	if err != nil || len(routes) == 0 {
 		return err
 	}
@@ -60,14 +61,14 @@ func requireNoLiveRoutes(ctx context.Context, q database.Querier, nodeID domain.
 	}
 	slices.Sort(hostnames)
 	return smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
-		"the node still has app routes (%s); remove them with `sm apps unexpose` before disabling the tunnel", strings.Join(hostnames, ", ")))
+		"the node still has routes (%s); remove them with `sm nodes unexpose` before disabling the tunnel", strings.Join(hostnames, ", ")))
 }
 
 // routeTunnelCarries reports whether the node's tunnel is still the one the route froze at admission. ops
 // are the node's tunnel operations, newest first. A setup rerun opens a newer generation of the same tunnel
 // and keeps the route valid; a disable after the frozen generation, or a tunnel that is not the frozen one,
 // does not.
-func routeTunnelCarries(ops []database.TunnelOperation, route database.AppRoute) bool {
+func routeTunnelCarries(ops []database.TunnelOperation, route database.NodeRoute) bool {
 	tunnelID := ""
 	for _, op := range ops {
 		if op.Generation < route.TunnelGeneration || op.Kind == database.TunnelDisable {
@@ -84,8 +85,8 @@ func routeTunnelCarries(ops []database.TunnelOperation, route database.AppRoute)
 // nodeTunnelIdentity is the tunnel of the node and the generation of its newest committed enable, which a
 // route freezes when it is admitted. It fails with errNoTunnel when the node has no committed tunnel or a
 // disable came after its last enable.
-func nodeTunnelIdentity(ctx context.Context, q database.Querier, nodeID domain.ID) (string, int64, error) {
-	ops, err := database.ListTunnelOperations(ctx, q, nodeID)
+func nodeTunnelIdentity(ctx context.Context, q database.Querier, node domain.Node) (string, int64, error) {
+	ops, err := database.ListTunnelOperations(ctx, q, node.ID)
 	if err != nil {
 		return "", 0, err
 	}
@@ -103,9 +104,13 @@ func nodeTunnelIdentity(ctx context.Context, q database.Querier, nodeID domain.I
 		}
 	}
 	if generation == 0 || tunnelID == "" {
-		return "", 0, errNoTunnel
+		return "", 0, errNoConnector(node)
 	}
 	return tunnelID, generation, nil
 }
 
-var errNoTunnel = smerr.New(smerr.CodeCapabilityUnavailable, "", "the node has no Cloudflare connector; run `sm nodes setup <node> --tunnel`")
+// errNoConnector refuses a node that no committed Cloudflare tunnel carries.
+func errNoConnector(node domain.Node) error {
+	return smerr.New(smerr.CodeCapabilityUnavailable, "", fmt.Sprintf(
+		"the node %s has no Cloudflare connector; run `sm nodes setup %s --tunnel`", node.Name, node.Name))
+}

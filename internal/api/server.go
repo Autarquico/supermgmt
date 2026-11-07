@@ -75,6 +75,8 @@ type Services struct {
 	SSHKeys    *SSHKeys
 	// Proxmox is optional: without it the refresh route answers CAPABILITY_UNAVAILABLE.
 	Proxmox *app.ProxmoxSync
+	// Routes is optional: without it the node route routes (ADR-0043) are not served.
+	Routes *app.NodeRoutes
 	// Apps, Repositories and Deployments are optional (M4): without one, the
 	// routes of its group are not served.
 	Apps         *app.Apps

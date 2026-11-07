@@ -770,11 +770,10 @@ func TestNewDeployHandlerRequiresItsCollaborators(t *testing.T) {
 	w := newDeployWorld(t)
 	c, err := newCore(w.cfg)
 	mustf(t, err, "newCore")
-	good := DeployOptions{Secrets: dhSecrets{}, HTTP: &http.Client{}, SystemID: "system"}
+	good := DeployOptions{Secrets: dhSecrets{}, HTTP: &http.Client{}}
 	for name, mutate := range map[string]func(*DeployOptions){
 		"secrets": func(o *DeployOptions) { o.Secrets = nil },
 		"http":    func(o *DeployOptions) { o.HTTP = nil },
-		"system":  func(o *DeployOptions) { o.SystemID = "" },
 	} {
 		o := good
 		mutate(&o)
@@ -805,7 +804,7 @@ func TestHandlers_DeploymentTypesExistOnlyWhenDeploymentsAreConfigured(t *testin
 	n := newNodeFixture(t)
 
 	without := n.handlersWith(t, nil, nil).Map()
-	with := n.handlersWith(t, nil, &DeployOptions{Secrets: dhSecrets{}, HTTP: &http.Client{}, SystemID: "system"}).Map()
+	with := n.handlersWith(t, nil, &DeployOptions{Secrets: dhSecrets{}, HTTP: &http.Client{}}).Map()
 
 	for _, jobType := range []string{deploymentCreateAction, deploymentRollbackAction} {
 		if _, ok := without[jobType]; ok {

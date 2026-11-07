@@ -76,9 +76,9 @@ type TunnelEnrollmentAPI interface {
 	StartTunnelEnrollment(ctx context.Context, r wire.StartTunnelEnrollmentRequest) (wire.Direct[wire.TunnelEnrollment], error)
 }
 
-// AppRoutesAPI publishes and withdraws an app target's port through its node's Cloudflare Tunnel (ADR-0040).
+// NodeRoutesAPI publishes and withdraws a node's port through its Cloudflare Tunnel (ADR-0043).
 // It is optional like TunnelEnrollmentAPI: without it the palette says the daemon does not serve it.
-type AppRoutesAPI interface {
-	ExposeAppRoute(ctx context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error)
-	UnexposeAppRoute(ctx context.Context, target domain.ID, hostname string) (wire.AppRouteSubmission, error)
+type NodeRoutesAPI interface {
+	ExposeNodeRoute(ctx context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error)
+	UnexposeNodeRoute(ctx context.Context, node domain.ID, hostname string) (wire.NodeRouteSubmission, error)
 }

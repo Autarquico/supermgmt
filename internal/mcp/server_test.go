@@ -29,8 +29,8 @@ var (
 	planToolName = "infra_plan_action"
 
 	writeToolNames = []string{
-		"infra_create_deployment", "infra_expose_app", "infra_reboot_node", "infra_restart_service",
-		"infra_rollback_deployment", "infra_submit_plan", "infra_unexpose_app",
+		"infra_create_deployment", "infra_expose_port", "infra_reboot_node", "infra_restart_service",
+		"infra_rollback_deployment", "infra_submit_plan", "infra_unexpose_port",
 	}
 )
 
@@ -63,18 +63,18 @@ type serverFakeAPI struct {
 	rollbacks          []rollbackCall
 	exposes            []exposeCall
 	unexposes          []unexposeCall
-	routeSubmission    wire.AppRouteSubmission
+	routeSubmission    wire.NodeRouteSubmission
 }
 
-// exposeCall is one ExposeAppRoute call seen by serverFakeAPI.
+// exposeCall is one ExposeNodeRoute call seen by serverFakeAPI.
 type exposeCall struct {
-	target  domain.ID
-	request wire.ExposeAppRouteRequest
+	node    domain.ID
+	request wire.ExposeNodeRouteRequest
 }
 
-// unexposeCall is one UnexposeAppRoute call seen by serverFakeAPI.
+// unexposeCall is one UnexposeNodeRoute call seen by serverFakeAPI.
 type unexposeCall struct {
-	target   domain.ID
+	node     domain.ID
 	hostname string
 }
 
@@ -98,13 +98,13 @@ func (f *serverFakeAPI) RollbackDeployment(_ context.Context, id domain.ID, r wi
 	return f.deployment, f.deploymentEr
 }
 
-func (f *serverFakeAPI) ExposeAppRoute(_ context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error) {
-	f.exposes = append(f.exposes, exposeCall{target, r})
+func (f *serverFakeAPI) ExposeNodeRoute(_ context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error) {
+	f.exposes = append(f.exposes, exposeCall{node, r})
 	return f.routeSubmission, f.submitErr
 }
 
-func (f *serverFakeAPI) UnexposeAppRoute(_ context.Context, target domain.ID, hostname string) (wire.AppRouteSubmission, error) {
-	f.unexposes = append(f.unexposes, unexposeCall{target, hostname})
+func (f *serverFakeAPI) UnexposeNodeRoute(_ context.Context, node domain.ID, hostname string) (wire.NodeRouteSubmission, error) {
+	f.unexposes = append(f.unexposes, unexposeCall{node, hostname})
 	return f.routeSubmission, f.submitErr
 }
 
@@ -130,10 +130,10 @@ func newServerFakeAPI() *serverFakeAPI {
 		},
 		Policy: api.plan.Policy,
 	}
-	api.routeSubmission = wire.AppRouteSubmission{Submission: wire.Submission{
+	api.routeSubmission = wire.NodeRouteSubmission{Submission: wire.Submission{
 		Job: wire.Job{
 			ID: serverJobID, Type: "control_plane.apply", State: domain.JobAwaitingApproval, Risk: domain.RiskHigh,
-			Resource: wire.ResourceRef{Type: "app_target", ID: readTargetID}, PlanHash: serverHash,
+			Resource: wire.ResourceRef{Type: domain.ResourceNode, ID: readNodeID}, PlanHash: serverHash,
 		},
 		Policy: api.plan.Policy,
 	}}

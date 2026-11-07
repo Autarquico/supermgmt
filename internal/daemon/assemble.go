@@ -225,6 +225,7 @@ type builder struct {
 
 	governance *app.Governance
 	apps       *app.Apps
+	routes     *app.NodeRoutes
 	repos      *app.Repositories
 	finalizer  *app.DeploymentFinalizer // the deployments service of the API and the Finalizer of the CI watcher
 	ci         app.CIWatcher
@@ -404,6 +405,9 @@ func (b *builder) deploymentServices() error {
 	if b.apps, err = app.NewApps(b.app, b.jobs, clients); err != nil {
 		return err
 	}
+	if b.routes, err = app.NewNodeRoutes(b.app, b.jobs); err != nil {
+		return err
+	}
 	if b.repos, err = app.NewRepositories(b.app, clients); err != nil {
 		return err
 	}
@@ -496,7 +500,7 @@ func (b *builder) handlers() (map[string]jobs.Handler, error) {
 	}
 	h, err := app.NewHandlers(b.app, app.HandlersOptions{
 		Store: b.jobs, Connector: b.conn, Inventory: b.inventory, Prober: b.prober, Identity: app.SSHIdentityOf(b.kit.store),
-		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health, SystemID: SystemIdentityID},
+		Proxmox: b.proxmox, Apps: b.apps, Deploy: &app.DeployOptions{Secrets: b.kit.store, HTTP: health},
 		Tunnel: b.tunnelOptions(), Secrets: b.kit.store, Enrollments: b.enrollments,
 	})
 	if err != nil {
@@ -618,7 +622,7 @@ func (b *builder) apiServices() (api.Services, error) {
 		MCPClients: mcpClients,
 		Plans:      b.plans, Approvals: approvals, Governance: b.governance, Services: actions,
 		Queries: b.queries, Inventory: b.inventory, Sessions: sessions, SSHKeys: sshKeys, Proxmox: b.proxmox,
-		Apps: b.apps, Repositories: b.repos, Deployments: b.finalizer,
+		Apps: b.apps, Routes: b.routes, Repositories: b.repos, Deployments: b.finalizer,
 		Auth: b.auth, Keys: b.keys, Backups: b.backups, Hold: b.hold, Enrollments: enrollments, TunnelEnrollments: b.enrollments,
 	}, nil
 }

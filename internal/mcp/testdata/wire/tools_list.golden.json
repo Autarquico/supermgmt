@@ -13,11 +13,11 @@
           {"name": "infra_get_node", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_get_service", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_get_service_logs", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
-          {"name": "infra_list_app_routes", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_apps", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_deployments", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_events", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_nodes", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_routes", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_services", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_plan_action", "description": "$string", "inputSchema": {"type": "object"}, "_meta": {"dev.supermgmt/schema_version": 1}}
         ]}
@@ -31,8 +31,8 @@
         "jsonrpc": "2.0", "id": 3,
         "result": {"tools": [
           {"name": "infra_get_deployment"}, {"name": "infra_get_health"}, {"name": "infra_get_node"},
-          {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_list_app_routes"}, {"name": "infra_list_apps"},
-          {"name": "infra_list_deployments"}, {"name": "infra_list_events"}, {"name": "infra_list_nodes"},
+          {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_list_apps"},
+          {"name": "infra_list_deployments"}, {"name": "infra_list_events"}, {"name": "infra_list_nodes"}, {"name": "infra_list_routes"},
           {"name": "infra_list_services"}, {"name": "infra_plan_action"}
         ]}
       }
@@ -49,8 +49,8 @@
         "jsonrpc": "2.0", "id": 4,
         "result": {"tools": [
           {"name": "infra_get_deployment"}, {"name": "infra_get_health"}, {"name": "infra_get_node"},
-          {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_list_app_routes"}, {"name": "infra_list_apps"},
-          {"name": "infra_list_deployments"}, {"name": "infra_list_events"}, {"name": "infra_list_nodes"},
+          {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_list_apps"},
+          {"name": "infra_list_deployments"}, {"name": "infra_list_events"}, {"name": "infra_list_nodes"}, {"name": "infra_list_routes"},
           {"name": "infra_list_services"}, {"name": "infra_plan_action"}
         ]}
       }

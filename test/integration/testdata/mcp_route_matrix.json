@@ -448,9 +448,9 @@
    }
   },
   {
-   "route": "GET /api/v1/app-targets/{id}/routes",
+   "route": "GET /api/v1/nodes/{id}/routes",
    "class": "query",
-   "path": "/api/v1/app-targets/{route_target}/routes",
+   "path": "/api/v1/nodes/{route_node}/routes",
    "body": "",
    "headers": null,
    "stream": false,
@@ -462,10 +462,10 @@
    }
   },
   {
-   "route": "POST /api/v1/app-targets/{id}/routes",
+   "route": "POST /api/v1/nodes/{id}/routes",
    "class": "write",
-   "path": "/api/v1/app-targets/{route_target}/routes",
-   "body": "{\"hostname\":\"shop.example.com\",\"service\":\"web\",\"port\":8080}",
+   "path": "/api/v1/nodes/{route_node}/routes",
+   "body": "{\"hostname\":\"shop.example.com\",\"port\":8080}",
    "headers": null,
    "stream": false,
    "off": {
@@ -479,12 +479,12 @@
      "plans": 1
     }
    },
-   "note": "The rig holds a tunnel node with a target and a waiting route app.example.com. A granted mcp actor with writes on plans an expose of shop.example.com; the route row is written only after approval, so nothing but the plan and its job is created."
+   "note": "The rig holds a tunnel node with a provisioning route app.example.com. A granted mcp actor with writes on plans an expose of shop.example.com; the route row is written only after approval, so nothing but the plan and its job is created."
   },
   {
-   "route": "DELETE /api/v1/app-targets/{id}/routes/{hostname}",
+   "route": "DELETE /api/v1/nodes/{id}/routes/{hostname}",
    "class": "write",
-   "path": "/api/v1/app-targets/{route_target}/routes/app.example.com",
+   "path": "/api/v1/nodes/{route_node}/routes/app.example.com",
    "body": "",
    "headers": null,
    "stream": false,
@@ -499,12 +499,12 @@
      "plans": 1
     }
    },
-   "note": "Unexposing the seeded waiting route app.example.com only plans its removal; the route stays until the job runs."
+   "note": "Unexposing the seeded route app.example.com only plans its removal; the route stays until the job runs."
   },
   {
-   "route": "GET /api/v1/app-routes",
+   "route": "GET /api/v1/node-routes",
    "class": "query",
-   "path": "/api/v1/app-routes",
+   "path": "/api/v1/node-routes",
    "body": "",
    "headers": null,
    "stream": false,

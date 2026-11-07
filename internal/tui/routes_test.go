@@ -10,19 +10,19 @@ import (
 
 type routesAPI struct {
 	*m4API
-	exposed   []wire.ExposeAppRouteRequest
+	exposed   []wire.ExposeNodeRouteRequest
 	exposedOn []domain.ID
 	removed   []string
 }
 
-func (f *routesAPI) ExposeAppRoute(_ context.Context, target domain.ID, r wire.ExposeAppRouteRequest) (wire.AppRouteSubmission, error) {
-	f.exposed, f.exposedOn = append(f.exposed, r), append(f.exposedOn, target)
-	return wire.AppRouteSubmission{Submission: wire.Submission{Job: wire.Job{ID: idJob, State: domain.JobAwaitingApproval}}}, nil
+func (f *routesAPI) ExposeNodeRoute(_ context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error) {
+	f.exposed, f.exposedOn = append(f.exposed, r), append(f.exposedOn, node)
+	return wire.NodeRouteSubmission{Submission: wire.Submission{Job: wire.Job{ID: idJob, State: domain.JobAwaitingApproval}}}, nil
 }
 
-func (f *routesAPI) UnexposeAppRoute(_ context.Context, _ domain.ID, hostname string) (wire.AppRouteSubmission, error) {
+func (f *routesAPI) UnexposeNodeRoute(_ context.Context, _ domain.ID, hostname string) (wire.NodeRouteSubmission, error) {
 	f.removed = append(f.removed, hostname)
-	return wire.AppRouteSubmission{Submission: wire.Submission{Job: wire.Job{ID: idJob, State: domain.JobQueued}}}, nil
+	return wire.NodeRouteSubmission{Submission: wire.Submission{Job: wire.Job{ID: idJob, State: domain.JobQueued}}}, nil
 }
 
 func TestExposeViaPaletteWarnsAboutAPublicRouteAndSubmitsOnConfirm(t *testing.T) {
@@ -31,7 +31,7 @@ func TestExposeViaPaletteWarnsAboutAPublicRouteAndSubmitsOnConfirm(t *testing.T)
 	h.start()
 
 	h.press("/")
-	h.typeText("expose shop production shop.example.com web 8080")
+	h.typeText("expose web-1 shop.example.com 8080")
 	h.press("enter")
 
 	contains(t, h.view(), "reachable from the internet with no authentication")
@@ -39,10 +39,10 @@ func TestExposeViaPaletteWarnsAboutAPublicRouteAndSubmitsOnConfirm(t *testing.T)
 		t.Fatalf("exposed before the confirmation: %+v", api.exposed)
 	}
 	h.press("y")
-	if len(api.exposed) != 1 || api.exposedOn[0] != m4TargetPrd {
+	if len(api.exposed) != 1 || api.exposedOn[0] != idWeb {
 		t.Fatalf("exposed %+v on %v", api.exposed, api.exposedOn)
 	}
-	if got := api.exposed[0]; got.Hostname != "shop.example.com" || got.Service != "web" || got.Port != 8080 || got.Access != "public" {
+	if got := api.exposed[0]; got.Hostname != "shop.example.com" || got.Port != 8080 || got.Access != "public" {
 		t.Errorf("request = %+v", got)
 	}
 }
@@ -53,12 +53,12 @@ func TestExposeOwnersViaPaletteHasNoPublicWarning(t *testing.T) {
 	h.start()
 
 	h.press("/")
-	h.typeText("expose shop staging shop.example.com web 8080 owners")
+	h.typeText("expose lab-1 shop.example.com 8080 owners")
 	h.press("enter")
 
 	lacks(t, h.view(), "no authentication")
 	h.press("y")
-	if len(api.exposed) != 1 || api.exposed[0].Access != "owners" || api.exposedOn[0] != m4TargetStg {
+	if len(api.exposed) != 1 || api.exposed[0].Access != "owners" || api.exposedOn[0] != idLab {
 		t.Errorf("exposed %+v on %v", api.exposed, api.exposedOn)
 	}
 }
@@ -69,7 +69,7 @@ func TestUnexposeViaPaletteAsksFirst(t *testing.T) {
 	h.start()
 
 	h.press("/")
-	h.typeText("unexpose shop production shop.example.com")
+	h.typeText("unexpose web-1 shop.example.com")
 	h.press("enter")
 	if len(api.removed) != 0 {
 		t.Fatalf("removed before the confirmation: %v", api.removed)
@@ -85,12 +85,12 @@ func TestRouteCommandsValidateTheirWordsAndTheDaemon(t *testing.T) {
 	h := newHarness(t, api, 120, 28)
 	h.start()
 	for line, want := range map[string]string{
-		"expose shop production shop.example.com web":           "usage: expose",
-		"expose shop production shop.example.com web x":         "the port is a number",
-		"expose shop production shop.example.com web 80 anyone": "usage: expose",
-		"unexpose shop production":                              "usage: unexpose",
-		"expose nope production shop.example.com web 8080":      "no app matches",
-		"expose shop nowhere shop.example.com web 8080 public":  "has no target",
+		"expose web-1 shop.example.com":           "usage: expose",
+		"expose web-1 shop.example.com x":         "the port is a number",
+		"expose web-1 shop.example.com 80 anyone": "usage: expose",
+		"unexpose web-1":                          "usage: unexpose",
+		"expose nope shop.example.com 8080":       "no node matches",
+		"unexpose nope shop.example.com":          "no node matches",
 	} {
 		h.press("esc", "/")
 		h.typeText(line)
@@ -101,7 +101,7 @@ func TestRouteCommandsValidateTheirWordsAndTheDaemon(t *testing.T) {
 	bare := newHarness(t, newM4API(), 120, 28)
 	bare.start()
 	bare.press("/")
-	bare.typeText("expose shop production shop.example.com web 8080")
+	bare.typeText("expose web-1 shop.example.com 8080")
 	bare.press("enter")
 	contains(t, bare.view(), unavailableRoutes)
 }

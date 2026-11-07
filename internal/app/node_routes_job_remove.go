@@ -18,21 +18,21 @@ func (r *routeRun) removeRoute(ctx context.Context) error {
 		if err := r.reconcileUnrecorded(ctx); err != nil {
 			return r.run("reconciliation of the unrecorded objects", err)
 		}
-		err := r.change(ctx, func(ctx context.Context, tx *database.Tx) (database.AppRoute, error) {
-			return database.MarkAppRouteRemoving(ctx, tx, r.route.ID, r.route.Phase, r.cfg.Clock.Now())
+		err := r.change(ctx, func(ctx context.Context, tx *database.Tx) (database.NodeRoute, error) {
+			return database.MarkNodeRouteRemoving(ctx, tx, r.route.ID, r.route.Phase, r.cfg.Clock.Now())
 		})
 		if err != nil {
 			return err
 		}
 	}
 	steps := []struct {
-		from database.AppRoutePhase
+		from database.NodeRoutePhase
 		name string
 		run  func(context.Context) error
 	}{
-		{database.AppRouteRemoving, "removal of the DNS record", r.removeDNS},
-		{database.AppRouteDNSRemoved, "removal of the ingress rule", r.removeIngress},
-		{database.AppRouteIngressRemoved, "removal of the Access application", r.removeAccess},
+		{database.NodeRouteRemoving, "removal of the DNS record", r.removeDNS},
+		{database.NodeRouteDNSRemoved, "removal of the ingress rule", r.removeIngress},
+		{database.NodeRouteIngressRemoved, "removal of the Access application", r.removeAccess},
 	}
 	for _, s := range steps {
 		if r.route.Phase != s.from {
@@ -45,8 +45,8 @@ func (r *routeRun) removeRoute(ctx context.Context) error {
 	return nil
 }
 
-func removalPhase(p database.AppRoutePhase) bool {
-	return p == database.AppRouteRemoving || p == database.AppRouteDNSRemoved || p == database.AppRouteIngressRemoved
+func removalPhase(p database.NodeRoutePhase) bool {
+	return p == database.NodeRouteRemoving || p == database.NodeRouteDNSRemoved || p == database.NodeRouteIngressRemoved
 }
 
 // reconcileUnrecorded settles the one create-to-record window an expose was left in, while the route still
@@ -54,7 +54,7 @@ func removalPhase(p database.AppRoutePhase) bool {
 // application is created in phase ingress_ready; the DNS record needs no record, because its removal
 // recognises the route's marker.
 func (r *routeRun) reconcileUnrecorded(ctx context.Context) error {
-	if r.route.Access != "owners" || r.route.Objects.AccessAppID != "" || r.route.Phase != database.AppRouteIngressReady {
+	if r.route.Access != "owners" || r.route.Objects.AccessAppID != "" || r.route.Phase != database.NodeRouteIngressReady {
 		return nil
 	}
 	state, err := database.GetCloudflareState(ctx, r.cfg.DB.Reader())
@@ -75,7 +75,7 @@ func (r *routeRun) reconcileUnrecorded(ctx context.Context) error {
 	case len(apps) == 0:
 		return nil
 	}
-	return r.advance(ctx, r.route.Phase, database.AppRouteObjects{AccessAppID: app.ID}, eventAccessAppAdopted,
+	return r.advance(ctx, r.route.Phase, database.NodeRouteObjects{AccessAppID: app.ID}, eventAccessAppAdopted,
 		map[string]any{"access_app_id": app.ID, "name": name})
 }
 
@@ -111,7 +111,7 @@ func (r *routeRun) removeDNS(ctx context.Context) error {
 			return err
 		}
 	}
-	return r.advance(ctx, database.AppRouteDNSRemoved, database.AppRouteObjects{}, "", nil)
+	return r.advance(ctx, database.NodeRouteDNSRemoved, database.NodeRouteObjects{}, "", nil)
 }
 
 // removeIngress takes the rule out of the frozen tunnel's ingress. When the frozen tunnel is no longer the
@@ -128,7 +128,7 @@ func (r *routeRun) removeIngress(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return r.advance(ctx, database.AppRouteIngressRemoved, database.AppRouteObjects{}, "", nil)
+	return r.advance(ctx, database.NodeRouteIngressRemoved, database.NodeRouteObjects{}, "", nil)
 }
 
 // dropFrozenRule rewrites the frozen tunnel's ingress without the rule of this route's hostname, keeping every
@@ -186,5 +186,5 @@ func (r *routeRun) removeAccess(ctx context.Context) error {
 			}
 		}
 	}
-	return r.advance(ctx, database.AppRouteRemoved, database.AppRouteObjects{}, eventAppRouteRemoved, map[string]any{})
+	return r.advance(ctx, database.NodeRouteRemoved, database.NodeRouteObjects{}, eventNodeRouteRemoved, map[string]any{})
 }

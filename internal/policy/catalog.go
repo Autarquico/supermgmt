@@ -71,18 +71,17 @@ const (
 	ActionLogBrokerInstall      = "log_broker.install"
 	ActionNodeTunnelDisable     = "node.tunnel.disable"
 	ActionCloudflareRotate      = "cloudflare.access_token.rotate"
-	ActionAppRouteExpose        = "app_route.expose"
-	ActionAppRouteUnexpose      = "app_route.unexpose"
+	ActionNodeRouteExpose       = "node_route.expose"
+	ActionNodeRouteUnexpose     = "node_route.unexpose"
 )
 
-// app_route.expose parameters (ADR-0040). access is normalised to public before evaluation, so the risk
+// node_route.expose parameters (ADR-0040, ADR-0043). access is normalised to public before evaluation, so the risk
 // of an omitted value is the one of public.
 const (
 	ParamHostname = "hostname"
-	ParamService  = "service"
 	ParamPort     = "port"
 	ParamAccess   = "access"
-	ParamRouteID  = "route_id" // app_route.unexpose: the route the request was made for
+	ParamRouteID  = "route_id" // node_route.unexpose: the route the request was made for
 )
 
 // node.setup parameters (ADR-0009). docker_access has no default: the caller
@@ -254,21 +253,21 @@ func buildCatalog() []ActionSpec {
 	nodeAdd := direct("node.add", domain.ResourceNode, op)
 	nodeAdd.Params = []ParamSpec{{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}}}
 
-	appRouteExpose := direct(ActionAppRouteExpose, domain.ResourceAppTarget, op)
-	appRouteExpose.Params = []ParamSpec{
+	nodeRouteExpose := direct(ActionNodeRouteExpose, domain.ResourceNode, op)
+	nodeRouteExpose.Params = []ParamSpec{
 		{Name: ParamHostname, Type: ParamString, Required: true},
-		{Name: ParamService, Type: ParamString, Required: true},
 		{Name: ParamPort, Type: ParamString, Required: true},
 		{Name: ParamAccess, Type: ParamString, Values: []string{"public", "owners"}, RiskByValue: map[string]domain.RiskClass{"public": high}},
 	}
-	appRouteUnexpose := direct(ActionAppRouteUnexpose, domain.ResourceAppTarget, op)
-	appRouteUnexpose.Params = []ParamSpec{
+	nodeRouteUnexpose := direct(ActionNodeRouteUnexpose, domain.ResourceNode, op)
+	nodeRouteUnexpose.Params = []ParamSpec{
 		{Name: ParamHostname, Type: ParamString, Required: true},
 		{Name: ParamRouteID, Type: ParamString},
 	}
 
 	return []ActionSpec{
 		query("node.read", domain.ResourceNode, ""),
+		query("node_route.read", domain.ResourceNode, ""),
 		query("service.read", domain.ResourceService, "service.read"),
 		query("service.logs", domain.ResourceService, "service.logs"),
 		query("app.read", domain.ResourceApp, ""),
@@ -314,8 +313,8 @@ func buildCatalog() []ActionSpec {
 		direct("environment.write", domain.ResourceEnvironment, high),
 		direct("app.write", domain.ResourceApp, op),
 		direct("app_target.write", domain.ResourceAppTarget, op),
-		appRouteExpose,
-		appRouteUnexpose,
+		nodeRouteExpose,
+		nodeRouteUnexpose,
 		direct("config.write", domain.ResourceInstance, high),
 		direct("secret.write", domain.ResourceSecret, high),
 		direct("identity.write", domain.ResourceIdentity, high),

@@ -162,7 +162,7 @@ func restoreInto(t *testing.T, archive, keysDir string) (dbPath string, err erro
 	return dbPath, err
 }
 
-func TestRestoringABackupWithOnlyTerminalMovesSucceedsAtSchema12(t *testing.T) {
+func TestRestoringABackupWithOnlyTerminalMovesSucceedsAndMigratesPastSchema12(t *testing.T) {
 	for _, phase := range []string{"done", "rolled_back"} {
 		t.Run(phase, func(t *testing.T) {
 			archive, keysDir := schema11Archive(t, phase)
@@ -182,8 +182,8 @@ func TestRestoringABackupWithOnlyTerminalMovesSucceedsAtSchema12(t *testing.T) {
 			if err := db.Querier().QueryRowContext(context.Background(), `SELECT count(*) FROM sqlite_master WHERE name LIKE 'app_move%'`).Scan(&moveTables); err != nil {
 				t.Fatal(err)
 			}
-			if version != 12 || moveTables != 0 {
-				t.Errorf("schema version %d with %d move objects, want 12 and none", version, moveTables)
+			if version < 12 || moveTables != 0 {
+				t.Errorf("schema version %d with %d move objects, want at least 12 and none", version, moveTables)
 			}
 		})
 	}

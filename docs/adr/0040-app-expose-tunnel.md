@@ -1,6 +1,6 @@
 # ADR-0040: Exposing apps through the node's Cloudflare Tunnel
 
-- Status: Proposed
+- Status: Proposed; amended by ADR-0043 (a route publishes a node port, not a deployment's service)
 - Spec: spec `docs/specs/app-expose-tunnel.md`; ADR-0029, ADR-0037, ADR-0039
 
 ## Context

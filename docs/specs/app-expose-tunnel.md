@@ -20,6 +20,8 @@ updated: 2026-10-31
 
 # Expose an app through its node's Cloudflare Tunnel
 
+> **Amended by ADR-0043 and [node-routes](node-routes.md).** A route now publishes a port of a node (`sm nodes expose`), not a service of an app target, and no longer waits for a deployment. The rest of this spec (Cloudflare objects, order, ownership markers, halts) still holds.
+
 ## Contexto / problema
 
 A node with a Cloudflare connector (`transport: cloudflare`, ADR-0037 and ADR-0039) routes only SSH:
