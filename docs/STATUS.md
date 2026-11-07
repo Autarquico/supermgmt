@@ -18,6 +18,7 @@
 - #56 Move an app target's Cloudflare routes with it
 - #68 appliance: the proxmox-lxc installer fails or degrades on a real PVE 9.1 host
 - #69 tunnel: enrollment and re-enable get stuck or fail on a real account
+- #75 Retire app move
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -25,7 +26,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #75 Retire app move
+- #76 Routes publish a node port
 <!-- /pm-sync:in-progress -->
 
 ---

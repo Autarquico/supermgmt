@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Retire app move
 type: task
-status: active
+status: shipped
 priority: P1
 size: L
 issue: 75
