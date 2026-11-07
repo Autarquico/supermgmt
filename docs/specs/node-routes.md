@@ -6,7 +6,7 @@ status: active
 priority: P1
 size: L
 issue: 76
-prs: []
+prs: [79]
 related_issues: [76]
 depends_on: [retire-app-move]
 supersedes: []
