@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "Retire app move"
+title: Retire app move
 type: task
-status: draft
+status: active
 priority: P1
 size: L
 issue: null
 prs: []
-related_issues: []
+related_issues: [75]
 depends_on: []
 supersedes: [app-move, app-move-routes]
 related_specs: [node-routes, retire-deployments]
