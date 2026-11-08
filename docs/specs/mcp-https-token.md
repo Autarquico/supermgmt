@@ -31,12 +31,14 @@ Decision (user, 2026-11-08): MCP client tokens may travel over HTTPS, opt-in. MC
 
 **Entra:**
 - Config `mcp.token_over_https` (default `false`), server mode only.
-- A client registered with `--https` carries a marker (`mcp_clients.over_https`, migration 000015). HTTPS resolves a `smm_` token only if the flag is on and the client carries the marker; every other `smm_` token is still refused on HTTPS, before resolving. Tokens of marked clients keep working on a local socket.
-- Marked clients default to a 30-day expiry (explicit `--ttl` up to the existing maximum).
+- A client registered with `--https` carries a marker (`mcp_clients.over_https`, migration 000015), set at registration so the approved plan covers it. With the flag off, HTTPS refuses `smm_` tokens on the prefix alone, with no lookup. With the flag on, the lookup is restricted to marked clients, so an unmarked token gets the same answer as an unknown one and builds no caller.
+- The server owns the refusals at registration, before any plan: `over_https` with the flag off; a local client without `over_https` on a server (it would be usable nowhere); `over_https` on a local instance (no HTTPS to reach); `over_https` on an OAuth client.
+- Marked clients default to a 30-day expiry and the server caps them at 90 days (`--expires`).
 - The audit `Source` says which path was used (`mcp_socket` or `mcp_https`).
 - The per-identity write bucket applies; reads are charged as for any bearer on `/api/v1`.
 - Bridge: `sm mcp --profile NAME` targets that profile with only the MCP token (never the human's credential, no daemon autostart); without the flag, the active profile; a local target behaves as today.
-- The server's `enabled` and `write_tools_enabled` reach the bridge over the wire (`wire.Me` or a small read), so the tool list matches the server; a local configuration no longer decides for a remote target.
+- `write_tools_enabled` reaches the bridge in `wire.Me`, only for MCP callers, so the tool list matches the target; the bridge no longer reads a local configuration for that. With MCP disabled on the target the token does not resolve, and the bridge says so.
+- `--keychain` reads a namespace of its own, so it can never pick up a stored human credential.
 - `sm mcp clients add`: on a server without `--https`, or with the flag off, says where the token will work instead of issuing a useless one silently; prints a host config snippet with `--profile`.
 - Docs: ADR-0044, ADR-0032 amendment, `docs/mcp.md` (a remote agent without OAuth, the leak trade-off), security guide, spec §23-24.
 
@@ -53,12 +55,12 @@ Decision (user, 2026-11-08): MCP client tokens may travel over HTTPS, opt-in. MC
 ### Scenario: the flag is off by default
 - **Given** a server with the default configuration and a marked client
 - **When** its token is presented over HTTPS
-- **Then** it is refused without being resolved
+- **Then** it is refused on its prefix, with no database lookup
 
 ### Scenario: an unmarked token stays local
 - **Given** `mcp.token_over_https: true` and a client registered without `--https`
 - **When** its token is presented over HTTPS
-- **Then** it is refused without being resolved
+- **Then** the answer is identical to an unknown token and no caller is built
 
 ### Scenario: the floor does not depend on the transport
 - **Given** a marked client over HTTPS
@@ -73,7 +75,7 @@ Decision (user, 2026-11-08): MCP client tokens may travel over HTTPS, opt-in. MC
 ### Scenario: the human's credential never travels with the bridge
 - **Given** a remote profile with a stored human token
 - **When** the bridge runs with an MCP token
-- **Then** no request carries the human token, and a human token given as the MCP token is refused
+- **Then** the bridge never reads the human's credential store, `--keychain` cannot resolve to a human credential, and a non-MCP token placed in the token file is refused after the identity check
 
 ### Scenario: the tool list follows the server
 - **Given** a local configuration with writes on and a server with writes off (or the reverse)
@@ -83,7 +85,7 @@ Decision (user, 2026-11-08): MCP client tokens may travel over HTTPS, opt-in. MC
 ### Scenario: registration says where the token works
 - **Given** an active server profile with the flag off
 - **When** the operator runs `sm mcp clients add --https`
-- **Then** the command refuses, naming the flag; without `--https` on a server it refuses, explaining that a local token cannot be used there
+- **Then** the server refuses, naming the flag, before storing a plan; without `--https` on a server it refuses, explaining that a local token cannot be used there
 
 ### Scenario: a revoked or expired token stops at once
 - **Given** a marked client
