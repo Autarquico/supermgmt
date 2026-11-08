@@ -34,9 +34,9 @@ Part of #63. ADR-0043 makes MCP coverage the top priority, but today (`internal/
 - Read tools: `infra_list_jobs`, `infra_get_job`, `infra_list_approvals`, `infra_get_plan`, `infra_list_providers`, `infra_get_provider`, `infra_list_backups`, `infra_get_status`, `infra_list_tunnel_enrollments`, `infra_get_ssh_key` (public key only), and `infra_list_actions` (the catalog entries an MCP client may plan, with parameters, risk and whether they need write tools).
 - Write tools: `infra_start_service`, `infra_stop_service`, `infra_shutdown_node`, `infra_probe_node`, `infra_power_guest`, `infra_snapshot_guest`, `infra_cancel_job`, `infra_refresh_provider`, `infra_create_backup`, `infra_rotate_cloudflare_access_token`, `infra_disable_tunnel`. All registered only with `mcp.write_tools_enabled`, all through the plan → approval → job flow, none returning a model-supplied hash.
 - Instance-targeted planning works without the model knowing an instance id.
-- Default policy: a `builtin-mcp-operate` rule for `type:mcp` grants `service.logs` always, and the operational and node actions behind the write tools above. `mcp.write_tools_enabled` still decides whether writes exist, and the approval floor still holds every operational-or-higher action for a person.
-- `proxmox.snapshot.delete` is refused to MCP identities, in plans too.
-- A coverage test: every `sm` command and every `/api/v1` route is either served by a named MCP tool or listed in an explicit exclusion with its reason.
+- Default policy: a `builtin-mcp-operate` rule for `type:mcp` grants `service.logs` and what `builtin-operator` holds (`service.start|stop|restart`, `node.probe`, `node.reboot`, `proxmox.vm.power`, `proxmox.snapshot.create`, `proxmox.backup.create`, `job.cancel`). `mcp.write_tools_enabled` still decides whether writes exist, and the approval floor still holds every operational-or-higher action for a person. Admin-class actions (`node.shutdown`, `backup.create`, `node.tunnel.disable`, `cloudflare.access_token.rotate`, `node_route.*`) have tools but need an explicit `type:mcp` rule, because they change reachability or instance state.
+- `proxmox.snapshot.delete` is refused to MCP identities before any plan is stored (`Plans.Create` rejects an MCP-forbidden action instead of storing a denied plan).
+- A coverage test in `test/integration`: every `sm` command and every `/api/v1` route is either served by a named MCP tool or listed in an explicit exclusion with its reason.
 - Docs: `docs/mcp.md` tool tables and the logs redaction limit; spec tool list.
 
 **No entra:**
@@ -53,7 +53,7 @@ Part of #63. ADR-0043 makes MCP coverage the top priority, but today (`internal/
 ### Scenario: the model can discover what it may plan
 - **Given** an MCP client
 - **When** it calls `infra_list_actions`
-- **Then** it receives the plannable actions with parameters and risk, without direct, credential, governance or destructive actions
+- **Then** it receives the job actions an MCP identity can plan, with parameters and risk, served by a new `GET /api/v1/actions` using the same predicate as the MCP gate: no direct, credential, governance, destructive, forbidden or setup sub-actions, and `node.setup` not until mcp-node-tools. The list does not say whether policy grants them on a given target
 
 ### Scenario: a default install can read logs, redacted
 - **Given** a default policy and an MCP client
@@ -72,8 +72,8 @@ Part of #63. ADR-0043 makes MCP coverage the top priority, but today (`internal/
 - **Then** the probe runs without approval, as for a person
 
 ### Scenario: an instance-level job can be planned
-- **Given** writes on
-- **When** an MCP client calls `infra_create_backup`
+- **Given** writes on and a policy granting `cloudflare.access_token.rotate` to `type:mcp`
+- **When** an MCP client calls `infra_rotate_cloudflare_access_token`
 - **Then** the plan targets the instance without the client naming an id, and waits for approval
 
 ### Scenario: no deletion by MCP
@@ -84,7 +84,7 @@ Part of #63. ADR-0043 makes MCP coverage the top priority, but today (`internal/
 ### Scenario: an agent can withdraw its own job
 - **Given** a job submitted by the MCP client, not yet running
 - **When** it calls `infra_cancel_job`
-- **Then** the job is cancelled; a job of another identity is refused
+- **Then** the job is cancelled, the client supplying no hash; a job of another identity is refused by `Governance.Cancel`
 
 ### Scenario: coverage cannot silently regress
 - **Given** a new `sm` command or `/api/v1` route with no tool and no exclusion
@@ -95,4 +95,6 @@ Part of #63. ADR-0043 makes MCP coverage the top priority, but today (`internal/
 
 - New tools over existing routes need no matrix row; new routes do (`test/integration/mcp_route_matrix_test.go:171`).
 - Remote text goes through `untrustedText`/`remoteMap`; views are the only scrub (`docs/mcp.md:261`).
-- `job.cancel` is `ModeGovernance`: check `internal/app/mcpgate.go` and that the floor still refuses approve, reject and resolve.
+- `job.cancel` is `ModeGovernance` and has no approval gate; ownership lives in `Governance.Cancel`, and the floor still refuses approve, reject and resolve.
+- `infra_get_job` omits intents' evidence and pre-state; job errors, provider errors and enrollment errors are untrusted text; enrollments omit the join line.
+- `infra_refresh_provider` is a query, but it dials a provider, so it stays behind the write flag.
