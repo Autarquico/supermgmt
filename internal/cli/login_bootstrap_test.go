@@ -40,7 +40,7 @@ func newRealServerBox(t *testing.T) *realServerBox {
 	}()
 	t.Cleanup(func() {
 		cancel()
-		<-done
+		t.Logf("daemon stopped: %v", <-done)
 	})
 	var endpoints daemon.Endpoints
 	select {

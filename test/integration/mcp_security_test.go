@@ -234,7 +234,8 @@ func startMCPDaemon(t *testing.T, extra string) *mcpDaemon {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-d.done:
+		case err := <-d.done:
+			t.Logf("daemon stopped: %v", err)
 		case <-time.After(30 * time.Second):
 			t.Error("the daemon did not stop")
 		}

@@ -967,7 +967,7 @@ func TestDoctorAsksTheRunningServerOverItsAdminSocket(t *testing.T) {
 	go func() {
 		done <- daemon.RunServer(ctx, daemon.Options{Config: loaded.Config, ConfigFile: file, OnServing: func(daemon.Endpoints) { close(serving) }})
 	}()
-	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() { cancel(); t.Logf("daemon stopped: %v", <-done) })
 	select {
 	case <-serving:
 	case err := <-done:

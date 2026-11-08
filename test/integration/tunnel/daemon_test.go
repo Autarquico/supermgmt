@@ -74,7 +74,8 @@ func startDaemon(t *testing.T, extra string) *liveDaemon {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			t.Logf("daemon stopped: %v", err)
 		case <-time.After(30 * time.Second):
 			t.Error("the daemon did not stop within 30s")
 		}

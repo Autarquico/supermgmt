@@ -91,7 +91,7 @@ func TestAdminCommandsDriveARunningServerThroughItsAdminSocket(t *testing.T) {
 	}()
 	t.Cleanup(func() {
 		cancel()
-		<-done
+		t.Logf("daemon stopped: %v", <-done)
 	})
 	select {
 	case <-serving:
