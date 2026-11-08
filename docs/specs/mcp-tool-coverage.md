@@ -2,7 +2,7 @@
 codename: supermgmt
 title: "MCP drives what sm operates: reads, jobs and default grants"
 type: task
-status: active
+status: shipped
 priority: P1
 size: L
 issue: 83
