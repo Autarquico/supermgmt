@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Routes publish a node port
 type: task
-status: active
+status: shipped
 priority: P1
 size: L
 issue: 76
@@ -12,7 +12,7 @@ depends_on: [retire-app-move]
 supersedes: []
 related_specs: [app-expose-tunnel, retire-deployments]
 created: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 # Routes publish a node port
