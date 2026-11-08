@@ -2,12 +2,12 @@
 codename: supermgmt
 title: "sm mcp reaches a server: MCP client tokens over HTTPS"
 type: task
-status: draft
+status: active
 priority: P1
 size: M
 issue: null
 prs: []
-related_issues: []
+related_issues: [85]
 depends_on: [mcp-tool-coverage]
 supersedes: []
 related_specs: [mcp-tool-coverage, assistant-claude-cli, m5-mcp]
