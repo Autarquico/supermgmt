@@ -54,6 +54,22 @@ func resolveService(ctx context.Context, api API, ref string) (domain.ID, error)
 	return service.ID, err
 }
 
+// findProvider accepts a provider id or an exact provider name and returns the
+// provider itself: there is no route to read one.
+func findProvider(ctx context.Context, api API, ref string) (wire.Provider, error) {
+	id, byID := domain.ParseID(ref)
+	return findUnique(ctx, "provider", ref,
+		func(cursor string) (wire.Page[wire.Provider], error) {
+			return api.ListProviders(ctx, resolvePage(cursor))
+		},
+		func(p wire.Provider) bool {
+			if byID == nil {
+				return p.ID == id
+			}
+			return p.Name == ref
+		})
+}
+
 func resolvePage(cursor string) wire.PageQuery {
 	return wire.PageQuery{Cursor: cursor, Limit: wire.MaxLimit}
 }

@@ -28,7 +28,7 @@ func TestDiffPolicies_AgainstDefault(t *testing.T) {
 	if d.Changed[0].Before.Allow[0] != "service.start" || d.Changed[0].After.Allow[0] != "service.restart" {
 		t.Errorf("changed rule carries wrong versions: %+v", d.Changed[0])
 	}
-	wantRemoved := []string{"builtin-approver", "builtin-admin", "builtin-mcp-read"}
+	wantRemoved := []string{"builtin-approver", "builtin-admin", "builtin-mcp-read", "builtin-mcp-operate"}
 	if len(d.Removed) != len(wantRemoved) {
 		t.Fatalf("removed = %+v", d.Removed)
 	}

@@ -153,6 +153,12 @@ func (rs *routeSet) reads() {
 
 func (rs *routeSet) plans() {
 	s := rs.s
+	rs.read(wire.PathActions, actionPlanCreate, reading(s, func(ctx context.Context, by app.Caller, _ input) (wire.Page[wire.PlannableAction], error) {
+		if _, err := s.svc.Queries.RequireRead(ctx, by, actionPlanCreate, domain.ResourceRef{Type: domain.ResourceInstance}); err != nil {
+			return wire.Page[wire.PlannableAction]{}, err
+		}
+		return plannableActions(app.PlannableByMCP()), nil
+	}))
 	rs.read(wire.PathPlan, "plan.read", reading(s, func(ctx context.Context, by app.Caller, in input) (wire.CreatedPlan, error) {
 		id, err := in.id("id")
 		if err != nil {

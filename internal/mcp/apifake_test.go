@@ -20,6 +20,17 @@ type fakeAPI struct {
 	events   []wire.Event
 	logs     wire.LogChunk
 
+	me          wire.Me
+	jobs        []wire.Job
+	jobDetails  map[domain.ID]wire.JobDetail
+	approvals   []wire.Approval
+	plans       map[domain.ID]wire.CreatedPlan
+	providers   []wire.Provider
+	backups     []wire.Backup
+	enrollments []wire.TunnelEnrollment
+	sshKey      wire.SSHKey
+	actions     []wire.PlannableAction
+
 	pageSize int            // items per page; 0 serves everything in one page
 	failWith error          // returned by every method when set
 	calls    map[string]int // method name -> number of calls
@@ -27,6 +38,7 @@ type fakeAPI struct {
 	lastLogQuery   wire.LogQuery
 	lastEventQuery wire.EventQuery
 	lastNodeQuery  wire.NodeQuery
+	lastJobQuery   wire.JobQuery
 }
 
 func (f *fakeAPI) enter(method string) error {
@@ -95,4 +107,55 @@ func (f *fakeAPI) ListEvents(_ context.Context, q wire.EventQuery) (wire.Page[wi
 
 func (f *fakeAPI) ListAllNodeRoutes(context.Context, bool) (wire.Page[wire.NodeRoute], error) {
 	return wire.Page[wire.NodeRoute]{Items: f.routes}, f.enter("ListAllNodeRoutes")
+}
+
+func (f *fakeAPI) Me(context.Context) (wire.Me, error) { return f.me, f.enter("Me") }
+
+func (f *fakeAPI) SSHKey(context.Context) (wire.SSHKey, error) { return f.sshKey, f.enter("SSHKey") }
+
+func (f *fakeAPI) ListProviders(_ context.Context, q wire.PageQuery) (wire.Page[wire.Provider], error) {
+	return pageOf(f.providers, q, f.pageSize), f.enter("ListProviders")
+}
+
+func (f *fakeAPI) ListJobs(_ context.Context, q wire.JobQuery) (wire.Page[wire.Job], error) {
+	f.lastJobQuery = q
+	return pageOf(f.jobs, q.PageQuery, f.pageSize), f.enter("ListJobs")
+}
+
+func (f *fakeAPI) GetJob(_ context.Context, id domain.ID) (wire.JobDetail, error) {
+	if err := f.enter("GetJob"); err != nil {
+		return wire.JobDetail{}, err
+	}
+	detail, ok := f.jobDetails[id]
+	if !ok {
+		return wire.JobDetail{}, smerr.New(smerr.CodeNotFound, "", "no such job")
+	}
+	return detail, nil
+}
+
+func (f *fakeAPI) ListApprovals(_ context.Context, q wire.PageQuery) (wire.Page[wire.Approval], error) {
+	return pageOf(f.approvals, q, f.pageSize), f.enter("ListApprovals")
+}
+
+func (f *fakeAPI) GetPlan(_ context.Context, id domain.ID) (wire.CreatedPlan, error) {
+	if err := f.enter("GetPlan"); err != nil {
+		return wire.CreatedPlan{}, err
+	}
+	plan, ok := f.plans[id]
+	if !ok {
+		return wire.CreatedPlan{}, smerr.New(smerr.CodeNotFound, "", "no such plan")
+	}
+	return plan, nil
+}
+
+func (f *fakeAPI) ListBackups(context.Context) (wire.Page[wire.Backup], error) {
+	return wire.Page[wire.Backup]{Items: f.backups}, f.enter("ListBackups")
+}
+
+func (f *fakeAPI) ListTunnelEnrollments(context.Context) (wire.Page[wire.TunnelEnrollment], error) {
+	return wire.Page[wire.TunnelEnrollment]{Items: f.enrollments}, f.enter("ListTunnelEnrollments")
+}
+
+func (f *fakeAPI) ListActions(context.Context) (wire.Page[wire.PlannableAction], error) {
+	return wire.Page[wire.PlannableAction]{Items: f.actions}, f.enter("ListActions")
 }

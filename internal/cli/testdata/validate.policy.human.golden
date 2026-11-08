@@ -7,3 +7,4 @@ policy: <tmp>/policy.yaml: valid (1 rules)
     - removed rule "builtin-approver"
     - removed rule "builtin-admin"
     - removed rule "builtin-mcp-read"
+    - removed rule "builtin-mcp-operate"

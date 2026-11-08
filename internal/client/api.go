@@ -111,6 +111,15 @@ func (c *Client) CreatePlan(ctx context.Context, r wire.CreatePlanRequest) (wire
 	return call[wire.CreatedPlan](ctx, c, post(wire.PathPlans, r))
 }
 
+func (c *Client) GetPlan(ctx context.Context, id domain.ID) (wire.CreatedPlan, error) {
+	return call[wire.CreatedPlan](ctx, c, get(wire.Path(wire.PathPlan, string(id)), nil))
+}
+
+// ListActions lists the actions an MCP client may ask to plan.
+func (c *Client) ListActions(ctx context.Context) (wire.Page[wire.PlannableAction], error) {
+	return call[wire.Page[wire.PlannableAction]](ctx, c, get(wire.PathActions, nil))
+}
+
 func (c *Client) SubmitPlan(ctx context.Context, plan domain.ID, planHash string) (wire.Submission, error) {
 	return call[wire.Submission](ctx, c, post(wire.Path(wire.PathPlanSubmit, string(plan)), wire.PlanHashRequest{PlanHash: planHash}))
 }

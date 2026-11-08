@@ -282,33 +282,31 @@ type planDocumentWire struct {
 }
 
 func ViewCreatedPlan(p wire.CreatedPlan) (PlanView, error) {
+	doc, err := viewPlanDocument(p.Plan)
+	if err != nil {
+		return PlanView{}, err
+	}
+	return PlanView{PlanID: p.PlanID, Plan: doc, PlanHash: p.PlanHash, ExpiresAt: p.ExpiresAt, Policy: p.Policy}, nil
+}
+
+func viewPlanDocument(raw json.RawMessage) (PlanDocument, error) {
 	var doc planDocumentWire
-	if len(p.Plan) > 0 {
-		if err := json.Unmarshal(p.Plan, &doc); err != nil {
-			return PlanView{}, fmt.Errorf("decode plan document: %w", err)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return PlanDocument{}, fmt.Errorf("decode plan document: %w", err)
 		}
 	}
 	var b remoteBuilder
 	remote := PlanRemote{Parameters: b.object(doc.Parameters)}
 	remote.remoteMark = b.mark()
-	steps := make([]string, len(doc.Steps))
-	for i, step := range doc.Steps {
-		steps[i] = operatorLine(step)
-	}
-	return PlanView{
-		PlanID: p.PlanID,
-		Plan: PlanDocument{
-			Version:    doc.Version,
-			Action:     operatorLine(doc.Action),
-			Risk:       doc.Risk,
-			Targets:    orEmpty(doc.Targets),
-			SubActions: orEmpty(doc.SubActions),
-			Steps:      steps,
-			Remote:     remote,
-		},
-		PlanHash:  p.PlanHash,
-		ExpiresAt: p.ExpiresAt,
-		Policy:    p.Policy,
+	return PlanDocument{
+		Version:    doc.Version,
+		Action:     operatorLine(doc.Action),
+		Risk:       doc.Risk,
+		Targets:    orEmpty(doc.Targets),
+		SubActions: orEmpty(doc.SubActions),
+		Steps:      operatorLines(doc.Steps),
+		Remote:     remote,
 	}, nil
 }
 

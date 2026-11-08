@@ -30,21 +30,22 @@ func addWriteTools(s *sdk.Server, api API) {
 	actionTool(s, "infra_restart_service",
 		"Plan and submit a restart of one service (id or name@node). The result says whether approval is required.",
 		func(ctx context.Context, in refInput) (WriteResult, error) {
-			return planAndSubmit(ctx, api, "service.restart", planTarget{Type: string(domain.ResourceService), Ref: in.Ref})
+			return planAndSubmit(ctx, api, "service.restart", planTarget{Type: string(domain.ResourceService), Ref: in.Ref}, nil)
 		})
 	actionTool(s, "infra_reboot_node",
 		"Plan and submit a reboot of one node (id or exact name). The result says whether approval is required.",
 		func(ctx context.Context, in refInput) (WriteResult, error) {
-			return planAndSubmit(ctx, api, "node.reboot", planTarget{Type: string(domain.ResourceNode), Ref: in.Ref})
+			return planAndSubmit(ctx, api, "node.reboot", planTarget{Type: string(domain.ResourceNode), Ref: in.Ref}, nil)
 		})
 	actionTool(s, "infra_expose_port",
-		"Publish a port of a node at a hostname through its Cloudflare Tunnel. Access defaults to public: reachable from the internet with no authentication, which is high risk; owners puts it behind Cloudflare Access. A request from an MCP client always waits for a person to approve it, and no route exists until then.",
+		"Publish a port of a node at a hostname through its Cloudflare Tunnel. Access defaults to public: reachable from the internet with no authentication, which is high risk; owners puts it behind Cloudflare Access. A request from an MCP client always waits for a person to approve it, and no route exists until then. The default policy does not grant this; it needs a policy rule for type:mcp.",
 		func(ctx context.Context, in exposePortInput) (WriteResult, error) { return exposePort(ctx, api, in) })
 	actionTool(s, "infra_unexpose_port",
-		"Remove the route of a hostname from a node. It removes the DNS record, then the ingress rule, then the Access app. A request from an MCP client always waits for a person to approve it.",
+		"Remove the route of a hostname from a node. It removes the DNS record, then the ingress rule, then the Access app. A request from an MCP client always waits for a person to approve it. The default policy does not grant this; it needs a policy rule for type:mcp.",
 		func(ctx context.Context, in unexposePortInput) (WriteResult, error) {
 			return unexposePort(ctx, api, in)
 		})
+	addOperateTools(s, api)
 }
 
 // actionTool registers a tool that may change state. Its schema is versioned
@@ -76,8 +77,8 @@ type submitPlanInput struct {
 
 // planAndSubmit plans the action and submits exactly the hash that plan
 // returned. A plan the policy denied is not submitted.
-func planAndSubmit(ctx context.Context, api API, action string, target planTarget) (WriteResult, error) {
-	created, err := requestPlan(ctx, api, action, target, nil)
+func planAndSubmit(ctx context.Context, api API, action string, target planTarget, params map[string]any) (WriteResult, error) {
+	created, err := requestPlan(ctx, api, action, target, params)
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -85,7 +86,7 @@ func planAndSubmit(ctx context.Context, api API, action string, target planTarge
 		return WriteResult{
 			Status:   WriteDenied,
 			PlanHash: &created.PlanHash,
-			Summary:  fmt.Sprintf("policy denied %s on %s (plan %s)", action, target.Type, created.PlanID),
+			Summary:  fmt.Sprintf("policy denied %s on %s: %s (plan %s)", action, target.Type, created.Policy.Reason, created.PlanID),
 			Risk:     planRisk(created.Plan),
 		}, nil
 	}

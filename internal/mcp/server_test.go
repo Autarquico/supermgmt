@@ -29,8 +29,11 @@ var (
 	planToolName = "infra_plan_action"
 
 	writeToolNames = []string{
-		"infra_expose_port", "infra_reboot_node", "infra_restart_service",
-		"infra_submit_plan", "infra_unexpose_port",
+		"infra_cancel_job", "infra_create_backup", "infra_disable_tunnel", "infra_expose_port",
+		"infra_power_guest", "infra_probe_node", "infra_reboot_node", "infra_refresh_provider",
+		"infra_restart_service", "infra_rotate_cloudflare_access_token", "infra_shutdown_node",
+		"infra_snapshot_guest", "infra_start_service", "infra_stop_service", "infra_submit_plan",
+		"infra_unexpose_port",
 	}
 )
 
@@ -54,6 +57,13 @@ type serverFakeAPI struct {
 	exposes         []exposeCall
 	unexposes       []unexposeCall
 	routeSubmission wire.NodeRouteSubmission
+	cancelJob       wire.Job
+
+	probes        []domain.ID
+	backupCreates int
+	cancels       []submitCall
+	refreshes     []domain.ID
+	refreshed     *wire.Provider
 }
 
 // exposeCall is one ExposeNodeRoute call seen by serverFakeAPI.
@@ -88,8 +98,32 @@ func (f *serverFakeAPI) UnexposeNodeRoute(_ context.Context, node domain.ID, hos
 	return f.routeSubmission, f.submitErr
 }
 
+func (f *serverFakeAPI) ProbeNode(_ context.Context, id domain.ID) (wire.Submission, error) {
+	f.probes = append(f.probes, id)
+	return f.submission, f.submitErr
+}
+
+func (f *serverFakeAPI) CreateBackup(context.Context) (wire.Submission, error) {
+	f.backupCreates++
+	return f.submission, f.submitErr
+}
+
+func (f *serverFakeAPI) CancelJob(_ context.Context, id domain.ID, hash string) (wire.Job, error) {
+	f.cancels = append(f.cancels, submitCall{id, hash})
+	return f.cancelJob, f.submitErr
+}
+
+func (f *serverFakeAPI) RefreshProvider(_ context.Context, id domain.ID) (wire.Provider, error) {
+	f.refreshes = append(f.refreshes, id)
+	if f.refreshed != nil {
+		return *f.refreshed, f.submitErr
+	}
+	return wire.Provider{ID: id, Status: "error", LastError: viewHostile}, f.submitErr
+}
+
 func (f *serverFakeAPI) wrote() bool {
-	return len(f.planRequests)+len(f.submits)+len(f.exposes)+len(f.unexposes) > 0
+	return len(f.planRequests)+len(f.submits)+len(f.exposes)+len(f.unexposes)+
+		len(f.probes)+f.backupCreates+len(f.cancels)+len(f.refreshes) > 0
 }
 
 // newServerFakeAPI serves the nodes and services of readTestAPI and a

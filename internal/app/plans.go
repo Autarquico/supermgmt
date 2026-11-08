@@ -59,7 +59,7 @@ type CreatedPlan struct {
 
 // Create evaluates the proposed action for the caller, builds the version 3
 // plan with the current spec_revision of every input, and persists it with its
-// expiry. The caller needs plan.create and the read permission on the target.
+// expiry; an action forbidden to an mcp actor is refused instead. The caller needs plan.create and the read permission on the target.
 func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (CreatedPlan, error) {
 	return commit(ctx, p.core, by, func(ctx context.Context, tx *database.Tx) (CreatedPlan, error) {
 		actor, err := loadCaller(ctx, tx, by)
@@ -73,6 +73,13 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 			return CreatedPlan{}, err
 		}
 		req.Parameters = p.withDefaults(req.Action, req.Parameters)
+		if req.Target.Type == domain.ResourceInstance && req.Target.ID == "" { // this instance; its job needs the id
+			instance, err := database.GetInstance(ctx, tx)
+			if err != nil {
+				return CreatedPlan{}, err
+			}
+			req.Target.ID = instance.ID
+		}
 		b, err := build(ctx, tx, req.Action, by.ID, req.Target, req.Parameters)
 		if err != nil {
 			return CreatedPlan{}, err
@@ -89,6 +96,9 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 		res := p.authorize(b.request(actor))
 		if err := p.auditDecision(ctx, tx, actor, req.Action, req.Target, res); err != nil {
 			return CreatedPlan{}, err
+		}
+		if res.Reason == smerr.ReasonMCPActionForbidden {
+			return CreatedPlan{}, reject(decisionError(res))
 		}
 		rec, err := p.persist(ctx, tx, by, b.plan)
 		if err != nil {

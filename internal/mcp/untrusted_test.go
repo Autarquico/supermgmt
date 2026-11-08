@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/autarquico/supermgmt/internal/api/wire"
 )
 
 type injectionCase struct {
@@ -248,5 +250,39 @@ func TestOperatorLine(t *testing.T) {
 	}
 	if got := operatorLine(strings.Repeat("n", 1000)); len(got) != MaxRemoteScalarBytes {
 		t.Errorf("len = %d", len(got))
+	}
+}
+
+// The remote text of the operations views (a job's failure, a provider's sync
+// error, an enrollment's scan error) goes through the same scrub as logs.
+func TestOpsViews_RemoteErrorTextPassesTheInjectionCorpus(t *testing.T) {
+	for _, tc := range injectionCorpus(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			job := viewJob(wire.Job{Error: &wire.Failure{Message: tc.Input}})
+			provider := ViewProvider(wire.Provider{LastError: tc.Input})
+			enrollment := ViewTunnelEnrollment(wire.TunnelEnrollment{Error: tc.Input})
+
+			fields := map[string]string{
+				"job error":        job.Remote.ErrorMessage,
+				"provider error":   provider.Remote.LastError,
+				"enrollment error": enrollment.Remote.Error,
+			}
+			marks := map[string]remoteMark{"job": job.Remote.remoteMark, "provider": provider.Remote.remoteMark, "enrollment": enrollment.Remote.remoteMark}
+			for name, text := range fields {
+				for _, bad := range tc.Forbidden {
+					if strings.Contains(text, bad) {
+						t.Errorf("%s %q still contains %q", name, text, bad)
+					}
+				}
+				if tc.Want != nil && text != *tc.Want {
+					t.Errorf("%s = %q, want %q", name, text, *tc.Want)
+				}
+			}
+			for name, mark := range marks {
+				if !mark.Untrusted {
+					t.Errorf("the %s view does not flag its remote text untrusted", name)
+				}
+			}
+		})
 	}
 }
