@@ -35,7 +35,7 @@ Meaning never depends on color alone. A glyph or a word carries it too:
 
 | Key | Does |
 |---|---|
-| `1` to `7` | Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings |
+| `1` to `8` | Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings, Assistant |
 | `j` `k` or the arrow keys | move the selection |
 | `g` `G` (or Home, End) | first row, last row |
 | `enter` | open the selected item |
@@ -45,7 +45,7 @@ Meaning never depends on color alone. A glyph or a word carries it too:
 | `?` | open or close Help |
 | `q`, `ctrl+c` | quit |
 
-Letters are case-sensitive: `r` reloads, `R` restarts a service or rejects a plan. While the palette or a prompt is open, keys type text; `esc` closes it.
+Letters are case-sensitive: `r` reloads, `R` restarts a service or rejects a plan. While the palette or a prompt is open, keys type text; `esc` closes it. The Assistant screen also takes keys as text: `esc` leaves it and `ctrl+c` quits.
 
 ## Screens
 
@@ -62,6 +62,7 @@ Letters are case-sensitive: `r` reloads, `R` restarts a service or rejects a pla
 | Approvals | `4` | Plans waiting for a decision, and the selected plan in full | `A` approve, `R` reject |
 | Events | `5` | The last 100 audit events, newest first: time, severity, action, result, correlation ID | |
 | Providers | `6` | Providers with type, origin, status, last sync and last error. Read-only | |
+| Assistant | `8` | A conversation with a Claude model that works through SuperMgmt's MCP tools, with approvals in place. See [Ask in natural language](assistant.md#in-the-tui) | |
 | Settings | `7` | Mode, profile, server, how the screen updates, and who you are: name, ID, type, credential, roles. Read-only | |
 | Help | `?` | Every key and the palette syntax | |
 
