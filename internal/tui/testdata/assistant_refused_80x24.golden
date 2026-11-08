@@ -1,0 +1,24 @@
+┌ SuperMgmt · Assistant ────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ assistant · not available: see below                                         │
+│ Ask in plain language. The assistant works through SuperMgmt's tools as its  │
+│ own client, never as you.                                                    │
+│ A change that needs approval comes back here as a card for you to decide.    │
+│ esc leaves this screen; the conversation keeps going.                        │
+│ [sm] no MCP client named assistant; register it (approval may be needed,     │
+│      then run the same line again):                                          │
+│        sm mcp clients add assistant --keychain supermgmt-assistant           │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│ > ask something                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ enter send  pgup/pgdn scroll  esc back  ctrl+c quit                          │
+└──────────────────────────────────────────────────────────────────────────────┘

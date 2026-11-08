@@ -122,6 +122,8 @@ func (m *Model) body(bw, bh int) []string {
 		return m.settingsBody(bw)
 	case screenHelp:
 		return m.helpBody(bw)
+	case screenAssistant:
+		return m.assistantBody(bw, bh)
 	}
 	return nil
 }
@@ -149,6 +151,8 @@ func (m *Model) statusLine(bw int) string {
 	switch {
 	case m.prompt != nil:
 		return " " + m.input.View()
+	case m.confirmingApproval(), m.cardWaitingElsewhere():
+		return " " + m.th.warn.Render(clip(m.assistantStatus(), bw-2))
 	case m.notice.text != "":
 		style := m.th.info
 		if m.notice.isErr {
@@ -223,6 +227,8 @@ func (m *Model) keyHints() string {
 		return "esc back  q quit"
 	case screenApprovals:
 		return "j/k move  A approve  R reject  esc back  " + global
+	case screenAssistant:
+		return m.assistantHints()
 	case screenEvents, screenProviders, screenSettings:
 		return "r refresh  esc back  " + global
 	}

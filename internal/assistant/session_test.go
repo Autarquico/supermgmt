@@ -281,3 +281,26 @@ func between(s, from, to string) string {
 	end := strings.Index(s, to)
 	return s[start:end]
 }
+
+func TestSession_CloseDoesNotWaitBehindASendBlockedOnAStalledChild(t *testing.T) {
+	claude, _ := fakeClaude(t, "exec sleep 30\n")
+	s := startSession(t, sessionConfig(claude))
+	sent := make(chan error, 1)
+	go func() { sent <- s.Send(strings.Repeat("x", 1<<20)) }() // far beyond the pipe buffer
+	time.Sleep(200 * time.Millisecond)
+	closed := make(chan struct{})
+	go func() { _ = s.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(closeGraceTime + waitDelay + 2*time.Second):
+		t.Fatal("Close waited behind a blocked Send")
+	}
+	select {
+	case err := <-sent:
+		if err == nil {
+			t.Error("the blocked Send reported success")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the blocked Send was not released by Close")
+	}
+}

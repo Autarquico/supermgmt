@@ -72,6 +72,8 @@ const (
 	authenticationFailed = "authentication_failed" // the `error` field claude sets on its signed-out message
 	maxToolInputRunes    = 200
 	maxToolResultRunes   = 120
+	maxTextRunes         = 32 << 10 // one text block of the model; a front end lays it out, so it is bounded
+	tabWidth             = 4
 )
 
 var (
@@ -170,7 +172,7 @@ func (p *parser) assistant(msg streamMessage) ([]Event, error) {
 	for _, block := range content {
 		switch block.Type {
 		case "text":
-			events = append(events, Event{Kind: KindText, Text: display(block.Text)})
+			events = append(events, Event{Kind: KindText, Text: modelText(block.Text)})
 		case "tool_use":
 			p.toolNames[block.ID] = block.Name
 			line := display(strings.TrimPrefix(block.Name, mcpToolPrefix))
@@ -300,3 +302,13 @@ func truncate(s string, max int) string {
 }
 
 func display(s string) string { return textsafe.Sanitize(bytes.TrimSpace([]byte(s))) }
+
+// modelText is the text of the model for a front end to lay out: sanitised,
+// tabs spent as spaces (a tab has no width a layout can count), and bounded.
+func modelText(s string) string {
+	text := strings.ReplaceAll(display(s), "\t", strings.Repeat(" ", tabWidth))
+	if r := []rune(text); len(r) > maxTextRunes {
+		return string(r[:maxTextRunes]) + " [cut]"
+	}
+	return text
+}

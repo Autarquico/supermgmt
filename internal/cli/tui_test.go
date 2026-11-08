@@ -36,6 +36,43 @@ func TestTUICommandRefusesANonInteractiveTerminal(t *testing.T) {
 	}
 }
 
+func TestTUIAuthFlagIsValidatedBeforeTheTerminalCheck(t *testing.T) {
+	tests := []struct {
+		name string
+		env  []string
+		args []string
+		want string
+	}{
+		{"unknown value", nil, []string{"--auth", "bogus"}, "--auth must be subscription or api-key"},
+		{"api-key without the key", []string{"PATH=/bin"}, []string{"--auth", "api-key"}, "ANTHROPIC_API_KEY"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newTUICmd(tc.env)
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if smerr.CodeOf(err) != smerr.CodeInvalidArgument || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want INVALID_ARGUMENT mentioning %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTUIAuthFlagAcceptsBothModesAndThenNeedsATerminal(t *testing.T) {
+	for _, mode := range []string{"subscription", "api-key"} {
+		cmd := newTUICmd([]string{"ANTHROPIC_API_KEY=sk-test"})
+		cmd.SetIn(strings.NewReader(""))
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetArgs([]string{"--auth", mode})
+		err := cmd.Execute()
+		if smerr.CodeOf(err) != smerr.CodeInvalidArgument || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+			t.Errorf("--auth %s: err = %v, want the terminal refusal", mode, err)
+		}
+	}
+}
+
 func TestIsTerminal(t *testing.T) {
 	null, err := os.Open(os.DevNull)
 	if err != nil {

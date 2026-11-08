@@ -39,7 +39,7 @@ func readLines(r io.Reader) (lines <-chan string, inputErr func() error) {
 
 type assistantRepl struct {
 	out      io.Writer
-	session  assistantSession
+	session  assistant.Conversation
 	lines    <-chan string
 	inputErr func() error
 	approver *approver

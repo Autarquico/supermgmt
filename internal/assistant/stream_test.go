@@ -436,3 +436,16 @@ func TestParser_RejectedAPIKeyIsNotReportedAsSignedOut(t *testing.T) {
 		t.Fatalf("err = %v, want ErrAPIKeyRejected without a sign-in hint", err)
 	}
 }
+
+func TestModelTextExpandsTabsAndBoundsItsSize(t *testing.T) {
+	if got := modelText("a\tb"); got != "a    b" {
+		t.Fatalf("tab = %q", got)
+	}
+	got := modelText(strings.Repeat("x", 10*maxTextRunes))
+	if n := len([]rune(got)); n > maxTextRunes+len(" [cut]") || !strings.HasSuffix(got, " [cut]") {
+		t.Fatalf("unbounded text: %d runes", n)
+	}
+	if got := modelText(strings.Repeat("y", maxTextRunes)); strings.HasSuffix(got, "[cut]") {
+		t.Fatal("a text at the bound was cut")
+	}
+}

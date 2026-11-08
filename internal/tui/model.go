@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/assistant"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
@@ -43,6 +44,9 @@ type Options struct {
 	Follow func(ctx context.Context, handle func(wire.Event) error) error
 	// Settings describes the connection for the read-only Settings screen.
 	Settings Settings
+	// Assistant, when set, enables the assistant screen (key 8). Nothing it
+	// launches exists until the operator sends the first message there.
+	Assistant *assistant.Launcher
 }
 
 // Settings is what the Settings screen shows besides the caller's identity.
@@ -69,13 +73,14 @@ const (
 	screenProviders
 	screenSettings
 	screenHelp
+	screenAssistant
 )
 
 var screenTitles = map[screen]string{
 	screenDashboard: "Dashboard", screenResources: "Resources", screenNode: "Node", screenServices: "Services",
 	screenService: "Service", screenLogs: "Logs", screenJobs: "Jobs", screenJob: "Job",
 	screenApprovals: "Approvals", screenEvents: "Events", screenProviders: "Providers",
-	screenSettings: "Settings", screenHelp: "Help",
+	screenSettings: "Settings", screenHelp: "Help", screenAssistant: "Assistant",
 }
 
 // Model is the Bubble Tea model. It is only ever touched by Update and View;
@@ -124,6 +129,9 @@ type Model struct {
 	handingOff bool // a session is being issued or ended: input is ignored
 	planSeq    int  // identifies the confirmation a plan reply belongs to
 	input      textinput.Model
+
+	asst assistantState
+	send func(tea.Msg) // delivers a message to the running program; nil outside Run
 }
 
 type notice struct {
@@ -143,16 +151,20 @@ func New(api API, o Options) *Model {
 	styles := input.Styles()
 	styles.Cursor.Blink = false // a solid cursor: no blink timers to drive
 	input.SetStyles(styles)
-	return &Model{
+	m := &Model{
 		api: api, opts: o, ctx: context.Background(), th: newTheme(),
 		width: 80, height: 24, screen: screenDashboard,
 		loads: map[loadKey]*loadState{}, svcCache: map[domain.ID][]wire.Service{},
-		logsView: viewport.New(), input: input,
+		logsView: viewport.New(), input: input, asst: newAssistantState(),
 	}
+	m.sizeAssistant()
+	return m
 }
 
 // Run shows the TUI until the user quits or ctx ends.
-func Run(ctx context.Context, api API, o Options) error {
+func Run(ctx context.Context, api API, o Options) error { return run(ctx, api, o) }
+
+func run(ctx context.Context, api API, o Options, programOpts ...tea.ProgramOption) error {
 	if o.Refresh == 0 {
 		o.Refresh = DefaultRefresh
 	}
@@ -166,11 +178,14 @@ func Run(ctx context.Context, api API, o Options) error {
 	if o.Follow != nil {
 		model.followState = followLive
 	}
-	program := tea.NewProgram(model, tea.WithContext(ctx), tea.WithFilter(dropInterruptWhileHandingOff))
+	programOpts = append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithFilter(dropInterruptWhileHandingOff)}, programOpts...)
+	program := tea.NewProgram(model, programOpts...)
+	model.send = program.Send
 	if o.Follow != nil {
 		go follow(ctx, o.Follow, program.Send)
 	}
 	_, err := program.Run()
+	model.closeAssistant() // the child and its directory are gone before Run returns
 	return err
 }
 
@@ -217,6 +232,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.sizeLogs()
+		m.sizeAssistant()
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.reload(false, m.screenLoaders()...), m.tick())
@@ -242,13 +258,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m, m.onKey(msg)
 	case tea.PasteMsg:
-		if m.prompt != nil {
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
-		}
+		return m, m.onPaste(msg)
 	}
-	return m, nil
+	return m, m.assistantUpdate(msg)
 }
 
 func (m *Model) onStreamEnded(msg streamEndedMsg) {
@@ -283,7 +295,7 @@ func (m *Model) screenLoaders() []loader {
 		return append(always, loader{keyEvents, m.loadEvents})
 	case screenProviders:
 		return append(always, loader{keyProviders, m.loadProviders})
-	case screenResources, screenApprovals, screenSettings, screenHelp:
+	case screenResources, screenApprovals, screenSettings, screenHelp, screenAssistant:
 		return always
 	}
 	return always
@@ -320,6 +332,8 @@ func (m *Model) onKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.promptKey(key)
 	case m.confirm != nil:
 		return m.confirmKey(key)
+	case m.screen == screenAssistant:
+		return m.assistantKey(key)
 	}
 	switch key.String() {
 	case "q", "ctrl+c":
@@ -345,6 +359,8 @@ func (m *Model) onKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jump(screenProviders)
 	case "7":
 		return m.jump(screenSettings)
+	case "8":
+		return m.openAssistant()
 	case "r":
 		return m.reload(true, m.screenLoaders()...)
 	case "esc":
@@ -371,7 +387,7 @@ func (m *Model) screenKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jobKey(key)
 	case screenApprovals:
 		return m.approvalsKey(key)
-	case screenDashboard, screenEvents, screenProviders, screenSettings, screenHelp:
+	case screenDashboard, screenEvents, screenProviders, screenSettings, screenHelp, screenAssistant:
 		return nil
 	}
 	return nil
