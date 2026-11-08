@@ -2,12 +2,12 @@
 codename: supermgmt
 title: "MCP drives what sm operates: reads, jobs and default grants"
 type: task
-status: draft
+status: active
 priority: P1
 size: L
 issue: null
 prs: []
-related_issues: []
+related_issues: [83]
 depends_on: []
 supersedes: []
 related_specs: [mcp-https-token, mcp-node-tools, assistant-claude-cli, m5-mcp]
