@@ -2,7 +2,7 @@
 codename: supermgmt
 title: "sm mcp reaches a server: MCP client tokens over HTTPS"
 type: task
-status: active
+status: shipped
 priority: P1
 size: M
 issue: 85
