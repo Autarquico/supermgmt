@@ -31,7 +31,7 @@ Second half of #64. `sm assistant` (PR #90) gives the conversation on a plain te
 - Docs: `docs/tui.md`, `docs/assistant.md`.
 
 **No entra:**
-- Changes to the session, the tools or the approval rules. Saved conversations.
+- Changes to the tools or the approval rules. Saved conversations. The one session change: the child runs in its own process group, so a Ctrl-C during an SSH handoff does not reach it.
 
 ## Criterios de aceptación
 
@@ -48,7 +48,7 @@ Second half of #64. `sm assistant` (PR #90) gives the conversation on a plain te
 ### Scenario: an approval is decided in place
 - **Given** a real `approval_required` result for the assistant's own job
 - **When** the card opens
-- **Then** it shows what the CLI card shows, wrapped so the plan is never cut, and `A`/`R`/leave use the human connection and the API's hash, and text typed before the card opened does not answer it
+- **Then** it shows what the CLI card shows, wrapped and scrollable so every line of the plan can be read at any terminal size, and a decision needs two steps (choosing, then confirming) after a short arming delay, so keys typed before the card appeared or held down cannot answer it; approval uses the human connection and the API's hash
 
 ### Scenario: another actor's job or forged text opens no card
 - **Given** a result naming another actor's job, or model text imitating a card
