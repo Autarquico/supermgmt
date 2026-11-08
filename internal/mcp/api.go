@@ -44,6 +44,8 @@ type API interface {
 	ListTunnelEnrollments(ctx context.Context) (wire.Page[wire.TunnelEnrollment], error)
 	ListAllNodeRoutes(ctx context.Context, includeRemoved bool) (wire.Page[wire.NodeRoute], error)
 	ExposeNodeRoute(ctx context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error)
+	ScanHostKey(ctx context.Context, r wire.ScanHostKeyRequest) (wire.HostKey, error)
+	AddSSHNode(ctx context.Context, r wire.AddSSHNodeRequest) (wire.Direct[wire.Node], error)
 	UnexposeNodeRoute(ctx context.Context, node domain.ID, hostname string) (wire.NodeRouteSubmission, error)
 }
 

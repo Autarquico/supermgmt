@@ -44,6 +44,53 @@ func clip(s string, w int) string {
 	return string(runes) + "…"
 }
 
+// wrap breaks plain text into lines of at most w cells at spaces, indenting
+// continuations by indent. A word wider than a line is split by cells: no text
+// is dropped. Like clip, it must run before styling.
+func wrap(s string, w int, indent string) []string {
+	if w <= len(indent)+1 || lipgloss.Width(s) <= w {
+		return []string{s}
+	}
+	var lines []string
+	line, prefix := "", ""
+	flush := func() {
+		lines = append(lines, line)
+		line, prefix = "", indent
+	}
+	for _, word := range strings.Fields(s) {
+		if line != "" && lipgloss.Width(line+" "+word) > w {
+			flush()
+		}
+		if lipgloss.Width(prefix+word) > w && lipgloss.Width(word) <= w {
+			// Whole beats indented: a key that fits only unindented stays in one piece.
+			line, prefix = word, ""
+			flush()
+			continue
+		}
+		for lipgloss.Width(prefix+word) > w {
+			room := []rune(word)
+			n := len(room)
+			for n > 1 && lipgloss.Width(prefix+string(room[:n])) > w {
+				n--
+			}
+			line = prefix + string(room[:n])
+			word = string(room[n:])
+			flush()
+		}
+		switch {
+		case word == "":
+		case line == "":
+			line = prefix + word
+		default:
+			line += " " + word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
 // padTo right-pads s with spaces to w cells; longer text is left as is.
 func padTo(s string, w int) string {
 	if gap := w - lipgloss.Width(s); gap > 0 {

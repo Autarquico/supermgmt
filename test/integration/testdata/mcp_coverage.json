@@ -133,7 +133,7 @@
    "reason": "help-only group: its subcommands are mapped on their own"
   },
   "nodes add": {
-   "reason": "pending: mcp-node-tools"
+   "tool": "infra_add_node"
   },
   "nodes expose": {
    "tool": "infra_expose_port"
@@ -154,13 +154,13 @@
    "reason": "deletion: no MCP tool for resource deletion (SUPERMGMT-SPEC.md:1826)"
   },
   "nodes repin": {
-   "reason": "pending: mcp-node-tools"
+   "reason": "a person re-trusts a host key: a changed key is a possible impersonation, never an MCP decision"
   },
   "nodes routes": {
    "tool": "infra_list_routes"
   },
   "nodes setup": {
-   "reason": "pending: mcp-node-tools"
+   "tool": "infra_setup_node"
   },
   "nodes tunnel": {
    "reason": "help-only group: its subcommands are mapped on their own"
@@ -384,7 +384,7 @@
    "reason": "readiness probe of the process, unauthenticated; infra_get_health is per node or service"
   },
   "PATCH /api/v1/nodes/{id}": {
-   "reason": "pending: mcp-node-tools"
+   "reason": "a repin is a person's act, so the route has no tool; the raw route stays subject to policy and approval"
   },
   "POST /api/v1/auth/bootstrap": {
    "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
@@ -444,22 +444,22 @@
    "reason": "interactive node session (node.connect), forbidden to MCP identities"
   },
   "POST /api/v1/nodes/ssh": {
-   "reason": "pending: mcp-node-tools"
+   "tool": "infra_add_node"
   },
   "POST /api/v1/nodes/ssh/host-key": {
-   "reason": "pending: mcp-node-tools"
+   "tool": "infra_add_node"
   },
   "POST /api/v1/nodes/ssh/tunnel-enrollments": {
-   "reason": "pending: mcp-node-tools"
+   "reason": "tunnel enrollment: the connector token it issues is a credential, a person enrolls the node"
   },
   "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/cancel": {
-   "reason": "pending: mcp-node-tools"
+   "reason": "an MCP actor's non-Allow decision on an enrollment is refused, so a person decides it"
   },
   "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/confirm": {
-   "reason": "pending: mcp-node-tools"
+   "reason": "an MCP actor's non-Allow decision on an enrollment is refused, so a person decides it"
   },
   "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/refuse": {
-   "reason": "pending: mcp-node-tools"
+   "reason": "an MCP actor's non-Allow decision on an enrollment is refused, so a person decides it"
   },
   "POST /api/v1/plans": {
    "tool": "infra_plan_action"

@@ -485,7 +485,7 @@
    "route": "POST /api/v1/nodes/ssh",
    "class": "write",
    "path": "/api/v1/nodes/ssh",
-   "body": "{\"name\":\"new-1\",\"host\":\"127.0.0.1\",\"port\":22,\"admin_user\":\"admin\",\"host_public_key\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\",\"environment\":\"dev\"}",
+   "body": "{\"name\":\"new-1\",\"host\":\"{scan_host}\",\"port\":{scan_port},\"admin_user\":\"admin\",\"host_public_key\":\"{scan_key}\",\"environment\":\"dev\"}",
    "headers": null,
    "stream": false,
    "off": {

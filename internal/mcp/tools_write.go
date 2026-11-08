@@ -46,6 +46,7 @@ func addWriteTools(s *sdk.Server, api API) {
 			return unexposePort(ctx, api, in)
 		})
 	addOperateTools(s, api)
+	addNodeTools(s, api)
 }
 
 // actionTool registers a tool that may change state. Its schema is versioned
