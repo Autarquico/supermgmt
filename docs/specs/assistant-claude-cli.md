@@ -29,7 +29,7 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 
 **Entra:**
 - `sm assistant`: a conversation on the terminal. `--auth subscription` (default) runs the operator's `claude`; `--auth api-key` runs it with `--bare` and `ANTHROPIC_API_KEY` from the environment.
-- The model has only SuperMgmt's MCP tools. The child runs with no built-in tools (`--tools ""`), only one MCP server (`--strict-mcp-config --mcp-config`, launching `sm mcp` with a registered client token), those tools pre-approved, anything else denied instead of prompting (`--permission-prompts none`), no slash commands, no saved session and SuperMgmt's own system prompt. A test pins the argument vector and refuses `--dangerously-skip-permissions`. Before the first turn, the session's reported tools must all be SuperMgmt's and its server connected; otherwise `sm` stops the child and refuses.
+- The model has only SuperMgmt's MCP tools. The child runs with no built-in tools (`--tools ""`), only one MCP server (`--strict-mcp-config --mcp-config`, launching `sm mcp` with a registered client token), those tools pre-approved, anything else denied instead of prompting (`--permission-prompts none`), no slash commands, no saved session and SuperMgmt's own system prompt. A test pins the argument vector and refuses `--dangerously-skip-permissions`. When the session reports itself (`claude` does so after the first message), its tools must all be SuperMgmt's and its server connected; otherwise `sm` stops the child before any output is shown or any tool runs.
 - The child gets an allowlisted environment (home, path, locale, proxy, `CLAUDE_CONFIG_DIR`); the API key only in `--auth api-key`. No `SUPERMGMT_*`, no SSH agent socket. `sm mcp` gets its target explicitly (`--profile` or `--config`), so it reaches the same instance as `sm assistant`. The guide says what this protects: with no tools the model cannot read the environment, and any process of the operator's user can reach what the operator can.
 - The assistant uses its own registered MCP client (default name `assistant`, token in the keychain entry `supermgmt-assistant` or a 0600 file in the configuration directory), never the human's credential. If none exists, or a remote target needs `--https`, `sm assistant` prints the exact command to run; it does not register by itself.
 - Approvals in place: only a result of a known write tool, parsed strictly as a whole, with `status: approval_required` opens a card. `sm` then fetches the job with the human's own connection and shows it only if it is awaiting approval and its actor is the assistant's client. The card comes from the job and plan (never from model text); the human approves or rejects with the plan hash from the API, or leaves it. The model is told the outcome in the next turn.
@@ -51,7 +51,7 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 ### Scenario: a session with other tools does not start
 - **Given** a `claude` whose session reports any tool outside SuperMgmt's, or its server not connected
 - **When** the session starts
-- **Then** `sm` stops it before the first turn and says why
+- **Then** `sm` stops it before showing any output or letting any tool run, and says why
 
 ### Scenario: the child inherits nothing from SuperMgmt
 - **Given** an environment with `SUPERMGMT_*`, an SSH agent socket and a stored human token
@@ -88,4 +88,4 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 - `-p --input-format stream-json --output-format stream-json --verbose`; the stream's message schema is not documented for the CLI, so a recorded real run fixes the parser's fixtures.
 - Without `--bare`, `claude` loads the operator's hooks and CLAUDE.md. Use `--setting-sources` to narrow it as far as the CLI allows, and say what remains in the guide: they are the operator's own configuration, and the model still has no tools but SuperMgmt's.
 - The child runs from an empty temporary directory, so no project configuration applies.
-- `--safe-mode` is the preferred way to skip the operator's configuration in subscription mode, if it keeps `--mcp-config`; the first real run decides, otherwise `--setting-sources`.
+- A real run (`claude` 2.1.311) showed `--safe-mode` drops `--mcp-config`, so subscription mode uses `--setting-sources ""`. Fixtures in `test/fixtures/claude-stream/`.
