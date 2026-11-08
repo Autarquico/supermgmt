@@ -52,7 +52,7 @@ An MCP client is an identity of type `mcp`. It has **no roles**, not even when t
 
 ## The MCP floor
 
-These hold whatever the policy file says and whatever `mcp.write_tools_enabled` is. They are enforced in the application layer before policy runs (`internal/app/mcpgate.go`), so they apply to the MCP tools, to a raw API call made with the same token, and to the in-process path used by remote MCP.
+These hold whatever the policy file says and whatever `mcp.write_tools_enabled` is. They are enforced in the application layer before policy runs (`internal/app/mcpgate.go`, and `internal/app/inventory.go` for node credentials and host keys), so they apply to the MCP tools, to a raw API call made with the same token, and to the in-process path used by remote MCP.
 
 | An MCP identity can never | Reason returned | Test |
 |---|---|---|
@@ -61,6 +61,8 @@ These hold whatever the policy file says and whatever `mcp.write_tools_enabled` 
 | register or delete MCP clients, write identities, write role bindings (`mcp_client.register`, `mcp_client.delete`, `identity.write`, `role_binding.write`) | `MCP_ACTION_FORBIDDEN` | same tests; `TestAnMCPClientCannotRegisterClientsIssueTokensOrMintAPITokensEvenWithAFullGrant` |
 | open an interactive node session (`node.connect`) | `MCP_ACTION_FORBIDDEN` | `mcpForbiddenActions` in `internal/app/mcpgate.go`; the route matrix lists it (`TestMCPMatrixListsEveryRoute`) |
 | resolve an interrupted job (`job.resolve`) | `MCP_ACTION_FORBIDDEN` | `TestAnMCPClientWithoutAGrantCannotResolveAJob` |
+| plan a `node.setup` that grants Docker or service rights, writes a deploy root, issues a Proxmox token or installs the log broker, refused before any plan is stored; or re-run a setup on a node already set up or behind a tunnel | `INVALID_ARGUMENT` | `TestPlansCreate_NodeSetupByMCPRefusesWhatGrantsRootByValue`, `TestSetupByMCPIsRefusedOnANodeThatAlreadyHasASetup` |
+| add a node with an admin credential that is not a plain `secret://` name (a file or an agent, for example), an automation credential other than the instance default, or a key other than the one the daemon scanned; or change a node's host key | `INVALID_ARGUMENT` | `TestAddSSHNode_AnMCPActorMayNotNameAFileOrANonDefaultCredential` |
 | delete a Proxmox snapshot (`proxmox.snapshot.delete`, refused before any plan is stored) | `MCP_ACTION_FORBIDDEN` | `TestPlanningASnapshotDeleteIsRefusedEvenWhenPolicyGrantsItAndStoresNoPlan` |
 | skip approval for an operational-or-higher action | job stays `awaiting_approval` | `TestAProductionRebootAskedForByAnMCPClientRunsOnlyOnceTheExactHashIsApproved`, `TestE2E_MCPProductionRestartRequiresApproval` |
 
@@ -89,7 +91,7 @@ Always registered: read-only tools (`readOnlyHint`) and `infra_plan_action`, whi
 | `infra_get_status` | who the client is, with a summary of nodes and jobs |
 | `infra_list_tunnel_enrollments` | open node enrollments, without their join line |
 | `infra_get_ssh_key` | the instance's public SSH key |
-| `infra_list_actions` | the actions `infra_plan_action` accepts, with parameters and risk |
+| `infra_list_actions` | the actions `infra_plan_action` accepts, with parameters, risk and target type; `node.setup` is accepted with restricted values and is not listed, use `infra_setup_node` |
 | `infra_plan_action` | builds and stores a plan for one action on one target; nothing runs |
 
 Write tools (**registered only when `mcp.write_tools_enabled: true`**):
@@ -106,6 +108,8 @@ Write tools (**registered only when `mcp.write_tools_enabled: true`**):
 | `infra_snapshot_guest` | snapshots a Proxmox guest |
 | `infra_create_backup` | backs up the instance (needs its own policy rule) |
 | `infra_refresh_provider` | asks a provider for its current inventory; it contacts the provider |
+| `infra_add_node` | scans a host's SSH key and requests adding it; a person sees the fingerprint in the plan and approves (needs its own policy rule). A person first stores the admin user's SSH private key with `sm secrets import --name <name>` and gives the model that name; on a local instance it can be left empty to use the SSH agent |
+| `infra_setup_node` | plans the first setup of a node with no Docker access and no service rights, optionally with a tunnel; the node can be probed and read, and a person grants service rights with `sm nodes setup`. A node already set up or behind a tunnel is refused, because a re-run would replace its rights (needs its own policy rule, for `node.setup` and `sudoers.write`) |
 | `infra_cancel_job` | cancels a job this client submitted, before it runs |
 | `infra_disable_tunnel` | plans removing a node's tunnel (needs its own policy rule) |
 | `infra_rotate_cloudflare_access_token` | plans rotating the Access service token (needs its own policy rule) |
@@ -113,6 +117,8 @@ Write tools (**registered only when `mcp.write_tools_enabled: true`**):
 | `infra_unexpose_port` | removes the route of a hostname from a node; a request from an MCP client waits for a person to approve it (needs its own policy rule) |
 
 With writes disabled the write tools are absent from `tools/list` and calling one by name is an unknown-tool error (`TestNewServer_WritesDisabledListsReadToolsAndPlanOnly`, `TestNewServer_WritesDisabledRefusesWriteToolsByName`). No resources and no prompts are offered.
+
+A client granted `node.add` can make the daemon open a connection to a host and port it names, to read its SSH key (60 requests a minute, with a burst of 20). The action is not granted by default; grant it only to clients you would let map your network from the daemon's position.
 
 ### Names and ids
 
