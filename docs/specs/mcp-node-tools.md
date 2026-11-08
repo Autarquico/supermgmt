@@ -2,7 +2,7 @@
 codename: supermgmt
 title: MCP adds and sets up nodes, a person checks the host key
 type: task
-status: active
+status: shipped
 priority: P1
 size: M
 issue: 87

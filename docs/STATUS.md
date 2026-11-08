@@ -14,6 +14,7 @@
 - #44 flake: TestFixturesSetup_AdminRootRunsWithoutSudo — systemctl was not found on the node (debian13)
 - #52 Move an app target to another node
 - #56 Move an app target's Cloudflare routes with it
+- #63 mcp: drive the whole infrastructure that sm drives, against any instance
 - #68 appliance: the proxmox-lxc installer fails or degrades on a real PVE 9.1 host
 - #69 tunnel: enrollment and re-enable get stuck or fail on a real account
 - #75 Retire app move
@@ -21,6 +22,7 @@
 - #77 Retire deployments, apps and the GitHub connector
 - #83 MCP drives what sm operates: reads, jobs and default grants
 - #85 sm mcp reaches a server: MCP client tokens over HTTPS
+- #87 MCP adds and sets up nodes, a person checks the host key
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -28,7 +30,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #87 MCP adds and sets up nodes, a person checks the host key
+- #89 sm assistant: ask in natural language, through SuperMgmt's MCP tools
 <!-- /pm-sync:in-progress -->
 
 ---
