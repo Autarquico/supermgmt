@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "MCP adds and sets up nodes, a person checks the host key"
+title: MCP adds and sets up nodes, a person checks the host key
 type: task
-status: draft
+status: active
 priority: P1
 size: M
 issue: null
 prs: []
-related_issues: []
+related_issues: [87]
 depends_on: [mcp-tool-coverage]
 supersedes: []
 related_specs: []
