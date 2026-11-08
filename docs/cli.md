@@ -76,6 +76,34 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+### sm assistant
+
+Talk to your own Claude Code, limited to SuperMgmt's MCP tools
+
+Start a conversation with the `claude` CLI on this machine. It runs with no built-in tools, only the
+MCP tools of SuperMgmt, as the registered MCP client (default name assistant), never as you.
+
+The client must exist first: `sm mcp clients add assistant --keychain supermgmt-assistant` (with --https for a
+remote profile; a token file replaces the keychain where there is none; a remote profile or another --client
+name has an entry of its own, which sm assistant prints). Changes that need approval are
+shown to you here as a card read from the API, and only you decide them. /exit or end of input (Ctrl-D)
+ends the conversation; a blank line does nothing. Ctrl-C also ends it: a single request cannot be
+cancelled, and the conversation is not saved.
+
+--auth subscription uses the signed-in claude; --auth api-key runs it with ANTHROPIC_API_KEY from the
+environment. Nothing is installed or signed in on your behalf.
+
+```text
+sm assistant [--auth subscription|api-key] [--client NAME] [flags]
+```
+
+Flags:
+
+- `--auth` (string, default `subscription`): how claude signs in: subscription|api-key
+- `--client` (string, default `assistant`): name of the registered MCP client the assistant acts as
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 ### sm backup
 
 Create and list backups; restore one offline

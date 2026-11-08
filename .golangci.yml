@@ -71,6 +71,7 @@ linters:
           files:
             - "**/internal/tui/**"
             - "**/internal/client/**"
+            - "**/internal/assistant/**"
           deny:
             - pkg: github.com/autarquico/supermgmt/internal/app
               desc: tui and client talk to the daemon through the API only

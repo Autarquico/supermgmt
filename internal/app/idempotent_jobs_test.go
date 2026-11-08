@@ -50,7 +50,7 @@ func TestAnInterruptedProbeIsRequeuedAndConverges(t *testing.T) {
 	go func() { done <- (probeHandler{prober: p.probe, store: p.store}).Run(ctx, claimed.Lease) }()
 	kill()
 	close(gate)
-	<-done
+	t.Logf("runner stopped: %v", <-done)
 
 	interruptAndRequeue(t, p.fixture, sub.Job.ID)
 	p.dialer.route(p.node.ID, newFakeNode(t).reply("probe", linuxProbe))

@@ -20,6 +20,7 @@
 - #76 Routes publish a node port
 - #77 Retire deployments, apps and the GitHub connector
 - #83 MCP drives what sm operates: reads, jobs and default grants
+- #85 sm mcp reaches a server: MCP client tokens over HTTPS
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -27,7 +28,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #85 sm mcp reaches a server: MCP client tokens over HTTPS
+- #87 MCP adds and sets up nodes, a person checks the host key
 <!-- /pm-sync:in-progress -->
 
 ---

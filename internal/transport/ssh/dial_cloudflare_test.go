@@ -619,7 +619,8 @@ func TestChildConnCloseUnblocksAReader(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	_ = c.Close()
 	select {
-	case <-read:
+	case err := <-read:
+		t.Logf("read ended: %v", err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("Close left a reader blocked")
 	}

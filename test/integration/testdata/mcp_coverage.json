@@ -12,6 +12,9 @@
   "approvals": {
    "tool": "infra_list_approvals"
   },
+  "assistant": {
+   "reason": "local-only: runs on this machine, not through the control plane (it is an MCP host: it launches the operator's own claude with the MCP tools)"
+  },
   "backup": {
    "reason": "help-only group: its subcommands are mapped on their own"
   },
