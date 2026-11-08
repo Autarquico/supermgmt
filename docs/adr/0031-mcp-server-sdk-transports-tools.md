@@ -20,7 +20,7 @@
 ### One server, two transports
 
 - `internal/mcp` builds one `*mcp.Server` from an `API` interface, the subset of the typed client its tools call. Every tool is one or more API calls; policy, audit, idempotency and rate limits are the API's.
-- **stdio** (`sm mcp`): `client.New(<daemon socket>, Token: <MCP client token>)` and `Server.Run` over `StdioTransport`; every SDK protocol version. Stdout carries JSON-RPC only.
+- **stdio** (`sm mcp`): `client.New(<daemon socket>, Token: <MCP client token>)` (or a remote profile over HTTPS, since ADR-0044) and `Server.Run` over `StdioTransport`; every SDK protocol version. Stdout carries JSON-RPC only.
 - **Streamable HTTP** (server mode, `mcp.remote_enabled`): mounted by the daemon at `/mcp` on the HTTPS listener with `StreamableHTTPOptions{Stateless: true, JSONResponse: true}` (the stateful handler cannot serve `2026-07-28`, `mcp/server.go:942-948`); protocol versions `2026-07-28`, `2025-11-25`, `2025-06-18`, the ones whose authorization model is RFC 9728 (ADR-0033). A request with an `Origin` header must name `server.public_url`'s origin, else 403 (the transport's DNS-rebinding rule). Tool calls reach the API **in process**: `api.(*Server).InProcess(caller)` is an `http.RoundTripper` that runs the API handler with the resolved caller in an unexported context key; it refuses a request that carries `Authorization`. OAuth access tokens are never accepted on `/api/v1` (no token passthrough).
 - No MCP resources and no prompts in V1. The `initialize` client name is display metadata only (§11.1).
 

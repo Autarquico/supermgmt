@@ -373,8 +373,8 @@ sm daemon [stop|install-user-unit]   run local daemon (Unix socket); normally au
 sm server                  run daemon in server mode (TCP/HTTPS)
 sm install <mode>          installer logic invoked by install.sh (§3.4)
 sm admin bootstrap-code|grant|restore-complete   server admin socket only (§11.5, §29.2)
-sm mcp [--token-file F|--keychain NAME]   stdio MCP bridge (§24); exit 2 without a valid MCP client token
-sm mcp clients list|add|remove   add: --token-file F | --keychain NAME, --expires (default 90d) (§24)
+sm mcp [--token-file F|--keychain NAME] [--profile NAME]   stdio MCP bridge (§24); exit 2 without a valid MCP client token
+sm mcp clients list|add|remove   add: --token-file F | --keychain NAME, --expires (default 90d; with --https 30d, at most 90d), --https (§24)
 sm ssh-key show            server-mode public key (§8.4)
 sm secrets import|rotate-master-key|retire-key|export-key|import-key
 sm jobs [list|get|approve|reject|resolve]
@@ -735,6 +735,7 @@ mcp:
     required_scopes: ["supermgmt:mcp"]
   allow_interactive_exec: false    # true is refused in V1 (no MCP tool runs commands)
   write_tools_enabled: false
+  token_over_https: false          # server mode: MCP client tokens registered with --https work over HTTPS (ADR-0044)
 
 providers: []
 
@@ -870,7 +871,7 @@ secrets(id, name, version, envelope_version, kek_id, wrapped_dek, ciphertext, me
 join_tokens(id, token_hash, expires_at, consumed_at, created_by, constraints_json)
 settings(key PRIMARY KEY, value_json, updated_at)
 node_routes(...)             # published node ports (ADR-0040, ADR-0043); see migration 000013
-mcp_clients(id, identity_id, name, origin, state, requested_by, registration_job_id, approved_at, token_hash, token_issued_at, token_expires_at, revoked_at, last_used_at, created_at, updated_at, deleted_at)
+mcp_clients(id, identity_id, name, origin, over_https, state, requested_by, registration_job_id, approved_at, token_hash, token_issued_at, token_expires_at, revoked_at, last_used_at, created_at, updated_at, deleted_at)
 oauth_access_tokens(id, mcp_client_id, token_hash, issuer, jti, issued_at, expires_at, revoked_at, first_seen_at, last_used_at)
 ```
 
@@ -980,7 +981,7 @@ automation  API token holder. The automation identities created for GitHub Actio
             they are kept because jobs, plans and events reference them.
 mcp         a registered MCP client. Local: registered by a human with `sm mcp clients add
             <name>` (registration, then one-time token issuance, §11.2), which yields an MCP client token stored by the MCP bridge config in a
-            0600 file or the OS keychain; `sm mcp` presents it on every socket request.
+            0600 file or the OS keychain; `sm mcp` presents it on every request, over the socket or, for a client registered with `--https`, over HTTPS (ADR-0044).
             Remote: (issuer, subject, client_id) from OAuth (§24), pre-registered by an
             admin. The MCP `initialize` client name is never used for identity.
             An MCP identity NEVER inherits the roles of the human who registered it.
@@ -992,7 +993,7 @@ system      the daemon itself. Allowed operations, fixed in code: observation wr
 
 On the local socket, a request carrying an MCP client token is `mcp`; a request carrying no token is `human`. This separation guards against a misbehaving model using the bridge. It does not guard against arbitrary code running as the same OS user (§2.1.1 trust boundary).
 
-**MCP clients (1.4.7; ADR-0032).** A local client's identity is `issuer = supermgmt:mcp-local`, `subject = <mcp_clients.id>`, `client_id = ''`; a remote client's is its OAuth `(issuer, subject, client_id)`, with `issuer = mcp.oauth.issuer`. Both are created with no role binding. A local client token (`smm_…`, kind `m`) is issued once, expires (mandatory, at most 365 days; default 90 days in the CLI), is accepted only on the local socket and is refused while `mcp.enabled` is false; its `credential_id` is the client id. An OAuth access token's `credential_id` is the id of its `oauth_access_tokens` row (keyed by the token's SHA-256). Deleting a client revokes its token and every OAuth token row, disables its identity and removes its role bindings. Re-registering a deleted remote triple reuses the identity (still with no role) under a new client row; old credentials stay refused, including OAuth tokens whose `iat` precedes the new client's creation by more than 60 s.
+**MCP clients (1.4.7; ADR-0032).** A local client's identity is `issuer = supermgmt:mcp-local`, `subject = <mcp_clients.id>`, `client_id = ''`; a remote client's is its OAuth `(issuer, subject, client_id)`, with `issuer = mcp.oauth.issuer`. Both are created with no role binding. A local client token (`smm_…`, kind `m`) is issued once, expires (mandatory, at most 365 days; default 90 days in the CLI), is accepted on the local socket and, for a client registered with `over_https` while `mcp.token_over_https` is on, on HTTPS (default 30 days, at most 90; ADR-0044), and is refused while `mcp.enabled` is false; its `credential_id` is the client id. An OAuth access token's `credential_id` is the id of its `oauth_access_tokens` row (keyed by the token's SHA-256). Deleting a client revokes its token and every OAuth token row, disables its identity and removes its role bindings. Re-registering a deleted remote triple reuses the identity (still with no role) under a new client row; old credentials stay refused, including OAuth tokens whose `iat` precedes the new client's creation by more than 60 s.
 
 **Credential context.** Every authenticated request also carries the credential it used: `credential_kind ∈ {local_socket, session, api_token, mcp_token, oauth_access_token, github_oidc}` (`github_oidc` only on jobs from before ADR-0043), `credential_id`, the token `scopes`, and the credential expiry. Plans and jobs persist this context (§9). It is re-checked at claim (§20.4):
 - a revoked credential fails the job (`CREDENTIAL_REVOKED`);
@@ -1760,7 +1761,7 @@ Remote interactive terminals are not exposed through a generic command endpoint 
 ## 23.1 Transports, TLS and login
 
 - **Unix socket** (local mode): peer-credential auth and MCP client tokens (§2.1.1, §11.1). An `smm_` token is the only bearer the socket accepts; its requests are charged to the per-identity write rate limit (1.4.7; ADR-0032).
-- **MCP credentials on HTTPS** (1.4.7): `smm_` tokens are refused; OAuth access tokens are accepted only at `/mcp`, never on `/api/v1` (ADR-0033).
+- **MCP credentials on HTTPS** (1.4.7; ADR-0044): `smm_` tokens are refused on their prefix unless `mcp.token_over_https` is set, and then only tokens of clients registered with `over_https` resolve; OAuth access tokens are accepted only at `/mcp`, never on `/api/v1` (ADR-0033).
 - **HTTPS** (server mode), `server.tls.mode`:
   - `direct`: the daemon terminates TLS with `cert_file`/`key_file` (TLS ≥ 1.2; reloaded on SIGHUP).
   - `proxy`: `server.listen` must be a loopback or Unix address, `trusted_proxies` must be non-empty, and `X-Forwarded-For`/`X-Forwarded-Proto` are honored only from those peers. Requests whose forwarded proto is not `https` are rejected. Behind a proxy, a connection from loopback is **not** treated as local or privileged; there is no loopback trust in HTTP auth.
@@ -1789,7 +1790,7 @@ MCP is a client of the API (§2.1.1); it holds no database handle and no connect
 
 Transport:
 
-- **stdio** (`sm mcp`): a bridge process launched by the MCP client. It connects to the local daemon socket and presents the MCP client token issued by `sm mcp clients add <name>` (read from `--token-file`, mode 0600, or the OS keychain). The daemon resolves the token to that `mcp` identity (§11.1). Without a valid token the bridge refuses to start; it never falls back to the human identity.
+- **stdio** (`sm mcp`): a bridge process launched by the MCP client. It connects to the local daemon socket, or to the server of `--profile` or the current profile (ADR-0044), and presents only the MCP client token issued by `sm mcp clients add <name>` (read from `--token-file`, mode 0600, or the OS keychain). The daemon resolves the token to that `mcp` identity (§11.1). Without a valid token the bridge refuses to start; it never falls back to the human identity.
 - **Streamable HTTP** (server mode, `mcp.remote_enabled`): SuperMgmt is an OAuth 2.0 **protected resource only**. It does not issue OAuth tokens. It requires an external authorization server configured in `mcp.oauth` (most OIDC IdPs qualify). SuperMgmt:
   - serves Protected Resource Metadata (RFC 9728) at `/.well-known/oauth-protected-resource`, naming the issuer and `mcp.oauth.resource`;
   - answers unauthenticated requests with `401` and a `WWW-Authenticate` header pointing to that metadata;
@@ -1899,9 +1900,9 @@ Tool schemas are versioned and covered by golden tests. MCP resources may expose
 - `mcp.write_tools_enabled: false` hides the write tools **and** denies every non-query action to `mcp` identities at the application layer (§11.2), so the flag is not cosmetic.
 - Tool output is an allowlisted view per DTO. Remote-discovered fields (service names and native ids, runtime status strings, metadata, event data, log lines) sit under a `remote` object marked `"untrusted_remote_output": true`, stripped, credential-scrubbed and bounded (256 bytes per scalar, 64 KiB / 500 lines per text, depth 4, 64 entries per level). Scrubbing covers Bearer/Basic, PEM private keys, SuperMgmt tokens, JWT-shaped strings and sensitive-key `key=value` / `key: value` / JSON forms, whatever `security.redact_command_output` says; a secret under a non-sensitive name is **not** detected (stated in the tool descriptions and `docs/mcp.md`).
 - Name resolution compares raw API values and the plan binds ids. Write results are `{status, job_id?, plan_hash?, summary, risk}` with `status ∈ {approval_required, queued, denied, done, failed}`; `done` means the effect already happened (a cancelled job, a provider refresh), `failed` that a provider refresh ended in error.
-- The default policy keeps `service.logs` away from `type:mcp`; `docs/mcp.md` shows an environment-scoped grant.
+- The default policy grants `service.logs` to `type:mcp` (`builtin-mcp-operate`); `docs/mcp.md` shows how to deny it.
 - `mcp.allow_interactive_exec: true` is refused by configuration validation in V1.
-- `sm mcp clients add <name>` registers the client; when approval is pending it prints the job and exits 0. Run again by the requester after approval, it preflights the destination (`--token-file`: a new 0600 file created with `O_EXCL|O_NOFOLLOW` in a directory owned by the caller and not group/world-writable; `--keychain`: the native OS keychain, never a file fallback, with no existing entry), then issues the token and stores it. A storage failure after issuance prints `sm mcp clients remove <id>` and re-registration as the only recovery; the token is never printed. On an `active` client it exits 1 saying the token is not re-issued.
+- `sm mcp clients add <name>` registers the client (`--https` marks it for HTTPS; the server refuses a marked client while `mcp.token_over_https` is off, an unmarked local client on a server, a marked client on a local instance and a marked OAuth client, and caps marked tokens at 90 days); when approval is pending it prints the job and exits 0. Run again by the requester after approval, it preflights the destination (`--token-file`: a new 0600 file created with `O_EXCL|O_NOFOLLOW` in a directory owned by the caller and not group/world-writable; `--keychain`: the native OS keychain, never a file fallback, with no existing entry), then issues the token and stores it. A storage failure after issuance prints `sm mcp clients remove <id>` and re-registration as the only recovery; the token is never printed. On an `active` client it exits 1 saying the token is not re-issued.
 - Tested clients: automated checks use the SDK's own client and hand-written JSON-RPC goldens; Claude Code, Claude Desktop and MCP Inspector with a real authorization server stay a manual checklist until run with dated, versioned evidence.
 
 ---
@@ -2424,7 +2425,7 @@ NOT_FOUND                —
 CONFLICT                 PLAN_STALE, PLAN_EXPIRED, ALREADY_SUBMITTED, ALREADY_DECIDED,
                          RESOURCE_LOCKED, RESTORE_HOLD, IDEMPOTENCY_MISMATCH,
                          INVALID_TRANSITION, ISSUANCE_WINDOW_EXPIRED
-UNAUTHENTICATED          CREDENTIAL_EXPIRED, CREDENTIAL_REVOKED, OIDC_REPLAY, OIDC_INVALID,
+UNAUTHENTICATED          CREDENTIAL_EXPIRED, CREDENTIAL_REVOKED, MCP_DISABLED, OIDC_REPLAY, OIDC_INVALID,
                          OAUTH_TOKEN_INVALID
 POLICY_DENIED            DENY_RULE, DEFAULT_DENY, DESTRUCTIVE_GATE, SCOPE_DENIED,
                          APPROVAL_NOT_SUPPORTED, NOT_PLAN_ACTOR, SELF_APPROVAL,

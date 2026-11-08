@@ -86,6 +86,6 @@ Rejections are `429` with `Retry-After`. Socket MCP gets only (4) (ADR-0032).
 
 ## Consequences
 
-- Tokens minted for another resource on the same host never work at `/mcp`, and MCP tokens never work on `/api/v1`.
+- Tokens minted for another resource on the same host never work at `/mcp`, and OAuth access tokens never work on `/api/v1`.
 - Some authorization servers need configuration (an `at+jwt` access-token profile, or introspection) before they can be used.
 - Root-only discovery clients may fail; the challenge path is documented as the supported one.

@@ -39,7 +39,7 @@ Apply creates the identity with **no role bindings**: local → always a new ide
 ### Socket admission
 
 - On the local socket, `Authorization: Bearer smm_…` makes the request the `mcp` caller of that client (`credential_kind = mcp_token`, `credential_id = mcp_clients.id`, expiry from the row). Any other token kind on the socket is still refused; no token is still `local:<uid>`.
-- `mcp.enabled: false` → MCP tokens are refused (`UNAUTHENTICATED`). `smm_` tokens are refused on HTTPS: they are a stdio-only credential.
+- `mcp.enabled: false` → MCP tokens are refused (`UNAUTHENTICATED`). `smm_` tokens are refused on HTTPS, unless the server enables it and the client was registered for it (amended by ADR-0044).
 - Socket `mcp` callers are charged to the per-identity write bucket on every effective write (the socket path had no limiter).
 
 ### Credential status

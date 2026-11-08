@@ -48,4 +48,5 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0040](0040-app-expose-tunnel.md) | Exposing apps through the node's Cloudflare Tunnel | Proposed | app-expose-tunnel |
 | [0041](0041-app-move.md) | Moving an app target to another node | Proposed | app-move |
 | [0042](0042-app-move-routes.md) | Moving an app target's routes with it | Proposed | app-move-routes |
-| [0043](0043-operations-plane-not-a-deployer.md) | SuperMgmt is an operations plane, not a deployer | Proposed | - |
+| [0043](0043-operations-plane-not-a-deployer.md) | SuperMgmt is an operations plane, not a deployer | Accepted | - |
+| [0044](0044-mcp-client-tokens-over-https.md) | MCP client tokens over HTTPS, opt-in and per client | Accepted | Amends 0032 |

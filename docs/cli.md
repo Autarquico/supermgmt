@@ -622,15 +622,19 @@ Serve the Model Context Protocol on stdin and stdout, for an MCP host to launch.
 
 The server authenticates with the token that `sm mcp clients add` stored, read from
 --token-file or the OS keychain (--keychain), never from arguments or the environment.
+It talks to the local daemon, or to the server of --profile (or of the current profile);
+a server accepts the token only if the client was added with --https. The profile's own
+sign-in is never used. The chosen target is printed once on standard error.
 Standard output carries only JSON-RPC; diagnostics go to standard error.
 
 ```text
-sm mcp (--token-file FILE | --keychain NAME) [flags]
+sm mcp (--token-file FILE | --keychain NAME) [--profile NAME] [flags]
 ```
 
 Flags:
 
 - `--keychain` (string): OS keychain entry holding the MCP client token
+- `--profile` (string): profile of the server to serve (default: the current profile; exclusive with --config)
 - `--token-file` (string): file holding the MCP client token (mode 0600, owned by you)
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
@@ -654,13 +658,17 @@ run the same command again after `sm jobs approve <job> --plan-hash <hash>` to i
 into --token-file (created exclusively, mode 0600) or the OS keychain (--keychain). It is never printed
 and cannot be shown again.
 
+--https marks the client's token as usable over HTTPS, which a server requires (a server has no local
+socket for it) and needs mcp.token_over_https on that server. Its token then defaults to 30 days.
+
 ```text
 sm mcp clients add <name> (--token-file FILE | --keychain NAME) [flags]
 ```
 
 Flags:
 
-- `--expires` (string, default `90d`): token lifetime, e.g. 90d (at most 365d)
+- `--expires` (string): token lifetime, e.g. 90d (at most 365d, or 90d with --https, measured on the server; default 90d, 30d with --https)
+- `--https` (bool): let the token authenticate over HTTPS (needs mcp.token_over_https on the server)
 - `--keychain` (string): OS keychain entry that receives the token (must not exist)
 - `--token-file` (string): file that receives the token (must not exist)
 

@@ -20,7 +20,7 @@ Laptop
 
 MCP reaches the daemon in two ways, and neither bypasses the API:
 
-- **Local:** `sm mcp` is a stdio bridge. An MCP host on your machine starts it; it authenticates to the Unix socket as a registered MCP client, never with your human credentials.
+- **Local:** `sm mcp` is a stdio bridge. An MCP host on your machine starts it; it authenticates to the Unix socket as a registered MCP client or, with a token registered with `--https`, to a server's HTTPS API ([how](mcp.md#drive-a-server-from-your-workstation)), never with your human credentials.
 - **Remote:** in server mode, `sm server` can serve MCP over streamable HTTP at `/mcp`. Tool calls reach the API in process as the admitted client. See [mcp.md](mcp.md).
 
 Two exceptions to "everything is an API client":
