@@ -23,7 +23,7 @@ Issue #64. After #63, MCP drives what `sm` operates, but the operator still need
 
 Decisions (user, 2026-11-08): the model runs through the official `claude` CLI, with the operator's own subscription by default and an API key as an explicit mode.
 
-Anthropic's terms do not allow a developer to route requests through a user's subscription on that user's behalf from a product, and do allow a person to use the official binary with their own subscription. They do not settle a program launching the operator's own `claude`. So: SuperMgmt never reads, stores, proxies or asks for Claude credentials or offers a Claude login; the operator's own `claude` handles its own sign-in; the guide states this and says that anyone offering `sm` to other people must use the API key mode.
+Anthropic's terms (as of 2026-11-08) allow running the unmodified Claude Code in a product, under the Commercial Terms, when each end user authenticates with their own subscription or API key, billed to them, and no built-in sign-in method is removed or restricted; a developer may not offer Claude login in their own application, nor collect, store or intermediate Claude credentials. So: SuperMgmt never reads, stores, proxies or asks for Claude credentials or offers a Claude login; the operator's own `claude` handles its own sign-in; the guide states these conditions.
 
 ## Scope
 

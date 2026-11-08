@@ -29,7 +29,7 @@ SuperMgmt never reads, stores or asks for your Claude credentials, and it offers
 
 What you type and what the tools return, including service logs, go to Anthropic through your `claude`, under the terms of that account. SuperMgmt keeps no transcript.
 
-**Offering `sm` to other people?** Use `--auth api-key`. [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance) require products to authenticate with an API key and do not allow routing requests through someone's subscription on their behalf. They allow a person to use the official `claude` with their own subscription, and they do not settle whether another program may launch it for that person, so the default mode is meant for your own use on your own machine.
+**Offering `sm` to other people?** As of 2026-11-08, [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance) allow running Claude Code in your product if you accept the Commercial Terms, the `claude` binary is unmodified with none of its sign-in methods removed or restricted, and each person authenticates with their own subscription or their own API key, billed to them. You may not pay for, resell or intermediate their usage. `--auth subscription` fits that when each person signs in to their own `claude`, as `sm` never touches those credentials. `--auth api-key` is for a key you or they provision. Advertised limits of Pro, Max and Ultra plans assume ordinary, individual usage. Read the page yourself before you distribute `sm`: this is a summary, not legal advice.
 
 ## A conversation
 
