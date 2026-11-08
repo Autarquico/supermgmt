@@ -67,6 +67,7 @@ type m5Options struct {
 	remote      http.Handler
 	remotePaths []string
 	noMCPTokens bool // socket: no MCPResolver
+	httpsMCP    bool // HTTPS: the MCPResolver of clients marked over_https
 	noMCPRoutes bool // no MCPClients service
 }
 
@@ -126,6 +127,9 @@ func newM5Fixture(t *testing.T, opts ...func(*m5Options)) *m5Fixture {
 		network, address = "tcp", "127.0.0.1:0"
 	case o.https:
 		server.Resolver = f.tokens
+		if o.httpsMCP {
+			server.MCPResolver = f.tokens
+		}
 		network, address = "tcp", "127.0.0.1:0"
 	default:
 		server.Identity = f.admin.ID

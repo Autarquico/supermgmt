@@ -121,7 +121,7 @@ func TestMCPClientsListGolden(t *testing.T) {
 	}
 	d := newMCPDaemon(t,
 		mcpClientRow(wire.MCPClientActive, mcpMeID),
-		wire.MCPClient{ID: "0192a000-0000-7000-8000-00000000c003", Name: "laptop", Origin: wire.MCPOriginLocal, State: wire.MCPClientPendingToken, RequestedBy: mcpMeID},
+		wire.MCPClient{ID: "0192a000-0000-7000-8000-00000000c003", Name: "laptop", Origin: wire.MCPOriginLocal, OverHTTPS: true, State: wire.MCPClientPendingToken, RequestedBy: mcpMeID},
 		remote,
 	)
 	r := d.run(realMCPDeps(nil), "mcp", "clients", "list")
@@ -226,7 +226,7 @@ func TestMCPClientsAddPendingTokenIssuesIntoKeychain(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("code=%d stderr=%q", r.code, r.stderr)
 	}
-	if store.entries["desk-token"] != mcpSecret {
+	if store.entries["mcp/desk-token"] != mcpSecret {
 		t.Error("token not in the keychain")
 	}
 	if strings.Contains(r.stdout+r.stderr, mcpSecret) {
@@ -263,7 +263,7 @@ func TestMCPClientsAddDestinationRefusedBeforeIssuance(t *testing.T) {
 			return realMCPDeps(nil), []string{"--keychain", "desk-token"}
 		}},
 		{"keychain entry exists", func(*testing.T) (mcpClientsDeps, []string) {
-			return realMCPDeps(&sinkMemCredentials{entries: map[string]string{"desk-token": "old"}}), []string{"--keychain", "desk-token"}
+			return realMCPDeps(&sinkMemCredentials{entries: map[string]string{"mcp/desk-token": "old"}}), []string{"--keychain", "desk-token"}
 		}},
 	}
 	for _, tt := range tests {
@@ -406,6 +406,7 @@ func TestMCPClientsAddRejectsBadFlagsBeforeConnecting(t *testing.T) {
 		"no destination":   {"mcp", "clients", "add", "desk"},
 		"two destinations": {"mcp", "clients", "add", "desk", "--token-file", "f", "--keychain", "k"},
 		"expiry over 365d": {"mcp", "clients", "add", "desk", "--keychain", "k", "--expires", "400d"},
+		"https over 90d":   {"mcp", "clients", "add", "desk", "--https", "--keychain", "k", "--expires", "120d"},
 		"expiry garbage":   {"mcp", "clients", "add", "desk", "--keychain", "k", "--expires", "soon"},
 	}
 	for name, args := range tests {
@@ -440,5 +441,101 @@ func TestMCPClientsRemoveUnknownName(t *testing.T) {
 	r := d.run(realMCPDeps(nil), "mcp", "clients", "remove", "ghost")
 	if r.code != exitInternal || !strings.Contains(r.stderr, `no MCP client named "ghost"`) || len(d.api.Mutations()) != 0 {
 		t.Errorf("exit=%d stderr=%q mutations=%d", r.code, r.stderr, len(d.api.Mutations()))
+	}
+}
+
+func TestMCPClientsAddHTTPSMismatchWithTheStoredClientIsRefused(t *testing.T) {
+	for _, stored := range []bool{false, true} {
+		row := mcpClientRow(wire.MCPClientPendingToken, mcpMeID)
+		row.OverHTTPS = stored
+		d := newMCPDaemon(t, row)
+		args := []string{"mcp", "clients", "add", "desk", "--token-file", filepath.Join(t.TempDir(), "token")}
+		if !stored {
+			args = append(args, "--https")
+		}
+		r := d.run(realMCPDeps(nil), args...)
+		if r.code != exitUsage || !strings.Contains(r.stderr, "run the command again") || d.issueCalls() != 0 {
+			t.Errorf("stored=%v: exit=%d issuance calls=%d stderr=%q", stored, r.code, d.issueCalls(), r.stderr)
+		}
+	}
+}
+
+func TestMCPClientsAddAnActiveClientIsAnsweredAsActiveWhateverTheFlag(t *testing.T) {
+	row := mcpClientRow(wire.MCPClientActive, mcpMeID)
+	row.OverHTTPS = true
+	d := newMCPDaemon(t, row)
+
+	r := d.run(realMCPDeps(nil), "mcp", "clients", "add", "desk", "--token-file", filepath.Join(t.TempDir(), "token"))
+
+	if r.code == 0 || !strings.Contains(r.stderr, "already active") || strings.Contains(r.stderr, "was registered") {
+		t.Errorf("exit=%d stderr=%q", r.code, r.stderr)
+	}
+}
+
+func TestMCPClientsAddHTTPSSendsTheMarkerAndDefaultsTo30Days(t *testing.T) {
+	d := newMCPDaemon(t)
+	d.register = func() wire.Direct[wire.MCPClient] {
+		row := mcpClientRow(wire.MCPClientPendingToken, mcpMeID)
+		row.OverHTTPS = true
+		return wire.Direct[wire.MCPClient]{Applied: &row}
+	}
+	r := d.run(realMCPDeps(nil), "mcp", "clients", "add", "desk", "--https", "--token-file", filepath.Join(t.TempDir(), "token"))
+	if r.code != 0 {
+		t.Fatalf("code=%d stderr=%q", r.code, r.stderr)
+	}
+	var register, issue sentRequest
+	for _, req := range d.api.Requests() {
+		switch {
+		case req.Method == "POST" && req.Path == wire.PathMCPClients:
+			register = req
+		case req.Method == "POST" && strings.HasSuffix(req.Path, "/token"):
+			issue = req
+		}
+	}
+	if !strings.Contains(register.Body, `"over_https":true`) {
+		t.Errorf("register body %q lacks the marker", register.Body)
+	}
+	var body wire.IssueMCPTokenRequest
+	if err := json.Unmarshal([]byte(issue.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if days := time.Until(body.ExpiresAt).Hours() / 24; days < 29.9 || days > 30.1 {
+		t.Errorf("expiry in %.2f days, want 30", days)
+	}
+}
+
+func TestMCPClientsAddPrintsTheHostCommandForAProfile(t *testing.T) {
+	row := mcpClientRow(wire.MCPClientPendingToken, mcpMeID)
+	row.OverHTTPS = true
+	b := newRemoteBox(t, routes{
+		"GET " + wire.PathMe: func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, wire.Me{IdentityID: mcpMeID}) },
+		"GET " + wire.PathMCPClients: func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Page[wire.MCPClient]{Items: []wire.MCPClient{row}})
+		},
+		"POST " + wire.Path(wire.PathMCPClientToken, string(mcpClientID)): func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.MCPTokenIssued{Client: mcpClientRow(wire.MCPClientActive, mcpMeID), Token: mcpSecret})
+		},
+	})
+	b.useProfile()
+	b.signIn(tokenOne)
+	dest := filepath.Join(t.TempDir(), "token")
+	r := execRoot(b.env, "", []string{"mcp", "clients", "add", "desk", "--https", "--token-file", dest}, newMCPCmdWith(b.env, mcpBridgeDeps{}))
+	if r.code != 0 {
+		t.Fatalf("code=%d stderr=%q", r.code, r.stderr)
+	}
+	if want := "host command: sm mcp --profile home --token-file " + dest; !strings.Contains(r.stdout, want) {
+		t.Errorf("stdout lacks %q:\n%s", want, r.stdout)
+	}
+}
+
+func TestShellQuotedKeepsAPastedTokenPathIntact(t *testing.T) {
+	for in, want := range map[string]string{
+		"/home/a/token":                  "/home/a/token",
+		"/Users/a/Application Support/t": "'/Users/a/Application Support/t'",
+		"/tmp/it's":                      `'/tmp/it'\''s'`,
+	} {
+		if got := shellQuoted(in); got != want {
+			t.Errorf("shellQuoted(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

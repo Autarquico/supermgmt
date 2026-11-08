@@ -135,14 +135,14 @@ A failed tool call returns `isError: true` with the API error `code`, `reason` a
 1. The write tools are not registered.
 2. The application layer denies every non-query action to an `mcp` identity with `MCP_WRITES_DISABLED`, so a raw API call with the MCP token fails too (`TestMCPWritesOff_EveryNonQueryActionIsDenied`, `TestMCPWritesOff_HumansAreUnaffected`).
 
-What a client sees with writes off, per route (`test/integration/mcp_route_matrix_test.go`, `testdata/mcp_route_matrix.json`, run against the socket and the in-process path):
+What a client sees with writes off, per route (`test/integration/mcp_route_matrix_test.go`, `testdata/mcp_route_matrix.json`, run against the socket, the in-process path and HTTPS, where socket-only routes do not exist):
 
 - `POST /plans` still succeeds and stores a plan whose verdict is the denial (`TestAPlanIsStoredWithTheDenialAsItsVerdictWhileWritesAreOff`). `infra_plan_action` therefore reports a denied verdict instead of failing, and `submit_via` is `null`.
 - Submitting a plan fails with 403 and creates no job (`TestSubmittingAPlanFailsWithNoJobWhileWritesAreOff`).
 - A refused write never sends a command to a node (`TestARefusedWriteNeverSendsACommandToANode`).
 - With the flag off, a write is denied end to end through the daemon (`TestWithWritesDisabledAnMCPWriteIsDeniedEndToEndThroughTheDaemon`).
 
-With `write_tools_enabled: true`, normal policy applies, and the floor above and the approval floor still do: operational-or-higher actions wait for a person; a probe (read risk) and cancelling its own job do not. The flag is read by the daemon; the `sm mcp` bridge also reads it to decide which tools to list, but the daemon's value is the one that gates actions.
+With `write_tools_enabled: true`, normal policy applies, and the floor above and the approval floor still do: operational-or-higher actions wait for a person; a probe (read risk) and cancelling its own job do not. The flag is read by the daemon or server; the `sm mcp` bridge asks it to decide which tools to list, but the daemon's value is the one that gates actions.
 
 ## Local MCP over stdio
 
@@ -167,10 +167,10 @@ Rules, each covered by a test:
 - If storing fails after issuance, the partial file is removed and the command exits 1 with `the token for <name> (<id>) was issued but could not be stored: <cause>; it cannot be shown again — run 'sm mcp clients remove <id>' and add it again` (`TestMCPClientsAddStorageFailureAfterIssuance`, `TestMCPClientsAddKeychainPutFailureAfterIssuance`).
 - A second `add` for an `active` client exits 1 with `<name> is already active; its token was issued at <time> and is not re-issued...` (`TestMCPClientsAddActiveIsNotReissued`). A token that was lost is recovered only by `sm mcp clients remove <name|id>` and a new `add`.
 - Only the identity that requested the client can receive its token, once, within 24 hours of the approval (`TestMCPClientsAddForeignRequesterIsRefusedBeforeIssuance`; the window and once-only rule in `internal/app/mcpclients_test.go`). Late issuance is `CONFLICT`/`ISSUANCE_WINDOW_EXPIRED`.
-- `--expires` sets the token lifetime: default 90 days, at most 365. Expiry is mandatory (`internal/cli/mcp.go`, `internal/cli/tokens.go`).
+- `--expires` sets the token lifetime: default 90 days, at most 365; with `--https`, default 30 days, at most 90. Expiry is mandatory (`internal/cli/mcp.go`, `internal/cli/tokens.go`).
 - Client names match `^[a-z0-9][a-z0-9_-]{0,62}$` (`internal/app/mcpclients.go`).
 
-`sm mcp clients list` shows id, name, origin, state and token expiry, never a token (`TestMCPClientsListGolden`, `TestMCPClientsListNeverCarriesATokenInJSON`). `sm mcp clients remove <name|id>` revokes the token, disables the identity and removes its role bindings; history rows are kept.
+`sm mcp clients list` shows id, name, origin, whether it works over HTTPS, state and token expiry, never a token (`TestMCPClientsListGolden`, `TestMCPClientsListNeverCarriesATokenInJSON`). `sm mcp clients remove <name|id>` revokes the token, disables the identity and removes its role bindings; history rows are kept.
 
 ### Point a host at it
 
@@ -191,11 +191,23 @@ Claude Code with the keychain: `examples/mcp/claude-code.json`. **Whether Claude
 
 ### What `sm mcp` refuses
 
-Exit code 2 in each case (`internal/cli/mcp_bridge_test.go`): no token (`TestBridge_RefusesWithoutToken`); a token file that is not a regular file, not mode 0600 or not yours (`TestBridge_RefusesUnsafeTokenFiles`, `TestTokenFile_Refusals`); `mcp.enabled: false` (`TestBridge_RefusesWhenMCPIsDisabled`); a token that is not an MCP client token, such as a human session (`TestBridge_RefusesNonMCPIdentity`). It never falls back to the human. Standard output carries only JSON-RPC; diagnostics go to standard error (`TestBridge_ServesTheMCPToolsToAHost`).
+Exit code 2 in each case (`internal/cli/mcp_bridge_test.go`): no token (`TestBridge_RefusesWithoutToken`); a token file that is not a regular file, not mode 0600 or not yours (`TestBridge_RefusesUnsafeTokenFiles`, `TestTokenFile_Refusals`); `mcp.enabled: false` (`TestBridge_ExplainsWhenMCPIsDisabled`); a token that is not an MCP client token, such as a human session (`TestBridge_RefusesNonMCPIdentity`). It never falls back to the human. Standard output carries only JSON-RPC; diagnostics go to standard error (`TestBridge_ServesTheMCPToolsToAHost`). A keychain entry created before MCP entries got their own namespace is no longer read: remove the client and add it again; the old entry under the bare name can be deleted by hand.
 
-On the daemon's socket, a request with no token is still the local human; a request with an `smm_` token is that MCP client; every other token kind is refused (`TestSocketAdmitsAnMCPClientToken`, `TestSocketWithoutATokenIsStillTheLocalUser`, `TestSocketRefusesEveryOtherTokenKindWithoutResolvingIt`). `smm_` tokens are refused on HTTPS (`TestHTTPSRefusesALocalMCPTokenWithoutResolvingIt`). With `mcp.enabled: false` the daemon refuses MCP tokens (`TestMCPTokensAreRefusedWhenMCPIsDisabled`). A revoked, deleted or expired token fails immediately, including for a job that was already queued (`TestACredentialThatIsGoneByClaimTimeFailsTheQueuedMCPJob`).
+On the daemon's socket, a request with no token is still the local human; a request with an `smm_` token is that MCP client; every other token kind is refused (`TestSocketAdmitsAnMCPClientToken`, `TestSocketWithoutATokenIsStillTheLocalUser`, `TestSocketRefusesEveryOtherTokenKindWithoutResolvingIt`). `smm_` tokens are refused on HTTPS unless [the server and the client allow it](#drive-a-server-from-your-workstation) (`TestHTTPSRefusesALocalMCPTokenWithoutResolvingIt`). With `mcp.enabled: false` the daemon refuses MCP tokens (`TestMCPTokensAreRefusedWhenMCPIsDisabled`). A revoked, deleted or expired token fails immediately, including for a job that was already queued (`TestACredentialThatIsGoneByClaimTimeFailsTheQueuedMCPJob`).
 
-Not verified: `sm mcp` against the socket of a machine running `sm server`; the tests use the local daemon.
+### Drive a server from your workstation
+
+A server has no socket for `sm mcp`, so by default an MCP client token cannot reach it. Without an OAuth authorization server, you can let a client use its token over HTTPS:
+
+1. On the server (inside the container for an appliance), add `mcp.token_over_https: true` under `mcp:` in `/etc/supermgmt/config.yaml` and run `systemctl restart supermgmt`. Add `mcp.write_tools_enabled: true` too if the agent should act, not only read.
+2. On your workstation, point a profile at the server and sign in, if you have not: `sm profile add <name> --url <url> --ca-file <ca.pem> --use`, then `sm login`.
+3. Register the client: `sm mcp clients add <name> --https --token-file <path>`. It acts on the current profile; switch with `sm profile use <name>` if needed. A server does not let you approve your own plan, so another administrator approves it with `sm approvals` and `sm jobs approve <job-id> --plan-hash <hash>`; an appliance you run alone needs `security.allow_self_approval: true` ([why](policies.md#approving-your-own-plans)). Then run the same command again to get the token. It expires after 30 days by default, 90 at most.
+4. In your host configuration, launch `sm mcp --profile <name> --token-file <path>` ([example](../examples/mcp/remote-token.json)).
+
+The bridge runs on your workstation and sends only the MCP token, never your own credential. The tools it lists are those the server allows. A token leaked from such a client works from the network until it expires or you remove the client. It can read the inventory and logs and request what policy grants, with writes subject to `mcp.write_tools_enabled` and approval; it can never approve, issue credentials or open sessions.
+
+Without `--https` on a server, registration is refused, because the token would work nowhere.
+
 
 ## Remote MCP (server mode)
 

@@ -86,7 +86,7 @@ func (b *builder) serverServers(ctx context.Context, services api.Services) (*ap
 		return nil, nil, err
 	}
 	opts := api.Options{
-		Services: services, IDs: b.o.IDs, Resolver: b.bearerResolver(), Proxy: proxy,
+		Services: services, IDs: b.o.IDs, Resolver: b.bearerResolver(), MCPResolver: b.mcpHTTPSResolver(), Proxy: proxy,
 		DB: b.db, Clock: b.o.Clock, RequestTimeout: b.cfg.Server.RequestTimeout, Log: b.o.Log, Ready: b.ready(),
 	}
 	if mount != nil {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,9 +34,18 @@ func readTokenFile(path string, euid int) (audit.Secret, error) {
 	return tokenFromText("--token-file", string(raw))
 }
 
+// mcpKeychainAccount is the keychain account of an MCP client token. Profile
+// credentials share the store under the bare profile name, so the prefix keeps
+// --keychain from ever reading (and sending) a human's credential.
+func mcpKeychainAccount(name string) string { return "mcp/" + name }
+
 // readKeychainToken reads an MCP client token from the native OS keychain.
 func readKeychainToken(ctx context.Context, store client.CredentialStore, name string) (audit.Secret, error) {
-	text, err := store.Get(ctx, name)
+	text, err := store.Get(ctx, mcpKeychainAccount(name))
+	if errors.Is(err, client.ErrNoCredential) {
+		return "", usageErrorf("--keychain: no entry %q; entries created before this version are no longer read: "+
+			"run `sm mcp clients remove %s` and add the client again", name, name)
+	}
 	if err != nil {
 		return "", usageErrorf("--keychain: cannot read entry %q: %s", name, err)
 	}

@@ -92,6 +92,7 @@ mcp:
     required_scopes: ["supermgmt:mcp"]
   allow_interactive_exec: false    # true is refused in V1 (no MCP tool runs commands)
   write_tools_enabled: false
+  token_over_https: false          # server mode: MCP client tokens registered with --https work over HTTPS (ADR-0044)
 
 providers: []
 

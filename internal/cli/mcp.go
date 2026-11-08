@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -72,16 +74,28 @@ func newMCPClientsListCmd(env []string) *cobra.Command {
 func writeMCPClients(w io.Writer, clients []wire.MCPClient) error {
 	rows := make([][]string, len(clients))
 	for i, c := range clients {
-		rows[i] = []string{string(c.ID), c.Name, string(c.Origin), string(c.State), formatTimePtr(c.TokenExpiresAt)}
+		overHTTPS := "-"
+		if c.OverHTTPS {
+			overHTTPS = "yes"
+		}
+		rows[i] = []string{string(c.ID), c.Name, string(c.Origin), overHTTPS, string(c.State), formatTimePtr(c.TokenExpiresAt)}
 	}
-	return table(w, []string{"ID", "NAME", "ORIGIN", "STATE", "TOKEN EXPIRES"}, rows)
+	return table(w, []string{"ID", "NAME", "ORIGIN", "OVER HTTPS", "STATE", "TOKEN EXPIRES"}, rows)
 }
 
 // ---- add ----------------------------------------------------------------------
 
 type mcpAddFlags struct {
 	tokenFile, keychain, expires string
+	https                        bool
 }
+
+// defaultHTTPSTokenTTL is the shorter default life of a token that works over the network.
+const defaultHTTPSTokenTTL = "30d"
+
+// httpsTokenMaxTTL is the longest life of a token that works over the network;
+// the server measures it from its own clock, so this is only the early refusal.
+const httpsTokenMaxTTL = 90 * 24 * time.Hour
 
 func newMCPClientsAddCmd(env []string, deps mcpClientsDeps) *cobra.Command {
 	var f mcpAddFlags
@@ -91,23 +105,26 @@ func newMCPClientsAddCmd(env []string, deps mcpClientsDeps) *cobra.Command {
 		Long: "Register a local MCP client. When policy requires approval, this prints the job to approve and stops;\n" +
 			"run the same command again after `sm jobs approve <job> --plan-hash <hash>` to issue the token. The token goes straight\n" +
 			"into --token-file (created exclusively, mode 0600) or the OS keychain (--keychain). It is never printed\n" +
-			"and cannot be shown again.",
+			"and cannot be shown again.\n\n" +
+			"--https marks the client's token as usable over HTTPS, which a server requires (a server has no local\n" +
+			"socket for it) and needs mcp.token_over_https on that server. Its token then defaults to 30 days.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			expiry, err := f.validate()
 			if err != nil {
 				return err
 			}
-			api, err := newClient(cmd, env)
+			api, where, err := connect(cmd, env)
 			if err != nil {
 				return err
 			}
-			return (&mcpAdd{cmd: cmd, api: api, deps: deps, flags: f, expiry: expiry}).run(args[0])
+			return (&mcpAdd{cmd: cmd, api: api, where: where, deps: deps, flags: f, expiry: expiry}).run(args[0])
 		},
 	}
 	cmd.Flags().StringVar(&f.tokenFile, "token-file", "", "file that receives the token (must not exist)")
 	cmd.Flags().StringVar(&f.keychain, "keychain", "", "OS keychain entry that receives the token (must not exist)")
-	cmd.Flags().StringVar(&f.expires, "expires", defaultTokenTTL, "token lifetime, e.g. 90d (at most 365d)")
+	cmd.Flags().StringVar(&f.expires, "expires", "", "token lifetime, e.g. 90d (at most 365d, or 90d with --https, measured on the server; default 90d, 30d with --https)")
+	cmd.Flags().BoolVar(&f.https, "https", false, "let the token authenticate over HTTPS (needs mcp.token_over_https on the server)")
 	return cmd
 }
 
@@ -115,12 +132,27 @@ func (f mcpAddFlags) validate() (time.Time, error) {
 	if (f.tokenFile == "") == (f.keychain == "") {
 		return time.Time{}, usageErrorf("give exactly one of --token-file and --keychain")
 	}
-	return tokenExpiry(f.expires, "")
+	expires := f.expires
+	if expires == "" {
+		expires = defaultTokenTTL
+		if f.https {
+			expires = defaultHTTPSTokenTTL
+		}
+	}
+	expiry, err := tokenExpiry(expires, "")
+	if err != nil {
+		return time.Time{}, err
+	}
+	if f.https && time.Until(expiry) > httpsTokenMaxTTL {
+		return time.Time{}, usageErrorf("--expires: with --https a token lives at most 90d")
+	}
+	return expiry, nil
 }
 
 type mcpAdd struct {
 	cmd    *cobra.Command
 	api    *client.Client
+	where  target
 	deps   mcpClientsDeps
 	flags  mcpAddFlags
 	expiry time.Time
@@ -138,7 +170,7 @@ func (a *mcpAdd) run(name string) error {
 }
 
 func (a *mcpAdd) register(name string) error {
-	direct, err := a.api.RegisterMCPClient(a.cmd.Context(), wire.RegisterMCPClientRequest{Name: name, Origin: wire.MCPOriginLocal})
+	direct, err := a.api.RegisterMCPClient(a.cmd.Context(), wire.RegisterMCPClientRequest{Name: name, Origin: wire.MCPOriginLocal, OverHTTPS: a.flags.https})
 	if err != nil {
 		return err
 	}
@@ -164,6 +196,9 @@ func (a *mcpAdd) resume(c wire.MCPClient) error {
 		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
 			"%s is already active; its token was issued at %s and is not re-issued. If you do not hold it, remove and add the client again.",
 			c.Name, formatTimePtr(c.TokenIssuedAt)))
+	case c.OverHTTPS != a.flags.https:
+		with := map[bool]string{true: "with", false: "without"}[c.OverHTTPS]
+		return usageErrorf("%s was registered %s --https; run the command again %s --https (to change that, remove the client and add it again)", c.Name, with, with)
 	case c.State != wire.MCPClientPendingToken:
 		return smerr.New(smerr.CodeConflict, "", fmt.Sprintf("%s is %s and cannot receive a token", c.Name, c.State))
 	}
@@ -194,8 +229,25 @@ func (a *mcpAdd) resume(c wire.MCPClient) error {
 	return emit(a.cmd, issued.Client, func(w io.Writer) error {
 		_, err := fmt.Fprintf(w, "stored the token for %s (%s) in %s; it expires %s and cannot be shown again\n",
 			c.Name, c.ID, location, formatTimePtr(issued.Client.TokenExpiresAt))
+		if err != nil || a.where.name == "" {
+			return err
+		}
+		_, err = fmt.Fprintf(w, "host command: sm mcp --profile %s %s\n", a.where.name, a.sourceFlag())
 		return err
 	})
+}
+
+// sourceFlag is the bridge flag that reads the token this command stored. The
+// file is named absolutely because the host launches the bridge from elsewhere.
+func (a *mcpAdd) sourceFlag() string {
+	if a.flags.tokenFile != "" {
+		path, err := filepath.Abs(a.flags.tokenFile)
+		if err != nil {
+			path = a.flags.tokenFile
+		}
+		return "--token-file " + shellQuoted(path)
+	}
+	return "--keychain " + a.flags.keychain
 }
 
 // openSink preflights the destination; nothing is issued if it fails.
@@ -264,4 +316,12 @@ func findMCPClient(ctx context.Context, api *client.Client, name string) (wire.M
 		}
 	}
 	return wire.MCPClient{}, false, nil
+}
+
+// shellQuoted makes path safe to paste into a shell.
+func shellQuoted(path string) string {
+	if !strings.ContainsAny(path, " \t\n'\"\\$`&;|<>()*?#~!") {
+		return path
+	}
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }

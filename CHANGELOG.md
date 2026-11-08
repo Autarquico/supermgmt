@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: no stable release yet.
 
+### Added: MCP clients can reach a server over HTTPS
+
+- `sm mcp --profile NAME` drives a server from your workstation with an MCP client token. The server must set `mcp.token_over_https: true` and the client must be registered with `sm mcp clients add --https`. Such tokens last 30 days by default and at most 90.
+- MCP keychain entries now live under `mcp/<name>`. An entry created earlier is no longer read: run `sm mcp clients remove <name>`, add the client again, and delete the old entry under the bare name by hand.
+
 ### Added: reach nodes through Cloudflare Tunnel (experimental)
 
 - A node can have the transport `cloudflare`: `sm nodes setup <node> --tunnel` provisions a Cloudflare Tunnel, an Access application with a service-token policy and an owners policy, and a DNS record, installs `cloudflared` on the node from Cloudflare's package repository (key fingerprint pinned in the build), verifies the tunnel over a fresh connection with the pinned host key, and only then switches. `sm nodes tunnel disable <node>` returns the node to direct SSH and removes the node's tunnel, Access application and DNS record and the files setup installed; the instance's service token and Access policies stay, and a `cloudflared` that was already installed (for example from Cloudflare's guide) is never removed. It also abandons a tunnel setup that cannot finish. A node name must make a valid hostname `ssh-<node-name>.<zone>`; this is checked when the plan is created. `sm cloudflare rotate-access-token` rotates the instance's Access service token with overlap.

@@ -26,8 +26,15 @@ type mcpClientWorld struct {
 
 func newMCPClientWorld(t *testing.T) *mcpClientWorld {
 	t.Helper()
+	return newMarkedMCPClientWorld(t, false)
+}
+
+// newMarkedMCPClientWorld is newMCPClientWorld with the client registered
+// over_https (or not).
+func newMarkedMCPClientWorld(t *testing.T, overHTTPS bool) *mcpClientWorld {
+	t.Helper()
 	w := &mcpClientWorld{world: newWorld(t)}
-	w.identity, w.client = w.mcpRegister("local-client")
+	w.identity, w.client = w.mcpRegisterMarked("local-client", overHTTPS)
 	secret, hash, err := auth.Mint(auth.KindMCP)
 	must(t, err, "Mint")
 	w.token = secret.Reveal()
@@ -54,11 +61,15 @@ func (w *mcpClientWorld) mcpDelete() {
 }
 
 func (w *mcpClientWorld) mcpRegister(name string) (domain.ID, database.MCPClient) {
+	return w.mcpRegisterMarked(name, false)
+}
+
+func (w *mcpClientWorld) mcpRegisterMarked(name string, overHTTPS bool) (domain.ID, database.MCPClient) {
 	w.t.Helper()
 	now := w.clock.Now()
 	identity := w.ids.NewID()
 	client := database.MCPClient{
-		ID: w.ids.NewID(), IdentityID: identity, Name: name, Origin: database.MCPOriginLocal,
+		ID: w.ids.NewID(), IdentityID: identity, Name: name, Origin: database.MCPOriginLocal, OverHTTPS: overHTTPS,
 		State: database.MCPClientPendingToken, RequestedBy: w.admin, ApprovedAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	w.mcpTx(func(ctx context.Context, tx *database.Tx) error {
@@ -128,7 +139,7 @@ func TestMCPResolverRefusals(t *testing.T) {
 		do     func(w *mcpClientWorld) (token string, enabled bool)
 		reason smerr.Reason
 	}{
-		{"mcp disabled", func(w *mcpClientWorld) (string, bool) { return w.token, false }, ""},
+		{"mcp disabled", func(w *mcpClientWorld) (string, bool) { return w.token, false }, smerr.ReasonMCPDisabled},
 		{"expired", func(w *mcpClientWorld) (string, bool) {
 			w.clock.Advance(mcpLifetime)
 			return w.token, true
@@ -214,4 +225,60 @@ func TestMintedMCPTokenHasItsKindAndShape(t *testing.T) {
 	if err != nil || kind != auth.KindMCP || gotHash != hash || !strings.HasPrefix(secret.Reveal(), "smm_") {
 		t.Errorf("Hash = %c, %q, %v; want m, %q", kind, gotHash, err, hash)
 	}
+}
+
+func (w *mcpClientWorld) httpsResolve(token string) (app.Caller, error) {
+	return auth.MCPResolver{DB: w.db, Clock: w.clock, Enabled: true, OverHTTPS: true}.Resolve(context.Background(), token)
+}
+
+func (w *mcpClientWorld) lastUsed() *time.Time {
+	w.t.Helper()
+	c, err := database.GetMCPClient(context.Background(), w.db.Reader(), w.client.ID)
+	must(w.t, err, "GetMCPClient")
+	return c.LastUsedAt
+}
+
+func TestHTTPSMCPResolverAdmitsAMarkedClientAndLabelsItsSource(t *testing.T) {
+	w := newMarkedMCPClientWorld(t, true)
+
+	caller, err := w.httpsResolve(w.token)
+
+	must(t, err, "Resolve")
+	if caller.ID != w.identity || caller.Credential.Kind != domain.CredentialMCPToken || caller.Source != "mcp_https" {
+		t.Errorf("caller = %+v, want identity %s via mcp_token from mcp_https", caller, w.identity)
+	}
+	socket, err := w.mcpResolve(w.token)
+	must(t, err, "socket Resolve")
+	if socket.Source != "mcp_socket" {
+		t.Errorf("socket source = %q, want mcp_socket", socket.Source)
+	}
+}
+
+func TestHTTPSMCPResolverAnswersAnUnmarkedClientAsAnUnknownTokenWithoutTouchingIt(t *testing.T) {
+	w := newMarkedMCPClientWorld(t, false)
+	other, _, err := auth.Mint(auth.KindMCP)
+	must(t, err, "Mint")
+
+	_, unmarked := w.httpsResolve(w.token)
+	_, unknown := w.httpsResolve(other.Reveal())
+
+	mcpWantRefused(t, unmarked, smerr.CodeUnauthenticated, "")
+	if unmarked.Error() != unknown.Error() {
+		t.Errorf("unmarked: %q, unknown: %q, want the same answer", unmarked, unknown)
+	}
+	if w.lastUsed() != nil {
+		t.Error("an unmarked client's last use was stamped")
+	}
+}
+
+func TestHTTPSMCPResolverRefusesAMarkedClientThatExpiredOrWasRevoked(t *testing.T) {
+	expired := newMarkedMCPClientWorld(t, true)
+	expired.clock.Advance(mcpLifetime)
+	_, err := expired.httpsResolve(expired.token)
+	mcpWantRefused(t, err, smerr.CodeUnauthenticated, smerr.ReasonCredentialExpired)
+
+	deleted := newMarkedMCPClientWorld(t, true)
+	deleted.mcpDelete()
+	_, err = deleted.httpsResolve(deleted.token)
+	mcpWantRefused(t, err, smerr.CodeUnauthenticated, smerr.ReasonCredentialRevoked)
 }

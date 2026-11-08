@@ -43,9 +43,9 @@ The daemon socket is `$XDG_RUNTIME_DIR/supermgmt/sm.sock` on Linux when that var
 
 Reading was checked by searching the code for each key; a key not listed has no reader outside the config package.
 
-### MCP, read by the daemon and `sm mcp`
+### MCP, read by the daemon
 
-- `mcp.enabled`, `mcp.write_tools_enabled` and, for `sm server` with remote MCP, `mcp.remote_enabled` and `mcp.oauth.*`; see [MCP](#mcp). `sm mcp` reads `mcp.enabled` and `mcp.write_tools_enabled` (`internal/cli/mcp_bridge.go`); the daemon reads all of them (`internal/daemon/assemble.go`, `internal/daemon/mcp_remote.go`).
+- `mcp.enabled`, `mcp.write_tools_enabled` and, for `sm server` with remote MCP, `mcp.remote_enabled` and `mcp.oauth.*`; see [MCP](#mcp). `mcp.token_over_https` lets clients registered with `--https` use their token over HTTPS. `sm mcp` reads none of these: the daemon or server it connects to answers for them; the daemon reads all of them (`internal/daemon/assemble.go`, `internal/daemon/mcp.go`, `internal/daemon/mcp_remote.go`).
 - `mcp.allow_interactive_exec` is validated but refused when `true`.
 
 ### Validated but not read
@@ -151,6 +151,7 @@ The table below is generated from the schema by `make generate` (`go generate ./
 | `SUPERMGMT_MCP_OAUTH_REQUIRED_SCOPES` | `mcp.oauth.required_scopes` | list (comma-separated) |
 | `SUPERMGMT_MCP_ALLOW_INTERACTIVE_EXEC` | `mcp.allow_interactive_exec` | bool |
 | `SUPERMGMT_MCP_WRITE_TOOLS_ENABLED` | `mcp.write_tools_enabled` | bool |
+| `SUPERMGMT_MCP_TOKEN_OVER_HTTPS` | `mcp.token_over_https` | bool |
 | `SUPERMGMT_BACKUP_SCHEDULE` | `backup.schedule` | string |
 | `SUPERMGMT_BACKUP_RETENTION` | `backup.retention` | int |
 | `SUPERMGMT_BACKUP_DIRECTORY` | `backup.directory` | string |
@@ -285,7 +286,8 @@ Operator guide: [mcp.md](mcp.md).
 | Key | Default | Meaning |
 |---|---|---|
 | `mcp.enabled` | `true` | Master switch. `false` makes the daemon refuse every MCP token and `sm mcp` refuse to start, and `/mcp` is not mounted. |
-| `mcp.write_tools_enabled` | `false` | Registers the five write tools **and** lets the application layer consider writes by MCP identities at all. With `false`, every non-query action by an MCP identity is denied `MCP_WRITES_DISABLED`, whatever the policy says. |
+| `mcp.token_over_https` | `false` | Server mode only. Lets MCP client tokens registered with `--https` work over HTTPS ([how](mcp.md#drive-a-server-from-your-workstation)). |
+| `mcp.write_tools_enabled` | `false` | Registers the write tools **and** lets the application layer consider writes by MCP identities at all. With `false`, every non-query action by an MCP identity is denied `MCP_WRITES_DISABLED`, whatever the policy says. |
 | `mcp.allow_interactive_exec` | `false` | `true` fails validation ("not supported in this version"); no MCP tool runs commands. |
 | `mcp.remote_enabled` | `false` | Serves `/mcp` and the protected-resource metadata on the HTTPS listener. Requires `instance.mode: server`. |
 | `mcp.oauth.issuer` | empty | Authorization server issuer; `https`. Becomes `authorization_servers` in the metadata and must equal the token `iss` exactly. |
@@ -306,6 +308,7 @@ server:
 mcp:
   enabled: true
   write_tools_enabled: false
+  token_over_https: false
   remote_enabled: true
   oauth:
     issuer: https://auth.example.com/realms/ops

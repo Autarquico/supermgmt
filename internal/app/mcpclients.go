@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	"github.com/autarquico/supermgmt/internal/domain/plan"
@@ -35,6 +36,10 @@ const (
 	// may still be issued (spec §11.2).
 	mcpIssuanceWindow = 24 * time.Hour
 
+	// mcpHTTPSTokenMaxLifetime caps the token of a client marked over_https:
+	// it travels a network, so it lives shorter than the schema bound.
+	mcpHTTPSTokenMaxLifetime = 90 * 24 * time.Hour
+
 	maxMCPOAuthFieldBytes = 256
 )
 
@@ -48,6 +53,7 @@ type mcpRegisterParams struct {
 	IdentityID    domain.ID      `json:"identity_id"`
 	Name          string         `json:"name"`
 	Origin        wire.MCPOrigin `json:"origin"`
+	OverHTTPS     bool           `json:"over_https,omitempty"`
 	Issuer        string         `json:"issuer,omitempty"`
 	Subject       string         `json:"subject,omitempty"`
 	OAuthClientID string         `json:"oauth_client_id,omitempty"`
@@ -63,6 +69,9 @@ func (p mcpRegisterParams) validate() error {
 			return invalidArgument("a local MCP client has no issuer, subject or client_id")
 		}
 	case wire.MCPOriginRemote:
+		if p.OverHTTPS {
+			return invalidArgument("over_https applies to a local MCP client only: a remote client authenticates with OAuth")
+		}
 		for _, field := range []struct{ name, value string }{
 			{"issuer", p.Issuer}, {"subject", p.Subject}, {"client_id", p.OAuthClientID},
 		} {
@@ -90,10 +99,14 @@ type mcpDeleteParams struct {
 
 // MCPClientsOptions are the collaborators of MCPClientService. RemoteIssuer is
 // mcp.oauth.issuer when remote MCP is enabled and empty otherwise: a remote
-// client is only registered against it.
+// client is only registered against it. Mode is the instance mode and
+// TokenOverHTTPS is mcp.token_over_https: together they decide whether a local
+// client is registered over HTTPS (a server) or not (a local instance).
 type MCPClientsOptions struct {
-	Tokens       TokenMinter
-	RemoteIssuer string
+	Tokens         TokenMinter
+	RemoteIssuer   string
+	Mode           config.Mode
+	TokenOverHTTPS bool
 }
 
 // MCPClientService implements MCPClients (spec §11.1, §11.2; ADR-0032).
@@ -105,6 +118,8 @@ type MCPClientService struct {
 	plans        *Plans
 	tokens       TokenMinter
 	remoteIssuer string
+	mode         config.Mode
+	overHTTPS    bool
 }
 
 var _ MCPClients = (*MCPClientService)(nil)
@@ -119,7 +134,7 @@ func NewMCPClients(cfg Config, jobStore *jobs.Store, o MCPClientsOptions) (*MCPC
 	if o.Tokens == nil {
 		return nil, errors.New("app: mcp clients need a token minter")
 	}
-	return &MCPClientService{core: plans.core, plans: plans, tokens: o.Tokens, remoteIssuer: o.RemoteIssuer}, nil
+	return &MCPClientService{core: plans.core, plans: plans, tokens: o.Tokens, remoteIssuer: o.RemoteIssuer, mode: o.Mode, overHTTPS: o.TokenOverHTTPS}, nil
 }
 
 func mcpIdentityRef(id domain.ID) domain.ResourceRef {
@@ -155,7 +170,7 @@ func (s *MCPClientService) List(ctx context.Context, by Caller) ([]wire.MCPClien
 func mcpClientView(ctx context.Context, q database.Querier, row database.MCPClient) (wire.MCPClient, error) {
 	view := wire.MCPClient{
 		ID: row.ID, IdentityID: row.IdentityID, Name: row.Name, Origin: wire.MCPOrigin(row.Origin),
-		State: wire.MCPClientState(row.State), RequestedBy: row.RequestedBy, ApprovedAt: row.ApprovedAt,
+		OverHTTPS: row.OverHTTPS, State: wire.MCPClientState(row.State), RequestedBy: row.RequestedBy, ApprovedAt: row.ApprovedAt,
 		TokenIssuedAt: row.TokenIssuedAt, TokenExpiresAt: row.TokenExpiresAt, CreatedAt: row.CreatedAt,
 	}
 	if row.Origin == database.MCPOriginRemote {
@@ -213,7 +228,7 @@ func (s *MCPClientService) Register(ctx context.Context, by Caller, r wire.Regis
 func (s *MCPClientService) registerParams(r wire.RegisterMCPClientRequest) (mcpRegisterParams, error) {
 	p := mcpRegisterParams{
 		ClientID: s.cfg.IDs.NewID(), IdentityID: s.cfg.IDs.NewID(), Name: r.Name, Origin: r.Origin,
-		Subject: r.Subject, OAuthClientID: r.ClientID,
+		OverHTTPS: r.OverHTTPS, Subject: r.Subject, OAuthClientID: r.ClientID,
 	}
 	if r.Origin == wire.MCPOriginRemote {
 		if s.remoteIssuer == "" {
@@ -221,7 +236,30 @@ func (s *MCPClientService) registerParams(r wire.RegisterMCPClientRequest) (mcpR
 		}
 		p.Issuer = s.remoteIssuer
 	}
-	return p, p.validate()
+	if err := p.validate(); err != nil {
+		return mcpRegisterParams{}, err
+	}
+	return p, s.requireReachableToken(p)
+}
+
+// requireReachableToken refuses a local client whose token could not be used
+// where it would be registered: on a server the token works only over HTTPS,
+// and only while mcp.token_over_https is on; on a local instance there is no
+// HTTPS listener to reach.
+func (s *MCPClientService) requireReachableToken(p mcpRegisterParams) error {
+	if p.Origin != wire.MCPOriginLocal {
+		return nil
+	}
+	server := s.mode == config.ModeServer
+	switch {
+	case p.OverHTTPS && !server:
+		return invalidArgument("over_https (sm mcp clients add --https) needs a server instance: this local instance has no HTTPS listener; select the server's profile with `sm profile use`")
+	case p.OverHTTPS && !s.overHTTPS:
+		return invalidArgument("over_https (sm mcp clients add --https) needs mcp.token_over_https to be enabled on this server")
+	case !p.OverHTTPS && server:
+		return invalidArgument("on a server an MCP client token is usable only over HTTPS; register with over_https (sm mcp clients add --https)")
+	}
+	return nil
 }
 
 func requireFreeMCPClientName(ctx context.Context, q database.Querier, name string) error {
@@ -292,7 +330,7 @@ func (c core) applyMCPClientRegister(ctx context.Context, q database.Querier, ac
 	now := c.cfg.Clock.Now()
 	client := database.MCPClient{
 		ID: p.ClientID, IdentityID: identityID, Name: p.Name, Origin: database.MCPClientOrigin(p.Origin),
-		State: database.MCPClientPendingToken, RequestedBy: actor.ID, ApprovedAt: approvedAt, CreatedAt: now, UpdatedAt: now,
+		OverHTTPS: p.OverHTTPS, State: database.MCPClientPendingToken, RequestedBy: actor.ID, ApprovedAt: approvedAt, CreatedAt: now, UpdatedAt: now,
 	}
 	if p.Origin == wire.MCPOriginRemote {
 		client.State = database.MCPClientActive
@@ -304,6 +342,9 @@ func (c core) applyMCPClientRegister(ctx context.Context, q database.Querier, ac
 		return database.MCPClient{}, err
 	}
 	data := map[string]any{"client_id": p.ClientID.String(), "name": p.Name, "origin": string(p.Origin)}
+	if p.OverHTTPS {
+		data["over_https"] = true
+	}
 	if p.Origin == wire.MCPOriginRemote {
 		data["issuer"], data["subject"], data["oauth_client_id"] = p.Issuer, p.Subject, p.OAuthClientID
 	}
@@ -404,6 +445,9 @@ func (s *MCPClientService) IssueToken(ctx context.Context, by Caller, id domain.
 		}
 		if err := s.requireIssuable(ctx, tx, actor, ref, client, now); err != nil {
 			return wire.MCPTokenIssued{}, err
+		}
+		if client.OverHTTPS && r.ExpiresAt.Sub(now) > mcpHTTPSTokenMaxLifetime {
+			return wire.MCPTokenIssued{}, invalidArgument("expires_at must be within 90 days from now, measured on the server, for a client whose token is used over HTTPS (sm mcp clients add --https --expires 90d at most)")
 		}
 		secret, hash, err := s.tokens.Mint(MCPTokenKind)
 		if err != nil {

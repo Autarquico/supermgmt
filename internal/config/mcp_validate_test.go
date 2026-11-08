@@ -147,3 +147,13 @@ func TestConfig_MCPInteractiveExecIsRefused(t *testing.T) {
 		wantMCPProblem(t, c, "mcp.allow_interactive_exec")
 	}
 }
+
+func TestConfig_MCPTokenOverHTTPSNeedsServerMode(t *testing.T) {
+	local := resolved(t, localDoc)
+	local.MCP.TokenOverHTTPS = true
+	wantMCPProblem(t, local, "mcp.token_over_https")
+
+	server := resolved(t, serverDoc)
+	server.MCP.TokenOverHTTPS = true
+	wantMCPProblem(t, server, "")
+}

@@ -105,6 +105,31 @@ func TestHTTPSRefusesALocalMCPTokenWithoutResolvingIt(t *testing.T) {
 	}
 }
 
+func TestHTTPSWithTheMCPResolverResolvesAnMCPToken(t *testing.T) {
+	f := newM5Fixture(t, func(o *m5Options) { o.https = true; o.httpsMCP = true })
+	r := f.do(http.MethodGet, wire.PathMe, m5MCPToken, "")
+	if r.Status != http.StatusOK {
+		t.Fatalf("status %d: %s", r.Status, r.Body)
+	}
+	me := decodeData[wire.Me](t, r)
+	if me.IdentityID != f.mcp.ID || me.MCP == nil || me.MCP.WriteToolsEnabled {
+		t.Errorf("me = %+v, want the mcp client with writes off", me)
+	}
+	if human := decodeData[wire.Me](t, f.do(http.MethodGet, wire.PathMe, m5AdminToken, "")); human.MCP != nil {
+		t.Errorf("a human's Me carries mcp = %+v, want none", human.MCP)
+	}
+}
+
+func TestHTTPSWithTheMCPResolverStillRefusesOtherTokensOnTheirOwnResolver(t *testing.T) {
+	f := newM5Fixture(t, func(o *m5Options) { o.https = true; o.httpsMCP = true })
+	if r := f.do(http.MethodGet, wire.PathMe, m5AdminToken, ""); r.Status != http.StatusOK {
+		t.Fatalf("api token: status %d: %s", r.Status, r.Body)
+	}
+	if r := f.do(http.MethodGet, wire.PathMe, "smm_unknown", ""); r.Status != http.StatusUnauthorized {
+		t.Errorf("unknown mcp token: status %d, want 401", r.Status)
+	}
+}
+
 func TestHTTPSRefusesAnOAuthAccessTokenOnTheAPI(t *testing.T) {
 	f := newM5Fixture(t, func(o *m5Options) { o.https = true; o.realTokens = true })
 	for _, route := range []struct{ method, path string }{
@@ -123,7 +148,6 @@ func TestOptionsKeepTheMCPPiecesOnTheirTransport(t *testing.T) {
 	f := newM5Fixture(t)
 	handler := http.NotFoundHandler()
 	for name, o := range map[string]Options{
-		"MCP token resolver on HTTPS":    {Resolver: f.tokens, MCPResolver: f.tokens},
 		"remote endpoint on the socket":  {Identity: f.admin.ID, MCPRemote: handler, MCPRemotePaths: []string{"/mcp"}},
 		"remote endpoint without paths":  {Resolver: f.tokens, MCPRemote: handler},
 		"remote paths without a handler": {Resolver: f.tokens, MCPRemotePaths: []string{"/mcp"}},

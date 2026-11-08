@@ -68,10 +68,13 @@ func TestTokenFile_Refusals(t *testing.T) {
 }
 
 func TestTokenFile_KeychainToken(t *testing.T) {
-	store := &sinkMemCredentials{entries: map[string]string{"agent": "smm_kc\n"}}
+	store := &sinkMemCredentials{entries: map[string]string{"mcp/agent": "smm_kc\n", "profile": "smt_human"}}
 	got, err := readKeychainToken(t.Context(), store, "agent")
 	if err != nil || string(got) != "smm_kc" {
 		t.Fatalf("token = %q, err = %v", string(got), err)
+	}
+	if _, err := readKeychainToken(t.Context(), store, "profile"); exitCode(err) != 2 {
+		t.Errorf("a bare profile name read a credential: exit code = %d, err = %v", exitCode(err), err)
 	}
 	if _, err := readKeychainToken(t.Context(), store, "other"); exitCode(err) != 2 {
 		t.Errorf("missing entry: exit code = %d, err = %v", exitCode(err), err)

@@ -197,6 +197,33 @@ func TestMCPMatrixListsEveryRoute(t *testing.T) {
 	}
 }
 
+// TestMCPMatrixSkipsOnlyTheRoutesTheHTTPSTransportDoesNotServe pins the one
+// place the transports differ: a row the HTTPS table lacks is a unixOnly route,
+// and every route HTTPS serves has a row.
+func TestMCPMatrixSkipsOnlyTheRoutesTheHTTPSTransportDoesNotServe(t *testing.T) {
+	rig := newMCPRig(t, false)
+	listed := map[string]bool{}
+	for _, row := range loadMCPMatrix(t) {
+		listed[row.Route] = true
+		if rig.servesVia(mcpRigHTTPS, row.Route) {
+			continue
+		}
+		method, pattern, _ := strings.Cut(row.Route, " ")
+		unixOnly := false
+		for _, rt := range rig.server.Routes() {
+			unixOnly = unixOnly || rt.Method == method && rt.Pattern == pattern && rt.UnixOnly
+		}
+		if !unixOnly {
+			t.Errorf("row %q is absent over HTTPS but its route is not unixOnly", row.Route)
+		}
+	}
+	for _, rt := range rig.httpsServer.Routes() {
+		if key := rt.Method + " " + rt.Pattern; !listed[key] {
+			t.Errorf("route %q is served over HTTPS but has no matrix row", key)
+		}
+	}
+}
+
 // mcpMatrixClassMatches ties a row's class to the route's catalog action, so a
 // route re-mapped to another action cannot keep a stale row.
 func mcpMatrixClassMatches(rt api.Route, class mcpMatrixClass) string {
@@ -243,13 +270,16 @@ var mcpMatrixModes = []struct {
 	writes bool
 }{{"writes off", false}, {"writes on", true}}
 
-var mcpMatrixTransports = []mcpRigTransport{mcpRigSocket, mcpRigInProcess}
+var mcpMatrixTransports = []mcpRigTransport{mcpRigSocket, mcpRigInProcess, mcpRigHTTPS}
 
 // assertRow sends the row's request and compares what happened with what the
 // row expects in this writes mode.
 func (rig *mcpRig) assertRow(via mcpRigTransport, row mcpMatrixRow) {
 	t := rig.t
 	t.Helper()
+	if !rig.servesVia(via, row.Route) {
+		return
+	}
 	want := row.want(rig.writes)
 	got := rig.attempt(via, row)
 	if got.Status != want.Status || got.Reason != want.Reason {
@@ -365,6 +395,9 @@ func TestARefusedWriteNeverSendsACommandToANode(t *testing.T) {
 		t.Run(string(via), func(t *testing.T) {
 			rig := newMCPRig(t, false)
 			for _, row := range loadMCPMatrix(t) {
+				if !rig.servesVia(via, row.Route) {
+					continue
+				}
 				got := rig.attempt(via, row)
 				if got.Status == http.StatusForbidden && got.NodeCommands != 0 {
 					t.Errorf("%s was refused yet sent %d commands to a node", row.Route, got.NodeCommands)
