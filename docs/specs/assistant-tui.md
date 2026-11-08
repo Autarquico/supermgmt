@@ -6,7 +6,7 @@ status: active
 priority: P1
 size: M
 issue: null
-prs: []
+prs: [92]
 related_issues: [91]
 depends_on: [assistant-claude-cli]
 supersedes: []
