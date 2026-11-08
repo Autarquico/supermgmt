@@ -12,7 +12,6 @@ These cannot be completed by code alone. The [release checklist](docs/release-ch
 |---|---|---|
 | Release gate: a person checks the first tag run (`v0.1.0-rc.1`: gates, notices, SBOM, provenance, channel pointer, yank), a clean-machine install from the published pre-release, a real Debian 13 VM, an Intel Mac, an upgrade from a signed release, the Homebrew tap, the GitHub repository settings, the legal reading of the notices, a read of the first week of nightly results ([checklist](docs/manual-checks/m6-release.md)) | First release | Maintainer |
 | Real MCP clients (Claude Code and Claude Desktop over stdio, MCP Inspector against `/mcp`) and a real authorization server, including RFC 8707 `resource` at authorization and token exchange ([checklist](docs/manual-checks/m5-real-mcp-clients.md)); each row needs dated, versioned evidence | MCP acceptance, first version | Maintainer |
-| Real-GitHub run: GHCR, real attestations in a public and a private repository, real Actions OIDC, redirect behaviour, the GitHub TUF anchor and refresh ([checklist](docs/manual-checks/m4-real-github.md)); fills the GitHub rows of [Compatibility](docs/compatibility.md) | Deployments acceptance, first version | Maintainer |
 | Real-Proxmox run on a supported Proxmox VE 9.x host ([checklist](docs/manual-checks/m3-real-pve.md)); fills the real-host column of [Compatibility](docs/compatibility.md) | Proxmox acceptance, first version | Maintainer |
 | Server-mode checks: macOS keychain, Linux `secret-tool`, a real OIDC provider, a real reverse proxy, a real VM install ([checklist](docs/manual-checks/m2-handoff.md)) | Server-mode sign-off | Maintainer |
 | Real-Cloudflare run for node tunnels: permission labels, the pinned package key, Access admission and denial, the sandboxed node unit, One-time PIN owner login, teardown and abandoning an unfinished setup, rotation, restore ([checklist](docs/manual-checks/cloudflare-tunnel.md)) | Taking node tunnels out of experimental | Maintainer |
@@ -32,13 +31,13 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 | Local daemon, SSH nodes and TUI | `sm daemon` with a Unix-socket API and typed client, local provider, agentless SSH nodes with `node.setup`, systemd and Docker discovery and logs, policy-gated service actions, the TUI and the CLI | **Implemented**; the terminal-emulator checklist is open |
 | Server, client, auth and releases | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, signed release pipeline with checksums, SBOM and provenance, `install.sh`, backup and restore, join | **Implemented**; the server-mode checks and the production release key are open |
 | Proxmox and the appliance installer | Proxmox discovery, power actions, restricted credentials, `sm install proxmox-lxc` with a rollback journal, upgrade and uninstall | **Implemented** against a simulated Proxmox host; the real-host run is open |
-| Apps, GitHub and deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Implemented** against a fake GitHub, a virtual Sigstore and a local registry; the real-GitHub run is open |
+| Apps, GitHub and deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Retired**: each project's CI/CD deploys it, and SuperMgmt operates what runs on the node ([decision](docs/adr/0043-operations-plane-not-a-deployer.md)) |
 | MCP | MCP client registration, stdio bridge, remote MCP as an OAuth protected resource, read tools, plan submission, optional write tools off by default | **Implemented** against the Go SDK client, raw JSON-RPC goldens and a fake authorization server; the real-client run is open |
 | Reach nodes from any network | A per-node transport: direct SSH, or a Cloudflare Tunnel with an Access service token, provisioned by SuperMgmt through the Cloudflare API (`sm nodes setup --tunnel`, `sm nodes tunnel disable`, `sm cloudflare rotate-access-token`), so the laptop running `sm` reaches its servers from any network without inbound ports. SSH stays end to end with the pinned host key, the dedicated user, policy and approvals unchanged. `cloudflared` runs on the node and on the machines that dial it (third-party, not SuperMgmt). See [Cloudflare](docs/cloudflare.md) | **Implemented**, experimental: tested against fakes only; the [real-account checklist](docs/manual-checks/cloudflare-tunnel.md) is open |
 | Hardening and release | Fuzz and race tests, security scans, compatibility matrix, migration tests, lifecycle tests across modes, the release gate | **Implemented**; the human rows of the release checklist are open |
 | Website and documentation | A static site built from `docs/`, a getting-started path, TUI and policy guides, a generated CLI reference, one status page | **Implemented** and published: content from the latest release tag, site tooling from `main`, so a website fix never needs a release |
 
-"Done" for the first version means: install without cloning, a one-command Proxmox LXC, agentless SSH nodes, Proxmox, systemd and Docker discovery, the TUI, CI-gated Compose deploys with safe rollback, an audit timeline, remote server mode, MCP with approvals, tested backup, restore, upgrade and uninstall, and signed releases.
+"Done" for the first version means: install without cloning, a one-command Proxmox LXC, agentless SSH nodes, Proxmox, systemd and Docker discovery, the TUI, an audit timeline, remote server mode, MCP with approvals, tested backup, restore, upgrade and uninstall, and signed releases.
 
 ### What CI has run
 
@@ -85,21 +84,6 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 - An `--allow-downgrade` upgrade to a binary that predates the hardening work leaves its audit record pending until a newer binary starts.
 - The end-to-end suites (`TestM3_Appliance*`, `TestM3_Upgrade*`, `TestM3_Uninstall*`, CI jobs `e2e-appliance` and `e2e-upgrade`) run in Docker with a simulated Proxmox host; the upgrade fixture is an early server build (commit `e6d5577`), so the job needs the full history.
 
-### Apps, GitHub and deployments
-
-- **No real GitHub was used.** GitHub REST, GHCR, Sigstore attestations (public and private repositories), the GitHub TUF anchor and refresh, Actions OIDC tokens and redirect behaviour are verified against `ghfake`, a virtual Sigstore and a local registry only. Each assumption is a row of [Compatibility](docs/compatibility.md) and an item of the [real-GitHub checklist](docs/manual-checks/m4-real-github.md). GitHub Enterprise Server is not verified.
-- Docker Compose CLI **5.5.1 only**; any other version makes the node ineligible. `jq` is a required node tool and its version is not pinned.
-- GitHub App installation tokens are not supported; the credential is a fine-grained read-only token.
-- One target per application and environment.
-- `compose_source: repository` is refused for production environments (stricter than the spec, which allows an admin exception with no defined storage).
-- No environment can require an Actions `environment` claim; the spec defines no field for it.
-- Health checks: `http`, `tcp` and docker-health on the node, `http(s)` from the control plane; `command-template` and `systemd-active` are rejected for app targets. Manifest health bounds (timeout at most 30 s, interval at most 1 min, at most 60 attempts) are an implementation choice, not in the spec.
-- The only pre-deploy backup template is `postgres-dump`. `deployment_policy.snapshot: true` is refused ("not supported in this version").
-- The disk preflight uses registry-reported sizes plus 1 GiB with no decompression safety factor; an unknown size fails the preflight.
-- The pull step is proven by a `.done` marker, not a per-image inspect.
-- The secret-leak scan of the end-to-end suite covers the control plane (database, logs, backup archive, API, events), not the node and not CLI stdout.
-- Open review items: a locked command that exits 75 because a concurrent lock probe held the flock should be retryable; the expected-model helper is duplicated in the fixture test; the `vars` parameter of `ExpectedEnvHashes` is unused.
-
 ### MCP
 
 - **No real MCP client and no real OAuth authorization server was used.** MCP is verified with the SDK's own client, hand-written raw JSON-RPC goldens and a fake authorization server (`oauthfake`: JWKS and introspection). Claude Code, Claude Desktop, MCP Inspector and a real authorization server (including RFC 8707 `resource` at authorization and at token exchange) stay **deferred** until the [checklist](docs/manual-checks/m5-real-mcp-clients.md) records dated, versioned evidence.
@@ -133,7 +117,7 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 - A metrics endpoint, a TLS renewal command.
 - Linux packages (`.deb`, `.rpm`): a package manager's upgrade would bypass the upgrade protocol.
 - MCP resources and prompts.
-- Several targets per environment, GitHub App tokens, Proxmox snapshot policy, `command-template` and `systemd-active` health for apps, other backup templates.
+- Proxmox snapshot policy, other backup templates.
 
 ## Exploratory, not promises
 

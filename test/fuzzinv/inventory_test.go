@@ -343,7 +343,7 @@ func fuzzTargets(root string) map[string]bool {
 		if err != nil {
 			return nil
 		}
-		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == "node_modules") {
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".claude" || entry.Name() == "node_modules") { // .claude holds agent worktrees, not the tree
 			return filepath.SkipDir
 		}
 		if entry.IsDir() || !strings.HasSuffix(path, "_test.go") {

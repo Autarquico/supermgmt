@@ -34,7 +34,7 @@ func (s CredentialStatus) Status(ctx context.Context, cred domain.CredentialCont
 		row, err := database.GetAPIToken(ctx, s.DB.Reader(), domain.ID(cred.ID))
 		return s.stateOf(row.RevokedAt, row.ExpiresAt, err)
 	case domain.CredentialGitHubOIDC:
-		return s.githubOIDCState(ctx, cred.ID)
+		return app.CredentialRevoked, nil // GitHub credentials were retired with deployments (ADR-0043)
 	case domain.CredentialMCPToken:
 		return s.withID(ctx, cred, s.mcpTokenState)
 	case domain.CredentialOAuthAccessToken:
@@ -91,28 +91,6 @@ func (s CredentialStatus) oauthAccessTokenState(ctx context.Context, id string) 
 func (s CredentialStatus) identityDisabled(ctx context.Context, id domain.ID) bool {
 	identity, err := database.GetIdentity(ctx, s.DB.Reader(), id)
 	return err != nil || identity.DisabledAt != nil
-}
-
-// githubOIDCState: revoked when the row is revoked (unlinking the automation
-// identity from its app revokes its open rows), the identity is disabled, or
-// the row is gone; otherwise expired from expires_at, which callers treat as
-// natural expiry. A credential without an id is malformed, not revoked.
-func (s CredentialStatus) githubOIDCState(ctx context.Context, id string) (app.CredentialState, error) {
-	if id == "" {
-		return "", smerr.New(smerr.CodeUnauthenticated, "", "github_oidc credential has no id")
-	}
-	row, err := database.GetGithubOIDCCredential(ctx, s.DB.Reader(), id)
-	if smerr.CodeOf(err) == smerr.CodeNotFound {
-		return app.CredentialRevoked, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("read credential: %w", err)
-	}
-	identity, err := database.GetIdentity(ctx, s.DB.Reader(), row.IdentityID)
-	if err == nil && identity.DisabledAt != nil {
-		return app.CredentialRevoked, nil
-	}
-	return s.stateOf(row.RevokedAt, row.ExpiresAt, err)
 }
 
 // stateOf judges a credential row. Revocation wins over expiry. A row that is

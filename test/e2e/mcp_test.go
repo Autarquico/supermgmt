@@ -26,15 +26,12 @@ type (
 	m5Services struct {
 		Items []mcp.ServiceView `json:"items"`
 	}
-	m5Deployments struct {
-		Items []mcp.DeploymentView `json:"items"`
-	}
 )
 
 // TestE2E_MCPStdioReadsGraph
 //
 // Spec scenario "lectura sin shell" (M5): a registered MCP client launches `sm mcp`, inspects
-// nodes, services and deployments, and has no shell tool to do it with. Log text from the node
+// nodes and services, and has no shell tool to do it with. Log text from the node
 // reaches the client scrubbed of credentials, and the client's token appears nowhere it should not.
 func TestE2E_MCPStdioReadsGraph(t *testing.T) {
 	w := newM5LocalWorld(t, true)
@@ -80,16 +77,6 @@ func TestE2E_MCPStdioReadsGraph(t *testing.T) {
 		}
 		if service.NodeID != node.ID {
 			t.Errorf("service node = %s, want %s", service.NodeID, node.ID)
-		}
-	})
-
-	t.Run("lists deployments (none exist yet)", func(t *testing.T) {
-		var deployments m5Deployments
-		if failure := m5Call(t, &outputs, session, "infra_list_deployments", nil, &deployments); failure != "" {
-			t.Fatalf("infra_list_deployments failed: %s", failure)
-		}
-		if len(deployments.Items) != 0 {
-			t.Errorf("listed %d deployments in a world without apps", len(deployments.Items))
 		}
 	})
 

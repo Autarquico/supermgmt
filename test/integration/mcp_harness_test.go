@@ -27,7 +27,6 @@ import (
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
-	"github.com/autarquico/supermgmt/internal/providers/github"
 	"github.com/autarquico/supermgmt/internal/secrets"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh"
@@ -52,13 +51,6 @@ func (r mcpRigResolver) Resolve(_ context.Context, bearer string) (app.Caller, e
 		return r.caller, nil
 	}
 	return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "unknown token")
-}
-
-// mcpRigGitHub is a GitHubClients with no network: no route here reaches GitHub.
-type mcpRigGitHub struct{}
-
-func (mcpRigGitHub) For(context.Context, domain.ID) (github.Client, error) {
-	return nil, smerr.New(smerr.CodeProviderError, "", "no GitHub in the rig")
 }
 
 // mcpRigRuntime is the only fake of the rig: the SSH boundary to a node. It
@@ -235,7 +227,7 @@ func (rig *mcpRig) seedInventory() {
 		if err != nil {
 			return err
 		}
-		for _, capability := range []string{"node.reboot", "node.read", "service.start", "service.stop", "service.restart", "service.logs", "service.read", "docker.compose.deploy", "node.ssh"} {
+		for _, capability := range []string{"node.reboot", "node.read", "service.start", "service.stop", "service.restart", "service.logs", "service.read", "node.ssh"} {
 			if err := database.SetNodeCapability(ctx, tx, node.ID, database.NodeCapability{Capability: capability, Available: true, CheckedAt: now}); err != nil {
 				return err
 			}
@@ -276,12 +268,6 @@ func (rig *mcpRig) seedInventory() {
 		if err != nil {
 			return err
 		}
-		githubProvider, err := database.CreateProvider(ctx, tx, domain.Provider{
-			ID: rig.ids.NewID(), Type: "github", Name: "gh", Origin: domain.ProviderAPI, Endpoint: "https://127.0.0.1:1", CreatedAt: now, UpdatedAt: now,
-		})
-		if err != nil {
-			return err
-		}
 		apiNode, err := database.CreateNode(ctx, tx, domain.Node{
 			ID: rig.ids.NewID(), ProviderID: proxmox.ID, NativeID: "pve/101", Name: "vm-101", Kind: "proxmox-vm",
 			EnvironmentID: &env.ID, ManagementState: domain.ManagementDiscovered, Reachability: domain.ReachabilityUnknown, CreatedAt: now, UpdatedAt: now,
@@ -290,7 +276,7 @@ func (rig *mcpRig) seedInventory() {
 			return err
 		}
 		rig.fixtures["prod_service"], rig.fixtures["node_api"] = prodService.ID.String(), apiNode.ID.String()
-		rig.fixtures["provider_proxmox"], rig.fixtures["provider_github"] = proxmox.ID.String(), githubProvider.ID.String()
+		rig.fixtures["provider_proxmox"] = proxmox.ID.String()
 		rig.fixtures["provider"], rig.fixtures["environment"] = provider.ID.String(), env.ID.String()
 		rig.fixtures["node"], rig.fixtures["service"] = node.ID.String(), service.ID.String()
 		return nil
@@ -357,15 +343,7 @@ func (rig *mcpRig) startServer(ctx context.Context, cfg app.Config) *api.Server 
 	mcpRigMust(t, err)
 	svc.Proxmox, err = app.NewProxmoxSync(cfg, app.ProxmoxSyncOptions{Token: app.SecretToken(secretStore)})
 	mcpRigMust(t, err)
-	svc.Apps, err = app.NewApps(cfg, store, mcpRigGitHub{})
-	mcpRigMust(t, err)
 	svc.Routes, err = app.NewNodeRoutes(cfg, store)
-	mcpRigMust(t, err)
-	svc.Repositories, err = app.NewRepositories(cfg, mcpRigGitHub{})
-	mcpRigMust(t, err)
-	deployments, err := app.NewDeployments(cfg, svc.Governance, app.CIPolling{})
-	mcpRigMust(t, err)
-	svc.Deployments, err = app.NewDeploymentFinalizer(deployments, app.FinalizerDeps{Clients: mcpRigGitHub{}, Jobs: store})
 	mcpRigMust(t, err)
 	svc.Auth, err = app.NewAuthService(cfg, app.AuthOptions{Tokens: auth.Minter{}})
 	mcpRigMust(t, err)
@@ -494,7 +472,6 @@ func (rig *mcpRig) count(table string) int {
 
 // expand fills the {name} placeholders of s from the fixtures.
 func (rig *mcpRig) expand(s string) string {
-	s = strings.ReplaceAll(s, "{deployment_body}", rig.deploymentBody())
 	s = strings.ReplaceAll(s, "{bootstrap_code}", rig.unknownToken(auth.KindBootstrap))
 	s = strings.ReplaceAll(s, "{join_token}", rig.unknownToken(auth.KindJoin))
 	s = strings.ReplaceAll(s, "{expires_at}", rig.clock.Now().Add(24*time.Hour).UTC().Format(time.RFC3339))
@@ -518,26 +495,10 @@ func (rig *mcpRig) fixture(method, path, body string) mcpRigReply {
 	return r
 }
 
-// seedGovernedResources adds what the remaining routes address: an app with a
-// target, a queued job, an API token and a local MCP client.
+// seedGovernedResources adds what the remaining routes address: a queued job,
+// an API token and a local MCP client.
 func (rig *mcpRig) seedGovernedResources() {
 	rig.t.Helper()
-	var app struct {
-		Applied wire.App `json:"applied"`
-	}
-	rig.fixture(http.MethodPost, wire.PathApps, `{"name":"shop","deployed_service":"web","compose_source":"control-plane",`+
-		`"compose_content":"services:\n  web:\n    image: example/web\n","image_policy":{"deployed":"web"}}`).data(rig.t, &app)
-	var target struct {
-		Applied wire.AppTarget `json:"applied"`
-	}
-	rig.fixture(http.MethodPost, wire.Path(wire.PathAppTargets, app.Applied.ID.String()),
-		`{"environment":"dev","node_id":"`+rig.fixtures["node"]+`","deployment_policy":{"rollback":"manual"}}`).data(rig.t, &target)
-	rig.fixtures["app"], rig.fixtures["app_target"] = app.Applied.ID.String(), target.Applied.ID.String()
-
-	var deployment wire.Deployment
-	rig.fixture(http.MethodPost, wire.PathDeployments, rig.deploymentBody()).data(rig.t, &deployment)
-	rig.fixtures["deployment"] = deployment.ID.String()
-
 	var session wire.SessionOpened
 	rig.fixture(http.MethodPost, wire.Path(wire.PathNodeSessions, rig.fixtures["node"]), `{"tool":"shell"}`).data(rig.t, &session)
 	rig.fixtures["session"] = session.Session.ID.String()
@@ -640,12 +601,6 @@ func (rig *mcpRig) seedRoute() {
 		})
 		return err
 	})
-}
-
-// deploymentBody is a valid POST /deployments body for the fixture target.
-func (rig *mcpRig) deploymentBody() string {
-	return `{"app_target_id":"` + rig.fixtures["app_target"] + `","kind":"deploy","commit_sha":"` + strings.Repeat("a", 40) +
-		`","images":[{"service":"web","digest":"sha256:` + strings.Repeat("b", 64) + `"}]}`
 }
 
 // unknownToken is a well-formed token of the kind that no table has ever

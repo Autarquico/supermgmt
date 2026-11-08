@@ -240,7 +240,7 @@ func TestEveryPaletteCommandInTheTUIGuideIsHandledByTheTUI(t *testing.T) {
 	if end := strings.Index(section, "\n## "); end >= 0 {
 		section = section[:end]
 	}
-	source := readRepoFile(t, "internal/tui/action.go") + readRepoFile(t, "internal/tui/wizard.go")
+	source := readRepoFile(t, "internal/tui/action.go")
 	verbs := 0
 	for _, line := range strings.Split(section, "\n") {
 		if m := paletteRow.FindStringSubmatch(line); m != nil {

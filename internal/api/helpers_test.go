@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
 	"github.com/autarquico/supermgmt/internal/secrets"
@@ -221,4 +223,19 @@ func (h *harness) post(path, body, key string) reply {
 		headers[wire.HeaderIdempotencyKey] = key
 	}
 	return h.do(http.MethodPost, path, body, headers)
+}
+
+func errorReasonOf(t *testing.T, r reply) smerr.Reason {
+	t.Helper()
+	var env struct {
+		Error struct {
+			Details struct {
+				Reason smerr.Reason `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(r.Body, &env); err != nil {
+		t.Fatalf("not an error envelope: %s", r.Body)
+	}
+	return env.Error.Details.Reason
 }

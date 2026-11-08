@@ -10,7 +10,6 @@ test (ubuntu-latest)
 test (macos-latest)
 integration-fixtures (debian13)
 integration-fixtures (ubuntu2404)
-compose-equivalence
 daemon-linux-peer
 race (ubuntu-latest)
 race (macos-latest)
@@ -26,7 +25,6 @@ e2e-server
 e2e-install
 e2e-appliance
 e2e-upgrade
-e2e-deploy
 e2e-mcp
 secret-scan
 licenses

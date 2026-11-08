@@ -54,11 +54,8 @@ func (t inProcess) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // admitInProcess is the admission of an in-process request: its caller was
-// stamped by InProcess, so only the limit and the credential scope apply.
+// stamped by InProcess, so only the limit applies.
 func (s *Server) admitInProcess(by app.Caller, rt route) (scope, error) {
-	if err := requireScope(by, rt); err != nil {
-		return scope{}, err
-	}
 	if err := s.chargeWrite(by, rt); err != nil {
 		return scope{}, err
 	}

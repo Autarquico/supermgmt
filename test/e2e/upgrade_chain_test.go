@@ -203,6 +203,9 @@ func chainColumn(t *testing.T, db database.Querier, query string) []string {
 	return out
 }
 
+// deployerRoleID is the seeded role that migration 000014 removes.
+const deployerRoleID = "01970000-0000-7000-8000-000000000003"
+
 // chainAssertRows fails for every seeded row that got is missing.
 func chainAssertRows(t *testing.T, when string, seeded, got map[string][]string) {
 	t.Helper()
@@ -213,6 +216,9 @@ func chainAssertRows(t *testing.T, when string, seeded, got map[string][]string)
 			present[k] = true
 		}
 		for _, k := range keys {
+			if table == "roles" && k == deployerRoleID {
+				continue // migration 000014 removes it with the deployments
+			}
 			total++
 			if !present[k] {
 				t.Errorf("%s: row %s of %s is missing", when, k, table)

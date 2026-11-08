@@ -17,8 +17,3 @@ func ResourceLock(ref ResourceRef, mode LockMode) LockSpec {
 func ComposeProjectLock(node ID, project string, mode LockMode) LockSpec {
 	return LockSpec{Key: fmt.Sprintf("compose_project:%s:%s", node, project), Mode: mode}
 }
-
-// PortLock locks a published host port on a node: "port:<node>:<addr>:<port>".
-func PortLock(node ID, addr string, port int, mode LockMode) LockSpec {
-	return LockSpec{Key: fmt.Sprintf("port:%s:%s:%d", node, addr, port), Mode: mode}
-}

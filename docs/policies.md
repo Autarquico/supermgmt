@@ -27,7 +27,7 @@ Rules name subjects:
 
 | Subject | Matches |
 |---|---|
-| `role:<name>` | an identity bound to that role. The built-in roles are `viewer`, `operator`, `deployer` and `admin` |
+| `role:<name>` | an identity bound to that role. The built-in roles are `viewer`, `operator` and `admin` |
 | `type:<type>` | every identity of that type: `human`, `automation`, `mcp` |
 | `identity:<id>` | one identity, by its ID |
 | `*` | everyone |
@@ -42,11 +42,10 @@ Without a policy file, SuperMgmt uses the built-in policy, [`internal/policy/def
 
 | Rule | Who | May |
 |---|---|---|
-| `builtin-read` | `viewer`, `operator`, `deployer`, `admin` | read everything (`*.read`), read service logs, open interactive sessions, create plans |
+| `builtin-read` | `viewer`, `operator`, `admin` | read everything (`*.read`), read service logs, open interactive sessions, create plans |
 | `builtin-operator` | `operator`, `admin` | start, stop and restart services, probe and reboot nodes, power Proxmox guests, create Proxmox snapshots and backups, cancel and resolve jobs |
-| `builtin-deployer` | `deployer`, `admin` | create and roll back deployments, cancel jobs, run the pre-deploy backup |
-| `builtin-approver` | `operator`, `deployer`, `admin` | approve and reject plans |
-| `builtin-admin` | `admin` | configuration, environments, providers, nodes, apps, identities and roles, MCP clients, tokens, enrollment, secrets, backups, node setup |
+| `builtin-approver` | `operator`, `admin` | approve and reject plans |
+| `builtin-admin` | `admin` | configuration, environments, providers, nodes, node backup templates, identities and roles, MCP clients, tokens, enrollment, secrets, backups, node setup, node routes |
 | `builtin-mcp-read` | `type:mcp` | read everything (`*.read`) and create plans. Nothing else: no logs, no sessions, no writes |
 
 No built-in rule sets `allow_destructive`, so destructive actions (deleting a provider, removing a node, deleting a snapshot) are denied until your own policy allows them explicitly.
@@ -112,9 +111,9 @@ These rules, added after the built-in ones, pass `sm config validate --policy`:
 
 ```yaml
   - name: production-two-approvers
-    subjects: ["role:deployer", "role:admin"]
+    subjects: ["role:operator", "role:admin"]
     resources: ["environment:production"]
-    allow: ["deployment.create", "deployment.rollback"]
+    allow: ["service.restart", "node.reboot"]
     require_approval: true
     approvals: 2
   - name: no-reboots-on-databases
@@ -131,12 +130,12 @@ These rules, added after the built-in ones, pass `sm config validate --policy`:
     allow_destructive: true
 ```
 
-- `production-two-approvers`: production deployments and rollbacks need two different approvers. With a single person and self-approval, they can never collect two, so this rule only makes sense with a second person.
+- `production-two-approvers`: restarting a service or rebooting a node in production needs two different approvers. With a single person and self-approval, they can never collect two, so this rule only makes sense with a second person.
 - `no-reboots-on-databases`: nobody may reboot or power-cycle a node tagged `database`, whatever the other rules allow.
 - `mcp-logs-staging`: MCP clients may read service logs in staging. Read [the redaction boundary](mcp.md#the-redaction-boundary) before you grant this: secrets under harmless names in logs reach the model.
 - `admins-may-remove-nodes`: lets admins remove a node, which is destructive. Removal is still high risk, so it still waits for approval.
 
-[`examples/policies.yaml`](../examples/policies.yaml) shows more rule shapes, including one for a CI automation identity. It is a set of examples, not a complete policy: on its own it grants nothing to `admin`.
+[`examples/policies.yaml`](../examples/policies.yaml) shows more rule shapes. It is a set of examples, not a complete policy: on its own it grants nothing to `admin`.
 
 ## Rule reference
 
@@ -153,9 +152,9 @@ A policy file has `version: 1` and a list of `rules`. Decoding is strict: an unk
 | `approvals` | no | Minimum number of approvers, 1 to 5 |
 | `allow_destructive` | no | Needed, on an allowing rule, for destructive actions |
 
-**Action patterns** are dot-separated names such as `service.restart`. A `*` segment matches exactly one segment: `*.read` matches `node.read` and `deployment.read`, but not `service.logs` or `node.connect`. A bare `*` matches every action. An exact name must exist in the catalog, and a pattern with `*` must match at least one catalog action.
+**Action patterns** are dot-separated names such as `service.restart`. A `*` segment matches exactly one segment: `*.read` matches `node.read` and `job.read`, but not `service.logs` or `node.connect`. A bare `*` matches every action. An exact name must exist in the catalog, and a pattern with `*` must match at least one catalog action.
 
-**Retired actions.** An action removed from the catalog is retired rather than unknown, so a policy file written before its removal still loads. A rule that names a retired action, or a pattern that matches only retired actions, loads with a warning (in the daemon log at start and in `sm config validate`), and that entry grants or denies nothing; a pattern that also matches live actions keeps exactly those. Any other name that is not in the catalog is still an error. Retired with app moves: `app_target.move`, `app_target.cleanup_source`, `app_target.abandon_move`. Retired when routes moved from apps to nodes: `app_route.expose` and `app_route.unexpose`, replaced by `node_route.expose` and `node_route.unexpose`, and route reads now need `node_route.read`. The replacements are granted on nodes: a rule that granted routes on app targets or environments grants nothing now; write it again for the nodes. A deny that covered a retired route action, by name or by a wildcard such as `*.expose`, is not lost: it denies its replacement to the same subjects, on the same nodes when it was scoped by node, tag or provider, and on every node when it was scoped by app or environment (a node's environment is not its apps'), so an upgrade never widens what someone can publish. Approval gates are not carried over: a `require_approval` or `approvals` written on a rule that allowed `app_route.*` no longer applies; write it again on `node_route.*` (a `public` route is high risk and keeps its own approval rules).
+**Retired actions.** An action removed from the catalog is retired rather than unknown, so a policy file written before its removal still loads. A rule that names a retired action, or a pattern that matches only retired actions, loads with a warning (in the daemon log at start and in `sm config validate`), and that entry grants or denies nothing; a pattern that also matches live actions keeps exactly those. Any other name that is not in the catalog is still an error. Retired with apps and deployments, with no replacement: `deployment.create`, `deployment.rollback`, `deployment.read`, `app.read`, `app.write`, `app_target.read`, `app_target.write`; the `deployer` role is gone with them, and `admin` keeps `node.backup_template.run`. Retired with app moves: `app_target.move`, `app_target.cleanup_source`, `app_target.abandon_move`. Retired when routes moved from apps to nodes: `app_route.expose` and `app_route.unexpose`, replaced by `node_route.expose` and `node_route.unexpose`, and route reads now need `node_route.read`. The replacements are granted on nodes: a rule that granted routes on app targets or environments grants nothing now; write it again for the nodes. A deny that covered a retired route action, by name or by a wildcard such as `*.expose`, is not lost: it denies its replacement to the same subjects, on the same nodes when it was scoped by node, tag or provider, and on every node when it was scoped by app or environment (a node's environment is not its apps'), so an upgrade never widens what someone can publish. Approval gates are not carried over: a `require_approval` or `approvals` written on a rule that allowed `app_route.*` no longer applies; write it again on `node_route.*` (a `public` route is high risk and keeps its own approval rules).
 
 ### Actions and their risk
 
@@ -163,8 +162,8 @@ The catalog is the complete list of actions a rule can name ([`internal/policy/c
 
 | Risk | Actions |
 |---|---|
-| read | `node.read`, `service.read`, `service.logs`, `app.read`, `app_target.read`, `deployment.read`, `environment.read`, `provider.read`, `job.read`, `plan.read`, `event.read`, `config.read`, `identity.read`, `backup.read`, `node.connect`, `plan.create`, `node.probe` |
-| operational | `service.start`, `service.stop`, `service.restart`, `proxmox.vm.power` (`stop` is high), `proxmox.snapshot.create`, `proxmox.backup.create`, `node.backup_template.run`, `deployment.create`, `deployment.rollback`, `backup.create`, `node.add`, `node.update`, `app.write`, `app_target.write`, `mcp_client.delete`, `token.revoke`, and the credential-issuing `token.create`, `mcp_client.issue_token`, `enrollment.create` |
+| read | `node.read`, `service.read`, `service.logs`, `environment.read`, `provider.read`, `job.read`, `plan.read`, `event.read`, `config.read`, `identity.read`, `backup.read`, `node.connect`, `plan.create`, `node.probe` |
+| operational | `service.start`, `service.stop`, `service.restart`, `proxmox.vm.power` (`stop` is high), `proxmox.snapshot.create`, `proxmox.backup.create`, `node.backup_template.run`, `backup.create`, `node.add`, `node.update`, `mcp_client.delete`, `token.revoke`, and the credential-issuing `token.create`, `mcp_client.issue_token`, `enrollment.create` |
 | high | `node.reboot`, `node.shutdown`, `proxmox.snapshot.rollback`, `node.setup`, `node.tunnel.disable` (also abandons an unfinished tunnel setup), `cloudflare.access_token.rotate`, `sudoers.write`, `log_broker.install`, `provider.write`, `environment.write`, `config.write`, `secret.write`, `identity.write`, `role_binding.write`, `mcp_client.register` |
 | destructive | `node.remove`, `provider.delete`, `proxmox.snapshot.delete` |
 | governance | `approval.grant`, `approval.reject`, `job.cancel`, `job.resolve` |
@@ -174,4 +173,4 @@ The catalog is the complete list of actions a rule can name ([`internal/policy/c
 - Engine: `internal/policy/evaluate.go` (decision order and approval rules), `internal/policy/quorum.go` (counting approvals), `internal/policy/governance.go` (approving, rejecting, cancelling, resolving), `internal/policy/validate.go` and `internal/policy/parse.go` (the file format), `internal/policy/catalog.go` (actions and risk).
 - Loading: `internal/daemon/assemble.go` (`security.policy_file`), `internal/cli/config.go` (`sm config validate --policy`), `internal/daemon/identity.go` (the local admin).
 - Tests: `TestEvaluate_Step4_DenyOverrides`, `TestEvaluate_Step5_DefaultDeny`, `TestEvaluate_Step6_DestructiveGate`, `TestEvaluate_Step8_Approval`, `TestEvaluate_Step8_CredentialIssuingIsNeverApprovalGated`, `TestEvaluate_Step9_CompositePlans`, `TestEvaluate_DefaultPolicy_EndToEnd`, `TestEvaluateQuorum`, `TestEvaluateGovernance`, `TestPolicyProperty_NoAllowOverridesAMatchingDeny`, `TestPolicyProperty_AddingTargetsNeverRelaxesTheDecision`, `TestParse_Invalid`, `TestExamplePolicy_MatchesSpecBlockAndValidates`, `TestDiffPolicies_AgainstDefault`.
-- Related pages: [Concepts](concepts.md), [Getting started](getting-started.md), [Security](security.md), [Configuration](configuration.md#policy), [Deployments](deployments.md).
+- Related pages: [Concepts](concepts.md), [Getting started](getting-started.md), [Security](security.md), [Configuration](configuration.md#policy).

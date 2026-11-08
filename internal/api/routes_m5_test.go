@@ -322,3 +322,33 @@ func TestIssuingATokenForAnUnknownClientIsNotFound(t *testing.T) {
 		t.Errorf("status %d: %s, want 404", r.Status, r.Body)
 	}
 }
+
+var wantNodeRoutes = map[string]string{
+	"GET " + wire.PathNodeRoutes:    "node_route.read",
+	"POST " + wire.PathNodeRoutes:   "node_route.expose",
+	"DELETE " + wire.PathNodeRoute:  "node_route.unexpose",
+	"GET " + wire.PathNodeRoutesAll: "node_route.read",
+}
+
+func TestEveryNodeRouteMapsToExactlyOneCatalogAction(t *testing.T) {
+	got := map[string]Route{}
+	for _, rt := range newM5Fixture(t).server.Routes() {
+		got[rt.Method+" "+rt.Pattern] = rt
+	}
+	for key, action := range wantNodeRoutes {
+		rt, ok := got[key]
+		if !ok {
+			t.Errorf("route %s is not served", key)
+			continue
+		}
+		if rt.Action != action {
+			t.Errorf("%s maps to %q, want %q", key, rt.Action, action)
+		}
+		if _, inCatalog := policy.Lookup(rt.Action); !inCatalog {
+			t.Errorf("%s: %q is not a catalog action", key, rt.Action)
+		}
+		if wantKeyed := rt.Method != http.MethodGet; rt.Keyed != wantKeyed {
+			t.Errorf("%s: keyed = %v, want %v", key, rt.Keyed, wantKeyed)
+		}
+	}
+}

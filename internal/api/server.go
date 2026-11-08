@@ -24,7 +24,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -77,11 +76,6 @@ type Services struct {
 	Proxmox *app.ProxmoxSync
 	// Routes is optional: without it the node route routes (ADR-0043) are not served.
 	Routes *app.NodeRoutes
-	// Apps, Repositories and Deployments are optional (M4): without one, the
-	// routes of its group are not served.
-	Apps         *app.Apps
-	Repositories *app.Repositories
-	Deployments  *app.DeploymentFinalizer
 	// MCPClients is optional (M5): without it the /mcp/clients routes are not served.
 	MCPClients app.MCPClients
 
@@ -168,9 +162,6 @@ type Options struct {
 	// mounted on, verbatim and outside /api/v1 (ADR-0033). HTTPS only.
 	MCPRemote      http.Handler
 	MCPRemotePaths []string
-	// GitHubWebhook enables POST /github/webhook. It is served on HTTPS only,
-	// whatever is configured: local mode polls CI.
-	GitHubWebhook *GitHubWebhook
 	// Proxy is set in `server.tls.mode: proxy`; nil means the TCP peer is the
 	// client (direct TLS).
 	Proxy *Proxy
@@ -211,7 +202,6 @@ type Server struct {
 	residency Residency
 	ready     func(context.Context) error
 	clock     domain.Clock
-	webhooks  *GitHubWebhook
 
 	mcpRemote      http.Handler
 	mcpRemotePaths []string
@@ -221,8 +211,6 @@ type Server struct {
 	writeLimit *limiter
 	// refreshLimit bounds on-demand Proxmox discovery per caller and provider.
 	refreshLimit *limiter
-	// webhookLimit bounds GitHub webhook deliveries per client address.
-	webhookLimit *limiter
 	openMu       sync.Mutex
 	open         map[domain.ID]int // event streams per identity
 
@@ -255,14 +243,8 @@ func New(o Options) (*Server, error) {
 		responder: responder{log: o.Log}, svc: o.Services, ids: o.IDs, resolver: o.Resolver, mcp: o.MCPResolver, mcpRemote: o.MCPRemote, mcpRemotePaths: o.MCPRemotePaths, proxy: o.Proxy, db: o.DB,
 		stream: o.Stream.withDefaults(), timeout: o.RequestTimeout, residency: o.Residency, ready: o.Ready,
 		authLimit: newLimiter(authRate, o.Clock.Now), pollLimit: newLimiter(pollRate, o.Clock.Now), writeLimit: newLimiter(writeRate, o.Clock.Now),
-		refreshLimit: newLimiter(refreshRate, o.Clock.Now), webhookLimit: newLimiter(webhookRate, o.Clock.Now), clock: o.Clock,
+		refreshLimit: newLimiter(refreshRate, o.Clock.Now), clock: o.Clock,
 		open: map[domain.ID]int{}, closing: make(chan struct{}),
-	}
-	if o.GitHubWebhook != nil {
-		if err := o.GitHubWebhook.complete(); err != nil {
-			return nil, err
-		}
-		s.webhooks = o.GitHubWebhook
 	}
 	if o.Resolver != nil {
 		s.transport = viaHTTPS
@@ -516,23 +498,10 @@ func (s *Server) admitRemote(r *http.Request, rt route) (scope, error) {
 	if err != nil {
 		return scope{}, err
 	}
-	if err := requireScope(by, rt); err != nil {
-		return scope{}, err
-	}
 	if err := s.chargeWrite(by, rt); err != nil {
 		return scope{}, err
 	}
 	return scope{caller: by, client: client}, nil
-}
-
-// requireScope refuses a credential that is limited to named actions (a GitHub
-// Actions OIDC token) on any route that stands for another action or for an
-// exemption (spec §11.1: deployment.create and deployment.read only).
-func requireScope(by app.Caller, rt route) error {
-	if by.Credential.Kind != domain.CredentialGitHubOIDC || slices.Contains(by.Credential.Scopes, rt.action) {
-		return nil
-	}
-	return smerr.New(smerr.CodePolicyDenied, smerr.ReasonScopeDenied, "this credential cannot call this route")
 }
 
 // loginLimiter is the per-address bucket of an unauthenticated route: device

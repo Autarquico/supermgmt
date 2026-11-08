@@ -9,97 +9,69 @@ import (
 type Reason string
 
 const (
-	ReasonComposeRejected         Reason = "COMPOSE_REJECTED"
-	ReasonManifestInvalid         Reason = "MANIFEST_INVALID"
-	ReasonUnknownAction           Reason = "UNKNOWN_ACTION"
-	ReasonAmbiguousTarget         Reason = "AMBIGUOUS_TARGET"
-	ReasonPlanStale               Reason = "PLAN_STALE"
-	ReasonPlanExpired             Reason = "PLAN_EXPIRED"
-	ReasonAlreadySubmitted        Reason = "ALREADY_SUBMITTED"
-	ReasonAlreadyDecided          Reason = "ALREADY_DECIDED"
-	ReasonResourceLocked          Reason = "RESOURCE_LOCKED"
-	ReasonRestoreHold             Reason = "RESTORE_HOLD"
-	ReasonIdempotencyMismatch     Reason = "IDEMPOTENCY_MISMATCH"
-	ReasonInvalidTransition       Reason = "INVALID_TRANSITION"
-	ReasonProjectNotOwned         Reason = "PROJECT_NOT_OWNED"
-	ReasonCredentialExpired       Reason = "CREDENTIAL_EXPIRED"
-	ReasonCredentialRevoked       Reason = "CREDENTIAL_REVOKED"
-	ReasonOIDCReplay              Reason = "OIDC_REPLAY"
-	ReasonOIDCInvalid             Reason = "OIDC_INVALID"
-	ReasonDenyRule                Reason = "DENY_RULE"
-	ReasonDefaultDeny             Reason = "DEFAULT_DENY"
-	ReasonDestructiveGate         Reason = "DESTRUCTIVE_GATE"
-	ReasonScopeDenied             Reason = "SCOPE_DENIED"
-	ReasonApprovalNotSupported    Reason = "APPROVAL_NOT_SUPPORTED"
-	ReasonNotPlanActor            Reason = "NOT_PLAN_ACTOR"
-	ReasonSelfApproval            Reason = "SELF_APPROVAL"
-	ReasonUnitNotEligible         Reason = "UNIT_NOT_ELIGIBLE"
-	ReasonHealthCapabilityMissing Reason = "HEALTH_CAPABILITY_MISSING"
-	ReasonCheckFailed             Reason = "CHECK_FAILED"
-	ReasonCheckMissing            Reason = "CHECK_MISSING"
-	ReasonCITimeout               Reason = "CI_TIMEOUT"
-	ReasonDigestUnbound           Reason = "DIGEST_UNBOUND"
-	ReasonTagReference            Reason = "TAG_REFERENCE"
-	ReasonPreflightFailed         Reason = "PREFLIGHT_FAILED"
-	ReasonStagingFailed           Reason = "STAGING_FAILED"
-	ReasonHealthFailed            Reason = "HEALTH_FAILED"
-	ReasonRollbackUnavailable     Reason = "ROLLBACK_UNAVAILABLE"
-	ReasonInterruptedBeforeDeploy Reason = "INTERRUPTED_BEFORE_DEPLOY"
-	ReasonRejected                Reason = "REJECTED"
-	ReasonRestoredUndispatched    Reason = "RESTORED_UNDISPATCHED"
-	ReasonMCPWritesDisabled       Reason = "MCP_WRITES_DISABLED"
-	ReasonMCPActionForbidden      Reason = "MCP_ACTION_FORBIDDEN"
-	ReasonMCPClientUnregistered   Reason = "MCP_CLIENT_UNREGISTERED"
-	ReasonIssuanceWindowExpired   Reason = "ISSUANCE_WINDOW_EXPIRED"
-	ReasonOAuthTokenInvalid       Reason = "OAUTH_TOKEN_INVALID"
-	ReasonTunnelDNSNegativeCache  Reason = "TUNNEL_DNS_NEGATIVE_CACHE"
+	ReasonUnknownAction          Reason = "UNKNOWN_ACTION"
+	ReasonAmbiguousTarget        Reason = "AMBIGUOUS_TARGET"
+	ReasonPlanStale              Reason = "PLAN_STALE"
+	ReasonPlanExpired            Reason = "PLAN_EXPIRED"
+	ReasonAlreadySubmitted       Reason = "ALREADY_SUBMITTED"
+	ReasonAlreadyDecided         Reason = "ALREADY_DECIDED"
+	ReasonResourceLocked         Reason = "RESOURCE_LOCKED"
+	ReasonRestoreHold            Reason = "RESTORE_HOLD"
+	ReasonIdempotencyMismatch    Reason = "IDEMPOTENCY_MISMATCH"
+	ReasonInvalidTransition      Reason = "INVALID_TRANSITION"
+	ReasonCredentialExpired      Reason = "CREDENTIAL_EXPIRED"
+	ReasonCredentialRevoked      Reason = "CREDENTIAL_REVOKED"
+	ReasonOIDCReplay             Reason = "OIDC_REPLAY"
+	ReasonOIDCInvalid            Reason = "OIDC_INVALID"
+	ReasonDenyRule               Reason = "DENY_RULE"
+	ReasonDefaultDeny            Reason = "DEFAULT_DENY"
+	ReasonDestructiveGate        Reason = "DESTRUCTIVE_GATE"
+	ReasonScopeDenied            Reason = "SCOPE_DENIED"
+	ReasonApprovalNotSupported   Reason = "APPROVAL_NOT_SUPPORTED"
+	ReasonNotPlanActor           Reason = "NOT_PLAN_ACTOR"
+	ReasonSelfApproval           Reason = "SELF_APPROVAL"
+	ReasonUnitNotEligible        Reason = "UNIT_NOT_ELIGIBLE"
+	ReasonRejected               Reason = "REJECTED"
+	ReasonRestoredUndispatched   Reason = "RESTORED_UNDISPATCHED"
+	ReasonMCPWritesDisabled      Reason = "MCP_WRITES_DISABLED"
+	ReasonMCPActionForbidden     Reason = "MCP_ACTION_FORBIDDEN"
+	ReasonMCPClientUnregistered  Reason = "MCP_CLIENT_UNREGISTERED"
+	ReasonIssuanceWindowExpired  Reason = "ISSUANCE_WINDOW_EXPIRED"
+	ReasonOAuthTokenInvalid      Reason = "OAUTH_TOKEN_INVALID"
+	ReasonTunnelDNSNegativeCache Reason = "TUNNEL_DNS_NEGATIVE_CACHE"
 )
 
 var codeByReason = map[Reason]Code{
-	ReasonComposeRejected:         CodeInvalidArgument,
-	ReasonManifestInvalid:         CodeInvalidArgument,
-	ReasonUnknownAction:           CodeInvalidArgument,
-	ReasonAmbiguousTarget:         CodeInvalidArgument,
-	ReasonPlanStale:               CodeConflict,
-	ReasonPlanExpired:             CodeConflict,
-	ReasonAlreadySubmitted:        CodeConflict,
-	ReasonAlreadyDecided:          CodeConflict,
-	ReasonResourceLocked:          CodeConflict,
-	ReasonRestoreHold:             CodeConflict,
-	ReasonIdempotencyMismatch:     CodeConflict,
-	ReasonInvalidTransition:       CodeConflict,
-	ReasonProjectNotOwned:         CodeConflict,
-	ReasonCredentialExpired:       CodeUnauthenticated,
-	ReasonCredentialRevoked:       CodeUnauthenticated,
-	ReasonOIDCReplay:              CodeUnauthenticated,
-	ReasonOIDCInvalid:             CodeUnauthenticated,
-	ReasonDenyRule:                CodePolicyDenied,
-	ReasonDefaultDeny:             CodePolicyDenied,
-	ReasonDestructiveGate:         CodePolicyDenied,
-	ReasonScopeDenied:             CodePolicyDenied,
-	ReasonApprovalNotSupported:    CodePolicyDenied,
-	ReasonNotPlanActor:            CodePolicyDenied,
-	ReasonSelfApproval:            CodePolicyDenied,
-	ReasonUnitNotEligible:         CodeCapabilityUnavailable,
-	ReasonHealthCapabilityMissing: CodeCapabilityUnavailable,
-	ReasonCheckFailed:             CodeCINotPassed,
-	ReasonCheckMissing:            CodeCINotPassed,
-	ReasonCITimeout:               CodeCINotPassed,
-	ReasonDigestUnbound:           CodeArtifactNotImmutable,
-	ReasonTagReference:            CodeArtifactNotImmutable,
-	ReasonPreflightFailed:         CodeDeploymentFailed,
-	ReasonStagingFailed:           CodeDeploymentFailed,
-	ReasonHealthFailed:            CodeDeploymentFailed,
-	ReasonRollbackUnavailable:     CodeDeploymentFailed,
-	ReasonInterruptedBeforeDeploy: CodeDeploymentFailed,
-	ReasonRejected:                CodeDeploymentFailed,
-	ReasonRestoredUndispatched:    CodeDeploymentFailed,
-	ReasonMCPWritesDisabled:       CodePolicyDenied,
-	ReasonMCPActionForbidden:      CodePolicyDenied,
-	ReasonMCPClientUnregistered:   CodePolicyDenied,
-	ReasonIssuanceWindowExpired:   CodeConflict,
-	ReasonOAuthTokenInvalid:       CodeUnauthenticated,
-	ReasonTunnelDNSNegativeCache:  CodeNodeUnreachable,
+	ReasonUnknownAction:          CodeInvalidArgument,
+	ReasonAmbiguousTarget:        CodeInvalidArgument,
+	ReasonPlanStale:              CodeConflict,
+	ReasonPlanExpired:            CodeConflict,
+	ReasonAlreadySubmitted:       CodeConflict,
+	ReasonAlreadyDecided:         CodeConflict,
+	ReasonResourceLocked:         CodeConflict,
+	ReasonRestoreHold:            CodeConflict,
+	ReasonIdempotencyMismatch:    CodeConflict,
+	ReasonInvalidTransition:      CodeConflict,
+	ReasonCredentialExpired:      CodeUnauthenticated,
+	ReasonCredentialRevoked:      CodeUnauthenticated,
+	ReasonOIDCReplay:             CodeUnauthenticated,
+	ReasonOIDCInvalid:            CodeUnauthenticated,
+	ReasonDenyRule:               CodePolicyDenied,
+	ReasonDefaultDeny:            CodePolicyDenied,
+	ReasonDestructiveGate:        CodePolicyDenied,
+	ReasonScopeDenied:            CodePolicyDenied,
+	ReasonApprovalNotSupported:   CodePolicyDenied,
+	ReasonNotPlanActor:           CodePolicyDenied,
+	ReasonSelfApproval:           CodePolicyDenied,
+	ReasonUnitNotEligible:        CodeCapabilityUnavailable,
+	ReasonRejected:               CodeDeploymentFailed,
+	ReasonRestoredUndispatched:   CodeDeploymentFailed,
+	ReasonMCPWritesDisabled:      CodePolicyDenied,
+	ReasonMCPActionForbidden:     CodePolicyDenied,
+	ReasonMCPClientUnregistered:  CodePolicyDenied,
+	ReasonIssuanceWindowExpired:  CodeConflict,
+	ReasonOAuthTokenInvalid:      CodeUnauthenticated,
+	ReasonTunnelDNSNegativeCache: CodeNodeUnreachable,
 }
 
 // CodeFor returns the top-level code a reason belongs to (spec §38). A reason

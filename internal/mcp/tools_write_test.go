@@ -8,8 +8,6 @@ import (
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
-const writeDeploymentID domain.ID = "0190a5c3-7b1e-7c3a-9d2e-1a2b3c4d5e21"
-
 func writeSession(t *testing.T, api *serverFakeAPI) func(name string, arguments map[string]any) map[string]any {
 	session := serverSession(t, api, true)
 	return func(name string, arguments map[string]any) map[string]any {
@@ -144,103 +142,5 @@ func TestWrappers_AmbiguousOrMissingTargetsNeverPlan(t *testing.T) {
 	}
 	if api.wrote() {
 		t.Error("an unresolved target reached CreatePlan")
-	}
-}
-
-func TestCreateDeployment_StatusFollowsTheDeploymentState(t *testing.T) {
-	cases := map[string]string{
-		"created":           "waiting_ci",
-		"waiting_ci":        "waiting_ci",
-		"awaiting_approval": "approval_required",
-		"queued":            "queued",
-	}
-	for state, want := range cases {
-		t.Run(state, func(t *testing.T) {
-			api := newServerFakeAPI()
-			api.deployment = wire.Deployment{ID: writeDeploymentID, Kind: "deploy", State: state, AppTargetID: readTargetID, CommitSHA: "abc123"}
-			out := writeSession(t, api)("infra_create_deployment", map[string]any{
-				"app_target_id": string(readTargetID), "commit_sha": "abc123",
-				"images": []any{map[string]any{"service": "web", "digest": "sha256:00"}},
-			})
-			if out["status"] != want || out["deployment_id"] != string(writeDeploymentID) || out["risk"] != "operational" {
-				t.Errorf("result = %v, want status %s", out, want)
-			}
-		})
-	}
-}
-
-func TestCreateDeployment_SendsADeployRequest(t *testing.T) {
-	api := newServerFakeAPI()
-	api.deployment = wire.Deployment{ID: writeDeploymentID, State: "waiting_ci"}
-	digest := "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	writeSession(t, api)("infra_create_deployment", map[string]any{
-		"app_target_id": string(readTargetID), "commit_sha": "abc123",
-		"images": []any{map[string]any{"service": "web", "digest": digest}},
-	})
-	if len(api.deploymentRequests) != 1 {
-		t.Fatalf("requests = %d", len(api.deploymentRequests))
-	}
-	request := api.deploymentRequests[0]
-	if request.AppTargetID != readTargetID || request.Kind != "deploy" || request.CommitSHA != "abc123" ||
-		len(request.Images) != 1 || request.Images[0] != (wire.RequestedImage{Service: "web", Digest: digest}) {
-		t.Errorf("request = %+v", request)
-	}
-}
-
-func TestCreateDeployment_RefusesABadTargetBeforeTheAPI(t *testing.T) {
-	api := newServerFakeAPI()
-	failure := readToolFailure(t, callReadTool(t, serverSession(t, api, true), "infra_create_deployment",
-		map[string]any{"app_target_id": "shop", "commit_sha": "abc123", "images": []any{}}))
-	if failure.Code != smerr.CodeInvalidArgument || api.wrote() {
-		t.Errorf("failure = %+v, wrote = %v", failure, api.wrote())
-	}
-}
-
-func TestRollbackDeployment_DefaultsToTheNewestKnownGood(t *testing.T) {
-	api := newServerFakeAPI()
-	api.deployment = wire.Deployment{ID: writeDeploymentID, Kind: "rollback", State: "awaiting_approval"}
-	out := writeSession(t, api)("infra_rollback_deployment", map[string]any{"deployment_id": string(readDeploymentID)})
-	if len(api.rollbacks) != 1 || api.rollbacks[0].id != readDeploymentID || api.rollbacks[0].request.ToDeploymentID != nil {
-		t.Errorf("rollbacks = %+v", api.rollbacks)
-	}
-	if out["status"] != "approval_required" || out["deployment_id"] != string(writeDeploymentID) {
-		t.Errorf("result = %v", out)
-	}
-}
-
-func TestRollbackDeployment_NamesTheTargetWhenGiven(t *testing.T) {
-	api := newServerFakeAPI()
-	api.deployment = wire.Deployment{ID: writeDeploymentID, State: "queued"}
-	writeSession(t, api)("infra_rollback_deployment", map[string]any{
-		"deployment_id": string(readDeploymentID), "to_deployment_id": string(writeDeploymentID),
-	})
-	to := api.rollbacks[0].request.ToDeploymentID
-	if to == nil || *to != writeDeploymentID {
-		t.Errorf("to_deployment_id = %v", to)
-	}
-}
-
-func TestRollbackDeployment_RefusesBadIdsBeforeTheAPI(t *testing.T) {
-	for name, arguments := range map[string]map[string]any{
-		"deployment id": {"deployment_id": "latest"},
-		"target id":     {"deployment_id": string(readDeploymentID), "to_deployment_id": "previous"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			api := newServerFakeAPI()
-			failure := readToolFailure(t, callReadTool(t, serverSession(t, api, true), "infra_rollback_deployment", arguments))
-			if failure.Code != smerr.CodeInvalidArgument || api.wrote() {
-				t.Errorf("failure = %+v, wrote = %v", failure, api.wrote())
-			}
-		})
-	}
-}
-
-func TestDeploymentTools_APIDenialSurfacesCodeAndReason(t *testing.T) {
-	api := newServerFakeAPI()
-	api.deploymentEr = smerr.New(smerr.CodePolicyDenied, smerr.ReasonMCPWritesDisabled, "writes are off")
-	failure := readToolFailure(t, callReadTool(t, serverSession(t, api, true), "infra_rollback_deployment",
-		map[string]any{"deployment_id": string(readDeploymentID)}))
-	if failure.Code != smerr.CodePolicyDenied || failure.Reason != smerr.ReasonMCPWritesDisabled {
-		t.Errorf("failure = %+v", failure)
 	}
 }

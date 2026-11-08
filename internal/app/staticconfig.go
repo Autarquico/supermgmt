@@ -15,7 +15,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
-	"github.com/autarquico/supermgmt/internal/providers/github"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 )
@@ -24,8 +23,8 @@ import (
 const configSource = "config"
 
 // StaticReconciler makes the database agree with the environments, SSH
-// providers, Proxmox providers and GitHub providers declared in the
-// configuration file (plan Q5, Q9; ADR-0024, ADR-0028), as the system
+// providers and Proxmox providers declared in the
+// configuration file (plan Q5, Q9; ADR-0024), as the system
 // actor, at daemon start. A changed environment or node endpoint bumps
 // spec_revision and is audited, so a plan made before the change goes stale
 // (spec §6.4, §20.4). A node whose provider left the file is retired. Nodes
@@ -92,11 +91,6 @@ func (s *StaticReconciler) apply(ctx context.Context, tx *database.Tx, envs []co
 			wanted[p.Proxmox.Name] = true
 			if err := s.proxmoxProvider(ctx, tx, *p.Proxmox); err != nil {
 				problems = append(problems, fmt.Errorf("provider %q: %w", p.Proxmox.Name, err))
-			}
-		case p.GitHub != nil:
-			wanted[p.GitHub.Name] = true
-			if err := s.githubProvider(ctx, tx, *p.GitHub); err != nil {
-				problems = append(problems, fmt.Errorf("provider %q: %w", p.GitHub.Name, err))
 			}
 		}
 	}
@@ -341,30 +335,6 @@ func (s *StaticReconciler) proxmoxProvider(ctx context.Context, q database.Queri
 	})
 }
 
-// githubStaticConfig is what the GitHub client factory and the webhook read
-// besides the endpoint (the API URL) and the credential reference: the CA and
-// the webhook secret reference, each only when configured (the convention of
-// providers created through the API).
-func githubStaticConfig(p config.GitHubProvider) map[string]any {
-	conf := map[string]any{}
-	if p.CAFile != "" {
-		conf[providerConfigCAFile] = p.CAFile
-	}
-	if p.WebhookSecretRef != "" {
-		conf[providerConfigWebhookSecretRef] = p.WebhookSecretRef
-	}
-	return conf
-}
-
-// githubProvider creates the provider of a configured GitHub connector or
-// brings an existing one in line with the file (ADR-0028).
-func (s *StaticReconciler) githubProvider(ctx context.Context, q database.Querier, p config.GitHubProvider) error {
-	return s.staticProvider(ctx, q, "GitHub", domain.Provider{
-		Type: github.ProviderType, Name: p.Name,
-		Endpoint: p.APIURL, CredentialRef: p.CredentialRef, Config: githubStaticConfig(p),
-	})
-}
-
 // staticProvider creates the static provider want describes (identified by
 // Name), or brings the stored one in line: an unchanged one is left alone, a
 // changed one bumps spec_revision and is audited, and one that had left the
@@ -432,7 +402,7 @@ func (s *StaticReconciler) revokeGuestPower(ctx context.Context, q database.Quer
 	return nil
 }
 
-// stopRemovedProviders marks every static Proxmox or GitHub provider that left
+// stopRemovedProviders marks every static Proxmox provider that left
 // the file as removed. For Proxmox that stops its sync, stales the plans that
 // used it and withdraws power over its guests. Nodes and observations stay:
 // removing a provider never deletes what it discovered (spec §29.4).
@@ -463,5 +433,5 @@ func (s *StaticReconciler) stopRemovedProviders(ctx context.Context, q database.
 }
 
 func markedOnRemoval(providerType string) bool {
-	return providerType == proxmox.ProviderType || providerType == github.ProviderType
+	return providerType == proxmox.ProviderType
 }

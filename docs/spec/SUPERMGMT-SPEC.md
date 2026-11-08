@@ -12,7 +12,7 @@ Implement this specification as a production-quality open-source repository. Do 
 
 The implementation order MUST follow the milestones in §31. Each milestone must compile, have tests, and leave the repository usable. Do not implement future milestone behavior as hidden, untested code. Prefer boring, auditable code over clever abstractions.
 
-Before release, verify current upstream documentation for Go, MCP, Proxmox VE, GitHub Actions/OIDC, Cloudflare Access/Tunnel, Docker/Compose and any optional overlay networking. Do not hard-code assumptions about vendor versions that can be discovered at runtime.
+Before release, verify current upstream documentation for Go, MCP, Proxmox VE, Cloudflare Access/Tunnel, Docker/Compose and any optional overlay networking. Do not hard-code assumptions about vendor versions that can be discovered at runtime.
 
 The final repository MUST include every file listed in §27 unless marked generated/optional. Examples in this document are contracts; keep sample files synchronized with actual schemas through tests.
 
@@ -22,7 +22,7 @@ The final repository MUST include every file listed in §27 unless marked genera
 
 ## 1.1 One-line pitch
 
-**SuperMgmt is a local-first, terminal-first control plane that connects developer infrastructure, services, repositories and deployments, and exposes the same safe operational model to humans through a TUI/CLI and to AI agents through MCP.**
+**SuperMgmt is a local-first, terminal-first control plane that connects developer infrastructure and the services running on it, and exposes the same safe operational model to humans through a TUI/CLI and to AI agents through MCP.**
 
 ## 1.2 Problem
 
@@ -48,7 +48,8 @@ SuperMgmt creates a normalized graph and action layer over those resources. It d
 7. **Workloads survive control-plane failure.** SuperMgmt is not in the serving path of managed applications.
 8. **Capability-based.** Features appear because a resource advertises capabilities, not because of hard-coded provider menus.
 9. **Observable and auditable.** Every state-changing operation has actor, target, plan, result and correlation ID.
-10. **No Kubernetes requirement.** Docker Compose/systemd are first-class deployment targets.
+10. **No Kubernetes requirement.** Docker Compose/systemd are first-class runtimes.
+11. **An operations plane, not a deployer (ADR-0043).** Each project's CI/CD deploys it; SuperMgmt discovers and operates what runs.
 
 ## 1.5 Non-goals for V1
 
@@ -61,6 +62,7 @@ SuperMgmt creates a normalized graph and action layer over those resources. It d
 - HA multi-control-plane clustering.
 - Browser-first dashboard.
 - Generic unrestricted root shell exposed through MCP.
+- Building, deploying, rolling back or moving applications, and owning a project's Compose file, images or CI policy (ADR-0043).
 
 ---
 
@@ -79,7 +81,7 @@ Laptop
 │   ├── SQLite
 │   ├── job workers, sync loops, scheduler
 │   ├── MCP (optional, stdio bridge or loopback)
-│   └── connectors -> SSH / GitHub / Proxmox / etc.
+│   └── connectors -> SSH / Proxmox / Cloudflare / etc.
 └── sm TUI / CLI  (always API clients of the daemon)
 ```
 
@@ -104,9 +106,7 @@ Exactly one process — the **daemon** — owns the database, job workers, sync 
 
 **Local-mode trust boundary.** Peer credentials prove the OS user, not which program is speaking. Any process running as the same OS user can already read that user's SSH keys and agent, so local mode does **not** defend against malicious code running as the same user; `SECURITY.md` states this. Within that boundary, SuperMgmt still separates human and MCP authority (§11.1): MCP bridges must present a daemon-issued MCP client token, so a well-behaved but prompt-injected model cannot act as the human. Users who need isolation from a compromised MCP client run it under a different OS user (socket access is then refused) or use server mode with per-client OAuth (§24).
 
-**Residency.** When the last client exits, a local daemon stays alive only while it has active work: non-terminal jobs or deployments in `waiting_ci`/`awaiting_approval`. Otherwise it exits after `daemon.idle_exit` (default 10m). Schedules (backups, periodic sync) do not keep a local daemon resident unless `daemon.resident: true`, which `sm daemon install-user-unit` sets up via a launchd agent or systemd user unit. Server mode is always resident.
-
-**Webhooks.** Local mode cannot receive inbound webhooks. CI-gated deployments in local mode poll the GitHub API (§18). Webhooks require server mode.
+**Residency.** When the last client exits, a local daemon stays alive only while it has active work: non-terminal jobs, including those in `awaiting_approval`. Otherwise it exits after `daemon.idle_exit` (default 10m). Schedules (backups, periodic sync) do not keep a local daemon resident unless `daemon.resident: true`, which `sm daemon install-user-unit` sets up via a launchd agent or systemd user unit. Server mode is always resident.
 
 Server mode (§2.2) is the same daemon listening on HTTPS (§23.1); its local administrative socket lives at `/run/supermgmt/admin.sock` (root and the service user only) and is used for bootstrap and offline-safe admin commands (§11.5).
 
@@ -384,8 +384,6 @@ sm nodes [list|get|add|remove|probe]
 sm ssh <node>
 sm services [list|get|logs|restart]
 sm docker <node>            integration menu / lazydocker handoff
-sm apps [list|get|add|remove]
-sm deploy [list|get|create|rollback|cancel]
 sm events
 sm approvals
 sm providers [list|add|remove|sync]
@@ -442,14 +440,11 @@ supermgmt/
 │   │   ├── local/
 │   │   ├── ssh/             # statically registered SSH nodes; uses transport/ssh
 │   │   ├── proxmox/
-│   │   └── github/          # Cloudflare: a guide only in V1 (docs/cloudflare.md, §25)
+│   │   └── cloudflare/      # tunnels, Access and DNS for tunnel nodes (§25)
 │   ├── runtimes/
 │   │   ├── docker/
 │   │   └── systemd/
-│   ├── deployments/
-│   │   └── compose/
 │   ├── installer/           # sm install <mode>; PVE CLI behind interfaces
-│   ├── health/
 │   ├── backup/
 │   └── version/
 ├── migrations/
@@ -463,15 +458,12 @@ supermgmt/
 │   └── release/           # signing, notices, SBOM, reproducibility and gate scripts
 ├── examples/
 │   ├── config.yaml
-│   ├── app.supermgmt.yaml
-│   ├── github-actions.yml
 │   └── policies.yaml
 ├── docs/
 │   ├── architecture.md
 │   ├── installation.md
 │   ├── configuration.md
 │   ├── providers.md
-│   ├── deployments.md
 │   ├── mcp.md
 │   ├── security.md
 │   ├── operations.md
@@ -503,7 +495,7 @@ supermgmt/
 
 No business logic in `cmd/`, HTTP handlers, Bubble Tea models or MCP handlers. They adapt requests to application services.
 
-Directories for features scheduled after the current milestone are not created (§0). V1 ships no `.deb`/`.rpm` packages: a package manager's upgrade would bypass the §29.3 protocol (1.4.8; ADR-0036). Post-V1 packages (`providers/vercel`, `deployments/systemd`, `deployments/shell`) are added only when their milestone starts.
+Directories for features scheduled after the current milestone are not created (§0). V1 ships no `.deb`/`.rpm` packages: a package manager's upgrade would bypass the §29.3 protocol (1.4.8; ADR-0036). Post-V1 packages (`providers/vercel`) are added only when their milestone starts. Deployment packages are not planned (ADR-0043).
 
 ---
 
@@ -520,12 +512,12 @@ Connector/Provider
        Node ──────────────► Runtime ─────► Service
         │                                  ▲
         │                                  │
-        └──── capabilities                 │
-                                           │
-Repository ─► Application ─► Deployment ───┘
-                  │
-                  └──── Environment / Target
+        ├──── capabilities
+        ├──── routes (published node ports, ADR-0040)
+        └──── Environment
 ```
+
+Repositories, applications, app targets and deployments were retired by ADR-0043.
 
 ## 6.2 Core entities
 
@@ -538,12 +530,6 @@ Management state (configured): `discovered`, `managed`, `retired`. Reachability 
 **Runtime**: detected service manager/container runtime on a node: `docker`, `systemd` initially.
 
 **Service**: runtime-native process/container/unit. Stable internal ID plus native ID. Status and health are separate.
-
-**Application**: logical deployable software. Links repository, deployment policy and one/many services.
-
-**Artifact**: immutable release input. OCI images MUST be represented by digest. Other artifacts require checksum and immutable version URI.
-
-**Deployment**: application + exact artifact + target + strategy + state machine + previous known-good release.
 
 **Job**: durable asynchronous operation.
 
@@ -561,7 +547,7 @@ Use UUIDv7 (time-ordered; generated with `github.com/google/uuid`, which support
 
 Every **configured** resource carries one counter, `spec_revision`, plus separate **observation** records:
 
-- `spec_revision` increments only when desired/configured state changes. That covers user edits, tags, environment, `management_state`, management endpoint (host, port, user, admin user, pinned host-key fingerprint), credential references, app/target/environment/repository/health-check configuration, Compose content, image policy and security exceptions. It is monotonic, used for optimistic concurrency (`If-Match`), and every plan records the `spec_revision` of each configured input (Appendix C).
+- `spec_revision` increments only when desired/configured state changes. That covers user edits, tags, environment, `management_state`, management endpoint (host, port, user, admin user, pinned host-key fingerprint), credential references and environment configuration. It is monotonic, used for optimistic concurrency (`If-Match`), and every plan records the `spec_revision` of each configured input (Appendix C).
 - Observations (power state, reachability, metrics, health, discovered addresses, versions) live in `observations`, `node_addresses` and `last_seen_at`. They NEVER bump `spec_revision`.
 
 Configured vs observed node fields:
@@ -605,13 +591,10 @@ service.start
 docker.read
 docker.logs
 docker.exec.interactive
-docker.compose.deploy
 proxmox.vm.power
 proxmox.snapshot.create
 proxmox.backup.create
 proxmox.console
-deployment.create
-deployment.rollback
 ```
 
 A capability being technically available does not grant permission. Effective ability = discovered capability ∩ policy decision (§11.3) ∩ current preconditions (checked at execution time, §6.4).
@@ -736,17 +719,8 @@ jobs:
   reconcile_grace: 45s             # >= ssh.connect_timeout + ssh.command_timeout + 5s
   retry_base: 2s                   # max attempts are per action (§11.2)
 
-health:
-  allowed_private_cidrs: []        # control-plane checks only (§21)
-
 outbound:
   proxy: ""                        # optional explicit HTTPS proxy URL; ambient *_PROXY env is ignored (§21.1)
-
-github:
-  oidc_audience: ""               # default: server.public_url; required `aud` for Actions OIDC (§18)
-  ci_poll_initial: 15s
-  ci_poll_max: 2m
-  ci_timeout: 2h
 
 mcp:
   enabled: true
@@ -780,10 +754,10 @@ Environments are database entities (`environments`), created via API/TUI or decl
 environments:
   - name: production
     risk_level: production        # development | staging | production
-    require_provenance: true      # §18
     approvals_required: 1         # minimum quorum for operational+ writes (1..5)
-    allow_automatic_rollback: true
 ```
+
+`require_provenance` and `allow_automatic_rollback` still validate but are read by nothing since deployments were retired (ADR-0043).
 
 ## 8.3 Provider config examples
 
@@ -832,15 +806,7 @@ environment: production
 tags: [docker]
 ```
 
-GitHub (1.4.6; ADR-0028). `api_url` defaults to `https://api.github.com`; GitHub Enterprise Server sets its own (e.g. `https://ghe.example.com/api/v3`) and may add `ca_file`. The token is a fine-grained, read-only personal access token (Contents, Checks, Actions, Attestations, Metadata: read). `webhook_secret_ref` is used in server mode only. Besides static configuration, a GitHub provider can be registered with `POST /api/v1/providers` (`provider.write`):
-
-```yaml
-type: github
-name: github
-api_url: https://api.github.com
-credential_ref: secret://providers/github/token
-webhook_secret_ref: secret://providers/github/webhook-secret
-```
+A provider of `type: github` and the `github:` and `health:` blocks were retired by ADR-0043: a file that has them loads with one warning per block or provider, and they are otherwise ignored. A misspelt key is still an error.
 
 ## 8.4 Credential references
 
@@ -856,7 +822,7 @@ file://<abs-path>        key file. Opened with O_NOFOLLOW; fstat must show a reg
                          supported for migration.
 ```
 
-SSH identity (both modes): on first start the daemon generates an Ed25519 key pair and stores the private key as `secret://ssh/default`. It is the default `credential_ref` of SSH nodes: automated sessions as `user` sign with it, and `node.setup` authorizes its public key for `user` (§12 step 7). `sm ssh-key show` (API: `GET /api/v1/ssh-key`) prints the public key so users can authorize it on nodes. Per-node keys are optional. Proxmox, GitHub and Cloudflare tokens always use `secret://`.
+SSH identity (both modes): on first start the daemon generates an Ed25519 key pair and stores the private key as `secret://ssh/default`. It is the default `credential_ref` of SSH nodes: automated sessions as `user` sign with it, and `node.setup` authorizes its public key for `user` (§12 step 7). `sm ssh-key show` (API: `GET /api/v1/ssh-key`) prints the public key so users can authorize it on nodes. Per-node keys are optional. Proxmox and Cloudflare tokens always use `secret://`.
 
 `admin_credential_ref` is the credential of `admin_user` (§6.4), used for read-only probes before setup, for the `node.setup` bootstrap and, in local mode, for interactive sessions. It follows the same scheme rules; its local-mode default is `ssh-agent://default` (still local-only), and it has no default in server mode.
 
@@ -893,30 +859,22 @@ node_tags(node_id, tag)
 node_capabilities(node_id, capability, available, metadata_json, checked_at)
 runtimes(id, node_id, type, native_id, version, status, metadata_json, last_seen_at)
 services(id, runtime_id, node_id, native_id, name, kind, status, health, metadata_json, spec_revision, last_seen_at)
-repositories(id, provider_id, github_repository_id, github_owner_id, owner, name, url, default_branch, metadata_json, spec_revision, created_at, updated_at)
-apps(id, name, repository_id, manifest_path, deployed_service, image_policy_json, compose_source, compose_content, compose_source_hash, compose_exceptions_json, variables_json, secret_refs_json, ci_policy_json, automation_identity_id, spec_revision, created_at, updated_at)
-app_targets(id, app_id, environment_id, node_id, compose_project, deployment_policy_json, spec_revision, created_at, updated_at)
-artifacts(id, app_id, type, immutable_ref, digest, commit_sha, source_run_id, source_run_attempt, provenance_json, provenance_method, created_at)
-artifact_checks(artifact_id, check_name, app_id, workflow_path, run_id, run_attempt, conclusion, completed_at)
 plans(id, action, actor_id, credential_kind, credential_id, scopes_json, plan_json, plan_hash, finalized_at, created_at, expires_at, submitted_job_id)
-deployments(id, kind, app_id, app_target_id, environment_id, node_id, artifact_id, job_id, plan_id, strategy, state, state_code, state_reason, requested_by, previous_deployment_id, rollback_of_deployment_id, known_good, compose_hash, plan_hash, commit_sha, requested_json, credential_kind, credential_id, scopes_json, credential_expires_at, ci_deadline_at, next_ci_check_at, mutation_started, recovery_mode, resume_step, recovery_reason, recovery_target_deployment_id, created_at, updated_at, finished_at)
-execution_snapshots(hash, kind, content, created_at)
-github_oidc_credentials(id, identity_id, repository_id, claims_json, issued_at, expires_at, revoked_at, created_at)
-deployment_steps(id, deployment_id, ordinal, name, state, attempt, started_at, finished_at, output_ref, error_json)
 jobs(id, type, resource_type, resource_id, actor_id, credential_kind, credential_id, scopes_json, state, risk, retry_class, idempotency_key, payload_json, plan_id, plan_hash, lease_owner, lease_generation, lease_until, heartbeat_at, attempts, max_attempts, scheduled_at, created_at, started_at, finished_at, error_json)
 job_approvals(id, job_id, plan_hash, approver_id, decision, reason, expires_at, renewed_at, created_at)
 operation_intents(id, job_id, step, lease_generation, state, operation, target_type, target_id, marker, pre_state_json, deadline_at, dispatched_at, completed_at, outcome, evidence_json)
 resource_locks(resource_type, resource_id, job_id, mode, acquired_at)
-health_checks(id, resource_type, resource_id, type, scope, config_json, enabled, spec_revision, created_at)
 observations(id, resource_type, resource_id, kind, value_json, observed_at, expires_at)
 events(seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT UNIQUE NOT NULL, timestamp, actor_type, actor_id, source, action, resource_type, resource_id, correlation_id, severity, result, data_json)
 secrets(id, name, version, envelope_version, kek_id, wrapped_dek, ciphertext, metadata_json, created_at, rotated_at)
 join_tokens(id, token_hash, expires_at, consumed_at, created_by, constraints_json)
-webhook_deliveries(id, provider, delivery_id, received_at, signature_valid, event_type, processed_at, result)
 settings(key PRIMARY KEY, value_json, updated_at)
+node_routes(...)             # published node ports (ADR-0040, ADR-0043); see migration 000013
 mcp_clients(id, identity_id, name, origin, state, requested_by, registration_job_id, approved_at, token_hash, token_issued_at, token_expires_at, revoked_at, last_used_at, created_at, updated_at, deleted_at)
 oauth_access_tokens(id, mcp_client_id, token_hash, issuer, jti, issued_at, expires_at, revoked_at, first_seen_at, last_used_at)
 ```
+
+Migration `000014_retire_deployments` (ADR-0043) dropped `repositories`, `apps`, `app_targets`, `artifacts`, `artifact_checks`, `github_oidc_credentials`, `deployments`, `deployment_steps`, `health_checks`, `webhook_deliveries` and `execution_snapshots`. It refuses, changing nothing, while a deployment or a deployment, rollback or app job is unfinished. `events`, `jobs`, `plans` and `observations` keep their CHECKs, so old events and jobs stay readable.
 
 Constraints that carry semantics (not just performance):
 
@@ -929,34 +887,24 @@ resource_locks      PRIMARY KEY(resource_type, resource_id, job_id); exclusive/s
                     enforced in the claim transaction (§20.5)
 plans               UNIQUE(submitted_job_id); submit sets it with
                     UPDATE … WHERE submitted_job_id IS NULL (one job per plan)
-artifact_checks     PRIMARY KEY(artifact_id, check_name)
 operation_intents   UNIQUE(marker)
-webhook_deliveries  UNIQUE(provider, delivery_id)
-app_targets         UNIQUE(node_id, compose_project); UNIQUE(app_id, environment_id)
-                    (one target per app and environment in V1); compose_project immutable
-repositories        UNIQUE(provider_id, github_repository_id)
-execution_snapshots PRIMARY KEY(hash); rows immutable (ADR-0007)
-github_oidc_credentials PRIMARY KEY(id) = sha256(issuer|jti); never holds the token (ADR-0028)
 mcp_clients         at most one live (state <> 'deleted') row per identity_id and per name; deleted rows
                     are history; token_hash local only, set once; state moves only pending_token -> active
                     and any -> deleted; identity_id must be an mcp identity (ADR-0032)
 oauth_access_tokens UNIQUE(token_hash) = sha256(token); a row never changes mcp_client_id and never
-                    un-revokes; expired rows are swept unless a non-terminal job or a provisional
-                    deployment references them (ADR-0033)
-deployments         recovery_target_deployment_id set iff recovery_mode = safety_recovery (ADR-0029)
+                    un-revokes; expired rows are swept unless a non-terminal job references them (ADR-0033)
 providers           UNIQUE(name)
 nodes               UNIQUE(provider_id, native_id)
 ```
 
-Enumerations (CHECK constraints): `identities.actor_type ∈ {human, automation, mcp, system}`; `mcp_clients.origin ∈ {local, remote}`; `mcp_clients.state ∈ {pending_token, active, deleted}`; `artifacts.provenance_method ∈ {attestation, oidc_claims}`; `deployments.kind ∈ {deploy, rollback}`; `deployments.state` ∈ the §20.1 states; `deployments.recovery_mode ∈ {forward, safety_recovery}` or null; `execution_snapshots.kind ∈ {compose_model, health, deployment_policy, exceptions, manifest}`; `health_checks.type ∈ {http, https, tcp, docker-health}` and `scope ∈ {node, control_plane}` for app targets in V1; `operation_intents.state ∈ {recorded, completed}`; `resource_locks.mode ∈ {exclusive, shared}`; `nodes.management_state ∈ {discovered, managed, retired}`; `nodes.reachability ∈ {reachable, unreachable, unknown}`.
+Enumerations (CHECK constraints): `identities.actor_type ∈ {human, automation, mcp, system}`; `mcp_clients.origin ∈ {local, remote}`; `mcp_clients.state ∈ {pending_token, active, deleted}`; `operation_intents.state ∈ {recorded, completed}`; `resource_locks.mode ∈ {exclusive, shared}`; `nodes.management_state ∈ {discovered, managed, retired}`; `nodes.reachability ∈ {reachable, unreachable, unknown}`.
 
-Indexes MUST additionally cover node/service lookup, event timeline, job queue (`state, scheduled_at`), deployments by app/environment, and token/session hash lookup.
+Indexes MUST additionally cover node/service lookup, event timeline, job queue (`state, scheduled_at`), and token/session hash lookup.
 
 Token and session values are stored only as SHA-256 hashes of high-entropy random tokens (≥256 bits). `idempotency_records` expire after 24h (§23).
 
 Events are append-only through application permissions; no ordinary delete API.
 
-**Compose hashes (1.4.6; ADR-0007).** `apps.compose_source_hash` is the SHA-256 of the control-plane source text and does not depend on any target. The public model is frozen per target at finalization (ownership labels and bind addresses are target-bound); its hash is `deployments.compose_hash` and the plan's `content.compose_hash`. **Provisional deployments (ADR-0011)** keep `commit_sha`, `requested_json` and the credential context on the row with `plan_id`, `plan_hash` and `job_id` null until finalization. The **recovery record** (`recovery_mode`, `resume_step`, `recovery_reason`, `recovery_target_deployment_id`) is written by the reconcile verdict that requeues a deployment job (ADR-0029).
 
 ---
 
@@ -988,7 +936,7 @@ A crash before commit leaves the old state intact; a crash after commit leaves t
 
 **Rules.**
 - Logs and errors never include secret plaintext. The API never returns secret plaintext after creation.
-- Secrets referenced by apps live under `apps/…`. `secret.write` on `apps/…` rejects values containing NUL, CR or LF, or invalid UTF-8 (`INVALID_ARGUMENT`), because they are written verbatim to `format: raw` env files (§20.3, ADR-0010). Historical versions are kept encrypted and cannot be deleted in V1 (ADR-0008).
+- `secret.write` on `apps/…` rejects values containing NUL, CR or LF, or invalid UTF-8 (`INVALID_ARGUMENT`); the rule outlived the deployments that wrote such values to env files (ADR-0010, retired by ADR-0043). Historical versions are kept encrypted and cannot be deleted in V1 (ADR-0008).
 - `sm backup` includes encrypted secrets (they are rows in the database) but never KEK files.
 - Key backup is a separate, explicit `sm secrets export-key <kek_id>` that requires a passphrase (≥ 12 characters, read from a TTY or stdin, never from an argument). Export file format v1:
 
@@ -1027,11 +975,9 @@ Every request has exactly one actor. Identity is always a daemon-issued `identit
 human       local mode: the OS user of a socket connection that presents NO token
             (identity "local:<uid>", created on first daemon start). server mode: an
             OIDC subject (issuer+subject) after login.
-automation  API token holder, or a verified GitHub Actions OIDC token (§18) mapped to a
-            pre-registered automation identity (issuer + repository_id + workflow ref):
-            issuer https://token.actions.githubusercontent.com, subject
-            repository_id:<id>:workflow:<deploy_workflow>. app.write creates or links it
-            with no role; an admin grants one explicitly (ADR-0028).
+automation  API token holder. The automation identities created for GitHub Actions OIDC
+            were disabled and lost their role bindings by migration 000014 (ADR-0043);
+            they are kept because jobs, plans and events reference them.
 mcp         a registered MCP client. Local: registered by a human with `sm mcp clients add
             <name>` (registration, then one-time token issuance, §11.2), which yields an MCP client token stored by the MCP bridge config in a
             0600 file or the OS keychain; `sm mcp` presents it on every socket request.
@@ -1048,13 +994,13 @@ On the local socket, a request carrying an MCP client token is `mcp`; a request 
 
 **MCP clients (1.4.7; ADR-0032).** A local client's identity is `issuer = supermgmt:mcp-local`, `subject = <mcp_clients.id>`, `client_id = ''`; a remote client's is its OAuth `(issuer, subject, client_id)`, with `issuer = mcp.oauth.issuer`. Both are created with no role binding. A local client token (`smm_…`, kind `m`) is issued once, expires (mandatory, at most 365 days; default 90 days in the CLI), is accepted only on the local socket and is refused while `mcp.enabled` is false; its `credential_id` is the client id. An OAuth access token's `credential_id` is the id of its `oauth_access_tokens` row (keyed by the token's SHA-256). Deleting a client revokes its token and every OAuth token row, disables its identity and removes its role bindings. Re-registering a deleted remote triple reuses the identity (still with no role) under a new client row; old credentials stay refused, including OAuth tokens whose `iat` precedes the new client's creation by more than 60 s.
 
-**Credential context.** Every authenticated request also carries the credential it used: `credential_kind ∈ {local_socket, session, api_token, mcp_token, oauth_access_token, github_oidc}`, `credential_id`, the token `scopes`, and the credential expiry. Plans and jobs persist this context (§9). It is re-checked at claim (§20.4):
+**Credential context.** Every authenticated request also carries the credential it used: `credential_kind ∈ {local_socket, session, api_token, mcp_token, oauth_access_token, github_oidc}` (`github_oidc` only on jobs from before ADR-0043), `credential_id`, the token `scopes`, and the credential expiry. Plans and jobs persist this context (§9). It is re-checked at claim (§20.4):
 - a revoked credential fails the job (`CREDENTIAL_REVOKED`);
 - an expired API, MCP or OAuth token fails the job (`CREDENTIAL_EXPIRED`);
-- a session or GitHub OIDC token that expires naturally after submission does NOT fail the job, because the submission was valid and these credentials are short-lived by design, but revocation does;
+- a session that expires naturally after submission does NOT fail the job, because the submission was valid and these credentials are short-lived by design, but revocation does;
 - scopes are always re-applied.
 
-A `github_oidc` credential has the implicit scopes `["deployment.create", "deployment.read"]` and is usable only on those two routes. Its status is durable (`github_oidc_credentials`, ADR-0028): it is **revoked** when its row is revoked, its identity is disabled, or the automation identity is unlinked from the app (unlinking revokes its open credentials); a missing row counts as revoked; otherwise it is **expired** from `expires_at`, which is natural expiry above. The raw token is never stored.
+A `github_oidc` credential always reads as **revoked** (ADR-0043): an interrupted job that carries one is not resumed.
 
 ## 11.2 Roles, default policy and the action catalog
 
@@ -1066,24 +1012,20 @@ Built-in default policy:
 version: 1
 rules:
   - name: builtin-read
-    subjects: ["role:viewer", "role:operator", "role:deployer", "role:admin"]
+    subjects: ["role:viewer", "role:operator", "role:admin"]
     allow: ["*.read", "service.logs", "node.connect", "plan.create"]
   - name: builtin-operator
     subjects: ["role:operator", "role:admin"]
     allow: ["service.start", "service.stop", "service.restart", "node.probe",
             "node.reboot", "proxmox.vm.power", "proxmox.snapshot.create",
             "proxmox.backup.create", "job.cancel", "job.resolve"]
-  - name: builtin-deployer
-    subjects: ["role:deployer", "role:admin"]
-    allow: ["deployment.create", "deployment.rollback", "job.cancel",
-            "node.backup_template.run"]
   - name: builtin-approver
-    subjects: ["role:operator", "role:deployer", "role:admin"]
+    subjects: ["role:operator", "role:admin"]
     allow: ["approval.grant", "approval.reject"]
   - name: builtin-admin
     subjects: ["role:admin"]
     allow: ["config.write", "environment.write", "provider.write", "node.add",
-            "node.update", "node.remove", "app.write", "app_target.write",
+            "node.update", "node.remove", "node.backup_template.run",
             "identity.write", "role_binding.write", "mcp_client.register",
             "mcp_client.issue_token", "mcp_client.delete",
             "token.create", "token.revoke", "enrollment.create", "secret.write",
@@ -1110,9 +1052,6 @@ node.read                  node         read          query       —           
 node_route.read            node         read          query       —              —                        —
 service.read               service      read          query       —              service.read             —
 service.logs               service      read          query       —              service.logs             —
-app.read                   app          read          query       —              —                        —
-app_target.read            app_target   read          query       —              —                        —
-deployment.read            deployment   read          query       —              —                        —
 environment.read           environment  read          query       —              —                        —
 provider.read              provider     read          query       —              —                        —
 job.read / plan.read       job / plan   read          query       —              —                        —
@@ -1132,8 +1071,6 @@ proxmox.snapshot.rollback  node         high          job         non_retryable 
 proxmox.snapshot.delete    node         destructive   job         non_retryable  proxmox.snapshot.create  1
 proxmox.backup.create      node         operational   job         non_retryable  proxmox.backup.create    1
 node.backup_template.run   node         operational   sub-action  —              node.exec.template       —
-deployment.create          app_target   operational   job         resumable      docker.compose.deploy    3
-deployment.rollback        app_target   operational   job         resumable      docker.compose.deploy    3
 node.setup                 node         high          job         idempotent     node.ssh                 3
 node.tunnel.disable        node         high          job         idempotent     node.ssh                 3
 cloudflare.access_token.rotate  instance  high         job         idempotent     —                        3
@@ -1145,8 +1082,6 @@ node.remove                node         destructive   direct      —           
 provider.write             provider     high          direct      —              —                        —
 provider.delete            provider     destructive   direct      —              —                        —
 environment.write          environment  high          direct      —              —                        —
-app.write                  app          operational   direct      —              —                        —
-app_target.write           app_target   operational   direct      —              —                        —
 node_route.expose          node         operational   direct      —              —                        —
 node_route.unexpose        node         operational   direct      —              —                        —
 config.write               instance     high          direct      —              —                        —
@@ -1170,7 +1105,7 @@ Notes on the catalog:
 - `**` **Credential-issuing** direct actions (`mcp_client.issue_token`, `token.create`, `enrollment.create`) return a secret exactly once and are **never approval-gated**. Two design rules make this consistent with §11.3 step 8:
   - Their risk is `operational` and their resources (identities, the instance) have no environment, so the automatic approval floors never apply to them. The only possible trigger is an explicit `require_approval: true` rule, which `sm config validate` rejects for these actions. At runtime such a request is denied (`POLICY_DENIED`, `APPROVAL_NOT_SUPPORTED`).
   - The decision that may need approval is separated from the secret: **registering** an MCP client (`mcp_client.register`, high) is approval-gated like any high-risk direct action and creates the identity in state `pending_token`. Afterwards, `mcp_client.issue_token` is allowed **once**, only to the identity that requested the registration, only while the client is `pending_token`, and within 24h of approval. It returns the token and moves the client to `active`. A lost token requires deletion and re-registration.
-- **MCP floors (1.4.7; ADR-0032), applied before policy for an `mcp` actor and not configurable:** every `credential`-mode action (`token.create`, `mcp_client.issue_token`, `enrollment.create`, and any later one) and `mcp_client.register`, `mcp_client.delete`, `identity.write`, `role_binding.write` are denied (`POLICY_DENIED`, `MCP_ACTION_FORBIDDEN`), whatever a rule grants. While `mcp.write_tools_enabled` is false, every action that is not a `query` is also denied (`MCP_WRITES_DISABLED`), including governance actions and the admission of `POST /deployments`, `…/rollback` and `…/cancel`, which authorize before persisting anything. `POST /plans` still stores the plan with that denial as its verdict; submitting it fails.
+- **MCP floors (1.4.7; ADR-0032), applied before policy for an `mcp` actor and not configurable:** every `credential`-mode action (`token.create`, `mcp_client.issue_token`, `enrollment.create`, and any later one) and `mcp_client.register`, `mcp_client.delete`, `identity.write`, `role_binding.write` are denied (`POLICY_DENIED`, `MCP_ACTION_FORBIDDEN`), whatever a rule grants. While `mcp.write_tools_enabled` is false, every action that is not a `query` is also denied (`MCP_WRITES_DISABLED`), including governance actions. `POST /plans` still stores the plan with that denial as its verdict; submitting it fails.
 - `secret.write` is approval-gated by the high-risk floor (§11.3 step 8). Its operations carry no secret in the plan: an import is sealed as a staged version that approval activates, and `export-key` is requested, approved, then executed once by the requester with the passphrase (§10). Values under `apps/…` follow the env-file rule of §10.
 - A token can never carry scopes broader than the creator's own permissions at creation; scopes only narrow (§11.3 step 7).
 - `sub-action`: never invoked directly. It is authorized as part of a composite plan (§11.3).
@@ -1183,7 +1118,7 @@ Risk classes:
 
 ```text
 read         no mutation
-operational  restart/start/stop/deploy/update/ordinary config changes
+operational  restart/start/stop/update/ordinary config changes
 high         reboot/shutdown/hard stop/snapshot rollback/secrets/identities/providers/
              environments/global config/node privilege changes
 destructive  delete/disk/network/provider destructive actions
@@ -1194,21 +1129,15 @@ governance   decisions on existing plans/jobs; evaluated by §11.4, never approv
 
 ## 11.3 Evaluation algorithm
 
-**Effective resource attributes** used for matching. Tags are always control-plane-owned: `node_tags` and environments. Container labels, Compose labels and manifest content never become authorization attributes.
+**Effective resource attributes** used for matching. Tags are always control-plane-owned: `node_tags` and environments. Container labels and Compose labels never become authorization attributes.
 
 ```text
 node        node_tags; environment = nodes.environment_id; provider
 service     its node's tags, environment and provider (service-level tags: none in V1)
-app_target  environment of the target; app name; tags of its node
-deployment  same as its app_target
 provider    provider name
 ```
 
-**Composite plans.** A `deployment.create`/`deployment.rollback` plan also lists the **sub-actions** its deployment policy enables:
-- `proxmox.snapshot.create` on the node when `snapshot: true`;
-- `node.backup_template.run` on the node when `pre_deploy_backup` is set.
-
-A `node.setup` plan (ADR-0009) lists, on the node:
+**Composite plans.** A `node.setup` plan (ADR-0009) lists, on the node:
 - `sudoers.write`, always;
 - `log_broker.install` when `logs_mode: broker`.
 
@@ -1225,7 +1154,8 @@ Each sub-action is evaluated like a target (steps 2–8). The plan is allowed on
 3. Match, per target: collect rules where
      subjects matches actor   ("type:<t>", "role:<r>", "identity:<uuid>", "*")
      AND resources matches    (omitted = all; "tag:<t>", "environment:<e>",
-                               "provider:<name>", "node:<name>", "app:<name>";
+                               "provider:<name>", "node:<name>", "app:<name>" (still
+                               parsed; matches nothing since ADR-0043);
                                entries are OR'ed; matched against effective attributes)
      AND (allow or deny) contains a pattern matching the action.
    Action patterns are dot-separated; "*" matches exactly one segment; a bare "*"
@@ -1262,7 +1192,7 @@ Every DENY and CAPABILITY_UNAVAILABLE emits an audit event. The algorithm is tab
   - After expiry, the same approver may **renew**: the row's `expires_at` and `renewed_at` are updated, the renewal is audited, and it counts again.
   - A rejection row is final and cannot be renewed.
 - **Self-approval** (approver = requester) is forbidden when `security.allow_self_approval: false`. The default is `true` in local mode and `false` in server mode. When allowed, the requester counts at most once, only for `human` requesters, and only through an explicit approve action on the displayed plan hash, never implicitly.
-- **Rejection** is accepted only while the job is in `waiting_ci`, `awaiting_approval` or `queued`. It moves the job to `failed` (`REJECTED`) and is final for that plan hash. From `preparing` onward a rejection returns `CONFLICT`; the remedy is cancel (where allowed) or a later rollback.
+- **Rejection** is accepted only while the job is in `awaiting_approval` or `queued`. It moves the job to `failed` (`REJECTED`) and is final for that plan hash. Once the job runs, a rejection returns `CONFLICT`; the remedy is cancel (where allowed).
 - **Expiry:** each approval expires `security.approval_ttl` after it was given or renewed. Quorum is evaluated at the transition out of `awaiting_approval` and again at claim (§20.4); only unexpired approvals from still-authorized approvers count. If quorum lapses, the job returns to (or stays in) `awaiting_approval`.
 - **Plan expiry:** `plans.expires_at` (default 24h after the plan was finalized) is checked at submit (`CONFLICT`, `PLAN_EXPIRED`), at every approval, and at claim. An expired plan moves its job to `failed` (`PLAN_EXPIRED`) from any pre-execution state.
 - Approve/reject requests MUST include the `plan_hash` the approver saw; a mismatch returns `CONFLICT` (`PLAN_STALE`).
@@ -1287,19 +1217,13 @@ rules:
   - name: human-staging
     subjects: ["role:operator"]
     resources: ["environment:staging"]
-    allow: ["service.restart", "deployment.create"]
-  - name: production-deploy
-    subjects: ["role:deployer"]
+    allow: ["service.restart"]
+  - name: production-backup-template
+    subjects: ["role:operator"]
     resources: ["environment:production"]
-    allow: ["deployment.create", "deployment.rollback", "node.backup_template.run"]
+    allow: ["node.backup_template.run"]
     require_approval: true
     approvals: 2
-  - name: ci-deploy-staging
-    # automation identity registered for repository 123456789, workflow ci.yml
-    subjects: ["identity:0190a5e2-7c41-7b9e-9f0e-3d2c1b0a9f88"]
-    resources: ["environment:staging"]
-    allow: ["deployment.create"]
-    require_approval: false
   - name: never-mcp-destructive
     subjects: ["type:mcp"]
     deny: ["node.shutdown", "provider.delete", "proxmox.snapshot.delete"]
@@ -1445,7 +1369,7 @@ Docker discovery:
 
 Docker access is effectively privileged on many systems. Document this prominently.
 
-Actions: start/stop/restart selected containers, logs, Compose deployment, human interactive exec when policy permits.
+Actions: start/stop/restart selected containers, logs, human interactive exec when policy permits. Compose deployments are not an action: the project's CI/CD deploys (ADR-0043).
 
 ## 17.1 lazydocker integration
 
@@ -1463,355 +1387,21 @@ Also support similar human-only handoffs for `btop`, `journalctl`, `tmux`, and r
 
 ---
 
-# 18. GitHub connector and CI-gated deployments
+# 18. GitHub connector and CI-gated deployments (retired)
 
-GitHub is a connector/provider for repositories, workflow status and deployment authorization.
-
-Application creation flow from TUI:
-
-```text
-Select GitHub repository
-Select deployment branch
-Select target environment/node selector
-Select strategy (Docker Compose V1)
-Define health check
-Define rollback policy
-Choose required GitHub workflow/checks
-Review plan
-Save application
-```
-
-A deployment configured as “when CI passes” MUST deploy the exact commit/artifact that passed CI, never “latest main” at execution time.
-
-**CI policy** (per app, `apps.ci_policy_json`, set at app creation by an admin, part of plan inputs):
-
-```yaml
-repository_id: 123456789          # numeric GitHub IDs; names are display only
-owner_id: 987654
-branch: main
-allowed_events: [push]            # pull_request / pull_request_target never allowed
-required_checks:
-  - name: test
-    app_id: 15368                 # GitHub App that must have produced the check run;
-                                  # recorded from the repository at app creation, not hard-coded
-    workflow_path: .github/workflows/ci.yml   # required when app_id is GitHub Actions
-deploy_workflow: .github/workflows/ci.yml   # matched against the OIDC `workflow_ref` claim
-deploy_reusable_workflow: ""               # optional: owner/repo/path@ref, matched against
-                                            # `job_workflow_ref` when deploys run in a reusable workflow
-```
-
-**Check verification** (always performed through the GitHub API; never inferred from the request). For the exact commit SHA, every `required_checks` entry must have a completed check run that meets all of these:
-- produced by the named `app_id`;
-- named `name`;
-- conclusion `success`;
-- for GitHub Actions checks, belonging to a workflow run (resolved via the check suite → workflow run API) whose `path` = `workflow_path`, `head_branch` = `branch`, `head_sha` = the commit, and `event` ∈ `allowed_events`.
-
-The latest attempt of each check is used. Evidence is persisted **per check** in `artifact_checks`. `source_run_id`/`source_run_attempt` on the artifact record only the run that built the digest. A request coming from a "protected dependent job" is **not** accepted as evidence of passing checks.
-
-**GitHub Actions OIDC** (authenticates automation requests; it is not evidence that tests passed). Verification:
-- signature against the issuer JWKS (`https://token.actions.githubusercontent.com`, cached, refreshed on unknown `kid`);
-- `aud` = `github.oidc_audience` (default `server.public_url`);
-- `exp` in the future, `iat` no older than 5 minutes, ≤ 60s clock skew;
-- `jti` unseen, recorded in `oidc_replay` until `exp` (replay → `UNAUTHENTICATED`);
-- `repository_id`, `repository_owner_id`, `ref` = `refs/heads/<branch>`, `sha`, `event_name` ∈ `allowed_events`, `workflow_ref` = `<owner>/<repo>/<deploy_workflow>@<ref>`; when `deploy_reusable_workflow` is set, `job_workflow_ref` MUST be present and equal it; when it is not set, `job_workflow_ref` MAY be absent, and if present MUST equal `workflow_ref` (a job running inside any reusable workflow is then rejected); `run_id`, `run_attempt`, and `environment` when the target environment requires one.
-
-The token maps to the pre-registered automation identity for that repository and workflow. Tokens from forks or `pull_request*` events can never obtain deployment authority.
-
-**Webhooks (server mode):** HMAC-SHA256 signature over the raw body (constant-time compare) plus `delivery_id` dedupe. Webhooks only trigger re-evaluation; the API remains the source of truth.
-
-Delivery of CI results by mode:
-
-- **Server mode:** a `check_run`/`check_suite`/`workflow_run` webhook triggers re-evaluation, and the daemon also polls deployments in `waiting_ci` as a backstop every `github.ci_poll_max`, so a lost webhook cannot strand a deployment until `github.ci_timeout` (1.4.6).
-- **Local mode:** no inbound webhooks (§2.1.1). The daemon polls check status for deployments in `waiting_ci` (`github.ci_poll_initial` doubling to `github.ci_poll_max`; after `github.ci_timeout` → `failed`, `CI_NOT_PASSED`).
-
-**Artifact ↔ commit binding.** A digest is accepted for a commit only if:
-
-- **(a) `provenance_method = attestation`:** a GitHub artifact attestation (SLSA provenance) for that digest verifies, and its subject digest, source repository ID, workflow path and commit SHA match the CI policy and commit. Verification (ADR-0028) uses Sigstore bundles against the Sigstore public-good and GitHub trusted roots (embedded, refreshed through TUF over the outbound filter, fail closed when stale); the certificate SAN must be `https://github.com/<owner>/<repo>/<workflow_path>@refs/heads/<branch>`, its issuer the Actions OIDC issuer, and the source repository ID and commit come from the Fulcio extensions; or
-- **(b) `provenance_method = oidc_claims`:** the digest was reported by an automation request whose verified OIDC claims (above) match the commit, run and workflow.
-
-Environments with `require_provenance: true` accept only (a). Every image digest in the plan (deployed service and sidecars, §20.3) must be bound by (a) or (b), or be listed in the app's `image_policy.pinned` set approved by an admin.
+Retired by ADR-0043: SuperMgmt reads and operates what runs on a node; each project's own CI/CD deploys it. There is no GitHub connector, repository link, CI check, attestation or Actions OIDC credential. Migration `000014_retire_deployments` drops their tables; their audit events stay readable.
 
 ---
 
-# 19. Application manifest
+# 19. Application manifest (retired)
 
-Optional repository file `.supermgmt.yaml`, read from the exact CI-passed commit. It describes application-level deployment hints; it never carries infrastructure secrets, target selection or privilege.
-
-Schema V1 (strict; unknown fields fail):
-
-```yaml
-apiVersion: supermgmt.dev/v1
-kind: Application
-metadata:
-  name: myapp
-spec:
-  deployment:
-    strategy: docker-compose
-    composeFile: compose.yaml      # used only when apps.compose_source = repository
-    service: web                   # must equal apps.deployed_service
-  health:                          # hint; see precedence
-    type: http                     # http | tcp | docker-health
-    port: 8080                     # must be a host port published by the app's Compose model
-    path: /health
-    timeout: 3s
-    interval: 5s
-    attempts: 12
-  rollback:
-    mode: automatic                # automatic | manual
-```
-
-The manifest can NOT set: image repositories, target nodes or environments, secrets, variables, Compose security exceptions, CI policy, `stateful`, or backup steps. These live only in control-plane configuration (`apps`, `app_targets`). A manifest containing such fields fails validation; it never silently overrides control-plane values.
-
-**Precedence (control plane always wins; the manifest can only tighten):**
-
-```text
-field                      control-plane source                  manifest effect
-health check               app_target.deployment_policy.health   used only if control plane defines none;
-                                                                 manifest health is always scope=node
-rollback mode              app_target.deployment_policy.rollback  manifest "manual" downgrades automatic → manual;
-                                                                 manifest "automatic" never upgrades manual
-stateful / backup          app_target.deployment_policy           not settable
-compose content            apps.compose_content (control-plane)   composeFile used only if compose_source=repository
-```
-
-## 19.1 Deployment policy (control plane)
-
-`app_targets.deployment_policy_json`:
-
-```yaml
-rollback: automatic            # automatic | manual
-stateful: false                # true forces rollback: manual
-pre_deploy_backup:             # optional; required when stateful: true and environment is production
-  template: postgres-dump      # id from the command-template catalog (§12)
-  args: {container: db, database: app}
-  timeout: 10m
-snapshot: false                # Proxmox snapshot before deploy (only for Proxmox guests)
-allowed_bind_addresses: []     # extra host IPs Compose may publish on (default: loopback only)
-health:                        # optional; overrides manifest health
-  type: http
-  port: 8080
-  path: /health
-  timeout: 3s
-  interval: 5s
-  attempts: 12
-```
-
-`pre_deploy_backup` must exit 0 and print the path of the backup artifact on its last stdout line. The path is recorded in `deployment_steps.output_ref`. Any failure fails the deployment before services change. Proxmox snapshots are for manual recovery only: V1 never rolls back automatically to a snapshot.
-
-**Supported in M4 (1.4.6).** `pre_deploy_backup.template` is `postgres-dump`, the only backup template; `snapshot: true` is rejected with `INVALID_ARGUMENT` ("not supported in this version"); `health.type` is `http`, `tcp` or `docker-health` for `node` scope and `http`/`https` for `control_plane` scope; `command-template` and `systemd-active` are rejected for app targets. Deployments write under `deploy_root`, created by `node.setup` v2 (ADR-0030).
-
-## 19.2 Compose source
-
-`apps.compose_source`:
-
-- `control-plane` (default; required for production-risk environments unless an admin sets an exception): the Compose content is stored in `apps.compose_content` and edited by admins through an approval-gated `app.write` plan.
-- `repository`: the file at `composeFile` in the exact CI-passed commit. Either way it passes the Compose pipeline (§20.3).
-
+Retired by ADR-0043, with §19.1 (deployment policy) and §19.2 (Compose source). SuperMgmt reads no application manifest and owns no Compose file.
 
 ---
 
-# 20. Deployment engine
+# 20. Jobs
 
-## 20.0 Scope of a deployment in V1
-
-A deployment targets exactly **one** `app_target`, which resolves to exactly **one** managed node (`app_targets.node_id`, fixed at configuration time). Multi-node orchestration is post-V1. A deployment is either:
-- `kind: deploy` — a new artifact; or
-- `kind: rollback` — redeploy the artifact and Compose hash of a previous known-good deployment.
-
-A manual rollback is a new `kind: rollback` deployment with its own plan and approval. It never mutates the history of the deployment it reverts.
-
-**Provisional vs final plan.** At creation, a deployment records only its **provisional inputs**: app_target, the exact commit SHA, and the requester's credential context. While CI is pending (`waiting_ci`) there is no final plan and nothing can be approved. When CI passes, the engine:
-1. runs the Compose pipeline (§20.3);
-2. binds every image digest (§18);
-3. builds and persists the **final plan** (Appendix C);
-4. evaluates policy (§11.3).
-
-Approvals always refer to the final plan hash. Deployments without a CI gate finalize their plan immediately.
-
-## 20.1 State machine
-
-States:
-- `created`, `waiting_ci`, `awaiting_approval`, `queued`;
-- `preparing` (read-only preflight);
-- `staging` (mutations that do not affect running services);
-- `deploying`, `verifying`, `rolling_back`, `interrupted`;
-- terminal: `succeeded`, `failed`, `rolled_back`, `rollback_failed`, `cancelled`.
-
-The **first mutation boundary** is entry into `staging`. Nothing on any target changes before it. Running services first change on entry into `deploying`.
-
-The table is exhaustive; the state machine rejects any other transition with `CONFLICT`. `failed` always records the pair `state_code` (top-level code, §38) + `state_reason` (reason enum). Table entries name the reason; where a top-level code is shown (e.g. `POLICY_DENIED`), the reason is the one returned by the failing check.
-
-| From | To | Trigger / `state_reason` |
-|---|---|---|
-| `created` | `waiting_ci` | CI gate configured and not yet satisfied (provisional inputs only) |
-| `created` | `awaiting_approval` | final plan built; approval required |
-| `created` | `queued` | final plan built; no approval required |
-| `created` | `failed` | `INVALID_ARGUMENT`, `POLICY_DENIED`, `ARTIFACT_NOT_IMMUTABLE`, `COMPOSE_REJECTED` |
-| `waiting_ci` | `awaiting_approval` / `queued` | checks passed; final plan built; policy allows |
-| `waiting_ci` | `failed` | `CI_NOT_PASSED`, `ARTIFACT_NOT_IMMUTABLE`, `COMPOSE_REJECTED`, `POLICY_DENIED` (on final plan), `REJECTED` (rejected while waiting) |
-| `awaiting_approval` | `queued` | quorum of valid approvals reached (§11.4) |
-| `awaiting_approval` | `failed` | `REJECTED`, `PLAN_EXPIRED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_EXPIRED` |
-| `queued` | `preparing` | claim succeeded: lease, locks and claim-time revalidation (§20.4) |
-| `queued` | `awaiting_approval` | claim-time revalidation: quorum lapsed |
-| `queued` | `failed` | `PLAN_STALE`, `PLAN_EXPIRED`, `POLICY_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_EXPIRED`, `REJECTED` |
-| `preparing` | `staging` | preflight passed |
-| `preparing` | `failed` | `PREFLIGHT_FAILED` (no mutation has happened) |
-| `staging` | `deploying` | snapshot/backup taken if configured; digests pulled; deployment directory materialized and verified |
-| `staging` | `failed` | `STAGING_FAILED`. Running services untouched; staged directory garbage-collected; snapshot/backup kept per retention |
-| `deploying` | `verifying` | `compose up` completed |
-| `deploying` | `rolling_back` | update failed AND rollback available (below) |
-| `deploying` | `failed` | update failed AND rollback unavailable (`ROLLBACK_UNAVAILABLE` + cause) |
-| `verifying` | `succeeded` | health checks passed; deployment marked known-good |
-| `verifying` | `rolling_back` | health failed AND rollback available |
-| `verifying` | `failed` | health failed AND rollback unavailable (`ROLLBACK_UNAVAILABLE` + cause) |
-| `rolling_back` | `rolled_back` | previous known-good restored and healthy |
-| `rolling_back` | `rollback_failed` | restore failed or unhealthy (human required) |
-| `created`, `waiting_ci`, `awaiting_approval`, `queued`, `preparing` | `cancelled` | user cancel (`job.cancel`) |
-| `preparing`, `staging`, `deploying`, `verifying`, `rolling_back` | `interrupted` | lease expired and takeover performed (§20.4) |
-| `interrupted` | `preparing` / `staging` / `deploying` / `verifying` | **forward resume** (resumable jobs only): completion evidence for every earlier step (§20.4) AND resume revalidation passed; continues at the first incomplete step under a new lease generation |
-| `interrupted` | `rolling_back` | **safety recovery**: evidence shows a partial/unhealthy new deployment (or resume revalidation failed after `deploying` began) AND rollback available; performed by `system` (§20.4) |
-| `interrupted` | `failed` | reconciler: interrupted before `deploying` with running services untouched (`INTERRUPTED_BEFORE_DEPLOY`), resume revalidation failed before `deploying` (its reason), or partial/unhealthy new deployment with rollback unavailable (`ROLLBACK_UNAVAILABLE`) |
-| `interrupted` | `succeeded` | reconciler: evidence of the new deployment fully running and healthy |
-| `interrupted` | `rolled_back` / `rollback_failed` | reconciler: interrupted during `rolling_back`; evidence of the outcome |
-| `interrupted` | `failed` / `succeeded` / `rollback_failed` | human resolution (`job.resolve`, §20.4) when evidence is ambiguous |
-
-**Rollback available** means all of the following hold. Otherwise the cause is recorded.
-- the effective rollback mode is `automatic` (§19);
-- the target is not `stateful`;
-- the environment has `allow_automatic_rollback: true`;
-- a previous known-good deployment exists for this `app_target` (none on a first deployment);
-- `kind = deploy` (a `kind: rollback` deployment never auto-rolls back).
-
-Cancellation is impossible from `staging` onward. Every transition is persisted with its event in one SQLite transaction, guarded by the lease generation (§20.4).
-
-## 20.2 Docker Compose V1 flow
-
-1. Create the deployment with its provisional inputs (§20.0). If a CI gate applies, enter `waiting_ci` and wait (§18).
-2. Finalize: run the Compose pipeline (§20.3), bind every image digest, build and persist the final plan (Appendix C), and evaluate policy including sub-actions (§11.3).
-3. Await approval if required (`awaiting_approval`).
-4. Claim (§20.4): fence the generation, take locks (§20.5), and revalidate.
-5. `preparing`: read-only preflight. Checks:
-   - the node is reachable at the pinned endpoint with the pinned host key;
-   - Docker and Compose versions are in the compatibility matrix;
-   - free disk ≥ image sizes + 1 GiB, on the Docker root dir and on `deploy_root`. Image sizes come from the node: `docker manifest inspect --verbose <repo>@<digest>` for the node's platform (layers plus config) for each image not already present; present images count 0. A size that cannot be established fails preflight (`PREFLIGHT_FAILED`, cause `IMAGE_SIZE_UNKNOWN`) (1.4.6; ADR-0029);
-   - project ownership labels (§20.5);
-   - host ports are free or owned by this project;
-   - health-check capability (§21).
-6. `staging`, each step under its own deadline (§20.4):
-   - optional Proxmox snapshot;
-   - optional pre-deploy backup;
-   - `docker pull <repo>@<digest>` for every image;
-   - materialize a fresh deployment directory (§20.3 step 9);
-   - on-node equivalence check (§20.3 step 10).
-7. `deploying`: under the node-side project lock (§20.4), run `docker compose` with an explicit file, project name and project directory, `--no-build --pull never --remove-orphans`, under `env -i` with a fixed `PATH`.
-8. `verifying`: health checks (§21).
-9. Mark known-good, release locks, and persist the timeline. On failure, follow §20.1.
-
-**Execution reads only the plan snapshot.** Workers read Compose model, policy, health configuration, endpoint and digests from the persisted final plan, never from live configuration. Edits to plan inputs during execution are prevented by shared locks (§20.5).
-
-Shell deployments are post-V1, disabled by default, sandboxed/restricted and must use reviewed pinned scripts. Never execute arbitrary repository shell content as root merely because CI passed.
-
-## 20.3 Compose pipeline (closed schema)
-
-Docker access is root-equivalent (§17), so a Compose file is privileged code. Validation works on a **closed allowlist**: anything not listed is rejected. The node runs only the frozen output of this pipeline, never the original file.
-
-**1. Raw input.** Exactly one YAML document, ≤ 256 KiB. Before any loader runs, reject:
-- the top-level keys `include`, `secrets`, `configs` and `name`;
-- `extends` anywhere;
-- `env_file` anywhere.
-
-`x-*` extension keys and YAML anchors are allowed; merged content is validated after loading like everything else.
-
-**2. Interpolation (single pass, by SuperMgmt).**
-- Recognized forms: `$NAME` and `${NAME}` (NAME = `[A-Za-z_][A-Za-z0-9_]*`), plus `$$` meaning a literal `$`. Any other `$` usage — `${NAME:-x}`, `${NAME?err}`, `${NAME-x}`, nested forms, or a lone `$` before a non-name character — is rejected.
-- **Allowed locations:** values in `services.*.environment`, elements of `command`/`entrypoint`, and values in `labels`. A `$` anywhere else is rejected, except `$$`.
-- **Variables:** NAME must exist in the app's `variables_json` (non-secret). Unknown names are rejected. The process environment and `.env` files are never consulted.
-- **Secrets:** a value in `services.<svc>.environment` may be exactly `${secret:<ref-name>}`. This is a reference to `apps.secret_refs_json`, which maps ref-name → `secret://` path. It is not interpolated: it is removed from the public model and recorded as `{service, env_name, secret_id, secret_version}`.
-- **Escaping:** after substitution, every literal `$` in every string is re-escaped as `$$` in the frozen output. The pinned loader and the node CLI therefore perform no further substitution: interpolation of the frozen file with an empty environment is the identity, which is a CI test.
-
-**3. Load** with `compose-spec/compose-go` (pinned version, ADR-0006):
-- in-memory single-file resource loader;
-- environment lookup disabled;
-- include/extends resolution disabled;
-- path resolution disabled.
-
-Loader-equivalence tests against the pinned `docker compose` CLI versions run in CI.
-
-**4. Allowed top-level keys:** `services` (required), `volumes`, `networks`.
-
-**5. Allowed service keys** (exhaustive), with closed nested schemas:
-
-```text
-image                 string (see step 8)
-command, entrypoint   list of strings (string form rejected)
-environment           map string->string (list form rejected)
-ports                 long syntax only: {target:int, published:int, host_ip:addr,
-                      protocol: tcp|udp}; host_ip ∈ {127.0.0.1, ::1} ∪
-                      app_target.allowed_bind_addresses; no ranges
-expose                list of int
-healthcheck           {test: list, interval, timeout, retries, start_period,
-                      start_interval, disable}
-restart               no | always | on-failure | unless-stopped
-depends_on            map service -> {condition: service_started | service_healthy |
-                      service_completed_successfully}
-volumes               long syntax only: {type: volume, source: <top-level volume>,
-                      target, read_only, volume: {nocopy}} | {type: tmpfs, target,
-                      tmpfs: {size, mode}}
-networks              map network -> {aliases: list} (network declared at top level)
-labels                map; keys under com.docker.* and dev.supermgmt.* rejected
-logging               {driver: json-file | local, options: {max-size, max-file, compress}}
-user, working_dir     string
-read_only, init       bool
-tmpfs                 list of absolute container paths
-stop_signal           string;  stop_grace_period: duration
-mem_limit, cpus, pids_limit
-ulimits               {nofile: {soft, hard}} | {nproc: {soft, hard}}
-deploy                {resources: {limits: {cpus, memory, pids}}} only
-```
-
-Everything else is rejected. Examples, non-exhaustive: `privileged`, `cap_add`, `cap_drop`, `security_opt`, `network_mode`, `pid`, `ipc`, `userns_mode`, `uts`, `devices`, `gpus`, `cgroup*`, `sysctls`, `extra_hosts`, `dns*`, `container_name`, `hostname`, `volumes_from`, `links`, `build`, `secrets`, `configs`, `platform`, `profiles`, `runtime`, `storage_opt`, `oom_*`, `shm_size`.
-
-**6. Top-level `volumes`/`networks` entries:** allowed keys are `labels` only, and for networks also `internal: bool`. Compose prefixes their names with the project name (§20.5), so they cannot collide with or attach to other workloads.
-
-**7. Exceptions.** An admin-approved per-app exception (part of `apps.spec_revision` and of the plan) may enable only these keys, with exact values:
-- `cap_add` with values from {`NET_BIND_SERVICE`, `CHOWN`, `SETUID`, `SETGID`, `DAC_OVERRIDE`, `FOWNER`, `KILL`};
-- `sysctls` with keys under `net.`;
-- `extra_hosts`;
-- `shm_size`.
-
-Everything rejected in steps 1–2, 4 and 6, every bind mount, and every other key is **not exemptible** in V1.
-
-**8. Images (per service).** `apps.image_policy_json`:
-
-```yaml
-deployed: ghcr.io/acme/api          # repository for apps.deployed_service
-sidecars:                           # service name -> allowed repository
-  redis: docker.io/library/redis
-pinned: []                          # admin-approved repo@digest pairs (optional)
-```
-
-- The deployed service's `image` is **rewritten** to `<deployed>@<artifact digest>`.
-- Every other service's `image` must already be `<allowed repository>@sha256:<64 hex>` for its service name, and the digest must be bound per §18 or listed in `pinned`.
-- Tags are rejected.
-- Validation (step 5) runs before and after the rewrite.
-
-**9. Labels, freeze and materialize.**
-- After validation, the pipeline injects the deterministic **ownership labels** on every service, volume and network: `dev.supermgmt.owner=<app_target_id>` and `dev.supermgmt.project=<compose_project>`.
-- The model is serialized to canonical YAML (sorted keys, no anchors). That is the **public model**. `compose_hash` = SHA-256 of it.
-- **Per-deployment labels** (`dev.supermgmt.deployment=<deployment_id>`) and secret wiring are added only at materialization. They are excluded from `compose_hash` but are deterministic and checked in step 10.
-- On the node, SuperMgmt creates a new directory `<deploy_root>/<compose_project>/<deployment_id>/` (fails if it exists; `deploy_root` default `/srv/supermgmt`, owned by `supermgmt` 0750 and created by root during node.setup (1.4.6; ADR-0030); project dirs owned by `supermgmt`, mode 0750). It then writes:
-  - `compose.yaml`: the public model plus per-deployment labels plus, for each service with secrets, an `env_file: secrets/<service>.env` entry. Only the pipeline may emit `env_file`.
-  - `secrets/` (mode 0700) containing `<service>.env` (mode 0600), with the decrypted values written from memory at staging. Values are never persisted unencrypted on the control plane.
-- Files are created with `O_CREAT|O_EXCL|O_NOFOLLOW` semantics through a fixed template, and `stat` verifies that no path component is a symlink.
-- Docker exposes container environment to anyone with Docker access. That is already root-equivalent and is documented.
-
-**10. On-node equivalence check** (in `staging`): `docker compose -f <file> -p <project> --project-directory <dir> config --format json` under `env -i`, with secret values masked by the template before comparison. The **entire** output is compared with the expected effective model produced by the pinned `compose-go`. The comparison ignores only fields in a fixture-tested CLI-defaults normalization table (`internal/deployments/compose/normalize.go`). Any other difference → `STAGING_FAILED`.
-
-Secret values are compared by their **resolved** form (1.4.6; ADR-0010): the template runs `config --format json` with environment resolution and fixed `jq` programs (jq has no SHA-256, so a bash loop with `base64` and `sha256sum` hashes each value; ADR-0010), and prints only the model with every `environment` value replaced by its SHA-256 plus the set `{service, env_name, sha256}`. The control plane compares that set with hashes it computes in memory from the bound secret versions and variables; values never leave the node. A hash of the env-file bytes is not an acceptable substitute. The only supported Compose CLI is the pinned version in `docs/compatibility.md` (ADR-0006); preflight refuses any other.
-
-**API views** of a Compose model always show the public model, with secret references and no secret values. Plans contain only `{secret_id, secret_version}`.
-
-Each rule is unit-tested; the pipeline is fuzzed (raw YAML → reject or valid frozen model, never a panic).
+§20.0-§20.3 (deployment scope, state machine, Compose flow and closed Compose pipeline) were retired by ADR-0043. The job model below is generic.
 
 ## 20.4 Jobs: claim, fencing, intents and reconciliation
 
@@ -1819,8 +1409,9 @@ Each rule is unit-tested; the pipeline is fuzzed (raw YAML → reject or valid f
 
 ```text
 idempotent      safe to re-run from scratch -> retried up to max_attempts with backoff
-resumable       step-checkpointed (deployments): resumes at the first incomplete step,
-                only via the reconciler after an interruption (never blindly)
+resumable       step-checkpointed: resumes at the first incomplete step, only via the
+                reconciler after an interruption (never blindly). No catalog action uses
+                it since deployments were retired (ADR-0043)
 non_retryable   one-shot remote mutations; outcome is observed, never repeated
 ```
 
@@ -1833,44 +1424,40 @@ non_retryable   one-shot remote mutations; outcome is observed, never repeated
    - re-check the credential context (§11.1);
    - re-run policy for the requester, including sub-actions and scopes (§11.3);
    - re-check quorum (§11.4).
-4. Commit, or roll back and apply the §20.1 transition.
+4. Commit, or roll back and fail or requeue the job with the reason.
 
 **Fencing.** Every worker write (state, steps, intents, events, heartbeats, lock changes) carries `WHERE id = ? AND lease_generation = ? AND lease_owner = ?`. Zero rows affected means the lease was lost: the worker cancels its context and stops. A worker never renews a lease whose `lease_until` has passed; it stops instead.
 
 **Takeover** (reconciler; one transaction): `UPDATE jobs SET lease_generation = lease_generation + 1, lease_owner = 'reconciler:<id>', lease_until = … WHERE id = ? AND lease_generation = <observed> AND lease_until < now()`. After this commit the old worker's writes all fail. The job moves to `interrupted` in the same transaction if it was in a mutating state.
 
-**Per-step deadlines.** Every step has a deadline from the catalog or deployment policy: preflight 2m, snapshot 10m, `pre_deploy_backup.timeout`, pull 15m, materialize 1m, compose up 10m, health `attempts × interval + timeout`. The remote command runs under `timeout --kill-after=10s <deadline>`, and the intent stores `deadline_at`. `ssh.command_timeout` applies only to short read templates.
+**Per-step deadlines.** Every step has a deadline from the catalog. The remote command runs under `timeout --kill-after=10s <deadline>`, and the intent stores `deadline_at`. `ssh.command_timeout` applies only to short read templates.
 
 **Intents** (`operation_intents.state`: `recorded → completed`):
 1. The worker commits an intent with a unique `marker`, the operation, the target, `pre_state_json` and `deadline_at`. Then it dispatches.
 2. Every mutating remote template **first** creates the node-side marker file `/var/lib/supermgmt/markers/<marker>` (directory owned by `supermgmt`, created at enrollment) before doing anything else. The only exception is the `node.setup` steps that create that directory (ADR-0009): they are idempotent "ensure" steps that install files atomically, and an interrupted setup is requeued (retry class `idempotent`); markers are never consulted for it.
-3. Compose operations additionally run under `flock /run/supermgmt/locks/<compose_project>.lock`, so the lock is held for the whole remote operation.
-4. Proxmox calls cannot carry the marker. The intent records `type`, `vmid`, token `user` and `dispatched_at`, and the UPID is persisted as soon as the API returns it.
+3. Proxmox calls cannot carry the marker. The intent records `type`, `vmid`, token `user` and `dispatched_at`, and the UPID is persisted as soon as the API returns it.
 
 **Quiescence and completion** (required before any reconciler action and before human resolution releases locks). Two separate facts are needed, and a quiet interval alone proves neither.
 
 1. **Our remote process has exited.**
-   - Compose: acquire the node-side project flock, which the remote command held for its whole lifetime.
-   - Other templates: `now > deadline_at + kill_after + connect_timeout`.
+   - SSH templates: `now > deadline_at + kill_after + connect_timeout`.
    - Proxmox: the task has status `stopped`.
 2. **The platform operation has completed**, proven by **completion evidence** that does not depend on sampling resource state:
 
    | Operation | Completion evidence |
    |---|---|
-   | Compose `up`, `pull` (via template) | the remote wrapper writes `/var/lib/supermgmt/markers/<marker>.done` containing the CLI exit status **after** the Compose CLI returns. Only `.done` with exit status **0** is completion evidence. A nonzero status (transport, cancellation or daemon errors can make the CLI return before the daemon finished) and a missing `.done` both count as **no evidence** (fallback below) |
-   | Image pull by digest | `docker image inspect <repo>@<digest>` succeeds (content-addressed, so presence is final) |
    | systemd unit actions | `systemctl list-jobs` shows no queued/running job for the unit |
    | Proxmox tasks | task status `stopped` |
    | Node reboot/shutdown | `boot_id` changed, or provider power state `off` |
 
 3. **Only after completion is proven**, the outcome is classified from operation-specific state. The reconciler collects it **twice, at least 30s apart**; both samples must be identical and must match one of the operation's defined terminal patterns:
-   - `complete`: e.g. every service container carries this deployment's label, runs the expected digest, and no container of the previous deployment remains;
+   - `complete`: e.g. a restarted unit is `active` with a new `InvocationID`;
    - `not_started`;
    - `partial_stable`: an exactly defined mix that is identical across samples and has no container in `created`, `restarting` or `removing`.
 
    Samples that differ, or match no pattern, mean "still settling". The reconciler retries until `deadline_at + 5m`; after that the job stays `interrupted` for a human.
 
-**Fallback (fixed; adapters may not weaken it):** if completion evidence is unavailable — the CLI was killed before writing `.done`, the node is unreachable, or the adapter has no completion signal — the reconciler performs **no** automatic resume and **no** automatic rollback. The job stays `interrupted` with all its locks held and is surfaced for human resolution (`job.resolve`). Sampled stability alone never authorizes a new mutation.
+**Fallback (fixed; adapters may not weaken it):** if completion evidence is unavailable — the node is unreachable, or the adapter has no completion signal — the reconciler performs **no** automatic resume and **no** automatic rollback. The job stays `interrupted` with all its locks held and is surfaced for human resolution (`job.resolve`). Sampled stability alone never authorizes a new mutation.
 
 **Resume revalidation.** A forward resume (`interrupted` → an earlier execution state) is a new claim. It runs the full claim revalidation of the claim step:
 - plan inputs unchanged;
@@ -1879,9 +1466,7 @@ non_retryable   one-shot remote mutations; outcome is observed, never repeated
 - policy still allows (scopes included);
 - quorum: approvals already consumed at the first claim count only if no approver has since lost `approval.grant`.
 
-If revalidation fails before `deploying` was entered, the job fails with that reason. If it fails after `deploying` was entered, the only permitted continuation is **safety recovery**: the `system` actor rolls back to the previous known-good deployment when rollback is available (else `failed`, `ROLLBACK_UNAVAILABLE`). Safety recovery restores an already-approved prior state and is audited with the failed revalidation reason.
-
-**Safety recovery mechanics (1.4.6; ADR-0029).** The restoration target is the plan's frozen `rollback_target`, never "the newest known-good now". The requeueing reconcile verdict persists a durable recovery record on the deployment; the next claim reads it and, in safety recovery, replaces the requester revalidation with a restorability check (snapshot rows, secret versions, node endpoint and host-key pin): no requester credential, policy or quorum check, never `awaiting_approval`, same locks, actor `system`. A forward claim whose revalidation fails after `deploying` began is converted into safety recovery inside the claim transaction. A `kind: rollback` claim revalidates authorization inputs and the known-good snapshot, not the app's current Compose source (ADR-0007).
+If revalidation fails, the job fails with that reason.
 
 **Reconciliation**, per job after takeover:
 
@@ -1911,10 +1496,6 @@ node.reboot / shutdown    pre_state: /proc/sys/kernel/random/boot_id. Success: b
                           off (shutdown).
 proxmox task              UPID if recorded; else exactly one task matching the recorded
                           criteria. Success: status "stopped", exitstatus "OK".
-deployment step           containers of the project labeled with this deployment id,
-                          image digests and labels equal to the materialized model, then
-                          a fresh health check. Complete -> resume or succeed; partial ->
-                          rolling_back if available, else failed (ROLLBACK_UNAVAILABLE).
 ```
 
 Missing or contradictory evidence (zero or several matching Proxmox tasks) leaves the job `interrupted` and surfaces it in the TUI Jobs/Approvals screens.
@@ -1924,21 +1505,16 @@ Missing or contradictory evidence (zero or several matching Proxmox tasks) leave
 - If the node is unreachable, the caller must also pass `assume_quiescent: true`, which is recorded and audited.
 - It releases the locks and **never** re-executes anything. Re-running requires a new plan.
 
-## 20.5 Project ownership, locks and concurrency
-
-- `app_targets.compose_project` = `sm-<app>-<environment>`. It is unique per node (`UNIQUE(node_id, compose_project)`) and immutable after creation.
-- Preflight fails with `CONFLICT` ("project not owned") if a Compose project, volume or network with the project's names exists on the node without `dev.supermgmt.owner=<app_target_id>`.
-- Published host ports are plan inputs and are locked as `port:<node>:<addr>:<port>`. Preflight fails if anything other than this project holds them.
+## 20.5 Locks and concurrency
 
 **Lock modes** (`resource_locks.mode`):
 
 ```text
-exclusive   app_target, node+compose_project, each host port      (deployment)
-            service's node+compose_project or unit                 (service action)
+exclusive   service's node+Compose project, else its unit or container (service action)
             node                                                   (reboot/shutdown/power,
-                                                                    sudoers/log broker)
-shared      every other plan input: app, environment, node (for deployments and
-            service actions), provider, repository, health_check, secrets referenced
+                                                                    setup, sudoers/log broker)
+shared      every other plan input: environment, node (for service actions), provider,
+            secrets referenced
 ```
 
 Exclusive conflicts with any lock on the same resource; shared conflicts only with exclusive. A `direct` configuration write (§11.2) to a resource holding any lock returns `CONFLICT` (`RESOURCE_LOCKED`). Locks are held until the job is terminal, including while `interrupted`.
@@ -1946,43 +1522,13 @@ Exclusive conflicts with any lock on the same resource; shared conflicts only wi
 
 ---
 
-# 21. Health checks and service model
+# 21. Service health and outbound requests
 
-Health check types:
+Deployment health checks (`http`, `tcp` and command checks of an app target, the `health.http`/`health.tcp` capabilities and the `health:` config block) were retired by ADR-0043. Service health is what the runtime reports: `docker-health` and `systemd-active`, read through the runtime adapter on the node.
 
-```text
-http/https
-tcp
-command-template (restricted; control-plane defined only)
-docker-health
-systemd-active
-```
+## 21.1 Outbound request filter (provider and identity-provider endpoints)
 
-Every check has an execution `scope`.
-
-**`node` scope** (repository-manifest checks are always `node`). The check is executed on the target node through a fixed SSH template.
-- **Destination.** Only `127.0.0.1` or `::1`, with a port that is a host port published by the app's own frozen Compose model (§20.3) — not any loopback service. Manifests specify `port` and `path`, never a URL or hostname. Control-plane node checks may additionally target addresses in the app_target's `allowed_bind_addresses`. No hostnames are ever resolved on the node, so DNS rebinding does not apply.
-- **Address selection.** The check uses the `host_ip` of the matching published port in the frozen model. If that is `127.0.0.1` or `::1` it is used as-is (IPv6 in brackets in URLs). For an `allowed_bind_addresses` entry, that address is used.
-- **http** (capability `health.http` = `curl` present). Template, run under `env -i PATH=/usr/bin:/bin`:
-
-  ```text
-  curl -q --noproxy '*' --proto =http,https --max-redirs 0 --max-time <timeout>
-       --silent --show-error --output /dev/null --write-out '%{http_code}' <url>
-  ```
-
-  `-q` is the first argument, so no `.curlrc` is read. Success requires curl exit 0 **and** an HTTP code of 200–299. A 3xx is a failure: redirects are never followed. `path` must match `^/[A-Za-z0-9._~/-]*$`; userinfo, query strings and fragments are rejected. If curl is absent, `health.http` is unavailable. There is no wget fallback in V1, because wget's exit-status semantics vary by implementation.
-- **tcp** (capability `health.tcp` = `bash` and `timeout` present): `timeout <t> bash -c 'exec 3<>/dev/tcp/<addr>/<port>'`. Success is exit 0. It does not depend on curl.
-- A missing capability for the configured check type fails preflight (`PREFLIGHT_FAILED`).
-
-**Origin (1.4.6; ADR-0029).** Every check records where it was defined: `manifest` or `control_plane`. A manifest check may target only a port the frozen model publishes on exactly `127.0.0.1` or `::1`; a control-plane node check may also target a port published on an `allowed_bind_addresses` entry. The destination is always taken from the frozen model's published port, never from user input.
-
-**`control_plane` scope.** Executed by the daemon. Defined only in control-plane configuration. The URL passes the SSRF filter below.
-
-**`docker-health` / `systemd-active`.** Read through the runtime adapter on the node.
-
-## 21.1 Outbound request filter (control-plane checks, provider endpoints, webhooks to external services)
-
-1. **Scheme.** `https` (and `http` only for health checks); userinfo is rejected.
+1. **Scheme.** `https`; userinfo is rejected.
 2. **Resolution and pinning.** Resolve DNS once. Normalize each address: IPv4-mapped/compatible IPv6 becomes IPv4, and NAT64 `64:ff9b::/96` is unwrapped to the embedded IPv4. Filter as below, then connect to that exact IP with a custom dialer. TLS uses the original hostname for SNI and certificate verification; `InsecureSkipVerify` is never set.
 3. **Always denied, for every caller, checked before any allowlist:**
    - cloud metadata addresses: `169.254.169.254/32`, `fd00:ec2::254/128`, `169.254.170.2/32`;
@@ -1994,15 +1540,14 @@ Every check has an execution `scope`.
    - `fc00::/7`, `192.0.0.0/24`, `198.18.0.0/15`;
    - the documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`).
 5. **Allowlists by caller:**
-   - control-plane health checks: `health.allowed_private_cidrs`;
-   - provider endpoints (Proxmox, a GitHub provider's `api_url`, etc.): private ranges are allowed, because homelab endpoints (and GitHub Enterprise Server) are private. Provider endpoints are admin-only configuration (`provider.write`, high-impact, audited), never derived from repository content.
-6. **Redirects.** Disabled for health checks and provider APIs. For GitHub API calls, at most 3 redirects, each re-filtered, same scheme (no HTTPS→HTTP downgrade), and only to the configured GitHub API hosts: the exact origin (scheme, host, effective port) of the provider's `api_url`. The API token is sent only to that origin; file contents are read through the JSON contents API, so no content host is contacted (1.4.6; ADR-0028).
-7. **Limits.** Response bodies are capped (health: 64 KiB; provider: per adapter); connect and total timeouts always apply.
+   - provider endpoints (Proxmox, the identity provider, etc.): private ranges are allowed, because homelab endpoints are private. Provider endpoints are admin-only configuration (`provider.write`, high-impact, audited), never derived from repository content.
+6. **Redirects.** Disabled for provider APIs.
+7. **Limits.** Response bodies are capped per adapter; connect and total timeouts always apply.
 8. **Proxies.** The HTTP client never reads ambient proxy environment variables (`Transport.Proxy = nil`). If `outbound.proxy` is configured, the destination host is resolved and filtered by SuperMgmt first, then the request is sent via `CONNECT <pinned-ip>:<port>` with TLS verification against the original hostname. The proxy address itself must be configured by an admin.
 
 The filter is a single package (`internal/netguard`) with table tests for every range and normalization case.
 
-A node being online does not imply its application is healthy. TUI shows hierarchy:
+A node being online does not imply its services are healthy. TUI shows hierarchy:
 
 ```text
 ● node
@@ -2033,7 +1578,7 @@ Use Bubble Tea (current supported major version at implementation time), Lip Glo
 │   ● docker-prod        │ CPU   17%   RAM 41%   DISK 38%          │
 │   ● postgres           │                                         │
 │   ○ dev                │ Capabilities                            │
-│                        │ SSH Docker systemd Deploy                │
+│                        │ SSH Docker systemd                      │
 │ ▼ External             │                                         │
 │   ● ovh-prod           │ Services                                │
 │   ● hetzner-01         │ ● api      healthy                      │
@@ -2056,7 +1601,6 @@ Use Bubble Tea (current supported major version at implementation time), Lip Glo
 - `d` Docker/lazydocker if available.
 - `l` logs.
 - `v` services.
-- `g` repository/GitHub view when linked.
 - destructive shortcuts never execute immediately; they open plan/confirmation.
 
 Keyboard shortcuts are contextual and shown in footer. Mouse support optional.
@@ -2071,9 +1615,6 @@ Resources tree
 Node detail
 Service list/detail
 Logs viewer
-Applications
-Deployments/history
-Deployment creation wizard
 Jobs/actions
 Approvals
 Events/timeline
@@ -2092,8 +1633,6 @@ Examples:
 ssh ovh-prod
 logs api
 services docker-prod
-deploy myapp production
-rollback myapp production
 status @production
 refresh proxmox
 ```
@@ -2172,21 +1711,6 @@ GET    /api/v1/services/{id}/logs
 POST   /api/v1/services/{id}/actions/start    # literal routes, one per verb (service.start)
 POST   /api/v1/services/{id}/actions/stop     # (service.stop)
 POST   /api/v1/services/{id}/actions/restart  # (service.restart); any other verb is 404
-GET    /api/v1/providers/{id}/repositories  # GitHub repositories visible to the provider's token (provider.read)
-GET    /api/v1/apps
-POST   /api/v1/apps
-GET    /api/v1/apps/{id}
-PATCH  /api/v1/apps/{id}             # If-Match (app.write)
-GET    /api/v1/apps/{id}/targets
-POST   /api/v1/apps/{id}/targets     # (app_target.write)
-GET    /api/v1/app-targets/{id}
-PATCH  /api/v1/app-targets/{id}      # If-Match (app_target.write)
-GET    /api/v1/deployments
-POST   /api/v1/deployments           # provisional deployment, 202 (ADR-0011)
-GET    /api/v1/deployments/{id}
-POST   /api/v1/deployments/{id}/rollback
-POST   /api/v1/deployments/{id}/cancel  # job.cancel; the only action before finalization (ADR-0011)
-POST   /api/v1/github/webhook        # server mode; HMAC-authenticated (exempt:webhook, ADR-0028)
 GET    /api/v1/jobs
 GET    /api/v1/jobs/{id}
 POST   /api/v1/jobs/{id}/cancel
@@ -2209,7 +1733,7 @@ GET    /.well-known/oauth-protected-resource      # same document, the §24 alia
   - policy is re-evaluated;
   - in the same transaction, `plans.submitted_job_id` is set with `WHERE submitted_job_id IS NULL`, so a second submit returns `CONFLICT` (`ALREADY_SUBMITTED`);
   - a hash mismatch or stale input returns `CONFLICT` (`PLAN_STALE`), and an expired plan `CONFLICT` (`PLAN_EXPIRED`).
-- Convenience endpoints (`…/actions/restart`, `POST /deployments`, `…/rollback`) do plan+submit internally and return the plan hash.
+- Convenience endpoints (`…/actions/restart`) do plan+submit internally and return the plan hash. The repository, app, app-target, deployment and GitHub webhook routes were retired by ADR-0043.
 - Plans expire (`plans.expires_at`, default 24h).
 
 **Idempotency.** Mutating retryable requests require `Idempotency-Key`. The handler runs the mutation, builds its response and inserts `idempotency_records(identity_id, key, request_hash, status_code, response_json, job_id)` in **one SQLite write transaction**:
@@ -2281,9 +1805,7 @@ infra_get_node
 infra_list_services
 infra_get_service
 infra_get_service_logs
-infra_list_apps
-infra_list_deployments
-infra_get_deployment
+infra_list_routes
 infra_list_events
 infra_get_health
 infra_plan_action
@@ -2294,10 +1816,12 @@ Write tools, disabled by default:
 ```text
 infra_submit_plan
 infra_restart_service
-infra_create_deployment
-infra_rollback_deployment
 infra_reboot_node
+infra_expose_port
+infra_unexpose_port
 ```
+
+The app and deployment tools (`infra_list_apps`, `infra_list_deployments`, `infra_get_deployment`, `infra_create_deployment`, `infra_rollback_deployment`) were retired by ADR-0043.
 
 No default MCP tools for arbitrary shell, arbitrary container exec, secret reads, network/firewall changes or resource deletion.
 
@@ -2322,7 +1846,7 @@ No default MCP tools for arbitrary shell, arbitrary container exec, secret reads
 
 Unknown actions, unknown parameters and ambiguous target names fail with `INVALID_ARGUMENT`. Planning is `plan.create` (read risk) and is audited.
 
-Write tools (when enabled) take `{plan_id, plan_hash}` and call `POST /api/v1/plans/{id}/submit`. `infra_restart_service` and `infra_reboot_node` are thin wrappers that plan, then submit the returned hash. `infra_create_deployment` and `infra_rollback_deployment` call `POST /api/v1/deployments` and `POST /api/v1/deployments/{id}/rollback`, because a deployment has no plan until CI passes (ADR-0011); they return `waiting_ci`, `approval_required`, `queued` or `denied` with the deployment id (1.4.7). The model never supplies a hash it did not receive from a plan.
+Write tools (when enabled) take `{plan_id, plan_hash}` and call `POST /api/v1/plans/{id}/submit`. `infra_restart_service` and `infra_reboot_node` are thin wrappers that plan, then submit the returned hash. The model never supplies a hash it did not receive from a plan.
 
 Untrusted output to models: `infra_get_service_logs` and any tool returning remote text apply redaction (§16), strip control/ANSI sequences, cap size (default 64 KiB / 500 lines), and wrap content in a structured field marked `"untrusted_remote_output": true`. Policy can deny `service.logs` for `type:mcp` per environment (recommended for production).
 
@@ -2335,19 +1859,19 @@ Example result:
   "status": "approval_required",
   "job_id": "...",
   "plan_hash": "sha256:...",
-  "summary": "Deploy myapp sha256:abc to production on ovh-prod-01",
+  "summary": "Restart api on ovh-prod-01",
   "risk": "operational"
 }
 ```
 
-Tool schemas are versioned and covered by golden tests. MCP resources may expose sanitized node/app/deployment context. Prompts are optional and never grant authority.
+Tool schemas are versioned and covered by golden tests. MCP resources may expose sanitized node and service context. Prompts are optional and never grant authority.
 
 **Decisions (1.4.7; ADR-0031, ADR-0032).**
 
 - V1 exposes tools only: no resources and no prompts. Each tool's schema version is `_meta["dev.supermgmt/schema_version"] = 1`.
 - `mcp.write_tools_enabled: false` hides the write tools **and** denies every non-query action to `mcp` identities at the application layer (§11.2), so the flag is not cosmetic.
-- Tool output is an allowlisted view per DTO. Remote-discovered fields (service names and native ids, runtime status strings, metadata, step errors, event data, log lines) sit under a `remote` object marked `"untrusted_remote_output": true`, stripped, credential-scrubbed and bounded (256 bytes per scalar, 64 KiB / 500 lines per text, depth 4, 64 entries per level). Scrubbing covers Bearer/Basic, PEM private keys, SuperMgmt tokens, JWT-shaped strings and sensitive-key `key=value` / `key: value` / JSON forms, whatever `security.redact_command_output` says; a secret under a non-sensitive name is **not** detected (stated in the tool descriptions and `docs/mcp.md`).
-- Name resolution compares raw API values and the plan binds ids. Write results are `{status, job_id?, deployment_id?, plan_hash?, summary, risk}` with `status ∈ {approval_required, queued, waiting_ci, denied}`.
+- Tool output is an allowlisted view per DTO. Remote-discovered fields (service names and native ids, runtime status strings, metadata, event data, log lines) sit under a `remote` object marked `"untrusted_remote_output": true`, stripped, credential-scrubbed and bounded (256 bytes per scalar, 64 KiB / 500 lines per text, depth 4, 64 entries per level). Scrubbing covers Bearer/Basic, PEM private keys, SuperMgmt tokens, JWT-shaped strings and sensitive-key `key=value` / `key: value` / JSON forms, whatever `security.redact_command_output` says; a secret under a non-sensitive name is **not** detected (stated in the tool descriptions and `docs/mcp.md`).
+- Name resolution compares raw API values and the plan binds ids. Write results are `{status, job_id?, plan_hash?, summary, risk}` with `status ∈ {approval_required, queued, denied}`.
 - The default policy keeps `service.logs` away from `type:mcp`; `docs/mcp.md` shows an environment-scoped grant.
 - `mcp.allow_interactive_exec: true` is refused by configuration validation in V1.
 - `sm mcp clients add <name>` registers the client; when approval is pending it prints the job and exits 0. Run again by the requester after approval, it preflights the destination (`--token-file`: a new 0600 file created with `O_EXCL|O_NOFOLLOW` in a directory owned by the caller and not group/world-writable; `--keychain`: the native OS keychain, never a file fallback, with no existing entry), then issues the token and stores it. A storage failure after issuance prints `sm mcp clients remove <id>` and re-registration as the only recovery; the token is never printed. On an `active` client it exits 1 saying the token is not re-issued.
@@ -2383,17 +1907,17 @@ Every mutation and significant observation emits structured event:
   "timestamp": "2026-01-01T12:00:00Z",
   "actor": {"type":"human","id":"..."},
   "source": "tui",
-  "action": "deployment.create",
-  "resource": {"type":"app","id":"..."},
+  "action": "service.restart",
+  "resource": {"type":"service","id":"..."},
   "correlation_id": "...",
   "result": "succeeded",
-  "data": {"deployment_id":"...","commit":"a84f2d1"}
+  "data": {"job_id":"..."}
 }
 ```
 
 Never include credentials, Authorization headers, private keys, raw secret env vars or full unredacted command output.
 
-Timeline UI correlates deployments, snapshots, service restarts, health failures, node changes and GitHub events. This is a key MCP context source.
+Timeline UI correlates snapshots, service restarts, health failures and node changes. This is a key MCP context source. Events written by the retired deployments (`deployment.*`, `app.write`, `app_target.write`) stay readable (ADR-0043).
 
 ---
 
@@ -2432,7 +1956,7 @@ Recommended opening copy:
 
 **Your infrastructure, one control plane.**
 
-SuperMgmt is a local-first, terminal-first control plane for developers. Connect Linux machines, Proxmox, Docker, systemd, GitHub repositories and deployments in one place; manage them from a fast TUI/CLI, or expose the same policy-controlled operations to AI agents through MCP.
+SuperMgmt is a local-first, terminal-first control plane for developers. Connect Linux machines, Proxmox, Docker and systemd in one place; manage them from a fast TUI/CLI, or expose the same policy-controlled operations to AI agents through MCP.
 
 It works on a laptop, a VPS, or as an automatically provisioned unprivileged LXC on Proxmox. Managed workloads never depend on SuperMgmt to keep running.
 ```
@@ -2459,63 +1983,9 @@ Default recommendation Apache-2.0 for permissive OSS with explicit patent grant.
 
 ---
 
-# 28. Example GitHub Actions deployment contract
+# 28. Example GitHub Actions deployment contract (retired)
 
-Example workflow should build/test image, push immutable image and request/allow deployment only after CI succeeds. Do not use long-lived SSH keys to production.
-
-Conceptual example:
-
-```yaml
-name: ci
-on:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@<PINNED_SHA>
-      - run: go test ./...
-
-  build:
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      id-token: write          # artifact attestation signing only
-      attestations: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - uses: actions/checkout@<PINNED_SHA>
-      - id: build
-        run: ./ci/build-and-push.sh
-      - uses: actions/attest-build-provenance@<PINNED_SHA>
-        with:
-          subject-name: ghcr.io/acme/api
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-
-  deploy:
-    needs: build
-    environment: production
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write          # OIDC token for SuperMgmt, this job only
-    steps:
-      - name: Request SuperMgmt deployment
-        run: ./ci/request-supermgmt-deploy.sh "${{ needs.build.outputs.digest }}"
-```
-
-Only jobs that need `id-token: write` get it; the workflow default is `contents: read`. SuperMgmt still verifies required checks through the GitHub API (§18); the `deploy` job's success is not evidence of passing tests.
-
-Repository examples MUST pin third-party actions to commit SHA in production examples and explain how OIDC token exchange works. The actual implementation may provide an official reusable action later.
+Retired by ADR-0043. A project's CI/CD deploys to the node with its own credentials; SuperMgmt gives it no deployment API.
 
 ---
 
@@ -2547,8 +2017,9 @@ Restore is an **offline** operation: `sm backup restore --offline <archive>`. On
 2. Safe extraction into `<data_dir>/restore-<id>/`: only listed members; no absolute paths, no `..`, no symlinks, hardlinks or devices; per-member size limits.
 3. **Key check.** Open the staged database read-only. Every `kek_id` it references must have a key in `security.keys_dir` (`.key`, or `.key.pending` from an offline import) that passes the check record stored **in the staged database** (§10). Otherwise abort, exit 9, naming the missing keys. Pending keys that pass are promoted to `.key` in Phase B (they are listed in the restore journal).
 4. Open the **staged** database and run forward migrations, then neutralize it in one transaction:
-   - jobs (and their deployments) in `created`, `waiting_ci`, `awaiting_approval`, `queued` or `preparing` have never mutated a target. They become `failed` with reason `RESTORED_UNDISPATCHED`, and their locks are deleted. Requesters re-create them; a provisional deployment never had locks;
-   - jobs in `staging`, `deploying`, `verifying`, `rolling_back` or `interrupted`, and `non_retryable` jobs with any recorded intent, become (or stay) `interrupted`, with their deployments set to `interrupted` too. Their `resource_locks` rows are **kept as they are in the snapshot**. The snapshot is a single SQLite transaction and locks are only held by claimed jobs, so these rows are mutually consistent by construction;
+   - a backup taken before migration 000014 with a deployment that is not terminal is refused, changing nothing, with the guidance to restore it with the previous release, let the deployment finish and take a new backup (ADR-0043); one whose deployments are all terminal migrates past 000014 like a live database;
+   - jobs in `awaiting_approval` or `queued` have never mutated a target. They become `failed` with reason `RESTORED_UNDISPATCHED`, and their locks are deleted. Requesters re-create them;
+   - jobs in `running` or `interrupted`, and `non_retryable` jobs with any recorded intent, become (or stay) `interrupted`. Their `resource_locks` rows are **kept as they are in the snapshot**. The snapshot is a single SQLite transaction and locks are only held by claimed jobs, so these rows are mutually consistent by construction;
    - every other lock row is deleted;
    - approvals on non-terminal jobs are deleted;
    - all sessions and API/MCP tokens are revoked; identities and role bindings are kept;
@@ -2607,13 +2078,11 @@ Threats considered:
 - compromised MCP client;
 - malicious prompt attempting privileged action;
 - compromised managed node;
-- malicious repository/PR;
-- forged/replayed GitHub webhook;
 - SSH MITM/host key change;
 - leaked API token;
 - malicious container logs containing terminal escape/control sequences;
 - command injection through resource names/parameters;
-- SSRF through health-check URLs/provider endpoints;
+- SSRF through provider endpoints;
 - dependency/supply-chain compromise;
 - backup theft;
 - control-plane DB theft.
@@ -2627,8 +2096,6 @@ Mandatory mitigations:
 - URL validation and SSRF protections for server-side checks;
 - fixed command templates and argument escaping;
 - bounded output/timeouts/concurrency;
-- webhook signature + replay dedupe;
-- immutable artifact digests;
 - protected production policies;
 - secret encryption/redaction;
 - rate limiting on auth/MCP/write endpoints;
@@ -2638,7 +2105,6 @@ Mandatory mitigations:
 - dependency pinning/scanning and release checksums/signatures;
 - audit denied actions as well as accepted actions;
 - outbound request filter for every server-side fetch (§21.1);
-- closed-schema Compose pipeline (§20.3);
 - lease fencing, intents and evidence-based reconciliation (§20.4);
 - local-mode trust boundary documented: same-OS-user code is trusted (§2.1.1).
 
@@ -2724,26 +2190,13 @@ Deliver:
 
 Acceptance: fresh supported PVE host → one command → functioning LXC → cluster discovered → laptop `sm login` connects to it; injected failure at each installer step rolls back only created resources; upgrade N-1 → N with automatic pre-upgrade backup.
 
-## M4 — Apps/GitHub/deployments
+## M4 — Apps/GitHub/deployments (retired)
 
-Depends on: M0 jobs/plans/approvals, M1 SSH templates and locks, M2 HTTPS server (the GitHub webhook endpoint delivered in M4 runs on it; local mode polls instead).
-
-Deliver:
-
-- GitHub connector (webhooks in server mode, polling in local mode);
-- app manifest parser/schema; control-plane-only fields (§19);
-- CI verification and artifact/provenance binding (§18);
-- Compose pipeline (§20.3) and project ownership (§20.5);
-- Docker Compose deploy engine with the §20.1 state machine, intents and evidence-based reconciliation;
-- health checks with execution scope (§21);
-- rollback (§20.1) and deployment policy (§19.1);
-- deployment wizard/history/timeline.
-
-Acceptance: successful CI exact commit/digest deploys to selected managed node; failed health check rolls back when declared safe; a repository Compose file with `privileged: true` is rejected; a health URL pointing off-node is rejected.
+Delivered, then retired by ADR-0043: the GitHub connector, apps and app targets, the Compose pipeline, the deployment engine, health checks and rollback are removed. Migration 000014 drops their tables and keeps their audit events.
 
 ## M5 — MCP
 
-Depends on: M0 policy/plans/approvals, M2 tokens and HTTPS server, M4 deployment actions. M5 itself delivers the OAuth protected-resource layer (§24) against an external authorization server.
+Depends on: M0 policy/plans/approvals, M2 tokens and HTTPS server. M5 itself delivers the OAuth protected-resource layer (§24) against an external authorization server.
 
 Deliver:
 
@@ -2780,11 +2233,11 @@ Acceptance details (1.4.8; ADR-0034..0036):
 
 ## Unit
 
-Domain rules, policy, config, manifest, command templates, redaction, state machines, URL validation, canonical plan hashing.
+Domain rules, policy, config, command templates, redaction, state machines, URL validation, canonical plan hashing.
 
 ## Integration
 
-SQLite migrations, SSH fixture containers/VMs, fake Proxmox API, fake GitHub API/webhooks, Docker fixture, systemd where CI supports it.
+SQLite migrations, SSH fixture containers/VMs, fake Proxmox API, fake Cloudflare API, Docker fixture, systemd where CI supports it.
 
 ## E2E
 
@@ -2794,14 +2247,13 @@ SQLite migrations, SSH fixture containers/VMs, fake Proxmox API, fake GitHub API
 - remote client authentication.
 - add SSH node.
 - Docker discovery/logs.
-- deployment success/failure/rollback.
 - MCP read and approval-gated write.
 - backup/restore.
 - upgrade N-1 -> N.
 
 ## Security tests
 
-Command injection payloads, malicious ANSI logs, changed SSH host key, invalid TLS, webhook replay, forged OIDC claims, expired approval, changed plan after approval, SSRF URLs, secret leakage assertions, MCP forbidden tools, MCP self-approval, privileged Compose files, off-node health URLs, Unix socket access by another OS user, journalctl pager escape, lease expiry during non-retryable jobs.
+Command injection payloads, malicious ANSI logs, changed SSH host key, invalid TLS, forged OIDC claims, expired approval, changed plan after approval, SSRF URLs, secret leakage assertions, MCP forbidden tools, MCP self-approval, Unix socket access by another OS user, journalctl pager escape, lease expiry during non-retryable jobs.
 
 ## Quality gates
 
@@ -2831,7 +2283,6 @@ supermgmt_provider_sync_errors_total
 supermgmt_provider_sync_duration_seconds
 supermgmt_ssh_connections_active
 supermgmt_api_requests_total
-supermgmt_deployments_total
 ```
 
 Metrics endpoint disabled or private by default. The metrics endpoint is post-V1 (1.4.8); V1 ships structured logs only.
@@ -2866,10 +2317,7 @@ Client: macOS amd64/arm64, Linux amd64/arm64
 Server: Debian/Ubuntu-class systemd Linux amd64/arm64
 Proxmox: explicitly tested currently supported PVE major versions
 Nodes: common systemd Linux distributions with OpenSSH
-Docker: supported modern Docker Engine; deployments need the Compose CLI plugin at the
-        pinned version (v5.5.1 in M4, ADR-0006) and jq on the node (ADR-0010, ADR-0030)
-GitHub: github.com and GitHub Enterprise Server REST API (fake-verified until the manual
-        real-GitHub checklist runs, ADR-0028)
+Docker: supported modern Docker Engine
 ```
 
 Do not claim unsupported versions. Maintain `docs/compatibility.md` once implementation begins. From 1.4.8 (ADR-0036) every row there is labelled *supported* (CI runs install, upgrade, backup plus restore and uninstall on it, cited per operation), *container-verified*, *fake-verified*, *manual* or *not claimed*.
@@ -2940,36 +2388,35 @@ Generated files must have headers and CI drift checks.
 
 # 38. Error model
 
-Two levels: a small set of stable **top-level codes** (`error.code`), and a **reason** (`error.details.reason`, and `deployments.state_reason`) from a closed enum. Clients branch on the code; the reason is informative and may grow in minor versions.
+Two levels: a small set of stable **top-level codes** (`error.code`), and a **reason** (`error.details.reason`) from a closed enum. Clients branch on the code; the reason is informative and may grow in minor versions.
 
 ```text
 code                     reasons (non-exhaustive list is a bug; enum lives in internal/errors)
-INVALID_ARGUMENT         COMPOSE_REJECTED, MANIFEST_INVALID, UNKNOWN_ACTION, AMBIGUOUS_TARGET
+INVALID_ARGUMENT         UNKNOWN_ACTION, AMBIGUOUS_TARGET
 NOT_FOUND                —
 CONFLICT                 PLAN_STALE, PLAN_EXPIRED, ALREADY_SUBMITTED, ALREADY_DECIDED,
                          RESOURCE_LOCKED, RESTORE_HOLD, IDEMPOTENCY_MISMATCH,
-                         INVALID_TRANSITION, PROJECT_NOT_OWNED, ISSUANCE_WINDOW_EXPIRED
+                         INVALID_TRANSITION, ISSUANCE_WINDOW_EXPIRED
 UNAUTHENTICATED          CREDENTIAL_EXPIRED, CREDENTIAL_REVOKED, OIDC_REPLAY, OIDC_INVALID,
                          OAUTH_TOKEN_INVALID
 POLICY_DENIED            DENY_RULE, DEFAULT_DENY, DESTRUCTIVE_GATE, SCOPE_DENIED,
                          APPROVAL_NOT_SUPPORTED, NOT_PLAN_ACTOR, SELF_APPROVAL,
                          MCP_WRITES_DISABLED, MCP_ACTION_FORBIDDEN, MCP_CLIENT_UNREGISTERED
 APPROVAL_REQUIRED        —
-CAPABILITY_UNAVAILABLE   UNIT_NOT_ELIGIBLE, HEALTH_CAPABILITY_MISSING
+CAPABILITY_UNAVAILABLE   UNIT_NOT_ELIGIBLE
 NODE_UNREACHABLE         TUNNEL_DNS_NEGATIVE_CACHE
 SSH_HOST_KEY_MISMATCH    —
 PROVIDER_ERROR           —
-CI_NOT_PASSED            CHECK_FAILED, CHECK_MISSING, CI_TIMEOUT
-ARTIFACT_NOT_IMMUTABLE   DIGEST_UNBOUND, TAG_REFERENCE
-DEPLOYMENT_FAILED        PREFLIGHT_FAILED, STAGING_FAILED, HEALTH_FAILED,
-                         ROLLBACK_UNAVAILABLE, INTERRUPTED_BEFORE_DEPLOY, REJECTED,
-                         RESTORED_UNDISPATCHED
-ROLLBACK_FAILED          —
+CI_NOT_PASSED            —   (kept in the wire enum; nothing returns it since ADR-0043)
+ARTIFACT_NOT_IMMUTABLE   —   (likewise)
+DEPLOYMENT_FAILED        REJECTED, RESTORED_UNDISPATCHED   (the code of a rejected or
+                         restored-undispatched job; its name predates ADR-0043)
+ROLLBACK_FAILED          —   (`sm jobs resolve --outcome rollback_failed` still sets it)
 TIMEOUT                  —
 INTERNAL                 —
 ```
 
-`deployments.state_reason` values are the reasons above. A job that fails at claim records the reason of the corresponding code (e.g. `PLAN_STALE`). Errors shown to users should be actionable but must not leak credentials or sensitive internal values.
+A job that fails at claim records the reason of the corresponding code (e.g. `PLAN_STALE`). Errors shown to users should be actionable but must not leak credentials or sensitive internal values.
 
 
 ---
@@ -2989,7 +2436,6 @@ What do you want to connect?
   > Local machine
     SSH server
     Proxmox
-    GitHub
     Skip
 ```
 
@@ -3031,9 +2477,8 @@ TYPE: Docker
 IMAGE: ghcr.io/acme/api@sha256:...
 STATUS: running
 HEALTH: healthy
-DEPLOYMENT: a84f2d1
 
-[l] logs  [r] restart  [e] exec  [g] github
+[l] logs  [r] restart  [e] exec
 ```
 
 ## 39.5 Approval
@@ -3041,10 +2486,8 @@ DEPLOYMENT: a84f2d1
 ```text
 PLAN #184
 
-1. Pull ghcr.io/acme/api@sha256:abc
-2. Update Compose service api on ovh-prod
-3. Check http://127.0.0.1:8080/health
-4. Mark deployment known-good
+1. Restart service api on ovh-prod
+2. Verify api is running with a new start time
 
 Impact: 1 production node
 Risk: operational
@@ -3080,13 +2523,9 @@ type Runtime interface {
     Logs(ctx context.Context, service Service, opts LogOptions) (LogStream, error)
     Action(ctx context.Context, service Service, action ServiceAction) error
 }
-
-type Deployer interface {
-    Plan(ctx context.Context, req DeploymentRequest) (ActionPlan, error)
-    Execute(ctx context.Context, plan ActionPlan) error
-    Rollback(ctx context.Context, deployment Deployment) error
-}
 ```
+
+There is no deployer contract: deployments were retired by ADR-0043.
 
 Actual interfaces should be small and split when implementations do not need all methods.
 
@@ -3119,7 +2558,7 @@ Suggested tagline:
 
 Long description:
 
-> SuperMgmt is a local-first, terminal-first infrastructure control plane for developers. Connect machines, hypervisors, containers, services, repositories and deployments; operate them from one TUI/CLI, and expose the same policy-controlled context and actions to AI agents through MCP.
+> SuperMgmt is a local-first, terminal-first infrastructure control plane for developers. Connect machines, hypervisors, containers and services; operate them from one TUI/CLI, and expose the same policy-controlled context and actions to AI agents through MCP.
 
 ---
 
@@ -3134,9 +2573,6 @@ V1 is complete only when all of the following work and are documented:
 - Discover Proxmox VM/LXC resources.
 - Discover systemd and Docker services.
 - TUI navigates nodes/services/logs and opens SSH/lazydocker where supported.
-- GitHub repository can be linked to an app.
-- CI-passed immutable Docker artifact can deploy via Compose to a selected node/environment.
-- Health check and safe rollback work.
 - Events/audit timeline works.
 - Remote server/client mode works with authenticated HTTPS.
 - MCP can safely read normalized infrastructure and submit policy-controlled actions.
@@ -3154,7 +2590,6 @@ Potential modules, not V1 promises:
 
 - Hetzner/OVH provider APIs.
 - Vercel API deployments/status as API-only resources, not SSH nodes.
-- Cloudflare DNS/Tunnel management (V1 ships the guide only; no `providers/cloudflare` package).
 - Proxmox snapshot/backup/task-history listings, guest promotion and `POST /providers` registration (§15.1).
 - The §33 metrics endpoint.
 - AWS/GCP/Azure connectors.
@@ -3164,7 +2599,6 @@ Potential modules, not V1 promises:
 - Headscale/Tailscale/WireGuard onboarding helpers.
 - Scheduled maintenance policies.
 - Security-only unattended update workflows.
-- Canary/blue-green strategies.
 - Notification integrations.
 - External secret managers.
 - Multi-user teams and SSO refinements.
@@ -3178,7 +2612,7 @@ Potential modules, not V1 promises:
 2. Never make Cloudflare mandatory.
 3. Never require an agent for ordinary Linux management.
 4. Never expose unrestricted privileged shell through MCP by default.
-5. Never deploy a mutable branch/tag when an immutable digest can be used.
+5. Never deploy applications: each project's CI/CD does (ADR-0043).
 6. Never bypass policy/audit because an action originated from TUI, CLI, API or MCP.
 7. Never silently trust a changed SSH host key or invalid TLS certificate.
 8. Never claim a queued provider task succeeded until verified.
@@ -3201,7 +2635,7 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0006 Pinned compose-go and CLI equivalence ([file](../adr/0006-pinned-compose-go-and-cli-equivalence.md)) | M4 | compose-go and Compose CLI versions, loader options, how source forms the loader rewrites are still checked, the normalization table | One supported CLI version per fixture row; preflight refuses others; a raw closed-schema pass runs before the loader; equivalence corpus in CI |
 | ADR-0007 Execution snapshots ([file](../adr/0007-execution-snapshots.md)) | M4 | Where the executable contents behind plan hashes live (public Compose model, effective health config, deployment policy) and how long they are kept | Immutable, content-addressed by the hashes in Appendix C; stored in SQLite; retained at least while the deployment is a rollback candidate (`known_good` chain) and for the plan's job lifetime; workers read only these records (§20.2) |
 | ADR-0008 Secret versions ([file](../adr/0008-secret-versions.md)) | M4 | Whether historical secret versions are kept (encrypted) or rollback fails when a referenced version is gone | Plans reference `{secret_id, version}`; values never stored unencrypted on the control plane; if a required version is unavailable, rollback fails with `ROLLBACK_UNAVAILABLE` (reason `SECRET_VERSION_GONE`) rather than using a newer value silently |
-| ADR-0009 Node provisioning | M1 | The approved setup operation that creates `/var/lib/supermgmt/markers`, `/run/supermgmt/locks` (tmpfiles.d), `deploy_root`, the broker and sudoers drop-in, and the capabilities it advertises | A `node.setup` job (high risk, approval-gated, idempotent); nodes lacking it do not advertise `docker.compose.deploy` or any `non_retryable` mutating capability; marker-based recovery (§20.4) applies only to SSH templates. Proxmox recovery uses task correlation only, and missing evidence never implies safe re-dispatch |
+| ADR-0009 Node provisioning | M1 | The approved setup operation that creates `/var/lib/supermgmt/markers`, `/run/supermgmt/locks` (tmpfiles.d), `deploy_root`, the broker and sudoers drop-in, and the capabilities it advertises | A `node.setup` job (high risk, approval-gated, idempotent); nodes lacking it do not advertise any `non_retryable` mutating capability; marker-based recovery (§20.4) applies only to SSH templates. Proxmox recovery uses task correlation only, and missing evidence never implies safe re-dispatch |
 | ADR-0010 Secret env-file encoding ([file](../adr/0010-secret-env-file-encoding.md)) | M4 | How secret values are written to `secrets/<service>.env` so Compose reads them byte-exact | Must round-trip every value in a test corpus (`$`, quotes, `#`, spaces, unicode). Values with NUL or newline are rejected at `secret.write` time unless the ADR proves support (e.g. a pinned Compose version with `format: raw`). The node-side check compares resolved values privately (hash-only output) before masking |
 | ADR-0011 Provisional deployment API ([file](../adr/0011-provisional-deployment-api.md)) | M4 | Request/response shape of a deployment before its final plan exists | `plan_hash: null` while provisional; persisted in `deployments` with commit, requested digest(s) and credential context; only `job.cancel` applies before finalization; approve/reject accepted only once a final hash exists; finalization emits a `deployment.finalized` event carrying the hash |
 | ADR-0012 Route metadata | M2 | OpenAPI extension marking every route with exactly one of `action:<catalog id>`, `exempt:auth`, `exempt:health`, `exempt:self`, `exempt:webhook` (1.4.6: the GitHub webhook, authenticated by HMAC), `exempt:mcp` (1.4.7: `/mcp` and the protected-resource metadata, outside `/api/v1`) | CI fails on unmapped routes; exempt routes are listed explicitly; key-management CLI commands map to `secret.write` (rotate/retire/export) or are offline-only (`import-key`); enrollment consumption is `exempt:auth`; planning on resource types without a read action (secrets, repositories) requires `config.read` |
@@ -3212,7 +2646,7 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0027 Upgrade and uninstall | M3 | Phase state, backup, swap, failure policy, appliance delegation | Backup never migrates; no automatic data restore; data deletion separately confirmed |
 | ADR-0028 GitHub connector | M4 | Provider config and credential, redirects, check verification, Actions OIDC and its durable credential status, attestations, webhooks, fake fidelity | Read-only token; token only to the `api_url` origin; never "unverified" provenance; webhooks only nudge; every unproven GitHub behaviour is a manual checklist row |
 | ADR-0029 Deployment engine | M4 | Fine/coarse state mirroring, steps, preflight, backup, evidence, reconciliation, recovery claim, rollback, health execution | Proven completion before any automatic action; safety recovery restores only the plan's frozen target and never re-authorizes the requester; mirror in the same transaction |
-| ADR-0030 node.setup v2 | M4 | `deploy_root` and the gating of `docker.compose.deploy`, `health.http`, `health.tcp` | Capability only with setup ≥ 2, Docker access, a matrix Compose CLI, `flock` and `jq` |
+| ADR-0030 node.setup v2 | M4 | `deploy_root` (the `docker.compose.deploy`, `health.http` and `health.tcp` capabilities were retired by ADR-0043) | `deploy_root` is created by setup ≥ 2 |
 | ADR-0031 MCP server ([file](../adr/0031-mcp-server-sdk-transports-tools.md)) | M5 | SDK version, transports, tool list and contracts, output views, redaction guarantee | No database handle or connector credential; every tool is API calls; write tools only when enabled; remote output marked untrusted, scrubbed and bounded; the redaction limit stated |
 | ADR-0032 MCP clients and identity ([file](../adr/0032-mcp-clients-tokens-identity.md)) | M5 | Client state, one-time token, re-registration, socket admission, credential status, MCP floors, writes gate | No inherited roles; token issued once to the requester within 24h of approval; MCP never mints credentials or approves; writes disabled means denied at the application layer |
 | ADR-0033 Remote MCP protected resource ([file](../adr/0033-remote-mcp-oauth-protected-resource.md)) | M5 | MCP authorization spec version checked and deviations, resource identity, metadata, token validation, rate-limit order, fake fidelity | Protected resource only; audience bound to `<origin>/mcp`; OAuth tokens never accepted on `/api/v1`; per-address limit before any token work; real authorization servers are a manual checklist |
@@ -3220,7 +2654,7 @@ These items have fixed constraints here, but their concrete mechanism is decided
 | ADR-0035 Upgrade paths and migration fixtures ([file](../adr/0035-upgrade-paths-migration-fixtures-crash-points.md)) | M6 | Supported upgrade paths, fixture provenance, doctor JSON contract, version and downgrade audit, service hold, stale-archive rule, crash points and recovery | Fixtures written by real older binaries pinned to full commits on `main`; no automatic data rollback; hold before stop |
 | ADR-0036 Distribution and platform claims ([file](../adr/0036-distribution-notices-platform-claims.md)) | M6 | Platform claim vocabulary, host-mutating test guard, Homebrew tap, Linux packages, notices, egress inventory | No claim without a test per operation; tests never mutate a developer machine; no package-manager upgrade path in V1 |
 
-Each ADR lives in `docs/adr/` and is referenced from this table once accepted.
+Each ADR lives in `docs/adr/` and is referenced from this table once accepted. ADR-0011, ADR-0028 and ADR-0029 are superseded by ADR-0043, which retired deployments, apps and the GitHub connector; the other M4 rows describe decisions that only those features used.
 
 ---
 
@@ -3287,48 +2721,35 @@ A plan lists **every input** that can change what executes. The hash covers all 
 ```jsonc
 {
   "version": 3,
-  "action": "deployment.create",
+  "action": "node.setup",
   "actor": "identity/0190…",
   "targets": [                                   // sorted by (type, id)
-    {"type": "app_target", "id": "…", "spec_revision": 7}
+    {"type": "node", "id": "…", "spec_revision": 42}
   ],
   "inputs": [                                   // sorted by (type, id); every configured
                                                  // resource the execution reads
-    {"type": "app",          "id": "…", "spec_revision": 12},
     {"type": "environment",  "id": "…", "spec_revision": 3},
-    {"type": "health_check", "id": "…", "spec_revision": 1},
     {"type": "node",         "id": "…", "spec_revision": 42,
-     "endpoint": {"address": "10.42.0.10", "port": 22, "user": "supermgmt"},
+     "endpoint": {"address": "10.42.0.10", "port": 22, "user": "alex"},
      "host_public_key_sha256": "SHA256:…"},
-    {"type": "repository",   "id": "…", "spec_revision": 2},
-    {"type": "secret",       "id": "…", "version": 4}
+    {"type": "secret",       "id": "…", "version": 1}
   ],
   "content": {                                   // content hashes of materialized inputs
-    "commit_sha": "a84f2d1…",
-    "manifest_blob_sha": "…",                    // git blob of .supermgmt.yaml, if used
-    "compose_hash": "sha256:…",                  // frozen normalized model (§20.3)
-    "images": [                                  // sorted by service
-      {"service": "redis", "ref": "docker.io/library/redis@sha256:…", "binding": "pinned"},
-      {"service": "web",   "ref": "ghcr.io/acme/api@sha256:…",       "binding": "attestation"}
-    ],
-    "exceptions_hash": "sha256:…",
-    "health_hash": "sha256:…",                   // effective health config after precedence
-    "deployment_policy_hash": "sha256:…",        // rollback/stateful/backup/snapshot
-    "host_ports": ["127.0.0.1:8080"],            // sorted
-    "rollback_target": {"deployment_id": "…", "compose_hash": "sha256:…"}, // or null
-    "secret_bindings": [                         // sorted by (service, env_name); refs only
-      {"service": "web", "env_name": "DATABASE_URL", "secret_id": "…", "version": 4}
-    ]
+    "commit_sha": null, "manifest_blob_sha": null, "compose_hash": null,
+    "images": [], "exceptions_hash": null, "health_hash": null,
+    "deployment_policy_hash": null, "host_ports": [], "rollback_target": null,
+    "secret_bindings": []
   },
   "sub_actions": [                               // sorted by (action, target id)
-    {"action": "node.backup_template.run", "target": {"type": "node", "id": "…"}}
+    {"action": "sudoers.write", "target": {"type": "node", "id": "…"}}
   ],
-  "parameters": {},
-  "steps": ["preflight", "snapshot", "pre-deploy-backup", "pull", "materialize",
-            "verify-on-node", "deploy", "health-check"],   // execution order; not sorted
-  "risk": "operational"
+  "parameters": {"docker_access": "false", "logs_mode": "journal-group"},
+  "steps": ["…"],                                // execution order; not sorted
+  "risk": "high"
 }
 ```
+
+The `content` fields were filled only by deployment plans (ADR-0043 retired them). They stay in plan version 3 as `null` or empty, so the hashes of existing plans do not change.
 
 **Serialization.** RFC 8785 (JSON Canonicalization Scheme) over the plan object. Hash = SHA-256 of the canonical bytes, rendered `sha256:<hex>`.
 
@@ -3380,7 +2801,7 @@ Replace `<ORG>` only after the final repository location is known.
 
 # Appendix E — implementation completion checklist
 
-Before declaring the implementation complete, verify:
+Before declaring the implementation complete, verify (the deployment rows were retired by ADR-0043):
 
 ```text
 [ ] Repository matches §5
@@ -3395,13 +2816,9 @@ Before declaring the implementation complete, verify:
 [ ] Offline nodes do not block TUI
 [ ] Docker/systemd discovery works
 [ ] lazydocker handoff restores TUI
-[ ] GitHub CI exact commit/digest validation works
-[ ] Compose deployment state machine works
-[ ] Health failure rollback works where safe
 [ ] Audit timeline covers all mutations
 [ ] Policy/approval hash invalidates on plan change
 [ ] Sync/observations never invalidate approvals
-[ ] Compose validator rejects privileged constructs
 [ ] Interrupted jobs reconcile, never blind re-run
 [ ] Single daemon owns the DB; second daemon refuses
 [ ] MCP bridge without client token is refused; MCP identity cannot approve
@@ -3413,12 +2830,8 @@ Before declaring the implementation complete, verify:
 [ ] Every API route maps to a catalog action (CI check)
 [ ] Revoked/expired credential fails a queued job at claim
 [ ] Takeover fences the old worker; quiescence required before reconcile/resolve
-[ ] Frozen Compose model is identical after node CLI interpolation
 [ ] Secret values never appear in plans, API views or control-plane disk
 [ ] MCP client registration may need approval; token issuance happens once, afterwards
-[ ] Forward resume re-runs claim revalidation; safety recovery only rolls back
-[ ] No automatic resume/rollback without completion evidence (killed CLI -> human)
-[ ] Restore fails undispatched work and keeps snapshot locks only for dispatched work
 [ ] Fresh-host restore works with an offline key import
 [ ] ADR-0007..0012 accepted in their milestones
 [ ] MCP has no generic privileged shell
@@ -3429,7 +2842,7 @@ Before declaring the implementation complete, verify:
 [ ] Upgrade N-1 -> N tested
 [ ] Uninstall preserves data unless separately confirmed
 [ ] OpenAPI validated
-[ ] Config/manifest schemas validated
+[ ] Config schemas validated
 [ ] Unit/integration/E2E/security tests pass
 [ ] Race/vulnerability/static scans pass
 [ ] Release artifacts/checksums/signatures/SBOM generated
@@ -3740,6 +3153,25 @@ Decisions (M6 W0, user-approved option (a) for every question): Ubuntu 24.04 sup
         machines; seeds per PR and nightly fuzzing; owner runs name/trademark checks; Apache-2.0;
         no PR retries; release gated on CI and nightly; durable offline downgrade audit; real
         service hold; archive retaken on resume.
+```
+
+## F.13 Changes after 1.4.8-draft: deployments retired (ADR-0043)
+
+```text
+§1      principle 11 and non-goal: SuperMgmt operates, CI/CD deploys.
+§4, §5  sm apps / sm deploy, internal/deployments, internal/health, providers/github and the
+        deployment examples removed; providers/cloudflare listed.
+§6, §7  repositories, applications, artifacts and deployments; docker.compose.deploy and the
+        deployment capabilities removed.
+§8, §9  github:, health: and type: github retired with a warning; M4 tables dropped by 000014,
+        which refuses while a deployment is unfinished.
+§11     deployment, app and app-target actions retired; deployer role removed; github_oidc reads
+        revoked; no composite deployment plans.
+§18-§20.3, §19.1, §19.2, §21 (health checks), §28   retired.
+§20.4, §20.5  Compose flock, completion evidence, safety recovery and project ownership removed.
+§22-§24 deployment screens, routes and MCP tools removed.
+§29.2   a backup with an open deployment is refused with guidance.
+§31 M4  retired. §38 deployment reasons removed. Appendix C example is a node.setup plan.
 ```
 
 ---

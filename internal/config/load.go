@@ -16,8 +16,9 @@ import (
 // Result is a loaded, validated configuration plus non-fatal findings.
 type Result struct {
 	Config *Config
-	// Warnings lists SUPERMGMT_* variables that are neither configuration
-	// overrides nor installer variables; doctor prints them.
+	// Warnings lists retired configuration that was ignored and SUPERMGMT_*
+	// variables that are neither configuration overrides nor installer
+	// variables; doctor and validate print them.
 	Warnings []string
 }
 
@@ -49,7 +50,8 @@ func LoadBytes(data []byte, env []string) (Result, error) {
 
 func loadFrom(r io.Reader, name string, env []string) (Result, error) {
 	cfg := Defaults()
-	if err := DecodeStrict(r, &cfg); err != nil {
+	retired, err := DecodeStrict(r, &cfg)
+	if err != nil {
 		return Result{}, fmt.Errorf("%s: %w", name, err)
 	}
 	unknown, err := applyEnv(&cfg, env)
@@ -60,7 +62,7 @@ func loadFrom(r io.Reader, name string, env []string) (Result, error) {
 	if err := cfg.Validate(); err != nil {
 		return Result{}, fmt.Errorf("%s: %w", name, err)
 	}
-	return Result{Config: &cfg, Warnings: unknownWarnings(unknown)}, nil
+	return Result{Config: &cfg, Warnings: append(retired, unknownWarnings(unknown)...)}, nil
 }
 
 func localPaths(env []string) Paths {
@@ -88,7 +90,6 @@ func (c *Config) applyModeDefaults(local Paths) {
 	setDefault(&c.Security.KeysDir, filepath.Join(c.Instance.DataDir, "secrets", "keys"))
 	setDefault(&c.SSH.KnownHostsFile, filepath.Join(c.Instance.DataDir, "known_hosts"))
 	setDefault(&c.Backup.Directory, filepath.Join(c.Instance.DataDir, "backups"))
-	setDefault(&c.GitHub.OIDCAudience, c.Server.PublicURL)
 	if c.Instance.Mode == ModeServer {
 		setDefault(&c.Backup.Schedule, "0 3 * * *")
 	}

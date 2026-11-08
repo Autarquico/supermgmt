@@ -1,6 +1,6 @@
 # ADR-0011: Provisional deployment API
 
-- Status: Accepted
+- Status: Superseded by ADR-0043
 - Spec: §18, §20.0, §20.1, §23, §46; ADR-0007, ADR-0012, ADR-0028, ADR-0029
 
 ## Context

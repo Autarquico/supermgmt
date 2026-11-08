@@ -4,7 +4,7 @@
 
 Record, for every check, the date, the `sm version` commit (or the tag), the platform, and the person who ran it. A check that was skipped says so; it is not left blank.
 
-Checks that already have their own page are not repeated here: [m1-handoff.md](m1-handoff.md) (terminal), [m2-handoff.md](m2-handoff.md) (key, credential stores, OIDC, proxy, real VM), [m3-real-pve.md](m3-real-pve.md) (Proxmox), [m4-real-github.md](m4-real-github.md) (GitHub) and [m5-real-mcp-clients.md](m5-real-mcp-clients.md) (MCP clients).
+Checks that already have their own page are not repeated here: [m1-handoff.md](m1-handoff.md) (terminal), [m2-handoff.md](m2-handoff.md) (key, credential stores, OIDC, proxy, real VM), [m3-real-pve.md](m3-real-pve.md) (Proxmox) and [m5-real-mcp-clients.md](m5-real-mcp-clients.md) (MCP clients).
 
 ## 1. Signing key and trust root
 

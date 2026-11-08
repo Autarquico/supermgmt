@@ -75,30 +75,6 @@ func TestSetupMetaOmitsAnUnsetDeployRoot(t *testing.T) {
 	}
 }
 
-// TestComposeSupportedPinsTheShortVersionFormat: the node fixture's CLI prints
-// "5.5.1" for `docker compose version --short` and "Docker Compose version
-// v5.5.1" for the long form (measured on sm-fixture-node:local).
-func TestComposeSupportedPinsTheShortVersionFormat(t *testing.T) {
-	tests := []struct {
-		output string
-		want   bool
-	}{
-		{"5.5.1\n", true},
-		{"5.5.1", true},
-		{"v5.5.1", false},
-		{"Docker Compose version v5.5.1", false},
-		{"5.5.0", false},
-		{"5.5.10", false},
-		{"2.29.1", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		if got := ComposeSupported(tt.output); got != tt.want {
-			t.Errorf("ComposeSupported(%q) = %v, want %v", tt.output, got, tt.want)
-		}
-	}
-}
-
 func TestSetupMetaProxmoxStateRoundTripsAndOlderVersionsReadAsNone(t *testing.T) {
 	at := time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)
 	meta := SetupMeta{SetupVersion: SetupVersion, Proxmox: &ProxmoxMeta{

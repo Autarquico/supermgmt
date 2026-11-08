@@ -200,13 +200,6 @@ func TestDeployRootStepCreatesADirectoryOwnedByTheDedicatedUserOnlyForValidPaths
 	}
 }
 
-func TestJQPathIsAnUnprivilegedRead(t *testing.T) {
-	c, err := Render("setup.jq_path", nil)
-	if err != nil || c.Line != "command -v jq" {
-		t.Errorf("jq_path = %q, %v", c.Line, err)
-	}
-}
-
 func TestOwnStepsRunAsTheDedicatedUser(t *testing.T) {
 	dir := map[string]string{"user": "supermgmt", "mode": "0700", "path": SSHDir}
 	root, err := RenderSetup("setup.own_dir", dir, nil)

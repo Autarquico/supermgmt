@@ -183,6 +183,13 @@ func assertHealthyDatabase(t *testing.T, db database.Querier) {
 	}
 }
 
+// retiredTables are the tables migration 000014 drops with the deployment feature.
+var retiredTables = map[string]bool{
+	"repositories": true, "apps": true, "app_targets": true, "artifacts": true, "artifact_checks": true,
+	"github_oidc_credentials": true, "deployments": true, "deployment_steps": true, "health_checks": true,
+	"webhook_deliveries": true, "execution_snapshots": true,
+}
+
 func TestMigrationFixtures_MigrateToHeadKeepingEveryRow(t *testing.T) {
 	latest, err := database.LatestSchemaVersion()
 	if err != nil {
@@ -193,6 +200,7 @@ func TestMigrationFixtures_MigrateToHeadKeepingEveryRow(t *testing.T) {
 			site := installMigrationFixture(t, name)
 			db := openMigrationDatabase(t, site.dbPath)
 			before, statesBefore := rowCounts(t, db.Reader()), jobsByState(t, db.Reader())
+			retiredCapabilities := migrationScalar[int](t, db.Reader(), `SELECT COUNT(*) FROM node_capabilities WHERE capability IN ('docker.compose.deploy', 'health.http', 'health.tcp')`)
 			if v := migrationScalar[int](t, db.Reader(), `SELECT MAX(version) FROM schema_migrations`); v != site.provenance.schema {
 				t.Fatalf("fixture schema = %d, PROVENANCE says %d", v, site.provenance.schema)
 			}
@@ -207,7 +215,21 @@ func TestMigrationFixtures_MigrateToHeadKeepingEveryRow(t *testing.T) {
 			assertHealthyDatabase(t, db.Reader())
 			after := rowCounts(t, db.Reader())
 			for table, n := range before {
-				if got, ok := after[table]; !ok || got < n {
+				got, ok := after[table]
+				switch {
+				case retiredTables[table]:
+					if ok {
+						t.Errorf("retired table %s survived the migration", table)
+					}
+				case table == "roles":
+					if got != n-1 {
+						t.Errorf("roles: %d before, %d after, want only the deployer role gone", n, got)
+					}
+				case table == "node_capabilities":
+					if got != n-retiredCapabilities {
+						t.Errorf("node_capabilities: %d before, %d after, want only the %d retired ones gone", n, got, retiredCapabilities)
+					}
+				case !ok || got < n:
 					t.Errorf("table %s: %d rows before, %d after (present: %v)", table, n, got, ok)
 				}
 			}

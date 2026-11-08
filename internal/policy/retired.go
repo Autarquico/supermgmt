@@ -21,6 +21,13 @@ var retiredActions = map[string]retirement{
 	"app_target.abandon_move":   {ADR: "ADR-0043"},
 	"app_route.expose":          {ADR: "ADR-0043", Replacement: ActionNodeRouteExpose},
 	"app_route.unexpose":        {ADR: "ADR-0043", Replacement: ActionNodeRouteUnexpose},
+	"deployment.create":         {ADR: "ADR-0043"},
+	"deployment.rollback":       {ADR: "ADR-0043"},
+	"deployment.read":           {ADR: "ADR-0043"},
+	"app.read":                  {ADR: "ADR-0043"},
+	"app.write":                 {ADR: "ADR-0043"},
+	"app_target.read":           {ADR: "ADR-0043"},
+	"app_target.write":          {ADR: "ADR-0043"},
 }
 
 // Warning reports that a policy file names a retired action.

@@ -12,7 +12,6 @@ import (
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain/domaintest"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
-	"github.com/autarquico/supermgmt/internal/providers/github"
 )
 
 // fuzzMigratedDB is an empty migrated database whose clock is fixed at epoch.
@@ -33,14 +32,6 @@ func fuzzMigratedDB(tb testing.TB) (*database.DB, *domaintest.FakeClock) {
 	return db, clock
 }
 
-// fuzzRefusingVerifier is the Actions verifier of a deployment whose every
-// token is bad: the resolver chain, not the verifier, is under test here.
-type fuzzRefusingVerifier struct{}
-
-func (fuzzRefusingVerifier) Verify(context.Context, string) (github.Claims, error) {
-	return github.Claims{}, smerr.New(smerr.CodeUnauthenticated, "", "invalid token")
-}
-
 // fuzzWantRefusal fails unless err is a typed refusal that carries no caller.
 func fuzzWantRefusal(t *testing.T, caller app.Caller, err error) {
 	t.Helper()
@@ -57,10 +48,7 @@ func fuzzWantRefusal(t *testing.T, caller app.Caller, err error) {
 // error, since nothing is registered; Hash agrees on what is well formed.
 func FuzzBearer(f *testing.F) {
 	db, clock := fuzzMigratedDB(f)
-	bearers := auth.BearerResolver{
-		Tokens: auth.DBResolver{DB: db, Clock: clock},
-		GitHub: auth.GitHubResolver{DB: db, Verifier: fuzzRefusingVerifier{}, Clock: clock},
-	}
+	bearers := auth.DBResolver{DB: db, Clock: clock}
 	socket := auth.MCPResolver{DB: db, Clock: clock, Enabled: true}
 	minted, _, err := auth.Mint(auth.KindMCP)
 	if err != nil {

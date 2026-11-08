@@ -89,18 +89,6 @@ const (
 	PathEnrollments = Prefix + "/enrollments"
 	PathEnroll      = Prefix + "/enroll"
 
-	// Apps and deployments (ADR-0011, ADR-0028).
-	PathApps                 = Prefix + "/apps"
-	PathApp                  = Prefix + "/apps/{id}"
-	PathAppTargets           = Prefix + "/apps/{id}/targets"
-	PathAppTarget            = Prefix + "/app-targets/{id}"
-	PathProviderRepositories = Prefix + "/providers/{id}/repositories"
-	PathDeployments          = Prefix + "/deployments"
-	PathDeployment           = Prefix + "/deployments/{id}"
-	PathDeploymentRollback   = Prefix + "/deployments/{id}/rollback"
-	PathDeploymentCancel     = Prefix + "/deployments/{id}/cancel"
-	PathGitHubWebhook        = Prefix + "/github/webhook"
-
 	// MCP clients (ADR-0032).
 	PathMCPClients     = Prefix + "/mcp/clients"
 	PathMCPClient      = Prefix + "/mcp/clients/{id}"

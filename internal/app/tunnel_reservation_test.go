@@ -118,24 +118,6 @@ func TestPolicyRepairCoversTheAccessApplicationOfAnOpenEnrollment(t *testing.T) 
 	}
 }
 
-func TestAnOpenEnrollmentReservesItsNameAgainstAGitHubProvider(t *testing.T) {
-	d := newDirectM4Fixture(t)
-	id := holdName(t, d.fixture, "gh-9")
-	req := wire.CreateGitHubProviderRequest{Type: wire.ProviderGitHub, Name: "gh-9", CredentialRef: "secret://providers/gh-9/token"}
-
-	_, err := d.apps.CreateGitHubProvider(context.Background(), d.caller(d.admin), req)
-
-	if smerr.CodeOf(err) != smerr.CodeConflict || !strings.Contains(err.Error(), "tunnel enrollment") {
-		t.Fatalf("error = %v, want a conflict naming the open tunnel enrollment", err)
-	}
-	if _, found := d.providerNamed("gh-9"); found {
-		t.Error("a provider was created under the reserved name")
-	}
-	if err := requireNameFree(context.Background(), d.db.Reader(), "gh-9", id); err != nil {
-		t.Errorf("the enrollment's own commit is refused: %v", err)
-	}
-}
-
 func TestAnOpenEnrollmentReservesTheLocalProviderName(t *testing.T) {
 	n := newNodeFixture(t)
 	holdName(t, n.fixture, "local")

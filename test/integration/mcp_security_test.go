@@ -356,7 +356,7 @@ func TestWithWritesDisabledAnMCPWriteIsDeniedEndToEndThroughTheDaemon(t *testing
 
 	// With the flag off the server does not offer the write tools at all.
 	for _, name := range mcpSecToolNames(t, mcpSecSession(t, mcpClient, false)) {
-		if slices.Contains([]string{"infra_submit_plan", "infra_restart_service", "infra_reboot_node", "infra_create_deployment", "infra_rollback_deployment"}, name) {
+		if slices.Contains([]string{"infra_submit_plan", "infra_restart_service", "infra_reboot_node", "infra_expose_port", "infra_unexpose_port"}, name) {
 			t.Errorf("tool %s is offered with writes disabled", name)
 		}
 	}

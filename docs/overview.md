@@ -12,13 +12,13 @@ You, if you look after a handful of servers, a home lab or a small team's infras
 
 - **Manages Linux machines without an agent.** Nothing of SuperMgmt runs on a machine you manage. It connects with the system's own `sshd`, pins the host key the first time, and after a one-off setup works through a dedicated unprivileged account with a narrow sudoers file.
 - **Shows what runs there.** systemd units, Docker containers and their logs, gathered by read-only probes. Output from the machine is bounded and stripped of terminal control sequences before you see it.
-- **Changes things only through plans.** Every change (restart a service, set up a machine, deploy an app) becomes a plan with a hash. Policy decides whether it may run; in a production environment it waits until someone approves that exact plan. Change any input and the approval no longer applies.
+- **Changes things only through plans.** Every change (restart a service, set up a machine, publish a port) becomes a plan with a hash. Policy decides whether it may run; in a production environment it waits until someone approves that exact plan. Change any input and the approval no longer applies.
 - **Records everything.** Every request, decision and job lands in an append-only audit trail, with secrets redacted.
 - **Treats AI agents as clients, not operators.** An MCP client gets its own identity, no roles by default and no way to approve anything. Write tools are off unless you turn them on.
-- **Deploys Docker Compose apps from CI.** Only a commit that passed CI and an image digest CI built and attested, with a backup first, health checks after and rollback when they fail.
+- **Leaves deploying to your CI/CD.** Your pipelines deploy your apps as they are; SuperMgmt operates what they put on the machine.
 - **Optionally runs as a server.** The same daemon can serve an HTTPS API with tokens and OIDC login, so several clients share one control plane; it can also be installed as an unprivileged container on Proxmox VE.
 
-Some of these were tested only against fakes (Proxmox, GitHub, MCP clients). The status page says which.
+Some of these were tested only against fakes (Proxmox, Cloudflare, MCP clients). The status page says which.
 
 ## How it works
 
@@ -34,10 +34,10 @@ One process, the daemon, owns all state. The terminal UI, the CLI and the MCP br
         |  audit · SQLite · reconciler
         +------+-------+
                |  connectors
-     +---------+----------+-----------+
-     |         |          |           |
-    SSH     Proxmox    GitHub      Docker Compose
-  (nodes)   VE API     API         on nodes over SSH
+     +---------+----------+
+     |         |          |
+    SSH     Proxmox    Cloudflare
+  (nodes)   VE API     tunnels, Access
 ```
 
 Your workloads never depend on SuperMgmt to keep running: if the daemon stops, nothing on your machines changes.

@@ -61,7 +61,7 @@ type m5World struct {
 	laptop     *harness.Client
 	human      *client.Client
 	daemon     *harness.Proc
-	node       *m4Node
+	node       *fixtureNode
 	nodeRec    wire.Node
 }
 
@@ -131,7 +131,7 @@ func (w *m5World) writePolicy() string {
 }
 
 // startNode starts the fixture and a transient unit whose log carries a bearer credential.
-func (w *m5World) startNode(t *testing.T) *m4Node {
+func (w *m5World) startNode(t *testing.T) *fixtureNode {
 	t.Helper()
 	ctx := context.Background()
 	if err := fixture.Build(ctx); err != nil {
@@ -142,7 +142,7 @@ func (w *m5World) startNode(t *testing.T) *m4Node {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fx.Stop(context.WithoutCancel(ctx)) })
-	node := &m4Node{fx: fx, c: harness.Adopt(t, fx.Name)}
+	node := &fixtureNode{fx: fx, c: harness.Adopt(t, fx.Name)}
 	node.hostKeyPin = m5HostKeyPin(fx)
 	node.adminKey = node.authorizeAdminKey(t)
 	// The product refuses a unit whose command is an interpreter with inline code, so the log line

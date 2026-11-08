@@ -220,7 +220,7 @@ func noticesSHA256(t *testing.T, path string) string {
 	return strings.Fields(out)[0]
 }
 
-func TestNotices_RealOverridesCoverTheShippedBinary(t *testing.T) {
+func TestNotices_CoverTheShippedBinaryWithoutTheRetiredAttestationStack(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds cmd/sm")
 	}
@@ -232,8 +232,8 @@ func TestNotices_RealOverridesCoverTheShippedBinary(t *testing.T) {
 	noticesMustRun(t, nil, root, script, "generate", binary, out)
 	noticesMustRun(t, nil, root, script, "verify", binary, out)
 	for _, module := range []string{"github.com/in-toto/attestation", "github.com/in-toto/in-toto-golang", "github.com/cyberphone/json-canonicalization"} {
-		if !strings.Contains(noticesRead(t, out), "=== "+module+" ") {
-			t.Errorf("notices lack %s", module)
+		if strings.Contains(noticesRead(t, out), "=== "+module+" ") {
+			t.Errorf("notices still carry %s, which left the binary with the attestation stack", module)
 		}
 	}
 }

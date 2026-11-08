@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -95,18 +94,6 @@ type UnitGrant struct {
 // state; older versions stay readable and read as "no tunnel" and "no Proxmox",
 // and every check that asks for version 2 accepts 4.
 const SetupVersion = 4
-
-// SupportedComposeVersion is the only Compose CLI release deployments run on
-// (ADR-0006). On the node fixture `docker compose version --short` prints it
-// without a "v", while the long form prints "v5.5.1".
-const SupportedComposeVersion = "5.5.1"
-
-// ComposeSupported reports whether short, the output of
-// `docker compose version --short`, names the supported CLI. The match is
-// exact: a "v" prefix or any other release is unsupported.
-func ComposeSupported(short string) bool {
-	return strings.TrimSpace(short) == SupportedComposeVersion
-}
 
 // SetupMeta is the metadata of a node's `node.setup` capability (ADR-0009 f),
 // written by the setup job in the same fenced transaction as the capability.

@@ -1,6 +1,6 @@
 # Using the TUI
 
-The terminal UI is the everyday way to look at your nodes, services, jobs and deployments, and to act on them. It is a client of the same daemon API as the `sm` commands, so anything you do here goes through the same plans, policy and approvals.
+The terminal UI is the everyday way to look at your nodes, services and jobs, and to act on them. It is a client of the same daemon API as the `sm` commands, so anything you do here goes through the same plans, policy and approvals.
 
 ## Open it
 
@@ -36,7 +36,6 @@ Meaning never depends on color alone. A glyph or a word carries it too:
 | Key | Does |
 |---|---|
 | `1` to `7` | Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings |
-| `8`, `9` | Applications, Deployments |
 | `j` `k` or the arrow keys | move the selection |
 | `g` `G` (or Home, End) | first row, last row |
 | `enter` | open the selected item |
@@ -64,9 +63,6 @@ Letters are case-sensitive: `r` reloads, `R` restarts a service or rejects a pla
 | Events | `5` | The last 100 audit events, newest first: time, severity, action, result, correlation ID | |
 | Providers | `6` | Providers with type, origin, status, last sync and last error. Read-only | |
 | Settings | `7` | Mode, profile, server, how the screen updates, and who you are: name, ID, type, credential, roles. Read-only | |
-| Applications | `8` | Apps with their repository and target environments | |
-| Deployments | `9` | Deployments, newest first: kind, app and environment, state, commit | `enter` timeline |
-| Deployment | `enter` on Deployments | State, commit, plan, known-good flag, images, each step with its result, and the deployment's events | |
 | Help | `?` | Every key and the palette syntax | |
 
 The `s`, `d` and `p` keys need an SSH endpoint. A Proxmox VM or container has none, so on a guest they are refused with a hint to use `power` from the palette.
@@ -114,8 +110,6 @@ Press `/`, type a command, press `enter`. `esc` closes the palette without runni
 | `power <node> <start\|shutdown\|reboot\|stop>` | Plans a power action on a Proxmox VM or container. `stop` cuts power without a clean shutdown and is high risk |
 | `refresh` | Reloads the screen, like `r` |
 | `refresh proxmox [provider]` | Reads every Proxmox provider again now, or only the one named. Nothing changes on the cluster |
-| `deploy <app> <environment>` | Starts the deployment wizard |
-| `rollback <app> <environment>` | Reviews a rollback |
 
 A node can be named by its ID, its exact name, or a prefix that matches only one node.
 
@@ -127,21 +121,9 @@ A node can be named by its ID, its exact name, or a prefix that matches only one
 - lazydocker needs Docker on the node and lazydocker installed there. SuperMgmt never installs it; if it is missing, the status line links to its installation guide.
 - While a session is starting or ending, the TUI ignores your keys, so quitting cannot leave a session open.
 
-## Deploying and rolling back
-
-`/ deploy <app> <environment>` walks you through a deployment:
-
-1. **Commit:** the full commit SHA that CI built (40 hex characters, or 64 for a SHA-256 repository).
-2. **Images:** one or more `service=sha256:<digest>` pairs, separated by commas. Each digest is 64 hex characters.
-3. **Review:** the app, target, commit and images. Nothing has been sent yet.
-
-Confirming the review records the deployment. The daemon then checks CI for that commit, freezes the plan and, when policy asks for it, waits for approval. A wrong answer asks the same question again with the reason; `esc` cancels at any step. Follow the deployment on Deployments (`9`).
-
-`/ rollback <app> <environment>` goes straight to a review: which deployment it replaces and the known-good deployment it restores. Policy may ask for approval before it runs. See [Deployments](deployments.md) for how deployments and rollbacks work.
-
 ## What the TUI does not do
 
-- **It does not edit configuration.** Providers and Settings are read-only. Add nodes with `sm nodes add`, apps with `sm apps create`, and change the rest in the configuration file ([Configuration](configuration.md)).
+- **It does not edit configuration.** Providers and Settings are read-only. Add nodes with `sm nodes add`, and change the rest in the configuration file ([Configuration](configuration.md)).
 - **It does not install software on your nodes.** Setup creates a user, files and a scoped sudoers entry; tools such as lazydocker are yours to install ([Providers](providers.md)).
 
 ## The screens in the test suite
@@ -153,14 +135,13 @@ The TUI's tests render every screen with fixture data and compare it, character 
 - [Approvals, 120×30](../internal/tui/testdata/approvals_120x30.golden)
 - [A restart plan waiting for confirmation, 80×24](../internal/tui/testdata/confirm_restart_80x24.golden)
 - [Command palette, 80×24](../internal/tui/testdata/palette_80x24.golden)
-- [Deployment timeline, 80×24](../internal/tui/testdata/m4_nav_deployment_80x24.golden)
 - [Help, 80×24](../internal/tui/testdata/help_80x24.golden)
 
 The full set is in [`internal/tui/testdata/`](../internal/tui/testdata). The names, IDs and hashes in them are fixtures, not a real inventory.
 
 ## References
 
-- Keys and screens: `internal/tui/model.go` (global keys and screen list), `internal/tui/view.go` (key line, header and status line), `internal/tui/screens.go` (each screen and the Help screen), `internal/tui/action.go` (palette, plans and confirmation), `internal/tui/wizard.go` (deploy and rollback), `internal/tui/handoff.go` (sessions).
+- Keys and screens: `internal/tui/model.go` (global keys and screen list), `internal/tui/view.go` (key line, header and status line), `internal/tui/screens.go` (each screen and the Help screen), `internal/tui/action.go` (palette, plans and confirmation), `internal/tui/handoff.go` (sessions).
 - Launch: `internal/cli/tui.go`.
 - Related pages: [Getting started](getting-started.md), [Concepts](concepts.md), [CLI reference](cli.md), [Policies and approvals](policies.md).
-- Tests: `TestGoldenViews`, `TestM4ScreenGoldens`, `TestGoldenProvidersAndSettings`, `TestKeyboardNavigation`, `TestQuitKeys`, `TestPaletteCommands`, `TestServiceActionNeedsAPlanAndAConfirmation`, `TestPlanDeniedByPolicyCannotBeSubmitted`, `TestApproveSendsThePlanHashOnce`, `TestRejectNeedsAReason`, `TestSetupViaPaletteWarnsAboutDockerAccess`, `TestSessionKeysAreRefusedOnAGuestAndStartNothing`, `TestDeployWizardNeverCreatesWithoutReview`, `TestSmallTerminalExplainsInsteadOfBreaking`.
+- Tests: `TestGoldenViews`, `TestGoldenProvidersAndSettings`, `TestKeyboardNavigation`, `TestQuitKeys`, `TestPaletteCommands`, `TestServiceActionNeedsAPlanAndAConfirmation`, `TestPlanDeniedByPolicyCannotBeSubmitted`, `TestApproveSendsThePlanHashOnce`, `TestRejectNeedsAReason`, `TestSetupViaPaletteWarnsAboutDockerAccess`, `TestSessionKeysAreRefusedOnAGuestAndStartNothing`, `TestSmallTerminalExplainsInsteadOfBreaking`.

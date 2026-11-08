@@ -74,7 +74,7 @@ func requestPlan(ctx context.Context, api API, action string, target planTarget,
 	return api.CreatePlan(ctx, wire.CreatePlanRequest{Action: action, Targets: []wire.ResourceRef{ref}, Parameters: params})
 }
 
-// resolveTarget turns a target into a typed id. Nodes, services and apps may
+// resolveTarget turns a target into a typed id. Nodes and services may
 // be named; any other type must be given by id.
 func resolveTarget(ctx context.Context, api API, target planTarget) (wire.ResourceRef, error) {
 	kind := domain.ResourceType(target.Type)
@@ -90,8 +90,6 @@ func resolveTarget(ctx context.Context, api API, target planTarget) (wire.Resour
 		id, err = resolveNode(ctx, api, target.Ref)
 	case string(domain.ResourceService):
 		id, err = resolveService(ctx, api, target.Ref)
-	case string(domain.ResourceApp):
-		id, err = resolveApp(ctx, api, target.Ref)
 	default:
 		if id, err = domain.ParseID(target.Ref); err != nil {
 			err = invalidArgument("a " + target.Type + " target is given by id")

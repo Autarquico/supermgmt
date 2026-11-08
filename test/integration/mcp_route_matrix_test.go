@@ -76,8 +76,8 @@ type mcpMatrixWant struct {
 // mcpMatrixWatches are the counts whose growth a denied write must never
 // cause, each a table or a filtered table.
 var mcpMatrixWatches = []string{
-	"jobs", "plans", "job_approvals", "api_tokens", "deployments", "mcp_clients", "identities", "role_bindings",
-	"secrets", "join_tokens", "interactive_sessions", "sessions", "apps", "app_targets", "node_routes", "nodes", "providers",
+	"jobs", "plans", "job_approvals", "api_tokens", "mcp_clients", "identities", "role_bindings",
+	"secrets", "join_tokens", "interactive_sessions", "sessions", "node_routes", "nodes", "providers",
 	"api_tokens WHERE revoked_at IS NOT NULL", "jobs WHERE state = 'cancelled'",
 }
 
@@ -358,14 +358,6 @@ func TestAnMCPClientCanNeverIssueAnAPITokenEvenWithAFullGrant(t *testing.T) {
 			t.Errorf("api_tokens went from %d to %d rows", before, after)
 		}
 	})
-}
-
-func TestADeploymentIsRefusedWithNoRowWhileWritesAreOff(t *testing.T) {
-	row := mcpMatrixRowOf(t, "POST "+wire.PathDeployments)
-	if row.Off.Status != http.StatusForbidden || row.Off.Reason != smerr.ReasonMCPWritesDisabled || len(row.Off.Created) != 0 {
-		t.Fatalf("the deployment row does not describe a refusal with no rows: %+v", row.Off)
-	}
-	eachMCPMode(t, func(t *testing.T, rig *mcpRig, via mcpRigTransport) { rig.assertRow(via, row) })
 }
 
 func TestARefusedWriteNeverSendsACommandToANode(t *testing.T) {

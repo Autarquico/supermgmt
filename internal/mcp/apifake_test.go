@@ -14,22 +14,19 @@ import (
 type fakeAPI struct {
 	API
 
-	nodes       []wire.Node
-	services    map[domain.ID][]wire.Service
-	apps        []wire.App
-	routes      []wire.NodeRoute
-	deployments []wire.Deployment
-	events      []wire.Event
-	logs        wire.LogChunk
+	nodes    []wire.Node
+	services map[domain.ID][]wire.Service
+	routes   []wire.NodeRoute
+	events   []wire.Event
+	logs     wire.LogChunk
 
 	pageSize int            // items per page; 0 serves everything in one page
 	failWith error          // returned by every method when set
 	calls    map[string]int // method name -> number of calls
 
-	lastLogQuery        wire.LogQuery
-	lastEventQuery      wire.EventQuery
-	lastDeploymentQuery wire.DeploymentQuery
-	lastNodeQuery       wire.NodeQuery
+	lastLogQuery   wire.LogQuery
+	lastEventQuery wire.EventQuery
+	lastNodeQuery  wire.NodeQuery
 }
 
 func (f *fakeAPI) enter(method string) error {
@@ -89,27 +86,6 @@ func (f *fakeAPI) GetService(_ context.Context, id domain.ID) (wire.Service, err
 func (f *fakeAPI) ServiceLogs(_ context.Context, _ domain.ID, q wire.LogQuery) (wire.LogChunk, error) {
 	f.lastLogQuery = q
 	return f.logs, f.enter("ServiceLogs")
-}
-
-func (f *fakeAPI) ListApps(_ context.Context, q wire.PageQuery) (wire.Page[wire.App], error) {
-	return pageOf(f.apps, q, f.pageSize), f.enter("ListApps")
-}
-
-func (f *fakeAPI) ListDeployments(_ context.Context, q wire.DeploymentQuery) (wire.Page[wire.Deployment], error) {
-	f.lastDeploymentQuery = q
-	return pageOf(f.deployments, q.PageQuery, f.pageSize), f.enter("ListDeployments")
-}
-
-func (f *fakeAPI) GetDeployment(_ context.Context, id domain.ID) (wire.Deployment, error) {
-	if err := f.enter("GetDeployment"); err != nil {
-		return wire.Deployment{}, err
-	}
-	for _, d := range f.deployments {
-		if d.ID == id {
-			return d, nil
-		}
-	}
-	return wire.Deployment{}, smerr.New(smerr.CodeNotFound, "", "no such deployment")
 }
 
 func (f *fakeAPI) ListEvents(_ context.Context, q wire.EventQuery) (wire.Page[wire.Event], error) {

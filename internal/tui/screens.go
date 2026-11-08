@@ -817,7 +817,6 @@ func (m *Model) updatesText() string {
 func (m *Model) helpBody(bw int) []string {
 	rows := [][2]string{
 		{"1-7", "Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings"},
-		{"8 9", "Applications, Deployments"},
 		{"j k / arrows", "move; g top, G bottom"},
 		{"enter", "open the selected item"},
 		{"esc", "back"},

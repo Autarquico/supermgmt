@@ -26,14 +26,9 @@ type API interface {
 	ListServices(ctx context.Context, node domain.ID, q wire.PageQuery) (wire.Page[wire.Service], error)
 	GetService(ctx context.Context, id domain.ID) (wire.Service, error)
 	ServiceLogs(ctx context.Context, id domain.ID, q wire.LogQuery) (wire.LogChunk, error)
-	ListApps(ctx context.Context, q wire.PageQuery) (wire.Page[wire.App], error)
-	ListDeployments(ctx context.Context, q wire.DeploymentQuery) (wire.Page[wire.Deployment], error)
-	GetDeployment(ctx context.Context, id domain.ID) (wire.Deployment, error)
 	ListEvents(ctx context.Context, q wire.EventQuery) (wire.Page[wire.Event], error)
 	CreatePlan(ctx context.Context, r wire.CreatePlanRequest) (wire.CreatedPlan, error)
 	SubmitPlan(ctx context.Context, plan domain.ID, planHash string) (wire.Submission, error)
-	CreateDeployment(ctx context.Context, r wire.CreateDeploymentRequest) (wire.Deployment, error)
-	RollbackDeployment(ctx context.Context, id domain.ID, r wire.RollbackRequest) (wire.Deployment, error)
 	ListAllNodeRoutes(ctx context.Context, includeRemoved bool) (wire.Page[wire.NodeRoute], error)
 	ExposeNodeRoute(ctx context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error)
 	UnexposeNodeRoute(ctx context.Context, node domain.ID, hostname string) (wire.NodeRouteSubmission, error)
@@ -87,17 +82,15 @@ type WriteStatus string
 const (
 	WriteApprovalRequired WriteStatus = "approval_required"
 	WriteQueued           WriteStatus = "queued"
-	WriteWaitingCI        WriteStatus = "waiting_ci"
 	WriteDenied           WriteStatus = "denied"
 )
 
 // WriteResult is the result of every write tool (spec §24). Summary is built
 // from control-plane fields only, never from remote text.
 type WriteResult struct {
-	Status       WriteStatus `json:"status"`
-	JobID        *domain.ID  `json:"job_id,omitempty"`
-	DeploymentID *domain.ID  `json:"deployment_id,omitempty"`
-	PlanHash     *string     `json:"plan_hash,omitempty"`
-	Summary      string      `json:"summary"`
-	Risk         string      `json:"risk"`
+	Status   WriteStatus `json:"status"`
+	JobID    *domain.ID  `json:"job_id,omitempty"`
+	PlanHash *string     `json:"plan_hash,omitempty"`
+	Summary  string      `json:"summary"`
+	Risk     string      `json:"risk"`
 }

@@ -14,7 +14,7 @@ func TestDiffPolicies_AgainstDefault(t *testing.T) {
 	}
 
 	user := pol(t,
-		`{name: builtin-read, subjects: ['role:admin', 'role:viewer', 'role:deployer', 'role:operator'], allow: ['node.connect', 'plan.create', 'service.logs', '*.read']}`,
+		`{name: builtin-read, subjects: ['role:admin', 'role:viewer', 'role:operator'], allow: ['node.connect', 'plan.create', 'service.logs', '*.read']}`,
 		`{name: builtin-operator, subjects: ['role:operator'], allow: ['service.restart']}`,
 		`{name: custom, subjects: ['role:ops'], allow: ['node.read']}`)
 	d := DiffPolicies(base, user)
@@ -28,7 +28,7 @@ func TestDiffPolicies_AgainstDefault(t *testing.T) {
 	if d.Changed[0].Before.Allow[0] != "service.start" || d.Changed[0].After.Allow[0] != "service.restart" {
 		t.Errorf("changed rule carries wrong versions: %+v", d.Changed[0])
 	}
-	wantRemoved := []string{"builtin-deployer", "builtin-approver", "builtin-admin", "builtin-mcp-read"}
+	wantRemoved := []string{"builtin-approver", "builtin-admin", "builtin-mcp-read"}
 	if len(d.Removed) != len(wantRemoved) {
 		t.Fatalf("removed = %+v", d.Removed)
 	}

@@ -16,7 +16,7 @@ func validServer(t *testing.T) Config {
 func resolved(t *testing.T, doc string) Config {
 	t.Helper()
 	cfg := Defaults()
-	if err := DecodeStrict(strings.NewReader(doc), &cfg); err != nil {
+	if _, err := DecodeStrict(strings.NewReader(doc), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg.applyModeDefaults(Paths{DataDir: "/home/u/data"})
@@ -109,8 +109,6 @@ func TestValidateRules(t *testing.T) {
 		{"host key policy other than strict", func(c *Config) { c.SSH.HostKeyPolicy = "accept-new" }, "ssh.host_key_policy"},
 		{"logs mode broker", func(c *Config) { c.SSH.LogsMode = "broker" }, ""},
 		{"logs mode unknown", func(c *Config) { c.SSH.LogsMode = "syslog" }, "ssh.logs_mode"},
-		{"private CIDR list ok", func(c *Config) { c.Health.AllowedPrivateCIDRs = []string{"10.0.0.0/8"} }, ""},
-		{"private CIDR list garbage", func(c *Config) { c.Health.AllowedPrivateCIDRs = []string{"10.0.0.0"} }, "health.allowed_private_cidrs[0]"},
 
 		{"oidc client secret as secret ref", func(c *Config) { c.Auth.OIDC.ClientSecretRef = "secret://oidc/client" }, ""},
 		{"oidc client secret as file ref", func(c *Config) { c.Auth.OIDC.ClientSecretRef = "file:///etc/oidc" }, "auth.oidc.client_secret_ref"},

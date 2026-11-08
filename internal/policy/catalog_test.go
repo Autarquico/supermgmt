@@ -17,9 +17,6 @@ node.read                  node        read         query       -              -
 node_route.read            node        read         query       -              -                        -
 service.read               service     read         query       -              service.read             -
 service.logs               service     read         query       -              service.logs             -
-app.read                   app         read         query       -              -                        -
-app_target.read            app_target  read         query       -              -                        -
-deployment.read            deployment  read         query       -              -                        -
 environment.read           environment read         query       -              -                        -
 provider.read              provider    read         query       -              -                        -
 job.read                   job         read         query       -              -                        -
@@ -42,8 +39,6 @@ proxmox.snapshot.rollback  node        high         job         non_retryable  p
 proxmox.snapshot.delete    node        destructive  job         non_retryable  proxmox.snapshot.create  1
 proxmox.backup.create      node        operational  job         non_retryable  proxmox.backup.create    1
 node.backup_template.run   node        operational  sub-action  -              node.exec.template       -
-deployment.create          app_target  operational  job         resumable      docker.compose.deploy    3
-deployment.rollback        app_target  operational  job         resumable      docker.compose.deploy    3
 node.setup                 node        high         job         idempotent     node.ssh                 3
 node.tunnel.disable        node        high         job         idempotent     node.ssh                 3
 cloudflare.access_token.rotate instance high        job         idempotent     -                        3
@@ -56,8 +51,6 @@ node.remove                node        destructive  direct      -              -
 provider.write             provider    high         direct      -              -                        -
 provider.delete            provider    destructive  direct      -              -                        -
 environment.write          environment high         direct      -              -                        -
-app.write                  app         operational  direct      -              -                        -
-app_target.write           app_target  operational  direct      -              -                        -
 node_route.expose          node        operational  direct      -              -                        -
 node_route.unexpose        node        operational  direct      -              -                        -
 config.write               instance    high         direct      -              -                        -

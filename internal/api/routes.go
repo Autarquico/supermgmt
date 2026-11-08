@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"slices"
 	"strconv"
@@ -93,12 +92,8 @@ func (s *Server) buildRoutes() []route {
 	r.jobs()
 	r.providers()
 	r.proxmox()
-	r.repositories()
-	r.apps()
 	r.nodeRoutes()
-	r.deployments()
 	r.mcpClients()
-	r.webhook()
 	r.nodes()
 	r.tunnelEnrollments()
 	r.sessions()
@@ -301,28 +296,17 @@ func (rs *routeSet) providers() {
 	rs.write(http.MethodPost, wire.PathProviders, "provider.write", mutation(s, s.registerProvider, direct(http.StatusCreated, app.ProviderView)))
 }
 
-// registerProvider routes POST /providers by the body's type: local, or github
-// (approval-gated provider.write).
+// registerProvider routes POST /providers: only the local provider is
+// registered through the API.
 func (s *Server) registerProvider(ctx context.Context, by app.Caller, in input) (app.DirectResult[domain.Provider], error) {
-	var kind wire.CreateProviderRequest
-	_ = json.Unmarshal(in.body, &kind) // a malformed body is reported by the strict decode below
-	switch kind.Type {
-	case wire.ProviderGitHub:
-		if s.svc.Apps == nil {
-			return app.DirectResult[domain.Provider]{}, invalid("the %q provider is not available", wire.ProviderGitHub)
-		}
-		req, err := decode[wire.CreateGitHubProviderRequest](in)
-		if err != nil {
-			return app.DirectResult[domain.Provider]{}, err
-		}
-		return s.svc.Apps.CreateGitHubProvider(ctx, by, req)
-	case wire.ProviderLocal:
-		if _, err := decode[wire.CreateProviderRequest](in); err != nil {
-			return app.DirectResult[domain.Provider]{}, err
-		}
-		return s.svc.Inventory.RegisterLocal(ctx, by)
+	req, err := decode[wire.CreateProviderRequest](in)
+	if err != nil {
+		return app.DirectResult[domain.Provider]{}, err
 	}
-	return app.DirectResult[domain.Provider]{}, invalid("provider type must be %q or %q", wire.ProviderLocal, wire.ProviderGitHub)
+	if req.Type != wire.ProviderLocal {
+		return app.DirectResult[domain.Provider]{}, invalid("provider type must be %q", wire.ProviderLocal)
+	}
+	return s.svc.Inventory.RegisterLocal(ctx, by)
 }
 
 // direct renders the outcome of a `direct` action: applied at once with
@@ -342,6 +326,13 @@ func direct[T, V any](appliedStatus int, view func(T) V) func(app.DirectResult[T
 }
 
 func same[T any](v T) T { return v }
+
+func nonNil[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
+}
 
 func (rs *routeSet) nodes() {
 	s := rs.s

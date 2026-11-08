@@ -18,7 +18,7 @@ The words these pages use, in the order you meet them. Each entry says what the 
 
 **Node.** A machine SuperMgmt knows about: a Linux machine over SSH, the machine running `sm`, or a Proxmox VE host, VM or container.
 
-**Provider.** A source of nodes or of data about them. `ssh` and `local` give you nodes; `proxmox` discovers a cluster; `github` gives repositories, CI results and attestations, not nodes. See [Providers](providers.md).
+**Provider.** A source of nodes or of data about them. `ssh` and `local` give you nodes; `proxmox` discovers a cluster. See [Providers](providers.md).
 
 **Local node.** The machine running the daemon, registered with `sm nodes add --local`. It is read-only: SuperMgmt never changes anything on it.
 
@@ -32,7 +32,7 @@ The words these pages use, in the order you meet them. Each entry says what the 
 
 **Service.** Something running on a node that SuperMgmt can see: a systemd unit or a Docker container. Service actions are `start`, `stop` and `restart`.
 
-**Environment.** A label such as `staging` or `production` that you attach to nodes and apps. Its `risk_level` (`development`, `staging` or `production`) drives policy: in `production`, operational writes wait for approval by default.
+**Environment.** A label such as `staging` or `production` that you attach to nodes. Its `risk_level` (`development`, `staging` or `production`) drives policy: in `production`, operational writes wait for approval by default.
 
 ## How a change happens
 
@@ -48,7 +48,7 @@ request ─► plan ─► policy ─► job ─► (approval) ─► run ─►
 
 **Policy.** The rules that decide whether an actor may run an action on a resource. Nothing is allowed unless a rule allows it, and any matching deny wins over every allow. A built-in policy applies until you supply your own. See [Configuration](configuration.md).
 
-**Action.** One entry of SuperMgmt's closed action catalog, such as `service.restart`, `node.setup` or `deployment.create`. Each has a risk class that policy takes into account: a high-risk change such as `node.setup` waits for approval whatever the rules say.
+**Action.** One entry of SuperMgmt's closed action catalog, such as `service.restart`, `node.setup` or `node.reboot`. Each has a risk class that policy takes into account: a high-risk change such as `node.setup` waits for approval whatever the rules say.
 
 **Approval.** A decision by an authorized person that a waiting job may run. It is bound to the plan hash: change the plan and earlier approvals no longer apply. Approvals expire, and a quorum counts distinct approvers. In local mode you may approve your own plans; that is a setting (`security.allow_self_approval`).
 
@@ -60,7 +60,7 @@ request ─► plan ─► policy ─► job ─► (approval) ─► run ─►
 
 ## Identities and secrets
 
-**Actor.** Who asks: a human, an automation identity (such as a CI workflow), an MCP client, or the system itself.
+**Actor.** Who asks: a human, an automation identity, an MCP client, or the system itself.
 
 **MCP client.** An AI tool registered with `sm mcp clients add`. It gets its own identity with no roles, can never approve, reject or resolve anything and can never create credentials. Write tools are off unless `mcp.write_tools_enabled` is true. See [MCP](mcp.md).
 
@@ -68,17 +68,9 @@ request ─► plan ─► policy ─► job ─► (approval) ─► run ─►
 
 **Master key (KEK).** A key file that encrypts every secret SuperMgmt stores, including the instance SSH identity. It lives outside the database and outside backup archives, so back it up separately with `sm secrets export-key`. A lost master key cannot be recovered.
 
-## Apps and deployments
+## Deployments
 
-**App.** One Docker Compose application: the service to deploy, where its Compose file comes from, which images are allowed and which CI checks must pass.
-
-**App target.** An app bound to one environment and one node.
-
-**Deployment.** One request to put a commit's images on a target. SuperMgmt deploys only a commit whose required CI checks passed and image digests CI built; it takes a backup first when configured, checks health afterwards and rolls back when the checks fail.
-
-**Rollback.** A deployment that restores the versions of an earlier known-good deployment.
-
-See [Applications and deployments](deployments.md).
+SuperMgmt does not deploy applications. Each project's own CI/CD deploys it to the node; SuperMgmt discovers what runs there and operates it. See [the operations-plane decision](adr/0043-operations-plane-not-a-deployer.md).
 
 ## References
 

@@ -76,99 +76,6 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
-### sm apps
-
-List, inspect and create applications and their targets
-
-```text
-sm apps
-```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps create
-
-Create an application
-
-Create an application from a JSON request (--file, the body of POST /apps) and/or flags. A flag the
-command line sets wins over the same field in the file. The Compose file is the control-plane source and may
-hold ${secret:<ref>} references, never a secret value.
-
-```text
-sm apps create [flags]
-```
-
-Flags:
-
-- `--automation-identity` (bool): link the GitHub Actions automation identity
-- `--compose-file` (string): Compose file to keep as the control-plane source
-- `--deployed-service` (string): the Compose service CI deploys
-- `--file` (string): JSON file with the create request
-- `--manifest-path` (string): path of the manifest in the repository
-- `--name` (string): app name
-- `--ref` (stringArray): secret reference NAME=secret://apps/... (repeatable)
-- `--var` (stringArray): Compose variable NAME=value (repeatable)
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps get
-
-Show one application with its targets (id or name)
-
-```text
-sm apps get <app>
-```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps list
-
-List applications
-
-```text
-sm apps list [flags]
-```
-
-Flags:
-
-- `--cursor` (string): continue after this cursor
-- `--limit` (int): maximum items per page (default 50, max 500)
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm apps target
-
-Manage where an application runs
-
-```text
-sm apps target
-```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-##### sm apps target add
-
-Bind an application to an environment and a node
-
-Add a target: the application in one environment on one node. The Compose project is derived by the
-daemon (sm-<app>-<environment>). The deployment policy comes from --policy-file (JSON) and/or flags; a flag
-the command line sets wins over the file.
-
-```text
-sm apps target add <app> [flags]
-```
-
-Flags:
-
-- `--bind-address` (stringArray): address a published port may bind (repeatable)
-- `--environment` (string): environment name
-- `--node` (string): node (id or name)
-- `--policy-file` (string): JSON file with the deployment policy
-- `--rollback` (string): rollback mode: automatic | manual
-- `--stateful` (bool): the application holds state
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
 ### sm backup
 
 Create and list backups; restore one offline
@@ -294,80 +201,6 @@ Run the SuperMgmt daemon (started on demand by the other commands)
 ```text
 sm daemon
 ```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-### sm deploy
-
-Deploy a commit's images to an application's environment
-
-Request a deployment of the exact commit and image digests CI built. The daemon verifies CI for the
-commit, freezes the plan and, when policy asks for it, waits for approval: this command prints that plan
-preview. With --wait it blocks until the deployment succeeds, fails or is rolled back.
-
-```text
-sm deploy <app> <environment> --commit <sha> --image <service>=<digest> [flags]
-```
-
-Flags:
-
-- `--commit` (string): full commit SHA CI built
-- `--image` (stringArray): service=sha256:<digest> to deploy (repeatable)
-- `--interval` (duration, default `2s`): with --wait: how often to poll
-- `--wait` (bool): wait until the deployment settles; exit non-zero unless it succeeded
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-### sm deployments
-
-List, inspect, follow and cancel deployments
-
-```text
-sm deployments
-```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm deployments cancel
-
-Cancel a deployment that has not started changing services
-
-```text
-sm deployments cancel <deployment-id>
-```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm deployments get
-
-Show a deployment and its step timeline
-
-```text
-sm deployments get <deployment-id> [flags]
-```
-
-Flags:
-
-- `--follow` (bool): print the timeline whenever it changes, until the deployment settles
-- `--interval` (duration, default `2s`): with --follow: how often to poll
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-#### sm deployments list
-
-List deployments, newest first
-
-```text
-sm deployments list [flags]
-```
-
-Flags:
-
-- `--app` (string): only this application (id or name)
-- `--cursor` (string): continue after this cursor
-- `--limit` (int): maximum items per page (default 50, max 500)
-- `--state` (string): only deployments in this state
-- `--target` (string): only this app target id
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -1254,26 +1087,6 @@ SuperMgmt knows about it. Exit status: 0 when the sync worked, 8 when the cluste
 ```text
 sm providers refresh <provider>
 ```
-
-Also accepts the global flags `--config`, `--json`, `--log-level`.
-
-### sm rollback
-
-Redeploy the last known-good deployment of an application's environment
-
-Request a rollback of the newest deployment of the target to its newest earlier known-good one
-(--to picks another known-good deployment of the same target). The daemon freezes the known-good
-snapshot; no CI gate applies.
-
-```text
-sm rollback <app> <environment> [flags]
-```
-
-Flags:
-
-- `--interval` (duration, default `2s`): with --wait: how often to poll
-- `--to` (string): known-good deployment id to roll back to
-- `--wait` (bool): wait until the deployment settles; exit non-zero unless it succeeded
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 

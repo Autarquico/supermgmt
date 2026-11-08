@@ -151,22 +151,6 @@ func TestResolveService(t *testing.T) {
 	}
 }
 
-func TestResolveApp(t *testing.T) {
-	api := &fakeAPI{apps: []wire.App{
-		{ID: resolveNodeIDOf(1), Name: "shop"},
-		{ID: resolveNodeIDOf(2), Name: "blog"},
-		{ID: resolveNodeIDOf(3), Name: "blog"},
-	}}
-
-	if got, err := resolveApp(context.Background(), api, "shop"); err != nil || got != resolveNodeIDOf(1) {
-		t.Errorf("shop = %v, %v", got, err)
-	}
-	_, err := resolveApp(context.Background(), api, "blog")
-	wantToolError(t, err, smerr.CodeInvalidArgument, smerr.ReasonAmbiguousTarget)
-	_, err = resolveApp(context.Background(), api, "wiki")
-	wantToolError(t, err, smerr.CodeNotFound, "")
-}
-
 // A name that sanitation would rewrite still resolves, and only by its raw
 // value: the display copy can never retarget a call.
 func TestResolveNode_UsesRawNamesNotTheSanitizedCopy(t *testing.T) {

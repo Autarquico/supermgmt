@@ -136,6 +136,14 @@ The binary is older than the installed one, or its version cannot be ordered. Us
 
 This version no longer moves apps between nodes, and it will not drop the record of a move that still has work to do: a move that is not `done` or `rolled_back`, or a move, cleanup or abandon job that has not finished. The database is left exactly as it was. Go back to the previous version, let the move finish (or abandon it where it halted), wait for its jobs to end, then upgrade again. A backup taken while a move was open fails to restore for the same reason.
 
+### The upgrade stops with `a deployment is unfinished`
+
+This version no longer deploys apps, and it will not drop the deployment tables while a deployment still has work to do: a deployment that is not `succeeded`, `failed`, `rolled_back`, `rollback_failed` or `cancelled`, or a deployment, rollback or app job that has not finished. The database is left exactly as it was. Go back to the previous version and settle what is open, then upgrade again (`TestMigration000014RefusesOpenWorkAndChangesNothing`):
+
+- an open deployment: `sm deployments list` shows its state; wait for it, or `sm deployments cancel <id>`;
+- a job waiting for approval: `sm approvals` lists it; approve it with `sm jobs approve <job-id> --plan-hash <hash>` or `sm jobs reject <job-id> --plan-hash <hash> --reason <text>` (`sm jobs get <job-id>` shows the hash);
+- a queued, running or interrupted job: `sm jobs list` shows it; wait for it, `sm jobs cancel <job-id> --plan-hash <hash>`, or settle an interrupted one with `sm jobs resolve <job-id> --plan-hash <hash> --outcome <succeeded|failed|rollback_failed>`.
+
 ## Restoring
 
 ### Every write returns `CONFLICT` with `RESTORE_HOLD`
@@ -145,6 +153,10 @@ The server is in the restore hold after a restore. Review `sm doctor` and the in
 ### Restore exits 4, or says the archive needs a key
 
 Exit 4 means a daemon holds the database lock: stop the service. An archive without its master key is refused; import the key export first with `sm secrets import-key --offline` ([operations.md](operations.md#restore)). Master keys are never in an archive.
+
+### Restore says the backup holds an unfinished deployment
+
+The archive was taken by a version that deployed apps, while a deployment was still open, and this version cannot finish it. Nothing was changed. Restore the archive with the previous release, settle what is open (see [the list](#the-upgrade-stops-with-a-deployment-is-unfinished)), take a new backup and restore that one here. An archive whose deployments had all ended restores normally (`TestRestoringABackupWithAnOpenDeploymentIsRefusedWithGuidanceAndChangesNothing`, `TestRestoringABackupWithOnlyTerminalDeploymentsMigratesPastSchema14`).
 
 ### `backup.create` returns `CONFLICT`
 
@@ -179,12 +191,9 @@ The fixed rate limits were exceeded (`/auth/*` and `/enroll`: 10 per minute; wri
 - **400**: the protocol version is not one of the three the server speaks.
 - A token that verifies but belongs to a subject nobody registered is refused. An administrator registers each `(iss, sub, client_id)` ([mcp.md](mcp.md)).
 
-### A deployment waits, fails or is unavailable
+### A warning says a config block, provider or policy action was retired
 
-- **`waiting_ci` for a long time**: the required checks are pending. It ends at `github.ci_timeout` (default 2 h) with `CI_TIMEOUT`, or with `CHECK_MISSING` when a required check never appeared ([deployments.md](deployments.md)).
-- **`docker.compose.deploy` unavailable on a node**: the Compose CLI there is not exactly 5.5.1, or `jq`, `flock`, `bash`, `timeout`, `ss`, `sha256sum`, `base64` or `df` is missing ([compatibility.md](compatibility.md#deployments)).
-- **`ROLLBACK_UNAVAILABLE`**: a secret version or snapshot the known-good deployment bound is gone; the rollback is refused before anything changes.
-- **Deployments from GitHub fail verification**: the GitHub path was only exercised against fakes; see the deferred list in [compatibility.md](compatibility.md#deployments).
+`config block github: was retired by ADR-0043 and is ignored; remove it`, the same for `health:`, `providers[<n>]: provider of type github was retired …`, or `action deployment.create was retired by ADR-0043 and grants nothing (rules: …)`. The daemon logs these at start and `sm config validate` prints them; the file still loads and the retired entries do nothing. Remove them from the file to silence the warning ([what changed](installation.md#upgrading-from-a-version-that-deployed-apps)). A misspelt key is still an error, retired or not (`TestLoadIgnoresRetiredBlocksAndProvidersWithOneWarningEach`, `TestLoadStillRejectsAMisspeltKeyBesideRetiredOnes`).
 
 ## Cloudflare tunnel nodes
 

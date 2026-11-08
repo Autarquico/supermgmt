@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Routes publish a node port
 type: task
-status: active
+status: shipped
 priority: P1
 size: L
 issue: 76
@@ -12,10 +12,12 @@ depends_on: [retire-app-move]
 supersedes: []
 related_specs: [app-expose-tunnel, retire-deployments]
 created: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 # Routes publish a node port
+
+> **Followed by [retire-deployments](retire-deployments.md).** Apps, app targets and deployments no longer exist, so the scenario "a deployment may change a routed port" and the read path for app-target plans describe the state between the two changes.
 
 ## Contexto / problema
 

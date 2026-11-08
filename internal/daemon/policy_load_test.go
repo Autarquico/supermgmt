@@ -11,7 +11,7 @@ import (
 
 func TestLoadPolicyLogsRetiredActionsOncePerAction(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "policy.yaml")
-	text := "version: 1\nrules:\n  - {name: a, subjects: ['*'], allow: ['app_target.move', 'app_target.read']}\n  - {name: b, subjects: ['*'], deny: ['app_target.move']}\n"
+	text := "version: 1\nrules:\n  - {name: a, subjects: ['*'], allow: ['app_target.move', 'node.read']}\n  - {name: b, subjects: ['*'], deny: ['app_target.move']}\n"
 	if err := os.WriteFile(file, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}

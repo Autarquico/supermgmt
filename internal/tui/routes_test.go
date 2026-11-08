@@ -9,7 +9,7 @@ import (
 )
 
 type routesAPI struct {
-	*m4API
+	*fakeAPI
 	exposed   []wire.ExposeNodeRouteRequest
 	exposedOn []domain.ID
 	removed   []string
@@ -26,7 +26,7 @@ func (f *routesAPI) UnexposeNodeRoute(_ context.Context, _ domain.ID, hostname s
 }
 
 func TestExposeViaPaletteWarnsAboutAPublicRouteAndSubmitsOnConfirm(t *testing.T) {
-	api := &routesAPI{m4API: newM4API()}
+	api := &routesAPI{fakeAPI: newFake()}
 	h := newHarness(t, api, 120, 28)
 	h.start()
 
@@ -48,7 +48,7 @@ func TestExposeViaPaletteWarnsAboutAPublicRouteAndSubmitsOnConfirm(t *testing.T)
 }
 
 func TestExposeOwnersViaPaletteHasNoPublicWarning(t *testing.T) {
-	api := &routesAPI{m4API: newM4API()}
+	api := &routesAPI{fakeAPI: newFake()}
 	h := newHarness(t, api, 120, 28)
 	h.start()
 
@@ -64,7 +64,7 @@ func TestExposeOwnersViaPaletteHasNoPublicWarning(t *testing.T) {
 }
 
 func TestUnexposeViaPaletteAsksFirst(t *testing.T) {
-	api := &routesAPI{m4API: newM4API()}
+	api := &routesAPI{fakeAPI: newFake()}
 	h := newHarness(t, api, 120, 28)
 	h.start()
 
@@ -81,7 +81,7 @@ func TestUnexposeViaPaletteAsksFirst(t *testing.T) {
 }
 
 func TestRouteCommandsValidateTheirWordsAndTheDaemon(t *testing.T) {
-	api := &routesAPI{m4API: newM4API()}
+	api := &routesAPI{fakeAPI: newFake()}
 	h := newHarness(t, api, 120, 28)
 	h.start()
 	for line, want := range map[string]string{
@@ -98,7 +98,7 @@ func TestRouteCommandsValidateTheirWordsAndTheDaemon(t *testing.T) {
 		contains(t, h.view(), want)
 	}
 
-	bare := newHarness(t, newM4API(), 120, 28)
+	bare := newHarness(t, newFake(), 120, 28)
 	bare.start()
 	bare.press("/")
 	bare.typeText("expose web-1 shop.example.com 8080")
