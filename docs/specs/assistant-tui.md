@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: "The assistant in the TUI"
+title: The assistant in the TUI
 type: task
-status: draft
+status: active
 priority: P1
 size: M
 issue: null
 prs: []
-related_issues: []
+related_issues: [91]
 depends_on: [assistant-claude-cli]
 supersedes: []
 related_specs: [assistant-claude-cli]
