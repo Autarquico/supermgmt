@@ -13,6 +13,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
+	"github.com/autarquico/supermgmt/internal/policy"
 	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/runtimes/systemd"
@@ -87,6 +88,13 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	}
 	node, err := database.GetNode(ctx, h.cfg.DB.Reader(), job.Resource.ID)
 	if err != nil {
+		return err
+	}
+	actor, err := loadActor(ctx, h.cfg.DB.Reader(), job.ActorID, credentialOf(job))
+	if err != nil {
+		return err
+	}
+	if err := requireMCPFreshNode(ctx, h.cfg.DB.Reader(), actor, policy.ActionNodeSetup, node.ID); err != nil {
 		return err
 	}
 	params, err := setupParamsOf(job)

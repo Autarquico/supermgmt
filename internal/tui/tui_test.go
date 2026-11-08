@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -584,6 +585,70 @@ func TestApproveSendsThePlanHashOnce(t *testing.T) {
 		t.Errorf("approved = %+v, want one with plan hash %s", api.approved, jobHash)
 	}
 	contains(t, h.view(), "approved job")
+}
+
+func TestANodeAddApprovalShowsTheWholeHostKeyFingerprint(t *testing.T) {
+	const fingerprint = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8"
+	plan := []byte(`{"action":"node.add","risk":"high","steps":["scan the host","trust host key (compare with the host): ssh-ed25519 ` + fingerprint + `"],"targets":[]}`)
+	newApproval := func(width int) *harness {
+		api := newFake()
+		api.approvals[0].Plan = plan
+		h := newHarness(t, api, width, 30)
+		h.start()
+		h.press("4")
+		return h
+	}
+
+	t.Run("80 columns", func(t *testing.T) {
+		contains(t, newApproval(80).view(), fingerprint)
+	})
+	t.Run("split layout", func(t *testing.T) {
+		contains(t, newApproval(120).view(), fingerprint)
+	})
+	t.Run("a pane narrower than the key keeps every character", func(t *testing.T) {
+		h := newApproval(80)
+		var pane strings.Builder
+		for _, line := range h.m.approvalView(h.m.approvals[0], 30) {
+			pane.WriteString(strings.TrimSpace(line))
+		}
+		contains(t, pane.String(), fingerprint)
+	})
+}
+
+func TestANodeAddApprovalShowsTheFingerprintBesideALongCredentialReference(t *testing.T) {
+	const fingerprint = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8"
+	reference := "secret://" + strings.Repeat("a", 128)
+	plan := []byte(`{"action":"node.add","risk":"high","steps":["trust host key (compare with the host): ssh-ed25519 ` + fingerprint +
+		`","admin credential: ` + reference + `","automation credential: ` + reference + `"],"targets":[]}`)
+	api := newFake()
+	api.approvals[0].Plan = plan
+	h := newHarness(t, api, 80, 24)
+	h.start()
+	h.press("4")
+
+	contains(t, h.view(), fingerprint)
+}
+
+func TestWrapKeepsEveryLineWithinItsWidth(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		w    int
+	}{
+		{"aaa bbbbbbbbbb", 11},
+		{"ab cdefghij", 10},
+		{"a " + strings.Repeat("x", 30) + " b", 12},
+		{strings.Repeat("word ", 20), 9},
+	} {
+		lines := wrap(c.text, c.w, "   ")
+		for _, line := range lines {
+			if width := lipgloss.Width(line); width > c.w {
+				t.Errorf("wrap(%q, %d) line %q is %d cells", c.text, c.w, line, width)
+			}
+		}
+		if got, want := strings.ReplaceAll(strings.Join(lines, ""), " ", ""), strings.ReplaceAll(c.text, " ", ""); got != want {
+			t.Errorf("wrap(%q, %d) dropped text: %q", c.text, c.w, got)
+		}
+	}
 }
 
 func TestRejectNeedsAReason(t *testing.T) {

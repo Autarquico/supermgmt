@@ -693,7 +693,9 @@ func (m *Model) approvalView(a wire.Approval, w int) []string {
 	lines := []string{"", " " + m.th.title.Render(clip("PLAN #"+shortHash(a.Job.PlanHash), w-2)), ""}
 	if doc, ok := decodePlan(a.Plan); ok {
 		for _, l := range docLines(doc) {
-			lines = append(lines, " "+clip(l, w-2))
+			for _, part := range wrap(l, w-1, "   ") {
+				lines = append(lines, " "+part)
+			}
 		}
 	} else {
 		lines = append(lines, m.th.warn.Render(" the plan could not be read: do not approve it"))

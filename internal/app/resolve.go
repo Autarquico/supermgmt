@@ -216,7 +216,7 @@ func (c core) rebuildCurrent(ctx context.Context, q database.Querier, rec databa
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
 		return built{}, planStale()
 	}
-	if err == nil {
+	if err == nil && rec.Action == policy.ActionNodeSetup { // the other actions' steps come from build
 		current.plan.Steps, err = c.tunnelSetupSteps(ctx, q, rec.Action, ref.ID, stored.Parameters)
 	}
 	if err == nil && rec.Action == policy.ActionNodeTunnelDisable {

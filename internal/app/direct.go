@@ -5,8 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
+
+	cryptossh "golang.org/x/crypto/ssh"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/database"
@@ -15,6 +19,7 @@ import (
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/policy"
+	sshnode "github.com/autarquico/supermgmt/internal/providers/ssh"
 	"github.com/autarquico/supermgmt/internal/runtimes"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -130,6 +135,10 @@ func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec
 			return built{}, err
 		}
 	}
+	steps, err := directSteps(spec.Name, params)
+	if err != nil {
+		return built{}, err
+	}
 	return built{
 		spec:   spec,
 		target: target,
@@ -139,9 +148,36 @@ func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec
 			Actor:      "identity/" + actorID.String(),
 			Targets:    []plan.Target{{Type: string(ref.Type), ID: ref.ID.String(), SpecRevision: revision}},
 			Inputs:     inputs,
+			Steps:      steps,
 			Parameters: params,
 			Risk:       spec.Risk,
 		},
+	}, nil
+}
+
+// directSteps are the human lines of a direct action's plan, computed from its parameters alone so that
+// building the plan again at approval gives the same hash. Only node.add has them: the approver sees whom
+// the control plane will trust and with which credentials.
+func directSteps(action string, params map[string]any) ([]string, error) {
+	if action != actionNodeAdd {
+		return nil, nil
+	}
+	p, err := fromParams[nodeAddParams](params)
+	if err != nil || p.Tunnel {
+		return nil, err
+	}
+	key, err := sshnode.ParseHostKey(p.HostPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		fmt.Sprintf("trust host key (compare with the host): %s %s", key.Type(), cryptossh.FingerprintSHA256(key)),
+		"name: " + p.Name,
+		fmt.Sprintf("host: %s", net.JoinHostPort(p.Host, strconv.Itoa(p.Port))),
+		"admin user: " + p.AdminUser,
+		"automation user: " + p.User,
+		"admin credential: " + p.AdminCredentialRef,
+		"automation credential: " + p.CredentialRef,
 	}, nil
 }
 

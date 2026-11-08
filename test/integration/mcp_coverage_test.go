@@ -21,7 +21,7 @@ import (
 const mcpCoverageFile = "testdata/mcp_coverage.json"
 
 // mcpCoverageEntry maps one command or route to exactly one of a tool or a
-// reason. A reason starting with "pending: " names the spec that will close it.
+// reason. A reason may not start with "pending: ": an exclusion is a decision.
 type mcpCoverageEntry struct {
 	Tool   string `json:"tool,omitempty"`
 	Reason string `json:"reason,omitempty"`
@@ -70,6 +70,8 @@ func mcpCoverageProblems(kind string, existing []string, entries map[string]mcpC
 			problems = append(problems, kind+" "+name+" is mapped but no longer exists")
 		case (entry.Tool == "") == (entry.Reason == ""):
 			problems = append(problems, kind+" "+name+" must name a tool or give a reason, not both and not neither")
+		case strings.HasPrefix(entry.Reason, "pending:"):
+			problems = append(problems, kind+" "+name+" is pending: give a tool or a final reason")
 		case entry.Tool != "" && !tools[entry.Tool]:
 			problems = append(problems, kind+" "+name+" is served by tool "+entry.Tool+", which the server does not register")
 		}
@@ -128,8 +130,9 @@ func TestTheCoverageGuardNamesWhatIsUnmappedStaleOrMisdeclared(t *testing.T) {
 		"neither":     {},
 		"ghost tool":  {Tool: "infra_missing"},
 		"jobs cancel": {Reason: "excluded"},
+		"pend":        {Reason: "pending: some-spec"},
 	}
-	existing := []string{"nodes list", "both", "neither", "ghost tool", "jobs cancel", "brand new"}
+	existing := []string{"nodes list", "both", "neither", "ghost tool", "jobs cancel", "brand new", "pend"}
 
 	got := strings.Join(mcpCoverageProblems("command", existing, entries, tools), "\n")
 
@@ -138,6 +141,7 @@ func TestTheCoverageGuardNamesWhatIsUnmappedStaleOrMisdeclared(t *testing.T) {
 		"command gone is mapped but no longer exists",
 		"command both must name a tool or give a reason",
 		"command neither must name a tool or give a reason",
+		"command pend is pending",
 		"command ghost tool is served by tool infra_missing, which the server does not register",
 	} {
 		if !strings.Contains(got, want) {

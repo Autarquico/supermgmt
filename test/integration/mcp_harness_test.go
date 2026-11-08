@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -176,6 +177,7 @@ func newMCPRigGranting(t *testing.T, writes bool, rules string) *mcpRig {
 	rig.seedGovernedResources()
 	rig.seedEnrollment()
 	rig.seedRoute()
+	rig.serveScannableHost()
 	rig.runtime.commands.Store(0)
 	return rig
 }
@@ -297,6 +299,30 @@ func (rig *mcpRig) seedInventory() {
 		rig.fixtures["provider"], rig.fixtures["environment"] = provider.ID.String(), env.ID.String()
 		rig.fixtures["node"], rig.fixtures["service"] = node.ID.String(), service.ID.String()
 		return nil
+	})
+}
+
+// serveScannableHost starts a listener the daemon can really scan and exposes it to request bodies as
+// {scan_host}, {scan_port} and {scan_key}.
+func (rig *mcpRig) serveScannableHost() {
+	host := startMCPNodeHost(rig.t)
+	rig.fixtures["scan_host"], rig.fixtures["scan_port"], rig.fixtures["scan_key"] = host.host, strconv.Itoa(host.port), host.authorized
+}
+
+// seedBareNode adds a managed ssh node that can be reached over ssh but has never been set up and sits behind no tunnel.
+func (rig *mcpRig) seedBareNode(name string) {
+	rig.t.Helper()
+	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
+		now := rig.clock.Now()
+		node, err := database.CreateNode(ctx, tx, domain.Node{
+			ID: rig.ids.NewID(), ProviderID: domain.ID(rig.fixtures["provider"]), NativeID: name, Name: name, Kind: "ssh",
+			ManagementState: domain.ManagementManaged, Reachability: domain.ReachabilityUnknown, CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		rig.fixtures["node_bare"] = node.ID.String()
+		return database.SetNodeCapability(ctx, tx, node.ID, database.NodeCapability{Capability: "node.ssh", Available: true, CheckedAt: now})
 	})
 }
 

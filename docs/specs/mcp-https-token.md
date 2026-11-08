@@ -5,7 +5,7 @@ type: task
 status: active
 priority: P1
 size: M
-issue: null
+issue: 85
 prs: [86]
 related_issues: [85]
 depends_on: [mcp-tool-coverage]

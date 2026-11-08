@@ -29,9 +29,9 @@ var (
 	planToolName = "infra_plan_action"
 
 	writeToolNames = []string{
-		"infra_cancel_job", "infra_create_backup", "infra_disable_tunnel", "infra_expose_port",
+		"infra_add_node", "infra_cancel_job", "infra_create_backup", "infra_disable_tunnel", "infra_expose_port",
 		"infra_power_guest", "infra_probe_node", "infra_reboot_node", "infra_refresh_provider",
-		"infra_restart_service", "infra_rotate_cloudflare_access_token", "infra_shutdown_node",
+		"infra_restart_service", "infra_rotate_cloudflare_access_token", "infra_setup_node", "infra_shutdown_node",
 		"infra_snapshot_guest", "infra_start_service", "infra_stop_service", "infra_submit_plan",
 		"infra_unexpose_port",
 	}
@@ -64,6 +64,12 @@ type serverFakeAPI struct {
 	cancels       []submitCall
 	refreshes     []domain.ID
 	refreshed     *wire.Provider
+
+	scans    []wire.ScanHostKeyRequest
+	scanned  wire.HostKey
+	scanErr  error
+	addNodes []wire.AddSSHNodeRequest
+	added    wire.Direct[wire.Node]
 }
 
 // exposeCall is one ExposeNodeRoute call seen by serverFakeAPI.
@@ -123,7 +129,7 @@ func (f *serverFakeAPI) RefreshProvider(_ context.Context, id domain.ID) (wire.P
 
 func (f *serverFakeAPI) wrote() bool {
 	return len(f.planRequests)+len(f.submits)+len(f.exposes)+len(f.unexposes)+
-		len(f.probes)+f.backupCreates+len(f.cancels)+len(f.refreshes) > 0
+		len(f.probes)+f.backupCreates+len(f.cancels)+len(f.refreshes)+len(f.scans)+len(f.addNodes) > 0
 }
 
 // newServerFakeAPI serves the nodes and services of readTestAPI and a

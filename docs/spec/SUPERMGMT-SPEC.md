@@ -1847,6 +1847,8 @@ infra_refresh_provider
 infra_cancel_job
 infra_disable_tunnel
 infra_rotate_cloudflare_access_token
+infra_add_node
+infra_setup_node
 ```
 
 The app and deployment tools (`infra_list_apps`, `infra_list_deployments`, `infra_get_deployment`, `infra_create_deployment`, `infra_rollback_deployment`) were retired by ADR-0043.

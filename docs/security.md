@@ -93,7 +93,7 @@ The single exception is a credential reference (`secret://<path>`, `ssh-agent://
 ### Host keys
 
 - The `host_public_key` stored in the database is the only trust anchor. The check compares the exact key bytes. `ssh.known_hosts_file` is not consulted, and neither are your `~/.ssh/known_hosts` or `ssh_config`.
-- First trust is explicit. `sm nodes add` scans the key and shows its SHA256 fingerprint; nothing is trusted until you confirm it (type `yes`, or pass `--fingerprint SHA256:...` verified out of band). The confirmed key is the one stored, so a key that changes between the scan and the first authenticated probe fails with `SSH_HOST_KEY_MISMATCH`.
+- First trust is explicit. `sm nodes add` scans the key and shows its SHA256 fingerprint; nothing is trusted until you confirm it (type `yes`, or pass `--fingerprint SHA256:...` verified out of band). A node added by an MCP client is confirmed by the person who approves its plan, which shows the fingerprint to compare with the host. The confirmed key is the one stored, so a key that changes between the scan and the first authenticated probe fails with `SSH_HOST_KEY_MISMATCH`.
 - A changed host key fails the connection; there is no automatic re-pinning. `sm nodes repin <node>` replaces a pinned key after you confirm the new fingerprint ([operations.md](operations.md#key-management)).
 - SSH CA trust is not supported and not scheduled.
 
@@ -361,7 +361,9 @@ These rules are enforced in the application layer before policy. They hold for t
 
 - approve or reject a job;
 - perform a credential-issuing action (API tokens, MCP tokens, enrollment), register or delete MCP clients, or write identities or role bindings (`MCP_ACTION_FORBIDDEN`);
-- open an interactive node session (`node.connect`) or resolve an interrupted job (`job.resolve`).
+- open an interactive node session (`node.connect`) or resolve an interrupted job (`job.resolve`);
+- delete a Proxmox snapshot, or plan a setup that grants Docker or service rights, writes a deploy root, issues a Proxmox token, installs the log broker or re-runs a setup on a node already set up or behind a tunnel;
+- name a file or an agent as a node's admin credential, pin a host key the daemon did not scan, or change a node's host key.
 
 An operational-or-higher write by an MCP identity always needs approval, and approval is bound to the exact plan hash.
 

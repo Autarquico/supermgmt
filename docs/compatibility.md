@@ -147,7 +147,7 @@ How to set it up: [MCP](mcp.md).
 | Streamable HTTP mode | stateless, JSON responses, no session id; `GET`/`DELETE` are `405` | `TestHTTP_StatelessServerRefusesGetAndDelete`, `TestHTTP_NoSessionIsIssued` | verified; **a real client that insists on a session or on SSE is not tested** |
 | `Origin` | refused with `403` unless equal to the origin of `server.public_url`; absent is served | `TestHTTP_OriginMustMatchTheConfiguredOne`, `TestHTTP_RequestWithoutOriginIsServed` | verified |
 | stdio bridge | `sm mcp` over stdin/stdout, JSON-RPC only on stdout | `TestBridge_ServesTheMCPToolsToAHost`, `TestE2E_MCPStdioReadsGraph` (SDK `CommandTransport`) | verified with the SDK client; real hosts not tested |
-| Tools | 10 read tools plus `infra_plan_action`, and 5 write tools when enabled, pinned by golden files; no resources, no prompts | `TestReadTools_ListGolden`, `TestNewServer_AllToolsGolden` | verified |
+| Tools | Read tools plus `infra_plan_action`, and write tools when enabled, pinned by golden files; no resources, no prompts | `TestReadTools_ListGolden`, `TestNewServer_AllToolsGolden` | verified |
 | Host configuration files | `examples/mcp/*.json` launch `sm mcp` with real flags and name the `<origin>/mcp` resource | `TestMCPExamples_StdioHostsLaunchSmMcpWithRealFlags`, `TestMCPExamples_RemoteNamesTheMCPResourceOfAnOrigin` | the files are checked for shape; **whether Claude Desktop or Claude Code accept them is not verified** |
 
 ### Remote authorization

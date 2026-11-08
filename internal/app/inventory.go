@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -166,6 +167,9 @@ func (c core) beginRequest(ctx context.Context, q database.Querier, by Caller) (
 // control_plane.apply job that waits for approval, e.g. for a production
 // environment; then Pending is set instead of Applied.
 func (i *Inventory) AddSSHNode(ctx context.Context, by Caller, r AddSSHNode) (DirectResult[wire.Node], error) {
+	if err := i.requireMCPSafeAdd(ctx, by, r); err != nil {
+		return DirectResult[wire.Node]{}, err
+	}
 	return commit(ctx, i.core, by, func(ctx context.Context, tx *database.Tx) (DirectResult[wire.Node], error) {
 		actor, err := i.beginRequest(ctx, tx, by)
 		if err != nil {
@@ -185,6 +189,70 @@ func (i *Inventory) AddSSHNode(ctx context.Context, by Caller, r AddSSHNode) (Di
 		}
 		return i.applyOrWrap(ctx, tx, by, actor, b, func() (domain.Node, error) { return i.applyNodeAdd(ctx, tx, actor, p) })
 	})
+}
+
+// requireMCPSafeAdd refuses an mcp actor's add that names a credential, and one whose key it chose: the daemon
+// scans host:port, outside the transaction because it dials, and refuses a key that is not the one it read.
+func (i *Inventory) requireMCPSafeAdd(ctx context.Context, by Caller, r AddSSHNode) error {
+	actor, err := loadCaller(ctx, i.cfg.DB.Reader(), by)
+	if err != nil || actor.Type != domain.ActorMCP {
+		return err
+	}
+	if err := requireMCPCredentialRefs(actor, r); err != nil {
+		return err
+	}
+	scanned, err := i.ScanHostKey(ctx, by, r.Host, r.Port)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.HostKey) != scanned.Authorized {
+		return invalidArgument("host_public_key is not the key the host presents; an MCP client cannot choose the key to pin")
+	}
+	return nil
+}
+
+// mcpSecretRef is the shape of a reference a model may name: a plain secret name, optionally versioned. It
+// is the only free text of the credential lines an approver reads.
+var mcpSecretRef = regexp.MustCompile(`^secret://[A-Za-z0-9._/-]{1,128}(@[0-9]+)?$`)
+
+// requireMCPAdminRef allows an mcp actor to name only a secret:// reference for the admin credential, never
+// a file on the daemon's host or the agent.
+func requireMCPAdminRef(actor domain.Actor, ref string) error {
+	if actor.Type == domain.ActorMCP && !mcpSecretRef.MatchString(ref) {
+		return invalidArgument("admin_credential_ref must be a plain secret:// reference for an MCP client (leave it empty on a local instance to use the SSH agent)")
+	}
+	return nil
+}
+
+// requireMCPCredentialRefs keeps a model from naming a credential: an mcp actor takes the instance default
+// for the automation credential and may name only a secret:// reference for the admin one. Empty values take
+// the defaults.
+func requireMCPCredentialRefs(actor domain.Actor, r AddSSHNode) error {
+	if actor.Type != domain.ActorMCP {
+		return nil
+	}
+	if r.CredentialRef != "" && r.CredentialRef != config.DefaultSSHCredentialRef {
+		return invalidArgument("credential_ref is the instance default for an MCP client; leave it empty")
+	}
+	if r.AdminCredentialRef == "" {
+		return nil
+	}
+	return requireMCPAdminRef(actor, r.AdminCredentialRef)
+}
+
+// requireMCPPatch keeps a model from re-trusting a host key or naming a credential through node.update:
+// both stay a person's act.
+func requireMCPPatch(actor domain.Actor, patch NodePatch) error {
+	if actor.Type != domain.ActorMCP {
+		return nil
+	}
+	if patch.HostPublicKey != nil {
+		return invalidArgument("host_public_key cannot be changed by an MCP client; a person re-trusts a host key with `sm nodes repin`")
+	}
+	if patch.AdminCredentialRef != nil {
+		return requireMCPAdminRef(actor, *patch.AdminCredentialRef)
+	}
+	return nil
 }
 
 // applyOrWrap authorizes b and either applies it inside the request
@@ -283,6 +351,9 @@ func (i *Inventory) UpdateNode(ctx context.Context, by Caller, id domain.ID, ifM
 	return commit(ctx, i.core, by, func(ctx context.Context, tx *database.Tx) (DirectResult[wire.Node], error) {
 		actor, node, err := i.beginMutation(ctx, tx, by, id, ifMatch)
 		if err != nil {
+			return DirectResult[wire.Node]{}, err
+		}
+		if err := requireMCPPatch(actor, patch); err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
 		if err := i.validatePatch(patch); err != nil {

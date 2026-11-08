@@ -3,6 +3,80 @@
     "_meta": {
       "dev.supermgmt/schema_version": 1
     },
+    "description": "Add a node reached over SSH. The daemon scans the host key of host:port and requests the add pinned to that key; you cannot pass a key, a fingerprint or a credential file. A request from an MCP client always waits for a person, who sees the host, the users, the credential references and the key's SHA-256 fingerprint and approves it; no node exists until then. Ask the user to review it with `sm approvals --plan` or the TUI; once approved, set it up with infra_setup_node. The default policy does not grant this; it needs a policy rule for type:mcp for node.add. Note it makes the daemon dial the host you name.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "admin_credential_ref": {
+          "description": "secret://\u003cname\u003e holding the admin_user SSH private key. A person stores it first with: sm secrets import --name \u003cname\u003e; you cannot create or list secrets, so ask the user for the name. Required on a server instance; omit it on a local instance to use the SSH agent",
+          "type": "string"
+        },
+        "admin_user": {
+          "description": "existing account used once, by the setup, to prepare the node",
+          "type": "string"
+        },
+        "host": {
+          "description": "DNS name or IP address of the SSH endpoint",
+          "type": "string"
+        },
+        "name": {
+          "description": "name of the new node",
+          "type": "string"
+        },
+        "port": {
+          "description": "SSH port, default 22",
+          "type": "integer"
+        },
+        "user": {
+          "description": "automation user the control plane creates and uses, default supermgmt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "host",
+        "admin_user"
+      ],
+      "type": "object"
+    },
+    "name": "infra_add_node",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "plan_hash": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "risk": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "summary",
+        "risk"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "_meta": {
+      "dev.supermgmt/schema_version": 1
+    },
     "description": "Cancel a job that has not started (queued or awaiting approval). Only jobs this client submitted can be cancelled.",
     "inputSchema": {
       "additionalProperties": false,
@@ -3070,6 +3144,62 @@
       "type": "object"
     },
     "name": "infra_rotate_cloudflare_access_token",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "plan_hash": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "risk": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "summary",
+        "risk"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "_meta": {
+      "dev.supermgmt/schema_version": 1
+    },
+    "description": "Plan and submit the setup of a node (id or exact name) with safe parameters only: no Docker access, no service grants, journal logs. The resulting node can be probed and its logs read, but has no service verbs (start, stop, restart) until a person runs `sm nodes setup \u003cnode\u003e --unit \u003cunit\u003e`. Only a node without a setup and not behind a tunnel is accepted: re-running setup replaces grants and docker access, so a person does it. A request from an MCP client always waits for a person. The default policy does not grant this; it needs a policy rule for type:mcp granting node.setup and sudoers.write.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "description": "node id or exact node name",
+          "type": "string"
+        },
+        "tunnel": {
+          "description": "also move the node behind a Cloudflare Tunnel (needs Cloudflare configured); a node already behind a tunnel is refused, a person re-runs its setup",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "type": "object"
+    },
+    "name": "infra_setup_node",
     "outputSchema": {
       "additionalProperties": false,
       "properties": {

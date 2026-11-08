@@ -73,6 +73,9 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 			return CreatedPlan{}, err
 		}
 		req.Parameters = p.withDefaults(req.Action, req.Parameters)
+		if err := requireMCPSafeSetup(actor, req); err != nil {
+			return CreatedPlan{}, err
+		}
 		if req.Target.Type == domain.ResourceInstance && req.Target.ID == "" { // this instance; its job needs the id
 			instance, err := database.GetInstance(ctx, tx)
 			if err != nil {
@@ -99,6 +102,11 @@ func (p *Plans) Create(ctx context.Context, by Caller, req PlanRequest) (Created
 		}
 		if res.Reason == smerr.ReasonMCPActionForbidden {
 			return CreatedPlan{}, reject(decisionError(res))
+		}
+		if res.Decision != policy.DecisionDeny {
+			if err := requireMCPFreshNode(ctx, tx, actor, req.Action, req.Target.ID); err != nil {
+				return CreatedPlan{}, err
+			}
 		}
 		rec, err := p.persist(ctx, tx, by, b.plan)
 		if err != nil {
