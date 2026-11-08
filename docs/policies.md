@@ -46,7 +46,8 @@ Without a policy file, SuperMgmt uses the built-in policy, [`internal/policy/def
 | `builtin-operator` | `operator`, `admin` | start, stop and restart services, probe and reboot nodes, power Proxmox guests, create Proxmox snapshots and backups, cancel and resolve jobs |
 | `builtin-approver` | `operator`, `admin` | approve and reject plans |
 | `builtin-admin` | `admin` | configuration, environments, providers, nodes, node backup templates, identities and roles, MCP clients, tokens, enrollment, secrets, backups, node setup, node routes |
-| `builtin-mcp-read` | `type:mcp` | read everything (`*.read`) and create plans. Nothing else: no logs, no sessions, no writes |
+| `builtin-mcp-read` | `type:mcp` | read everything (`*.read`) and create plans. No sessions |
+| `builtin-mcp-operate` | `type:mcp` | read service logs, and what `operator` holds: service start, stop and restart, node probe and reboot, guest power, snapshots and backups, cancelling its own jobs. Writes need `mcp.write_tools_enabled`; operational-or-higher actions wait for a person, a probe (read risk) and cancelling its own job do not |
 
 No built-in rule sets `allow_destructive`, so destructive actions (deleting a provider, removing a node, deleting a snapshot) are denied until your own policy allows them explicitly.
 
@@ -120,10 +121,10 @@ These rules, added after the built-in ones, pass `sm config validate --policy`:
     subjects: ["*"]
     resources: ["tag:database"]
     deny: ["node.reboot", "proxmox.vm.power"]
-  - name: mcp-logs-staging
+  - name: mcp-no-production-logs
     subjects: ["type:mcp"]
-    resources: ["environment:staging"]
-    allow: ["service.logs"]
+    resources: ["environment:production"]
+    deny: ["service.logs"]
   - name: admins-may-remove-nodes
     subjects: ["role:admin"]
     allow: ["node.remove"]
@@ -132,7 +133,7 @@ These rules, added after the built-in ones, pass `sm config validate --policy`:
 
 - `production-two-approvers`: restarting a service or rebooting a node in production needs two different approvers. With a single person and self-approval, they can never collect two, so this rule only makes sense with a second person.
 - `no-reboots-on-databases`: nobody may reboot or power-cycle a node tagged `database`, whatever the other rules allow.
-- `mcp-logs-staging`: MCP clients may read service logs in staging. Read [the redaction boundary](mcp.md#the-redaction-boundary) before you grant this: secrets under harmless names in logs reach the model.
+- `mcp-no-production-logs`: MCP clients read service logs by default; this keeps production logs from them. Read [the redaction boundary](mcp.md#the-redaction-boundary): secrets under harmless names reach the client.
 - `admins-may-remove-nodes`: lets admins remove a node, which is destructive. Removal is still high risk, so it still waits for approval.
 
 [`examples/policies.yaml`](../examples/policies.yaml) shows more rule shapes. It is a set of examples, not a complete policy: on its own it grants nothing to `admin`.

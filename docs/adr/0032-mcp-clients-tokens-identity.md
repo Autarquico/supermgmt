@@ -62,6 +62,6 @@ With writes on: normal policy, plus the floors (approval for risk ≥ operationa
 
 ## Consequences
 
-- An MCP identity starts with no role binding: the built-in policy gives every `type:mcp` subject `*.read` and `plan.create` (`builtin-mcp-read`), and anything more is granted explicitly.
+- An MCP identity starts with no role binding: the built-in policy gives every `type:mcp` subject `*.read` and `plan.create` (`builtin-mcp-read`). Since #83 it also grants logs and the operator's actions (`builtin-mcp-operate`), bounded by the write switch and the approval floor; anything more is granted explicitly.
 - Losing an issued token costs a delete and a re-registration, which needs approval again; that is the price of never showing a token twice.
 - `write_tools_enabled` is enforced at the application layer, so a token used outside the MCP server gains nothing by skipping the tool list.
