@@ -136,6 +136,13 @@ type mcpRig struct {
 
 func newMCPRig(t *testing.T, writes bool) *mcpRig {
 	t.Helper()
+	return newMCPRigGranting(t, writes, mcpRigGrant)
+}
+
+// newMCPRigGranting is newMCPRig under the default policy plus the given rules
+// (the `rules:` list items, indented as mcpRigGrant is).
+func newMCPRigGranting(t *testing.T, writes bool, rules string) *mcpRig {
+	t.Helper()
 	ctx := context.Background()
 	clock, ids := domaintest.NewFakeClock(epoch), domain.UUIDv7Generator{}
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "sm.db"), database.Options{Clock: clock})
@@ -143,7 +150,7 @@ func newMCPRig(t *testing.T, writes bool) *mcpRig {
 	t.Cleanup(func() { _ = db.Close() })
 	mcpRigMust(t, db.Migrate(ctx))
 
-	pol, err := policy.Parse(append(policy.DefaultYAML(), []byte(mcpRigGrant)...))
+	pol, err := policy.Parse(append(policy.DefaultYAML(), []byte(rules)...))
 	mcpRigMust(t, err)
 	cfg := app.Config{
 		DB: db, Clock: clock, IDs: ids, Policy: pol, Credentials: activeCredentials{}, MCPWritesEnabled: writes,

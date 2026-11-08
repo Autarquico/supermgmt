@@ -23,6 +23,7 @@ const (
 	PathPlans      = Prefix + "/plans"
 	PathPlan       = Prefix + "/plans/{id}"
 	PathPlanSubmit = Prefix + "/plans/{id}/submit"
+	PathActions    = Prefix + "/actions"
 
 	PathApprovals  = Prefix + "/approvals"
 	PathJobs       = Prefix + "/jobs"

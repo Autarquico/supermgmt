@@ -201,6 +201,7 @@ github.com/autarquico/supermgmt/internal/mcp.planRisk  exempt: renders a plan do
 github.com/autarquico/supermgmt/internal/mcp.readTool  FuzzJSONRPCFrames
 github.com/autarquico/supermgmt/internal/mcp.resolveNode  FuzzResolveRef
 github.com/autarquico/supermgmt/internal/mcp.resolveService  FuzzResolveRef
+github.com/autarquico/supermgmt/internal/mcp.viewPlanDocument  exempt: renders a plan document the daemon built
 github.com/autarquico/supermgmt/internal/mcp.versionsInBody  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
 github.com/autarquico/supermgmt/internal/netguard.cappedBody.Read  exempt: gap: its fuzz target went with the GitHub connector; needs one of its own
 github.com/autarquico/supermgmt/internal/policy.Parse  FuzzParsePolicy

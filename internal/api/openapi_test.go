@@ -84,6 +84,9 @@ var schemaTypes = map[string]reflect.Type{
 	"MCPClient":        reflect.TypeFor[wire.MCPClient](),
 	"MCPTokenIssued":   reflect.TypeFor[wire.MCPTokenIssued](),
 
+	"PlannableAction":        reflect.TypeFor[wire.PlannableAction](),
+	"ActionParameter":        reflect.TypeFor[wire.ActionParameter](),
+	"PageOfPlannableAction":  reflect.TypeFor[wire.Page[wire.PlannableAction]](),
 	"NodeRoute":              reflect.TypeFor[wire.NodeRoute](),
 	"ExposeNodeRouteRequest": reflect.TypeFor[wire.ExposeNodeRouteRequest](),
 	"NodeRouteSubmission":    reflect.TypeFor[wire.NodeRouteSubmission](),

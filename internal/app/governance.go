@@ -39,12 +39,20 @@ type ResolveRequest struct {
 }
 
 // Cancel cancels a job that has not started (action job.cancel). The plan hash
-// is the one the caller saw; a different one is PLAN_STALE.
+// is the one the caller saw; a different one is PLAN_STALE. An mcp actor may
+// cancel only the jobs it requested.
 func (g *Governance) Cancel(ctx context.Context, by Caller, job domain.ID, planHash string) (jobs.Job, error) {
 	return commit(ctx, g.core, by, func(ctx context.Context, tx *database.Tx) (jobs.Job, error) {
-		actor, _, err := g.begin(ctx, tx, by, job, planHash, policy.ActionJobCancel)
+		actor, stored, err := g.begin(ctx, tx, by, job, planHash, policy.ActionJobCancel)
 		if err != nil {
 			return jobs.Job{}, err
+		}
+		if actor.Type == domain.ActorMCP && stored.ActorID != actor.ID {
+			res := policy.Result{Decision: policy.DecisionDeny, Reason: smerr.ReasonNotPlanActor}
+			if err := g.auditDecision(ctx, tx, actor, policy.ActionJobCancel, jobRef(stored), res); err != nil {
+				return jobs.Job{}, err
+			}
+			return jobs.Job{}, reject(decisionError(res))
 		}
 		return g.jobs.Cancel(ctx, tx, job, actor)
 	})

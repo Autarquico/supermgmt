@@ -93,6 +93,7 @@ func addReadTools(s *sdk.Server, api API) {
 		func(ctx context.Context, in healthInput) (HealthView, error) {
 			return health(ctx, api, in)
 		})
+	addOperationReadTools(s, api)
 }
 
 // readTool registers a read-only tool whose handler returns a view.

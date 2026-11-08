@@ -1035,6 +1035,11 @@ rules:
   - name: builtin-mcp-read
     subjects: ["type:mcp"]
     allow: ["*.read", "plan.create"]
+  - name: builtin-mcp-operate
+    subjects: ["type:mcp"]
+    allow: ["service.logs", "service.start", "service.stop", "service.restart",
+            "node.probe", "node.reboot", "proxmox.vm.power",
+            "proxmox.snapshot.create", "proxmox.backup.create", "job.cancel"]
 ```
 
 `automation` identities receive nothing by default. `system` is not subject to policy; it is limited to the operations listed in §11.1. Every identity may always read itself (`/me`) and list and revoke its own tokens; these are not policy-evaluated.
@@ -1808,6 +1813,17 @@ infra_get_service_logs
 infra_list_routes
 infra_list_events
 infra_get_health
+infra_list_jobs
+infra_get_job
+infra_list_approvals
+infra_get_plan
+infra_list_providers
+infra_get_provider
+infra_list_backups
+infra_get_status
+infra_list_tunnel_enrollments
+infra_get_ssh_key
+infra_list_actions
 infra_plan_action
 ```
 
@@ -1819,6 +1835,17 @@ infra_restart_service
 infra_reboot_node
 infra_expose_port
 infra_unexpose_port
+infra_start_service
+infra_stop_service
+infra_shutdown_node
+infra_probe_node
+infra_power_guest
+infra_snapshot_guest
+infra_create_backup
+infra_refresh_provider
+infra_cancel_job
+infra_disable_tunnel
+infra_rotate_cloudflare_access_token
 ```
 
 The app and deployment tools (`infra_list_apps`, `infra_list_deployments`, `infra_get_deployment`, `infra_create_deployment`, `infra_rollback_deployment`) were retired by ADR-0043.
@@ -1871,7 +1898,7 @@ Tool schemas are versioned and covered by golden tests. MCP resources may expose
 - V1 exposes tools only: no resources and no prompts. Each tool's schema version is `_meta["dev.supermgmt/schema_version"] = 1`.
 - `mcp.write_tools_enabled: false` hides the write tools **and** denies every non-query action to `mcp` identities at the application layer (§11.2), so the flag is not cosmetic.
 - Tool output is an allowlisted view per DTO. Remote-discovered fields (service names and native ids, runtime status strings, metadata, event data, log lines) sit under a `remote` object marked `"untrusted_remote_output": true`, stripped, credential-scrubbed and bounded (256 bytes per scalar, 64 KiB / 500 lines per text, depth 4, 64 entries per level). Scrubbing covers Bearer/Basic, PEM private keys, SuperMgmt tokens, JWT-shaped strings and sensitive-key `key=value` / `key: value` / JSON forms, whatever `security.redact_command_output` says; a secret under a non-sensitive name is **not** detected (stated in the tool descriptions and `docs/mcp.md`).
-- Name resolution compares raw API values and the plan binds ids. Write results are `{status, job_id?, plan_hash?, summary, risk}` with `status ∈ {approval_required, queued, denied}`.
+- Name resolution compares raw API values and the plan binds ids. Write results are `{status, job_id?, plan_hash?, summary, risk}` with `status ∈ {approval_required, queued, denied, done, failed}`; `done` means the effect already happened (a cancelled job, a provider refresh), `failed` that a provider refresh ended in error.
 - The default policy keeps `service.logs` away from `type:mcp`; `docs/mcp.md` shows an environment-scoped grant.
 - `mcp.allow_interactive_exec: true` is refused by configuration validation in V1.
 - `sm mcp clients add <name>` registers the client; when approval is pending it prints the job and exits 0. Run again by the requester after approval, it preflights the destination (`--token-file`: a new 0600 file created with `O_EXCL|O_NOFOLLOW` in a directory owned by the caller and not group/world-writable; `--keychain`: the native OS keychain, never a file fallback, with no existing entry), then issues the token and stores it. A storage failure after issuance prints `sm mcp clients remove <id>` and re-registration as the only recovery; the token is never printed. On an `active` client it exits 1 saying the token is not re-issued.

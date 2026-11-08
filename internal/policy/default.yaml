@@ -24,3 +24,8 @@ rules:
   - name: builtin-mcp-read
     subjects: ["type:mcp"]
     allow: ["*.read", "plan.create"]
+  - name: builtin-mcp-operate
+    subjects: ["type:mcp"]
+    allow: ["service.logs", "service.start", "service.stop", "service.restart",
+            "node.probe", "node.reboot", "proxmox.vm.power",
+            "proxmox.snapshot.create", "proxmox.backup.create", "job.cancel"]

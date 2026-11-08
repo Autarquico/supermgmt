@@ -21,6 +21,8 @@ import (
 // satisfies it (asserted in internal/cli/mcp_bridge.go).
 type API interface {
 	Me(ctx context.Context) (wire.Me, error)
+	SSHKey(ctx context.Context) (wire.SSHKey, error)
+	ListProviders(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Provider], error)
 	ListNodes(ctx context.Context, q wire.NodeQuery) (wire.Page[wire.Node], error)
 	GetNode(ctx context.Context, id domain.ID, focus bool) (wire.Node, error)
 	ListServices(ctx context.Context, node domain.ID, q wire.PageQuery) (wire.Page[wire.Service], error)
@@ -29,6 +31,17 @@ type API interface {
 	ListEvents(ctx context.Context, q wire.EventQuery) (wire.Page[wire.Event], error)
 	CreatePlan(ctx context.Context, r wire.CreatePlanRequest) (wire.CreatedPlan, error)
 	SubmitPlan(ctx context.Context, plan domain.ID, planHash string) (wire.Submission, error)
+	GetPlan(ctx context.Context, id domain.ID) (wire.CreatedPlan, error)
+	ListActions(ctx context.Context) (wire.Page[wire.PlannableAction], error)
+	ListJobs(ctx context.Context, q wire.JobQuery) (wire.Page[wire.Job], error)
+	GetJob(ctx context.Context, id domain.ID) (wire.JobDetail, error)
+	CancelJob(ctx context.Context, id domain.ID, planHash string) (wire.Job, error)
+	ProbeNode(ctx context.Context, id domain.ID) (wire.Submission, error)
+	RefreshProvider(ctx context.Context, id domain.ID) (wire.Provider, error)
+	CreateBackup(ctx context.Context) (wire.Submission, error)
+	ListApprovals(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Approval], error)
+	ListBackups(ctx context.Context) (wire.Page[wire.Backup], error)
+	ListTunnelEnrollments(ctx context.Context) (wire.Page[wire.TunnelEnrollment], error)
 	ListAllNodeRoutes(ctx context.Context, includeRemoved bool) (wire.Page[wire.NodeRoute], error)
 	ExposeNodeRoute(ctx context.Context, node domain.ID, r wire.ExposeNodeRouteRequest) (wire.NodeRouteSubmission, error)
 	UnexposeNodeRoute(ctx context.Context, node domain.ID, hostname string) (wire.NodeRouteSubmission, error)
@@ -83,6 +96,8 @@ const (
 	WriteApprovalRequired WriteStatus = "approval_required"
 	WriteQueued           WriteStatus = "queued"
 	WriteDenied           WriteStatus = "denied"
+	WriteDone             WriteStatus = "done"
+	WriteFailed           WriteStatus = "failed"
 )
 
 // WriteResult is the result of every write tool (spec §24). Summary is built

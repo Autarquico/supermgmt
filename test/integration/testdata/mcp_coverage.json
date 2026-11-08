@@ -1,0 +1,504 @@
+{
+ "commands": {
+  "admin bootstrap-code": {
+   "reason": "admin socket, peer-UID authenticated; credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "admin grant": {
+   "reason": "admin socket, peer-UID authenticated; credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "admin restore-complete": {
+   "reason": "admin socket, peer-UID authenticated; local-only: runs on this machine, not through the control plane"
+  },
+  "approvals": {
+   "tool": "infra_list_approvals"
+  },
+  "backup": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "backup create": {
+   "tool": "infra_create_backup"
+  },
+  "backup list": {
+   "tool": "infra_list_backups"
+  },
+  "backup restore": {
+   "reason": "local-only: runs on this machine, not through the control plane (offline restore of the database)"
+  },
+  "cloudflare": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "cloudflare rotate-access-token": {
+   "tool": "infra_rotate_cloudflare_access_token"
+  },
+  "completion": {
+   "reason": "local-only: runs on this machine, not through the control plane (shell completion)"
+  },
+  "config": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "config validate": {
+   "reason": "local-only: runs on this machine, not through the control plane (reads config files)"
+  },
+  "daemon": {
+   "reason": "local-only: runs on this machine, not through the control plane (runs the server)"
+  },
+  "docker": {
+   "reason": "interactive node session (node.connect), forbidden to MCP identities"
+  },
+  "doctor": {
+   "reason": "no /api/v1 read: online mode uses the admin socket, offline mode reads local files"
+  },
+  "enrollments": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "enrollments create": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "events": {
+   "tool": "infra_list_events"
+  },
+  "install": {
+   "reason": "local-only: runs on this machine, not through the control plane (invoked by install.sh)"
+  },
+  "install auto": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install client": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install local": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install proxmox-lxc": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install restore": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install server": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install uninstall": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "install upgrade": {
+   "reason": "local-only: runs on this machine, not through the control plane (installer)"
+  },
+  "jobs": {
+   "tool": "infra_list_jobs"
+  },
+  "jobs approve": {
+   "reason": "governance floor: an MCP identity can never decide, approve or resolve a job"
+  },
+  "jobs cancel": {
+   "tool": "infra_cancel_job"
+  },
+  "jobs get": {
+   "tool": "infra_get_job"
+  },
+  "jobs list": {
+   "tool": "infra_list_jobs"
+  },
+  "jobs reject": {
+   "reason": "governance floor: an MCP identity can never decide, approve or resolve a job"
+  },
+  "jobs resolve": {
+   "reason": "governance floor: an MCP identity can never decide, approve or resolve a job"
+  },
+  "join": {
+   "reason": "local-only: runs on this machine, not through the control plane (enrolls this machine as a node)"
+  },
+  "login": {
+   "reason": "local-only: runs on this machine, not through the control plane (a person's session)"
+  },
+  "logout": {
+   "reason": "local-only: runs on this machine, not through the control plane (a person's session)"
+  },
+  "mcp": {
+   "reason": "local-only: serves this client's MCP session over stdio, it is the MCP server"
+  },
+  "mcp clients": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "mcp clients add": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "mcp clients list": {
+   "reason": "identity administration, no value to a model"
+  },
+  "mcp clients remove": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "nodes": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "nodes add": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "nodes expose": {
+   "tool": "infra_expose_port"
+  },
+  "nodes get": {
+   "tool": "infra_get_node"
+  },
+  "nodes list": {
+   "tool": "infra_list_nodes"
+  },
+  "nodes power": {
+   "tool": "infra_power_guest"
+  },
+  "nodes probe": {
+   "tool": "infra_probe_node"
+  },
+  "nodes remove": {
+   "reason": "deletion: no MCP tool for resource deletion (SUPERMGMT-SPEC.md:1826)"
+  },
+  "nodes repin": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "nodes routes": {
+   "tool": "infra_list_routes"
+  },
+  "nodes setup": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "nodes tunnel": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "nodes tunnel disable": {
+   "tool": "infra_disable_tunnel"
+  },
+  "nodes unexpose": {
+   "tool": "infra_unexpose_port"
+  },
+  "profile": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "profile add": {
+   "reason": "local-only: runs on this machine, not through the control plane (client profiles)"
+  },
+  "profile list": {
+   "reason": "local-only: runs on this machine, not through the control plane (client profiles)"
+  },
+  "profile remove": {
+   "reason": "local-only: runs on this machine, not through the control plane (client profiles)"
+  },
+  "profile use": {
+   "reason": "local-only: runs on this machine, not through the control plane (client profiles)"
+  },
+  "providers": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "providers check": {
+   "reason": "diagnostic run from a node or offline against local files; infra_refresh_provider is the model's online equivalent"
+  },
+  "providers get": {
+   "tool": "infra_get_provider"
+  },
+  "providers list": {
+   "tool": "infra_list_providers"
+  },
+  "providers refresh": {
+   "tool": "infra_refresh_provider"
+  },
+  "secrets": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "secrets export-key": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "secrets import": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "secrets import-key": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "secrets keys": {
+   "reason": "secrets: the value or key material would cross the model's transcript (key ids and states are metadata of it)"
+  },
+  "secrets retire-key": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "secrets rotate-master-key": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "server": {
+   "reason": "local-only: runs on this machine, not through the control plane (runs the server)"
+  },
+  "server init": {
+   "reason": "local-only: runs on this machine, not through the control plane (initializes this server)"
+  },
+  "services": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "services get": {
+   "tool": "infra_get_service"
+  },
+  "services list": {
+   "tool": "infra_list_services"
+  },
+  "services logs": {
+   "tool": "infra_get_service_logs"
+  },
+  "services restart": {
+   "tool": "infra_restart_service"
+  },
+  "services start": {
+   "tool": "infra_start_service"
+  },
+  "services stop": {
+   "tool": "infra_stop_service"
+  },
+  "sm": {
+   "reason": "interactive terminal UI over the same API; a model has the tools instead"
+  },
+  "ssh": {
+   "reason": "interactive node session (node.connect), forbidden to MCP identities"
+  },
+  "ssh-key": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "ssh-key rotate": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "ssh-key show": {
+   "tool": "infra_get_ssh_key"
+  },
+  "status": {
+   "tool": "infra_get_status"
+  },
+  "tokens": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "tokens create": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "tokens list": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (lists a person's API tokens)"
+  },
+  "tokens revoke": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "tui": {
+   "reason": "local-only: runs on this machine, not through the control plane (terminal UI)"
+  },
+  "version": {
+   "reason": "local-only: runs on this machine, not through the control plane"
+  }
+ },
+ "routes": {
+  "DELETE /api/v1/mcp/clients/{id}": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "DELETE /api/v1/nodes/{id}": {
+   "reason": "deletion: no MCP tool for resource deletion (SUPERMGMT-SPEC.md:1826)"
+  },
+  "DELETE /api/v1/nodes/{id}/routes/{hostname}": {
+   "tool": "infra_unexpose_port"
+  },
+  "DELETE /api/v1/tokens/{id}": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "GET /api/v1/actions": {
+   "tool": "infra_list_actions"
+  },
+  "GET /api/v1/approvals": {
+   "tool": "infra_list_approvals"
+  },
+  "GET /api/v1/backups": {
+   "tool": "infra_list_backups"
+  },
+  "GET /api/v1/events": {
+   "tool": "infra_list_events"
+  },
+  "GET /api/v1/events/stream": {
+   "reason": "long-lived stream; the model polls infra_list_events with after_seq"
+  },
+  "GET /api/v1/jobs": {
+   "tool": "infra_list_jobs"
+  },
+  "GET /api/v1/jobs/{id}": {
+   "tool": "infra_get_job"
+  },
+  "GET /api/v1/mcp/clients": {
+   "reason": "identity administration, no value to a model"
+  },
+  "GET /api/v1/me": {
+   "tool": "infra_get_status"
+  },
+  "GET /api/v1/node-routes": {
+   "tool": "infra_list_routes"
+  },
+  "GET /api/v1/nodes": {
+   "tool": "infra_list_nodes"
+  },
+  "GET /api/v1/nodes/{id}": {
+   "tool": "infra_get_node"
+  },
+  "GET /api/v1/nodes/{id}/connect-info": {
+   "reason": "interactive node session (node.connect), forbidden to MCP identities"
+  },
+  "GET /api/v1/nodes/{id}/routes": {
+   "tool": "infra_list_routes"
+  },
+  "GET /api/v1/nodes/{id}/services": {
+   "tool": "infra_list_services"
+  },
+  "GET /api/v1/nodes/ssh/tunnel-enrollments": {
+   "tool": "infra_list_tunnel_enrollments"
+  },
+  "GET /api/v1/nodes/ssh/tunnel-enrollments/{name}": {
+   "tool": "infra_list_tunnel_enrollments"
+  },
+  "GET /api/v1/nodes/ssh/tunnel-enrollments/{name}/token": {
+   "reason": "the connector token is a credential"
+  },
+  "GET /api/v1/plans/{id}": {
+   "tool": "infra_get_plan"
+  },
+  "GET /api/v1/presence": {
+   "reason": "keep-alive of long-lived human clients (TUI), exempt route"
+  },
+  "GET /api/v1/providers": {
+   "tool": "infra_list_providers"
+  },
+  "GET /api/v1/secrets/master-keys": {
+   "reason": "secrets: the value or key material would cross the model's transcript (key ids and states are metadata of it)"
+  },
+  "GET /api/v1/services/{id}": {
+   "tool": "infra_get_service"
+  },
+  "GET /api/v1/services/{id}/logs": {
+   "tool": "infra_get_service_logs"
+  },
+  "GET /api/v1/ssh-key": {
+   "tool": "infra_get_ssh_key"
+  },
+  "GET /api/v1/tokens": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (lists a person's API tokens)"
+  },
+  "GET /health/live": {
+   "reason": "liveness probe of the process, unauthenticated; infra_get_health is per node or service"
+  },
+  "GET /health/ready": {
+   "reason": "readiness probe of the process, unauthenticated; infra_get_health is per node or service"
+  },
+  "PATCH /api/v1/nodes/{id}": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/auth/bootstrap": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "POST /api/v1/auth/logout": {
+   "reason": "local-only: runs on this machine, not through the control plane (a person's session)"
+  },
+  "POST /api/v1/auth/oidc/device": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (human login)"
+  },
+  "POST /api/v1/auth/oidc/device/poll": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (human login)"
+  },
+  "POST /api/v1/auth/oidc/exchange": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (human login)"
+  },
+  "POST /api/v1/auth/oidc/start": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (human login)"
+  },
+  "POST /api/v1/backups": {
+   "tool": "infra_create_backup"
+  },
+  "POST /api/v1/enroll": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (a machine joining with a join token)"
+  },
+  "POST /api/v1/enrollments": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "POST /api/v1/jobs/{id}/approve": {
+   "reason": "governance floor: an MCP identity can never decide, approve or resolve a job"
+  },
+  "POST /api/v1/jobs/{id}/cancel": {
+   "tool": "infra_cancel_job"
+  },
+  "POST /api/v1/jobs/{id}/reject": {
+   "reason": "governance floor: an MCP identity can never decide, approve or resolve a job"
+  },
+  "POST /api/v1/jobs/{id}/resolve": {
+   "reason": "governance floor: an MCP identity can never decide, approve or resolve a job"
+  },
+  "POST /api/v1/mcp/clients": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "POST /api/v1/mcp/clients/{id}/token": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "POST /api/v1/nodes/{id}/probe": {
+   "tool": "infra_probe_node"
+  },
+  "POST /api/v1/nodes/{id}/routes": {
+   "tool": "infra_expose_port"
+  },
+  "POST /api/v1/nodes/{id}/sessions": {
+   "reason": "interactive node session (node.connect), forbidden to MCP identities"
+  },
+  "POST /api/v1/nodes/{id}/sessions/{sid}/end": {
+   "reason": "interactive node session (node.connect), forbidden to MCP identities"
+  },
+  "POST /api/v1/nodes/ssh": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/nodes/ssh/host-key": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/nodes/ssh/tunnel-enrollments": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/cancel": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/confirm": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/nodes/ssh/tunnel-enrollments/{name}/refuse": {
+   "reason": "pending: mcp-node-tools"
+  },
+  "POST /api/v1/plans": {
+   "tool": "infra_plan_action"
+  },
+  "POST /api/v1/plans/{id}/submit": {
+   "tool": "infra_submit_plan"
+  },
+  "POST /api/v1/providers": {
+   "reason": "provider.write is a direct high-risk action carrying credential refs; left to a person"
+  },
+  "POST /api/v1/providers/{id}/refresh": {
+   "tool": "infra_refresh_provider"
+  },
+  "POST /api/v1/secrets": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "POST /api/v1/secrets/master-key/export": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "POST /api/v1/secrets/master-key/retire": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "POST /api/v1/secrets/master-key/rotate": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "POST /api/v1/services/{id}/actions/restart": {
+   "tool": "infra_restart_service"
+  },
+  "POST /api/v1/services/{id}/actions/start": {
+   "tool": "infra_start_service"
+  },
+  "POST /api/v1/services/{id}/actions/stop": {
+   "tool": "infra_stop_service"
+  },
+  "POST /api/v1/ssh-key/rotate": {
+   "reason": "secrets: the value or key material would cross the model's transcript"
+  },
+  "POST /api/v1/tokens": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  }
+ }
+}

@@ -85,6 +85,20 @@
    }
   },
   {
+   "route": "GET /api/v1/actions",
+   "class": "query",
+   "path": "/api/v1/actions",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
    "route": "GET /api/v1/plans/{id}",
    "class": "query",
    "path": "/api/v1/plans/{plan}",
@@ -224,11 +238,10 @@
     "reason": "MCP_WRITES_DISABLED"
    },
    "on": {
-    "status": 200,
-    "created": {
-     "jobs WHERE state = 'cancelled'": 1
-    }
-   }
+    "status": 403,
+    "reason": "NOT_PLAN_ACTOR"
+   },
+   "note": "The rig's job was submitted by the admin, not by the mcp client: an mcp actor may cancel only the jobs it requested."
   },
   {
    "route": "POST /api/v1/jobs/{id}/resolve",

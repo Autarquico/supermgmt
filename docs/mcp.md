@@ -40,15 +40,15 @@ The shortest way to let an MCP host on your machine read your infrastructure. It
    }
    ```
 
-The agent can now list and read nodes, services, routes, events and health, and plan an action without running it. It cannot read logs, cannot submit anything and can never approve. To let it act, see [Writes are off by default](#writes-are-off-by-default).
+The agent can now read nodes, services and their logs, routes, events, health, jobs, approvals, plans, providers and backups, and plan an action without running it. It cannot submit anything and can never approve. To let it act, see [Writes are off by default](#writes-are-off-by-default).
 
 If your machine has no native keychain, use `--token-file <path>` in both commands instead of `--keychain`. Whether a real host such as Claude Code or Claude Desktop launches `sm mcp` this way is **not verified**; the automated tests drive the same steps with the Go SDK client (`TestE2E_MCPClientsAddFlow`, `TestE2E_MCPStdioReadsGraph`). The details and every rule behind these steps are below.
 
 ## What an MCP client is
 
-An MCP client is an identity of type `mcp`. It has **no roles**, not even when the human who registered it is an admin (`TestApplyApproved_MCPClientRegistrationGivesAnIdentityWithoutRolesEvenForAnAdminRequester` in `internal/app/mcpclients_apply_test.go`; the re-registration case in `test/integration/mcp_reregister_test.go`). What it may do comes only from policy rules that name `type:mcp`. The built-in policy grants it `*.read` and `plan.create` (`internal/policy/default.yaml`, rule `builtin-mcp-read`) and nothing else.
+An MCP client is an identity of type `mcp`. It has **no roles**, not even when the human who registered it is an admin (`TestApplyApproved_MCPClientRegistrationGivesAnIdentityWithoutRolesEvenForAnAdminRequester` in `internal/app/mcpclients_apply_test.go`; the re-registration case in `test/integration/mcp_reregister_test.go`). What it may do comes only from policy rules that name `type:mcp`. The built-in policy (`internal/policy/default.yaml`) grants it `*.read` and `plan.create` (rule `builtin-mcp-read`), and logs plus the operator's actions (rule `builtin-mcp-operate`, below).
 
-`*` matches one name segment, so two actions are **not** granted by that rule: `service.logs` and `node.connect`. As a result, `infra_get_service_logs` answers `POLICY_DENIED` out of the box (see [Giving MCP access to logs](#giving-mcp-access-to-logs)).
+`*` matches one name segment, so that rule does not grant `service.logs` or `node.connect`. A second built-in rule, `builtin-mcp-operate`, grants `service.logs` and what the `operator` role holds: `service.start|stop|restart`, `node.probe`, `node.reboot`, `proxmox.vm.power`, `proxmox.snapshot.create`, `proxmox.backup.create` and `job.cancel` (its own jobs only). `node.connect` stays refused, and the writes still need [the switch below](#writes-are-off-by-default). Operational-or-higher actions wait for a person's approval; a probe (read risk) and cancelling its own job do not.
 
 ## The MCP floor
 
@@ -61,6 +61,7 @@ These hold whatever the policy file says and whatever `mcp.write_tools_enabled` 
 | register or delete MCP clients, write identities, write role bindings (`mcp_client.register`, `mcp_client.delete`, `identity.write`, `role_binding.write`) | `MCP_ACTION_FORBIDDEN` | same tests; `TestAnMCPClientCannotRegisterClientsIssueTokensOrMintAPITokensEvenWithAFullGrant` |
 | open an interactive node session (`node.connect`) | `MCP_ACTION_FORBIDDEN` | `mcpForbiddenActions` in `internal/app/mcpgate.go`; the route matrix lists it (`TestMCPMatrixListsEveryRoute`) |
 | resolve an interrupted job (`job.resolve`) | `MCP_ACTION_FORBIDDEN` | `TestAnMCPClientWithoutAGrantCannotResolveAJob` |
+| delete a Proxmox snapshot (`proxmox.snapshot.delete`, refused before any plan is stored) | `MCP_ACTION_FORBIDDEN` | `TestPlanningASnapshotDeleteIsRefusedEvenWhenPolicyGrantsItAndStoresNoPlan` |
 | skip approval for an operational-or-higher action | job stays `awaiting_approval` | `TestAProductionRebootAskedForByAnMCPClientRunsOnlyOnceTheExactHashIsApproved`, `TestE2E_MCPProductionRestartRequiresApproval` |
 
 The approval floor ("`mcp` + risk at least operational always needs approval") and "MCP can never approve" are also covered by the policy package tests (`internal/policy/governance_test.go`, `evaluate_test.go`). There is no MCP tool that runs a shell command, reads a secret or deletes anything (`TestReadTools_NoShellExecSecretOrDeleteTools`).
@@ -69,7 +70,7 @@ The approval floor ("`mcp` + risk at least operational always needs approval") a
 
 Exactly these, no more. Every tool reaches the control plane through the same API a human uses, so policy, audit and rate limits are the API's. `tools/list` is pinned by golden files (`internal/mcp/testdata/tools.read.golden.json`, `tools.all.golden.json`) and carries `_meta["dev.supermgmt/schema_version"] = 1`.
 
-Always registered (9): eight read-only tools (`readOnlyHint`) and `infra_plan_action`, which stores a plan but executes nothing:
+Always registered: read-only tools (`readOnlyHint`) and `infra_plan_action`, which stores a plan but executes nothing:
 
 | Tool | Reads |
 |---|---|
@@ -81,19 +82,37 @@ Always registered (9): eight read-only tools (`readOnlyHint`) and `infra_plan_ac
 | `infra_list_routes` | the routes that publish node ports through the node's tunnel, optionally of one node, with hostname, port, access and phase |
 | `infra_list_events` | audit events |
 | `infra_get_health` | derived health of one node or service |
+| `infra_list_jobs`, `infra_get_job` | jobs and one job's state; never the evidence observed on a node |
+| `infra_list_approvals`, `infra_get_plan` | what waits for a person, and a stored plan |
+| `infra_list_providers`, `infra_get_provider` | providers and their last error |
+| `infra_list_backups` | backups of the instance |
+| `infra_get_status` | who the client is, with a summary of nodes and jobs |
+| `infra_list_tunnel_enrollments` | open node enrollments, without their join line |
+| `infra_get_ssh_key` | the instance's public SSH key |
+| `infra_list_actions` | the actions `infra_plan_action` accepts, with parameters and risk |
 | `infra_plan_action` | builds and stores a plan for one action on one target; nothing runs |
 
-Write tools (5, **registered only when `mcp.write_tools_enabled: true`**):
+Write tools (**registered only when `mcp.write_tools_enabled: true`**):
 
 | Tool | What it does |
 |---|---|
 | `infra_submit_plan` | submits a plan that `infra_plan_action` returned, given its `plan_id` and `plan_hash` |
 | `infra_restart_service` | plans, then submits, a service restart |
 | `infra_reboot_node` | plans, then submits, a node reboot |
-| `infra_expose_port` | publishes a port of a node at a hostname through its tunnel; access is `public` unless `owners` is given, and a public route is high risk; like every write by an MCP client, it waits for a person to approve it |
-| `infra_unexpose_port` | removes the route of a hostname from a node (waits for a person to approve it) |
+| `infra_start_service`, `infra_stop_service` | plan, then submit, the start or stop of a service |
+| `infra_probe_node` | probes a node; read risk, so it runs without approval |
+| `infra_shutdown_node` | plans, then submits, a node shutdown (needs its own policy rule) |
+| `infra_power_guest` | powers a Proxmox guest on or off |
+| `infra_snapshot_guest` | snapshots a Proxmox guest |
+| `infra_create_backup` | backs up the instance (needs its own policy rule) |
+| `infra_refresh_provider` | asks a provider for its current inventory; it contacts the provider |
+| `infra_cancel_job` | cancels a job this client submitted, before it runs |
+| `infra_disable_tunnel` | plans removing a node's tunnel (needs its own policy rule) |
+| `infra_rotate_cloudflare_access_token` | plans rotating the Access service token (needs its own policy rule) |
+| `infra_expose_port` | publishes a port of a node at a hostname through its tunnel; access is `public` unless `owners` is given, and a public route is high risk; a request from an MCP client waits for a person to approve it (needs its own policy rule) |
+| `infra_unexpose_port` | removes the route of a hostname from a node; a request from an MCP client waits for a person to approve it (needs its own policy rule) |
 
-With writes disabled the 5 write tools are absent from `tools/list` and calling one by name is an unknown-tool error (`TestNewServer_WritesDisabledListsReadToolsAndPlanOnly`, `TestNewServer_WritesDisabledRefusesWriteToolsByName`). No resources and no prompts are offered.
+With writes disabled the write tools are absent from `tools/list` and calling one by name is an unknown-tool error (`TestNewServer_WritesDisabledListsReadToolsAndPlanOnly`, `TestNewServer_WritesDisabledRefusesWriteToolsByName`). No resources and no prompts are offered.
 
 ### Names and ids
 
@@ -101,7 +120,7 @@ Tools accept an id or a name: a node by exact name, a service as `name@node`. Ze
 
 ### Writes: what the model sees
 
-A write tool answers `{status, job_id?, plan_hash?, summary, risk}` with `status` one of `approval_required`, `queued`, `denied` (`TestSubmitPlan_StatusFollowsTheJobAndTheVerdict`). The wrappers `infra_restart_service` and `infra_reboot_node` submit only the hash the plan call returned; the model supplies no hash (`TestRestartService_TakesNoHashFromTheModel`, `TestRestartService_PlansThenSubmitsOnlyTheReturnedHash`). A plan whose verdict is a denial is never submitted (`TestWrappers_ADeniedPlanIsNotSubmitted`).
+A write tool answers `{status, job_id?, plan_hash?, summary, risk}` with `status` one of `approval_required`, `queued`, `denied`, `done` or `failed` (`TestSubmitPlan_StatusFollowsTheJobAndTheVerdict`). `done` means the effect already happened and there is nothing to follow, as for a cancelled job or a provider refresh; `failed` means a provider refresh ended in error, and `infra_get_provider` shows why. Every wrapper submits only the hash the plan call returned; the model supplies no hash (`TestRestartService_TakesNoHashFromTheModel`, `TestRestartService_PlansThenSubmitsOnlyTheReturnedHash`). A plan whose verdict is a denial is never submitted (`TestWrappers_ADeniedPlanIsNotSubmitted`).
 
 A production write by an MCP client does not run until a human approves that exact plan hash with `sm jobs approve <job-id> --plan-hash <hash>` (`sm approvals` lists what is waiting). If the plan inputs change after approval, the claim fails as stale (`TestInputsChangedAfterAnMCPJobWasApprovedFailTheClaimAsStale`, `TestAProductionRestartThroughTheToolsWaitsForApprovalAndSendsNoCommand`, `TestSubmittingAFabricatedHashFailsAsStaleAndCreatesNoJob`). A client can submit only its own plan (`TestSubmittingAPlanTheMCPClientDidNotCreateIsRefusedAsNotThePlanActor`).
 
@@ -113,7 +132,7 @@ A failed tool call returns `isError: true` with the API error `code`, `reason` a
 
 `mcp.write_tools_enabled` defaults to `false`. It does two things, and the second is the one that matters:
 
-1. The eight write tools are not registered.
+1. The write tools are not registered.
 2. The application layer denies every non-query action to an `mcp` identity with `MCP_WRITES_DISABLED`, so a raw API call with the MCP token fails too (`TestMCPWritesOff_EveryNonQueryActionIsDenied`, `TestMCPWritesOff_HumansAreUnaffected`).
 
 What a client sees with writes off, per route (`test/integration/mcp_route_matrix_test.go`, `testdata/mcp_route_matrix.json`, run against the socket and the in-process path):
@@ -123,7 +142,7 @@ What a client sees with writes off, per route (`test/integration/mcp_route_matri
 - A refused write never sends a command to a node (`TestARefusedWriteNeverSendsACommandToANode`).
 - With the flag off, a write is denied end to end through the daemon (`TestWithWritesDisabledAnMCPWriteIsDeniedEndToEndThroughTheDaemon`).
 
-With `write_tools_enabled: true`, normal policy applies, and the floor above and the approval floor still do. The flag is read by the daemon; the `sm mcp` bridge also reads it to decide which tools to list, but the daemon's value is the one that gates actions.
+With `write_tools_enabled: true`, normal policy applies, and the floor above and the approval floor still do: operational-or-higher actions wait for a person; a probe (read risk) and cancelling its own job do not. The flag is read by the daemon; the `sm mcp` bridge also reads it to decide which tools to list, but the daemon's value is the one that gates actions.
 
 ## Local MCP over stdio
 
@@ -260,20 +279,18 @@ This is a pattern-based guarantee with a stated limit, independent of `security.
 
 **Supported (tested):** tool output is scrubbed of Bearer and Basic credentials, PEM private keys, SuperMgmt tokens (`sm[stbjm]_...`), JWT-shaped values, and the value of any `key=value`, `key: value` or `"key": "value"` pair whose key names a secret (`password`, `secret`, `token`, `api_key`, `authorization` and the like); maps (service metadata, event data) have sensitive keys masked structurally before serialization. With `security.redact_command_output: false`, these patterns still never reach tool output (`TestNoSupportedSecretInLogsMetadataOrEventsReachesToolOutput` in `test/integration/mcp_secrets_test.go`; `TestWithLogRedactionOffTheAPIServesLogsRawSoTheToolsAreTheOnlyScrub` shows the API itself serves the raw text in that mode).
 
-**Not supported:** an arbitrary secret under a harmless name, for example an environment variable `DB_URL` that contains a password, or a token with no recognizable prefix on a line with no secret-looking key. Such a value is not detected and **will** reach the model (`TestUntrustedText_UnknownSecretUnderAHarmlessNameIsNotScrubbed` pins this as documented behavior). Treat `service.logs`, `metadata` and event data as readable by anything that controls the model, and grant `service.logs` accordingly.
+**Not supported:** an arbitrary secret under a harmless name, for example an environment variable `DB_URL` that contains a password, or a token with no recognizable prefix on a line with no secret-looking key. Such a value is not detected and **will** reach the model (`TestUntrustedText_UnknownSecretUnderAHarmlessNameIsNotScrubbed` pins this as documented behavior). Treat `service.logs`, `metadata` and event data as readable by anything that controls the model, and deny `service.logs` where that is unacceptable ([MCP access to logs](#mcp-access-to-logs)).
 
-## Giving MCP access to logs
+## MCP access to logs
 
-By default MCP cannot read service logs. To allow it outside production, add a rule to your policy file. `security.policy_file` **replaces** the built-in policy entirely, so start from the built-in rules ([Write your own policy](policies.md#write-your-own-policy); `sm config validate --policy FILE` prints how a file differs from the default):
+Every MCP client can read service logs by default, through `infra_get_service_logs`. The lines pass through the [redaction boundary](#the-redaction-boundary) first, which cannot catch a secret under a harmless name. To keep logs away from MCP, or from production, add a deny rule for `type:mcp` to your policy file. `security.policy_file` **replaces** the built-in policy entirely, so start from the built-in rules ([Write your own policy](policies.md#write-your-own-policy)) and check the file with `sm config validate --policy FILE`. Without `resources`, the rule denies logs everywhere:
 
 ```yaml
-  - name: mcp-logs-staging
+  - name: mcp-no-production-logs
     subjects: ["type:mcp"]
-    resources: ["environment:staging"]
-    allow: ["service.logs"]
+    resources: ["environment:production"]
+    deny: ["service.logs"]
 ```
-
-The rule syntax is checked by `sm config validate --policy` (the snippet validates). That the rule then lets an MCP client read staging logs through `infra_get_service_logs` is **not exercised by a test**; read the redaction boundary above before enabling it.
 
 ## Operating notes
 

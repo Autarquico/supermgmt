@@ -275,3 +275,62 @@ func TestScrubbingKeepsTheBenignLinesAndLeavesAMarkerWhereASecretWas(t *testing.
 		}
 	}
 }
+
+// seedFailedJob stores a job that failed with a message quoting node output,
+// and returns its id.
+func (f *secretsFixture) seedFailedJob() string {
+	rig := f.rig
+	rig.t.Helper()
+	ctx := context.Background()
+	admin := client.New(client.Options{Transport: f.server.InProcess(rig.admin)})
+	created, err := admin.CreatePlan(ctx, wire.CreatePlanRequest{
+		Action: "service.restart", Targets: []wire.ResourceRef{{Type: domain.ResourceService, ID: domain.ID(rig.fixtures["prod_service"])}},
+	})
+	mcpRigMust(rig.t, err)
+	submitted, err := admin.SubmitPlan(ctx, created.PlanID, created.PlanHash)
+	mcpRigMust(rig.t, err)
+	failure, err := json.Marshal(map[string]string{
+		"code": "INTERNAL", "reason": "", "message": "restart failed: password=" + secretsPassword + " " + secretsSMToken + " Authorization: Bearer " + secretsBearer,
+	})
+	mcpRigMust(rig.t, err)
+	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'failed', error_json = ? WHERE id = ?`, string(failure), submitted.Job.ID.String())
+		return err
+	})
+	return submitted.Job.ID.String()
+}
+
+func TestNoSupportedSecretInAJobsFailureReachesTheJobTools(t *testing.T) {
+	f := newSecretsFixture(t)
+	jobID := f.seedFailedJob()
+	session := mcpSecSession(t, f.api(), false)
+	calls := []struct {
+		tool      string
+		arguments map[string]any
+	}{
+		{"infra_get_job", map[string]any{"id": jobID}},
+		{"infra_list_jobs", map[string]any{"states": []string{"failed"}}},
+	}
+	for _, call := range calls {
+		t.Run(call.tool, func(t *testing.T) {
+			result, err := session.CallTool(context.Background(), &sdk.CallToolParams{Name: call.tool, Arguments: call.arguments})
+			mcpRigMust(t, err)
+			if result.IsError {
+				t.Fatalf("%s failed: %+v", call.tool, result.Content)
+			}
+			everything, err := json.Marshal(result)
+			mcpRigMust(t, err)
+			if !strings.Contains(string(everything), "restart failed") {
+				t.Fatalf("%s does not show the job's failure, so this test proves nothing: %s", call.tool, everything)
+			}
+			for _, secret := range secretsLeaks {
+				if strings.Contains(string(everything), secret) {
+					t.Errorf("%s output contains %q", call.tool, secret)
+				}
+			}
+			if !strings.Contains(string(everything), "untrusted_remote_output") {
+				t.Errorf("%s output does not flag the failure text as untrusted", call.tool)
+			}
+		})
+	}
+}

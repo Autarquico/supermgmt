@@ -50,7 +50,7 @@ Exactly §24's list. Each tool's `_meta["dev.supermgmt/schema_version"]` is `1`;
 † Registered only when `mcp.write_tools_enabled: true`; `infra_plan_action.submit_via` is `"infra_submit_plan"` or `null` accordingly. Wrappers submit only the hash the plan they just created returned.
 
 - **Name resolution** happens in the MCP server, through reads: node = exact name or id; service = `name@node` or id; app = exact name or id; deployment = id. None → `NOT_FOUND`; several → `INVALID_ARGUMENT`/`AMBIGUOUS_TARGET`; more than 50 pages → "use an id". Resolution compares **raw** API values, never the sanitized display copy, and the plan binds ids, so sanitation can never retarget a write.
-- **Write results** (frozen): `{status: approval_required|queued|waiting_ci|denied, job_id?, deployment_id?, plan_hash?, summary, risk}`; `summary` is built from control-plane fields only.
+- **Write results** (amended: `waiting_ci` and `deployment_id` went with ADR-0043, `done` and `failed` came with #83): `{status: approval_required|queued|denied|done|failed, job_id?, plan_hash?, summary, risk}`; `summary` is built from control-plane fields only.
 - API errors become `CallToolResult{IsError: true}` carrying the API error's `code`, `reason` and `correlation_id`, never internal text.
 
 ### Output views by provenance

@@ -17,11 +17,11 @@ const decisionDeny = "deny"
 
 type planTarget struct {
 	Type string `json:"type" jsonschema:"resource type, for example service or node"`
-	Ref  string `json:"ref" jsonschema:"id or exact name; name@node for a service"`
+	Ref  string `json:"ref,omitempty" jsonschema:"id or exact name; name@node for a service; omit for the instance"`
 }
 
 type planActionInput struct {
-	Action     string         `json:"action" jsonschema:"an action of the catalog, for example service.restart"`
+	Action     string         `json:"action" jsonschema:"an action from infra_list_actions, for example service.restart"`
 	Targets    []planTarget   `json:"targets" jsonschema:"exactly one target"`
 	Parameters map[string]any `json:"parameters,omitempty" jsonschema:"parameters of the action, validated against its closed schema"`
 }
@@ -43,7 +43,7 @@ func addPlanTool(s *sdk.Server, api API, submittable bool) {
 	}
 	actionTool(s, "infra_plan_action",
 		"Build and store a plan for one action on one target (names or ids; the plan binds ids). "+
-			"Nothing is executed. The result carries the plan hash and the policy verdict.",
+			"Nothing is executed. The result carries the plan hash and the policy verdict. infra_list_actions lists the actions, the target type each takes and its parameters.",
 		func(ctx context.Context, in planActionInput) (planActionOutput, error) {
 			if len(in.Targets) != 1 {
 				return planActionOutput{}, invalidArgument("exactly one target is required")
@@ -75,7 +75,7 @@ func requestPlan(ctx context.Context, api API, action string, target planTarget,
 }
 
 // resolveTarget turns a target into a typed id. Nodes and services may
-// be named; any other type must be given by id.
+// be named, the instance has no id, any other type must be given by id.
 func resolveTarget(ctx context.Context, api API, target planTarget) (wire.ResourceRef, error) {
 	kind := domain.ResourceType(target.Type)
 	if !kind.Valid() {
@@ -90,6 +90,8 @@ func resolveTarget(ctx context.Context, api API, target planTarget) (wire.Resour
 		id, err = resolveNode(ctx, api, target.Ref)
 	case string(domain.ResourceService):
 		id, err = resolveService(ctx, api, target.Ref)
+	case string(domain.ResourceInstance):
+		return wire.ResourceRef{Type: kind}, nil
 	default:
 		if id, err = domain.ParseID(target.Ref); err != nil {
 			err = invalidArgument("a " + target.Type + " target is given by id")

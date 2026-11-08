@@ -480,7 +480,7 @@ func TestEvaluate_DefaultPolicy_EndToEnd(t *testing.T) {
 		{"default/operator_restart_in_production_needs_approval", p, restart(human("operator"), prodAttrs), DecisionAllow, "", true, 1},
 		{"default/admin_may_write_config_with_approval", p, Request{Actor: human("admin"), Action: "config.write", Targets: []Target{target(domain.ResourceInstance, "i", Attributes{})}}, DecisionAllow, "", true, 1},
 		{"default/mcp_reads", p, Request{Actor: mcp(), Action: "node.read", Targets: []Target{nodeT(Attributes{})}}, DecisionAllow, "", false, 0},
-		{"default/mcp_cannot_restart", p, restart(mcp(), Attributes{}), DecisionDeny, smerr.ReasonDefaultDeny, false, 0},
+		{"default/mcp_restart_waits_for_approval", p, restart(mcp(), Attributes{}), DecisionAllow, "", true, 1},
 		{"default/automation_gets_nothing", p, Request{Actor: automation(), Action: "node.read", Targets: []Target{nodeT(Attributes{})}}, DecisionDeny, smerr.ReasonDefaultDeny, false, 0},
 		{"default/plan_create_for_viewer", p, Request{Actor: human("viewer"), Action: "plan.create", Targets: []Target{nodeT(Attributes{})}}, DecisionAllow, "", false, 0},
 		{"default/destructive_is_gated_for_admin", p, Request{Actor: human("admin"), Action: "node.remove", Targets: []Target{nodeT(Attributes{})}}, DecisionDeny, smerr.ReasonDestructiveGate, false, 0},
