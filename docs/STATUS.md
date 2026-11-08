@@ -18,6 +18,7 @@
 - #69 tunnel: enrollment and re-enable get stuck or fail on a real account
 - #75 Retire app move
 - #76 Routes publish a node port
+- #77 Retire deployments, apps and the GitHub connector
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -25,7 +26,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #77 Retire deployments, apps and the GitHub connector
+- #83 MCP drives what sm operates: reads, jobs and default grants
 <!-- /pm-sync:in-progress -->
 
 ---

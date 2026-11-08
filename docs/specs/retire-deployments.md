@@ -2,7 +2,7 @@
 codename: supermgmt
 title: Retire deployments, apps and the GitHub connector
 type: task
-status: active
+status: shipped
 priority: P1
 size: XL
 issue: 77
@@ -12,7 +12,7 @@ depends_on: [retire-app-move, node-routes]
 supersedes: [m4-apps-deployments]
 related_specs: [retire-app-move, node-routes]
 created: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 # Retire deployments, apps and the GitHub connector
