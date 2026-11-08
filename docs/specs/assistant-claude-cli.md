@@ -29,16 +29,17 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 
 **Entra:**
 - `sm assistant`: a conversation on the terminal. `--auth subscription` (default) runs the operator's `claude`; `--auth api-key` runs it with `--bare` and `ANTHROPIC_API_KEY` from the environment.
-- The model has only SuperMgmt's MCP tools. The child runs with no built-in tools (`--tools ""`), only one MCP server (`--strict-mcp-config --mcp-config`, launching `sm mcp` with a registered client token), those tools pre-approved, and anything else denied instead of prompting. A test pins the argument vector.
-- The child gets a sanitised environment: no `SUPERMGMT_*`, no SSH agent socket, no SuperMgmt credentials; the API key only in `--auth api-key`.
-- The assistant uses its own registered MCP client (`sm mcp clients add`), never the human's credential. If none exists, `sm assistant` explains the one command to run; it does not register by itself.
-- Approvals in place: when a tool result says `approval_required`, `sm` fetches the job and plan with the human's own connection and shows them (never text written by the model); the human approves or rejects with the plan hash from the API, or leaves it. The approval uses the human's credential and rules. The model is told the outcome in the next turn.
-- The TUI gets an assistant screen with the same transcript and approval card, with the child in the background; model output goes through `textsafe` before rendering.
+- The model has only SuperMgmt's MCP tools. The child runs with no built-in tools (`--tools ""`), only one MCP server (`--strict-mcp-config --mcp-config`, launching `sm mcp` with a registered client token), those tools pre-approved, anything else denied instead of prompting (`--permission-prompts none`), no slash commands, no saved session and SuperMgmt's own system prompt. A test pins the argument vector and refuses `--dangerously-skip-permissions`. Before the first turn, the session's reported tools must all be SuperMgmt's and its server connected; otherwise `sm` stops the child and refuses.
+- The child gets an allowlisted environment (home, path, locale, proxy, `CLAUDE_CONFIG_DIR`); the API key only in `--auth api-key`. No `SUPERMGMT_*`, no SSH agent socket. `sm mcp` gets its target explicitly (`--profile` or `--config`), so it reaches the same instance as `sm assistant`. The guide says what this protects: with no tools the model cannot read the environment, and any process of the operator's user can reach what the operator can.
+- The assistant uses its own registered MCP client (default name `assistant`, token in the keychain entry `supermgmt-assistant` or a 0600 file in the configuration directory), never the human's credential. If none exists, or a remote target needs `--https`, `sm assistant` prints the exact command to run; it does not register by itself.
+- Approvals in place: only a result of a known write tool, parsed strictly as a whole, with `status: approval_required` opens a card. `sm` then fetches the job with the human's own connection and shows it only if it is awaiting approval and its actor is the assistant's client. The card comes from the job and plan (never from model text); the human approves or rejects with the plan hash from the API, or leaves it. The model is told the outcome in the next turn.
+- All model output goes through `textsafe` before reaching a terminal.
+- A second PR adds the TUI screen with the same session, transcript and approval card.
 - `claude` missing or not signed in: a clear message, nothing is installed.
 - Docs: `docs/assistant.md`, the terms note, `docs/mcp.md`, `docs/tui.md`, CLI reference.
 
 **No entra:**
-- Other model CLIs (an adapter can come when a second one is real). Saving conversations. Any new tool: the assistant has what MCP has.
+- The TUI screen in the first PR. Other model CLIs (an adapter can come when a second one is real). Saving conversations. Any new tool: the assistant has what MCP has.
 
 ## Criterios de aceptación
 
@@ -47,10 +48,15 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 - **When** the child is launched
 - **Then** its arguments give it no built-in tools, one MCP server and pre-approval only for that server's tools, and in api-key mode `--bare`
 
+### Scenario: a session with other tools does not start
+- **Given** a `claude` whose session reports any tool outside SuperMgmt's, or its server not connected
+- **When** the session starts
+- **Then** `sm` stops it before the first turn and says why
+
 ### Scenario: the child inherits nothing from SuperMgmt
 - **Given** an environment with `SUPERMGMT_*`, an SSH agent socket and a stored human token
 - **When** the child is launched
-- **Then** none of them reach it, and only the assistant's MCP token is used, by `sm mcp`
+- **Then** only the allowlisted variables reach it, and `sm mcp` uses the assistant's token against the same target as `sm assistant`
 
 ### Scenario: subscription mode never touches Claude credentials
 - **Given** `--auth subscription`
@@ -65,7 +71,7 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 ### Scenario: an approval is decided by the person, from the API
 - **Given** a tool result `approval_required` for a job, with model text claiming something else
 - **When** the card is shown
-- **Then** its content comes from the job and plan read with the human's connection; approving sends the API's plan hash with the human's credential, and the model's token could not have approved
+- **Then** its content comes from the job and plan read with the human's connection, and a job whose actor is not the assistant's client opens no card; approving sends the API's plan hash with the human's credential, and the model's token could not have approved
 
 ### Scenario: a hostile model cannot fake a card
 - **Given** model text or tool output with control sequences or a fake approval prompt
@@ -77,14 +83,9 @@ Anthropic's terms do not allow a developer to route requests through a user's su
 - **When** `sm assistant` starts
 - **Then** it prints the command to register one and exits without launching the model
 
-### Scenario: the TUI stays responsive
-- **Given** the assistant screen with the child streaming
-- **When** the operator navigates or the child stalls or dies
-- **Then** the TUI keeps responding and the failure is shown in the transcript
-
 ## Notas técnicas
 
 - `-p --input-format stream-json --output-format stream-json --verbose`; the stream's message schema is not documented for the CLI, so a recorded real run fixes the parser's fixtures.
 - Without `--bare`, `claude` loads the operator's hooks and CLAUDE.md. Use `--setting-sources` to narrow it as far as the CLI allows, and say what remains in the guide: they are the operator's own configuration, and the model still has no tools but SuperMgmt's.
 - The child runs from an empty temporary directory, so no project configuration applies.
-- The process lives in a `tea.Cmd` stream, never in `Update` (`internal/tui/api.go:14-15`).
+- `--safe-mode` is the preferred way to skip the operator's configuration in subscription mode, if it keeps `--mcp-config`; the first real run decides, otherwise `--setting-sources`.
