@@ -1,6 +1,6 @@
 ---
 codename: supermgmt
-title: "Mcp Https Token"
+title: "sm mcp reaches a server: MCP client tokens over HTTPS"
 type: task
 status: draft
 priority: P1
@@ -8,55 +8,90 @@ size: M
 issue: null
 prs: []
 related_issues: []
-depends_on: []
+depends_on: [mcp-tool-coverage]
 supersedes: []
-related_specs: []
+related_specs: [mcp-tool-coverage, assistant-claude-cli, m5-mcp]
 created: 2026-11-08
 updated: 2026-11-08
 ---
 
-# Mcp Https Token
+# sm mcp reaches a server: MCP client tokens over HTTPS
 
 ## Contexto / problema
 
-<Por qué existe esta spec. Qué problema resuelve.>
+Part of #63. An agent on a workstation cannot drive a server or a Proxmox appliance without an external OAuth authorization server:
+
+- `sm mcp` always connects to the local daemon (`internal/cli/mcp_bridge.go:79`).
+- `RunServer` binds only HTTPS and the admin socket (`internal/daemon/server.go:57-69`), and `smm_` tokens are refused on HTTPS (`internal/api/server.go:524-526`, ADR-0032). A token registered on a server is usable nowhere, yet `sm mcp clients add` issues it (`internal/cli/mcp.go:101`).
+- The bridge reads `mcp.enabled` and `write_tools_enabled` from the local configuration (`internal/cli/mcp_bridge.go:111-124`), which says nothing about a remote server.
+
+Decision (user, 2026-11-08): MCP client tokens may travel over HTTPS, opt-in. MCP stays off the network as a protocol: the bridge runs on the workstation and calls `/api/v1`, so ADR-0033 stands. Recorded in ADR-0044, amending ADR-0032.
 
 ## Scope
 
 **Entra:**
-- <Bullet 1>
-- <Bullet 2>
+- Config `mcp.token_over_https` (default `false`), server mode only.
+- A client registered with `--https` carries a marker (`mcp_clients.over_https`, migration 000015). HTTPS resolves a `smm_` token only if the flag is on and the client carries the marker; every other `smm_` token is still refused on HTTPS, before resolving. Tokens of marked clients keep working on a local socket.
+- Marked clients default to a 30-day expiry (explicit `--ttl` up to the existing maximum).
+- The audit `Source` says which path was used (`mcp_socket` or `mcp_https`).
+- The per-identity write bucket applies; reads are charged as for any bearer on `/api/v1`.
+- Bridge: `sm mcp --profile NAME` targets that profile with only the MCP token (never the human's credential, no daemon autostart); without the flag, the active profile; a local target behaves as today.
+- The server's `enabled` and `write_tools_enabled` reach the bridge over the wire (`wire.Me` or a small read), so the tool list matches the server; a local configuration no longer decides for a remote target.
+- `sm mcp clients add`: on a server without `--https`, or with the flag off, says where the token will work instead of issuing a useless one silently; prints a host config snippet with `--profile`.
+- Docs: ADR-0044, ADR-0032 amendment, `docs/mcp.md` (a remote agent without OAuth, the leak trade-off), security guide, spec §23-24.
 
 **No entra:**
-- <Lo que NO se hace aquí>
+- MCP protocol on the network with a static token (`/mcp` keeps OAuth, ADR-0033). Embedded authorization server. New tools.
 
 ## Criterios de aceptación
 
-Cada criterio se expresa como un scenario Given/When/Then. El parser de
-`scripts/pm_lib/scenarios.py` los extrae para la fase Review.
+### Scenario: a marked client drives a server from a workstation
+- **Given** a server with `mcp.token_over_https: true` and a client registered with `--https`
+- **When** `sm mcp --profile lab --token-file F` starts
+- **Then** the bridge calls the server's `/api/v1` with only that token, lists the server's tools, and a restart waits for a person's approval on that server
 
-### Scenario: <nombre breve>
-- **Given** <precondición>
-- **When** <acción>
-- **Then** <resultado verificable>
+### Scenario: the flag is off by default
+- **Given** a server with the default configuration and a marked client
+- **When** its token is presented over HTTPS
+- **Then** it is refused without being resolved
 
-### Scenario: <otro caso>
-- **Given** …
-- **When** …
-- **Then** …
+### Scenario: an unmarked token stays local
+- **Given** `mcp.token_over_https: true` and a client registered without `--https`
+- **When** its token is presented over HTTPS
+- **Then** it is refused without being resolved
 
-## Notas técnicas / riesgos
+### Scenario: the floor does not depend on the transport
+- **Given** a marked client over HTTPS
+- **When** it tries to approve a job, issue a credential or open a session
+- **Then** it is refused exactly as on the socket, and every route of the MCP matrix gives the same result on both transports
 
-<Archivos relevantes, patrones a seguir, gotchas, riesgos.>
+### Scenario: the audit tells the paths apart
+- **Given** the same client over each path
+- **When** it acts
+- **Then** the events carry `mcp_https` or `mcp_socket`
 
-## Tasks (no autoritativo — el board manda)
+### Scenario: the human's credential never travels with the bridge
+- **Given** a remote profile with a stored human token
+- **When** the bridge runs with an MCP token
+- **Then** no request carries the human token, and a human token given as the MCP token is refused
 
-Notas de granularidad fina mientras se desarrolla. El estado real vive en
-el GitHub Project (issue + sub-issues). `/pm sync` no los lee.
+### Scenario: the tool list follows the server
+- **Given** a local configuration with writes on and a server with writes off (or the reverse)
+- **When** the bridge lists tools
+- **Then** it lists what the server allows
 
-- [ ] <task 1>
-- [ ] <task 2>
+### Scenario: registration says where the token works
+- **Given** an active server profile with the flag off
+- **When** the operator runs `sm mcp clients add --https`
+- **Then** the command refuses, naming the flag; without `--https` on a server it refuses, explaining that a local token cannot be used there
 
-## Referencias
+### Scenario: a revoked or expired token stops at once
+- **Given** a marked client
+- **When** it is removed or expires
+- **Then** the next HTTPS request is `UNAUTHENTICATED`, uncached
 
-<Links a otras specs, RFCs, documentación externa.>
+## Notas técnicas
+
+- `internal/auth/mcptoken.go:13` hardcodes the source label. `mcpGate` keys on the actor type, not the transport.
+- The route matrix runs socket and in-process only (`test/integration/mcp_route_matrix_test.go:20-24`): add HTTPS.
+- `backup` restore revokes MCP tokens already; the marker needs nothing more.
