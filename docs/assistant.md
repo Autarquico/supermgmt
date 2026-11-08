@@ -1,0 +1,66 @@
+# Ask in natural language
+
+> **Status: experimental.** The session was tested against the real `claude` CLI on macOS with a stub MCP server; the rest of the path uses a fake `claude`. Linux sign-in is not verified.
+
+`sm assistant` opens a conversation in your terminal. You ask in natural language ("why is web failing on vps1?"), and a Claude model works with SuperMgmt's own [MCP tools](mcp.md). It has the same tools, policy, audit and approval floor as any MCP client.
+
+## Before you start
+
+You need the official [`claude` CLI](https://code.claude.com/docs/en/setup) on your `PATH`, signed in. SuperMgmt does not install it.
+
+The assistant is an MCP client of its own, so register it once. Run `sm assistant` first: when the client is missing, it prints the exact command to run for your current target and stops. On the local daemon that is:
+
+```bash
+sm mcp clients add assistant --keychain supermgmt-assistant
+```
+
+A remote profile, or another `--client`, has its own keychain entry and needs `--https` ([what that needs](mcp.md#drive-a-server-from-your-workstation)), so copy the line `sm assistant` prints. Registration may need approval: approve it (`sm approvals`, then `sm jobs approve <job-id> --plan-hash <hash>`), then run the same command again. If your machine has no keychain, `sm assistant` tells you which token file to use.
+
+Reads work by default. For the model to act, set `mcp.write_tools_enabled: true` ([Writes are off by default](mcp.md#writes-are-off-by-default)).
+
+## Which account it uses
+
+| Mode | How | Cost |
+|---|---|---|
+| `--auth subscription` (default) | Runs your own `claude`, signed in with your own account | Your Claude plan |
+| `--auth api-key` | Runs `claude --bare` with `ANTHROPIC_API_KEY` from your environment | Billed per use on your API account |
+
+SuperMgmt never reads, stores or asks for your Claude credentials, and it offers no Claude sign-in. If `claude` is not signed in, run `claude` in a terminal and sign in there.
+
+What you type and what the tools return, including service logs, go to Anthropic through your `claude`, under the terms of that account. SuperMgmt keeps no transcript.
+
+**Offering `sm` to other people?** Use `--auth api-key`. [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance) require products to authenticate with an API key and do not allow routing requests through someone's subscription on their behalf. They allow a person to use the official `claude` with their own subscription, and they do not settle whether another program may launch it for that person, so the default mode is meant for your own use on your own machine.
+
+## A conversation
+
+```text
+$ sm assistant
+[sm] assistant on profile lab (client assistant, your claude subscription). /exit or Ctrl-D to end.
+> which services failed on vps1 today?
+```
+
+End with `/exit` or Ctrl-D. A blank line does nothing.
+
+When the assistant's token has expired, `sm assistant` stops before starting and prints the steps to replace it.
+
+If `sm` cannot start its tools for the session, the usual cause is, on a server, `mcp.token_over_https` not being set ([how to set it](mcp.md#drive-a-server-from-your-workstation)).
+
+## What the model can do
+
+The model has only SuperMgmt's tools. `claude` runs with no built-in tools (no shell, no files, no web fetch tool), one MCP server, no slash commands, and no saved session, from an empty temporary directory. After your first message, `claude` reports its session and `sm` checks its tools and its server; if any tool is not SuperMgmt's, it stops before showing any output or letting any tool run.
+
+The limits of that:
+
+- It relies on `claude` honouring those options. With no tools the model cannot read files or the environment, but any process running as you can reach what you can, including the local daemon's socket and your keychain.
+- In subscription mode, policies your administrator manages for `claude` still apply.
+- Server-side features of your Anthropic account are not controlled by these options.
+
+## Approvals
+
+The model can never approve. When it requests something that needs approval, `sm` shows a card built from the job and plan it reads with **your** connection, not from anything the model wrote. It shows a job only if that job is waiting for approval and the assistant asked for it.
+
+Answer `approve`, `reject` or `leave`. There is no default. Approving uses your own credential and permissions, so you need the right to approve that action. The model is then told what you decided. If standard input is not a terminal, `sm` names the job and does not approve it; use `sm approvals`. Text typed while the model was working never answers a card. An approval that still needs more approvers is recorded, and `sm` says so.
+
+## Everything the model says is untrusted
+
+Model output is cleaned of control sequences before it reaches your terminal. Tool calls, failures and the status of writes appear, cleaned and shortened, after the `|` marker; other tool results are not displayed. Text that looks like an approval prompt is only text: real approvals come from the card described above.

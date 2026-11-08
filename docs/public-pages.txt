@@ -26,6 +26,7 @@ providers.md
 tui.md
 policies.md
 mcp.md
+assistant.md
 cloudflare.md
 
 [Operate]

@@ -44,6 +44,8 @@ The agent can now read nodes, services and their logs, routes, events, health, j
 
 If your machine has no native keychain, use `--token-file <path>` in both commands instead of `--keychain`. Whether a real host such as Claude Code or Claude Desktop launches `sm mcp` this way is **not verified**; the automated tests drive the same steps with the Go SDK client (`TestE2E_MCPClientsAddFlow`, `TestE2E_MCPStdioReadsGraph`). The details and every rule behind these steps are below.
 
+To talk to your infrastructure without setting up a host, see [`sm assistant`](assistant.md).
+
 ## What an MCP client is
 
 An MCP client is an identity of type `mcp`. It has **no roles**, not even when the human who registered it is an admin (`TestApplyApproved_MCPClientRegistrationGivesAnIdentityWithoutRolesEvenForAnAdminRequester` in `internal/app/mcpclients_apply_test.go`; the re-registration case in `test/integration/mcp_reregister_test.go`). What it may do comes only from policy rules that name `type:mcp`. The built-in policy (`internal/policy/default.yaml`) grants it `*.read` and `plan.create` (rule `builtin-mcp-read`), and logs plus the operator's actions (rule `builtin-mcp-operate`, below).

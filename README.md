@@ -18,7 +18,7 @@ The website, **https://autarquico.github.io/supermgmt/**, is built from release 
 - [Overview](docs/overview.md): what it does and what it is not.
 - [Getting started](docs/getting-started.md): build `sm` and manage your first machine from your laptop.
 - [Concepts](docs/concepts.md): nodes, plans, approvals, jobs and environments.
-- [Using the TUI](docs/tui.md), [CLI reference](docs/cli.md), [Policies and approvals](docs/policies.md), [AI agents with MCP](docs/mcp.md).
+- [Using the TUI](docs/tui.md), [CLI reference](docs/cli.md), [Policies and approvals](docs/policies.md), [AI agents with MCP](docs/mcp.md), [Ask in natural language](docs/assistant.md).
 - [Security](docs/security.md): the trust boundaries, before you point it at a machine you care about.
 - [Project status and what is verified](docs/project-status.md).
 

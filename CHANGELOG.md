@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: no stable release yet.
 
+### Added: `sm assistant` (experimental)
+
+- A conversation in the terminal that works through SuperMgmt's MCP tools and shows approvals in place. It runs the `claude` CLI with your own subscription by default, or with `--auth api-key`.
+
 ### Added: MCP clients can reach a server over HTTPS
 
 - `sm mcp --profile NAME` drives a server from your workstation with an MCP client token. The server must set `mcp.token_over_https: true` and the client must be registered with `sm mcp clients add --https`. Such tokens last 30 days by default and at most 90.
