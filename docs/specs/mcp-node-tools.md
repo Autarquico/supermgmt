@@ -6,7 +6,7 @@ status: active
 priority: P1
 size: M
 issue: null
-prs: []
+prs: [88]
 related_issues: [87]
 depends_on: [mcp-tool-coverage]
 supersedes: []
