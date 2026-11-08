@@ -38,6 +38,7 @@ type MCPClient struct {
 	IdentityID     domain.ID      `json:"identity_id"`
 	Name           string         `json:"name"`
 	Origin         MCPOrigin      `json:"origin"`
+	OverHTTPS      bool           `json:"over_https,omitempty"`
 	State          MCPClientState `json:"state"`
 	Subject        string         `json:"subject,omitempty"`
 	ClientID       string         `json:"client_id,omitempty"`
@@ -50,12 +51,14 @@ type MCPClient struct {
 
 // RegisterMCPClientRequest is POST /mcp/clients (mcp_client.register). A
 // remote registration names the OAuth subject and client_id; a local one
-// names neither.
+// names neither. OverHTTPS marks a local client whose token is accepted on the
+// HTTPS listener of a server; it is part of the approved plan.
 type RegisterMCPClientRequest struct {
-	Name     string    `json:"name"`
-	Origin   MCPOrigin `json:"origin"`
-	Subject  string    `json:"subject,omitempty"`
-	ClientID string    `json:"client_id,omitempty"`
+	Name      string    `json:"name"`
+	Origin    MCPOrigin `json:"origin"`
+	OverHTTPS bool      `json:"over_https,omitempty"`
+	Subject   string    `json:"subject,omitempty"`
+	ClientID  string    `json:"client_id,omitempty"`
 }
 
 // IssueMCPTokenRequest is POST /mcp/clients/{id}/token

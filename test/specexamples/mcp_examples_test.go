@@ -43,7 +43,7 @@ func loadMCPExample(t *testing.T, name string) mcpHostServer {
 }
 
 func TestMCPExamples_StdioHostsLaunchSmMcpWithRealFlags(t *testing.T) {
-	for _, name := range []string{"claude-desktop.json", "claude-code.json"} {
+	for _, name := range []string{"claude-desktop.json", "claude-code.json", "remote-token.json"} {
 		t.Run(name, func(t *testing.T) {
 			server := loadMCPExample(t, name)
 			if server.Command != "sm" {

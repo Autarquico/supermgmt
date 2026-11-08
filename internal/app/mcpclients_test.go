@@ -27,8 +27,13 @@ type mcpcFixture struct {
 
 func newMCPClientsFixture(t *testing.T, tweak ...func(*Config)) *mcpcFixture {
 	t.Helper()
+	return newMCPClientsFixtureWith(t, MCPClientsOptions{Tokens: &countingMinter{}, RemoteIssuer: mcpcIssuer}, tweak...)
+}
+
+func newMCPClientsFixtureWith(t *testing.T, o MCPClientsOptions, tweak ...func(*Config)) *mcpcFixture {
+	t.Helper()
 	f := newFixture(t, tweak...)
-	svc, err := NewMCPClients(f.cfg, f.store, MCPClientsOptions{Tokens: &countingMinter{}, RemoteIssuer: mcpcIssuer})
+	svc, err := NewMCPClients(f.cfg, f.store, o)
 	mustf(t, err, "NewMCPClients")
 	inv, err := NewInventory(f.cfg, InventoryOptions{Store: f.store, Connector: Connector{}, Mode: config.ModeLocal})
 	mustf(t, err, "NewInventory")
@@ -422,5 +427,84 @@ func TestMCPClientsDelete_AnMCPActorMayNotEvenWithEveryActionGranted(t *testing.
 	wantError(t, err, smerr.CodePolicyDenied, smerr.ReasonMCPActionForbidden)
 	if got := m.clientNamed("claude-code"); got.ID != client.ID {
 		t.Errorf("client = %+v", got)
+	}
+}
+
+func mcpcOverHTTPS(name string) wire.RegisterMCPClientRequest {
+	r := mcpcLocal(name)
+	r.OverHTTPS = true
+	return r
+}
+
+func TestMCPClientsRegister_OverHTTPSRefusalsCreateNoPlan(t *testing.T) {
+	server := MCPClientsOptions{Tokens: &countingMinter{}, RemoteIssuer: mcpcIssuer, Mode: config.ModeServer, TokenOverHTTPS: true}
+	serverFlagOff := server
+	serverFlagOff.TokenOverHTTPS = false
+	local := MCPClientsOptions{Tokens: &countingMinter{}, Mode: config.ModeLocal}
+	remote := mcpcRemote("remote", "alice", "client-1")
+	remote.OverHTTPS = true
+	cases := []struct {
+		name string
+		opts MCPClientsOptions
+		req  wire.RegisterMCPClientRequest
+	}{
+		{"flag off", serverFlagOff, mcpcOverHTTPS("a")},
+		{"local instance", local, mcpcOverHTTPS("a")},
+		{"server without over_https", server, mcpcLocal("a")},
+		{"remote origin", server, remote},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMCPClientsFixtureWith(t, tc.opts)
+
+			_, err := m.svc.Register(context.Background(), m.caller(m.admin), tc.req)
+
+			if smerr.CodeOf(err) != smerr.CodeInvalidArgument {
+				t.Fatalf("err = %v, want INVALID_ARGUMENT", err)
+			}
+			var plans int
+			mustf(t, m.db.Reader().QueryRowContext(context.Background(), `SELECT count(*) FROM plans`).Scan(&plans), "count plans")
+			if plans != 0 {
+				t.Errorf("the refusal left %d plan rows", plans)
+			}
+		})
+	}
+}
+
+func TestMCPClientsRegister_OverHTTPSIsPartOfThePlanAndTheClient(t *testing.T) {
+	m := newMCPClientsFixtureWith(t, MCPClientsOptions{Tokens: &countingMinter{}, Mode: config.ModeServer, TokenOverHTTPS: true})
+
+	res, err := m.svc.Register(context.Background(), m.caller(m.admin), mcpcOverHTTPS("ops"))
+
+	mustf(t, err, "Register")
+	var marked bool
+	err = m.db.Reader().QueryRowContext(context.Background(),
+		`SELECT json_extract(plan_json, '$.parameters.over_https') FROM plans WHERE id = ?`, res.Pending.Job.PlanID).Scan(&marked)
+	mustf(t, err, "read plan")
+	if !marked {
+		t.Error("the approved plan does not carry over_https")
+	}
+	m.approveUntilQueued(res.Pending.Job)
+	mustf(t, m.applyJob(res.Pending.Job.ID), "apply")
+	if client := m.clientNamed("ops"); !client.OverHTTPS {
+		t.Errorf("client = %+v, want over_https", client)
+	}
+	views, err := m.svc.List(context.Background(), m.caller(m.admin))
+	mustf(t, err, "List")
+	if len(views) != 1 || !views[0].OverHTTPS {
+		t.Errorf("list = %+v, want one client over_https", views)
+	}
+}
+
+func TestMCPClientsIssueToken_OverHTTPSTokensLiveAtMostNinetyDays(t *testing.T) {
+	m := newMCPClientsFixtureWith(t, MCPClientsOptions{Tokens: &countingMinter{}, Mode: config.ModeServer, TokenOverHTTPS: true})
+	client := m.register(mcpcOverHTTPS("ops"))
+
+	_, err := m.issue(m.admin, client.ID, 91*24*time.Hour)
+	if smerr.CodeOf(err) != smerr.CodeInvalidArgument {
+		t.Fatalf("91 days: err = %v, want INVALID_ARGUMENT", err)
+	}
+	if _, err := m.issue(m.admin, client.ID, 90*24*time.Hour); err != nil {
+		t.Errorf("90 days: %v", err)
 	}
 }

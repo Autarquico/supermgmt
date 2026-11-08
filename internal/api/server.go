@@ -155,8 +155,10 @@ type Options struct {
 	Identity domain.ID
 	// Resolver authenticates bearer tokens on HTTPS.
 	Resolver Resolver
-	// MCPResolver admits the token of a local MCP client on the Unix socket
-	// (ADR-0032). Without it the socket refuses every token.
+	// MCPResolver admits the token of a local MCP client: on the Unix socket
+	// (ADR-0032) or, with Resolver, on HTTPS for clients marked over_https
+	// (ADR-0044). Without it either transport refuses every such token on
+	// its prefix.
 	MCPResolver Resolver
 	// MCPRemote is the remote MCP endpoint and MCPRemotePaths the paths it is
 	// mounted on, verbatim and outside /api/v1 (ADR-0033). HTTPS only.
@@ -194,7 +196,7 @@ type Server struct {
 	transport transport
 	caller    app.Caller // Unix socket: the local user
 	resolver  Resolver
-	mcp       Resolver // Unix socket: local MCP client tokens
+	mcp       Resolver // local MCP client tokens (Unix socket), or those marked over_https (HTTPS)
 	proxy     *Proxy
 	db        *database.DB
 	stream    StreamOptions
@@ -275,8 +277,6 @@ func New(o Options) (*Server, error) {
 
 func (o Options) validateMCP() error {
 	switch {
-	case o.MCPResolver != nil && o.Resolver != nil:
-		return errors.New("api: the MCP token resolver belongs to the Unix socket transport")
 	case o.MCPRemote != nil && o.Resolver == nil:
 		return errors.New("api: the remote MCP endpoint belongs to the HTTPS transport")
 	case (o.MCPRemote == nil) != (len(o.MCPRemotePaths) == 0):
@@ -522,7 +522,10 @@ func (s *Server) bearerCaller(r *http.Request, mode authMode) (app.Caller, error
 		return app.Caller{}, err
 	}
 	if strings.HasPrefix(token, mcpTokenPrefix) {
-		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "this token is valid on the local socket only")
+		if s.mcp == nil {
+			return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "this server does not accept MCP client tokens over HTTPS")
+		}
+		return s.mcp.Resolve(r.Context(), token)
 	}
 	return s.resolver.Resolve(r.Context(), token)
 }

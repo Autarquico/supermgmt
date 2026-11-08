@@ -135,7 +135,7 @@ type keychainSink struct {
 // openKeychainSink refuses an entry that already exists: overwriting it would
 // destroy a credential another client may still use.
 func openKeychainSink(ctx context.Context, store client.CredentialStore, name string) (*keychainSink, error) {
-	_, err := store.Get(ctx, name)
+	_, err := store.Get(ctx, mcpKeychainAccount(name))
 	switch {
 	case err == nil:
 		return nil, usageErrorf("--keychain: an entry named %q already exists", name)
@@ -146,9 +146,9 @@ func openKeychainSink(ctx context.Context, store client.CredentialStore, name st
 }
 
 func (k *keychainSink) Store(ctx context.Context, token string) (string, error) {
-	location, err := k.store.Set(ctx, k.name, token)
+	location, err := k.store.Set(ctx, mcpKeychainAccount(k.name), token)
 	if err != nil {
-		_ = k.store.Delete(ctx, k.name)
+		_ = k.store.Delete(ctx, mcpKeychainAccount(k.name))
 		return "", fmt.Errorf("keychain entry %q: %w", k.name, err)
 	}
 	return fmt.Sprintf("%s entry %q", location, k.name), nil

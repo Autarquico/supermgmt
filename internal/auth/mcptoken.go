@@ -10,23 +10,31 @@ import (
 	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
-const mcpSocketSource = "mcp_socket"
+const (
+	mcpSocketSource = "mcp_socket"
+	mcpHTTPSSource  = "mcp_https"
+)
 
 // MCPResolver authenticates the "smm_" token a local MCP client presents on
 // the admin socket (spec §11.1, ADR-0032). It never accepts another token
 // kind, and refuses everything while MCP is disabled. Nothing is cached.
+//
+// With OverHTTPS it serves the HTTPS listener of a server instead: only a
+// client registered over_https is found, so the token of any other client
+// fails exactly as an unknown token does.
 type MCPResolver struct {
 	DB *database.DB
 	// Clock defaults to the system clock.
-	Clock   domain.Clock
-	Enabled bool
+	Clock     domain.Clock
+	Enabled   bool
+	OverHTTPS bool
 }
 
 var _ Resolver = MCPResolver{}
 
 func (r MCPResolver) Resolve(ctx context.Context, bearer string) (app.Caller, error) {
 	if !r.Enabled {
-		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "mcp is disabled")
+		return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, smerr.ReasonMCPDisabled, "mcp is disabled")
 	}
 	client, err := r.lookup(ctx, bearer)
 	if err != nil {
@@ -45,8 +53,15 @@ func (r MCPResolver) Resolve(ctx context.Context, bearer string) (app.Caller, er
 	return app.Caller{
 		ID:         client.IdentityID,
 		Credential: domain.CredentialContext{Kind: domain.CredentialMCPToken, ID: client.ID.String(), ExpiresAt: &expires},
-		Source:     mcpSocketSource,
+		Source:     r.source(),
 	}, nil
+}
+
+func (r MCPResolver) source() string {
+	if r.OverHTTPS {
+		return mcpHTTPSSource
+	}
+	return mcpSocketSource
 }
 
 func (r MCPResolver) lookup(ctx context.Context, bearer string) (database.MCPClient, error) {
@@ -57,7 +72,11 @@ func (r MCPResolver) lookup(ctx context.Context, bearer string) (database.MCPCli
 	if kind != KindMCP {
 		return database.MCPClient{}, smerr.New(smerr.CodeUnauthenticated, "", "this token kind cannot authenticate an mcp client")
 	}
-	client, err := database.GetMCPClientByTokenHash(ctx, r.DB.Reader(), hash)
+	find := database.GetMCPClientByTokenHash
+	if r.OverHTTPS {
+		find = database.GetHTTPSMCPClientByTokenHash
+	}
+	client, err := find(ctx, r.DB.Reader(), hash)
 	if err != nil {
 		return database.MCPClient{}, unknownCredential(err)
 	}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "supermgmt": {
+      "type": "stdio",
+      "command": "sm",
+      "args": ["mcp", "--profile", "home", "--token-file", "/home/you/.config/supermgmt/mcp-desk.token"]
+    }
+  }
+}

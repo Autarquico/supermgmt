@@ -54,6 +54,13 @@ func (c *Client) Run(ctx context.Context, stdin string, args ...string) Result {
 	return res
 }
 
+// Command is `sm` ready to be started by the caller (a stdio MCP host), in this client's environment.
+func (c *Client) Command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Env = c.env
+	return cmd
+}
+
 // Must runs `sm` and fails the test on a non-zero exit.
 func (c *Client) Must(ctx context.Context, stdin string, args ...string) Result {
 	c.t.Helper()

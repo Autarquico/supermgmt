@@ -18,6 +18,13 @@ type Me struct {
 	Credential   domain.CredentialKind `json:"credential"`
 	Roles        []string              `json:"roles"`
 	InstanceMode string                `json:"instance_mode"`
+	// MCP is set only for a caller authenticated by an MCP client token.
+	MCP *MeMCP `json:"mcp,omitempty"`
+}
+
+// MeMCP is what an MCP client token may learn about its instance.
+type MeMCP struct {
+	WriteToolsEnabled bool `json:"write_tools_enabled"`
 }
 
 // SSHKey is GET /ssh-key: the public half of the instance identity

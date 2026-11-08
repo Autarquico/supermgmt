@@ -242,11 +242,11 @@ func (m *sinkMemCredentials) Delete(_ context.Context, name string) error {
 }
 
 func TestKeychainSinkRefusesAnExistingEntry(t *testing.T) {
-	store := &sinkMemCredentials{entries: map[string]string{"desk": "old"}}
+	store := &sinkMemCredentials{entries: map[string]string{"mcp/desk": "old"}}
 	if _, err := openKeychainSink(context.Background(), store, "desk"); exitCode(err) != exitUsage {
 		t.Errorf("exit = %d (%v), want %d", exitCode(err), err, exitUsage)
 	}
-	if store.entries["desk"] != "old" {
+	if store.entries["mcp/desk"] != "old" {
 		t.Error("the existing entry was touched")
 	}
 }
@@ -268,7 +268,7 @@ func TestKeychainSinkStoresTheToken(t *testing.T) {
 	if err != nil || !strings.Contains(location, "desk") {
 		t.Fatalf("Store = %q, %v", location, err)
 	}
-	if store.entries["desk"] != sinkToken {
+	if store.entries["mcp/desk"] != sinkToken {
 		t.Error("token not stored")
 	}
 }
@@ -282,7 +282,7 @@ func TestKeychainSinkFailureLeavesNoEntry(t *testing.T) {
 	if _, err := sink.Store(context.Background(), sinkToken); err == nil {
 		t.Fatal("Store succeeded")
 	}
-	if len(store.deleted) != 1 || store.deleted[0] != "desk" {
+	if len(store.deleted) != 1 || store.deleted[0] != "mcp/desk" {
 		t.Errorf("deleted = %v, want the partial entry removed", store.deleted)
 	}
 }

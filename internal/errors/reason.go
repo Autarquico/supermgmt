@@ -38,6 +38,7 @@ const (
 	ReasonMCPClientUnregistered  Reason = "MCP_CLIENT_UNREGISTERED"
 	ReasonIssuanceWindowExpired  Reason = "ISSUANCE_WINDOW_EXPIRED"
 	ReasonOAuthTokenInvalid      Reason = "OAUTH_TOKEN_INVALID"
+	ReasonMCPDisabled            Reason = "MCP_DISABLED"
 	ReasonTunnelDNSNegativeCache Reason = "TUNNEL_DNS_NEGATIVE_CACHE"
 )
 
@@ -71,6 +72,7 @@ var codeByReason = map[Reason]Code{
 	ReasonMCPClientUnregistered:  CodePolicyDenied,
 	ReasonIssuanceWindowExpired:  CodeConflict,
 	ReasonOAuthTokenInvalid:      CodeUnauthenticated,
+	ReasonMCPDisabled:            CodeUnauthenticated,
 	ReasonTunnelDNSNegativeCache: CodeNodeUnreachable,
 }
 

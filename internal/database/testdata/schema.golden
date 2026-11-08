@@ -307,7 +307,8 @@ CREATE TABLE mcp_clients (
     last_used_at        INTEGER,
     created_at          INTEGER NOT NULL,                         -- lower bound for accepted OAuth iat
     updated_at          INTEGER NOT NULL,
-    deleted_at          INTEGER,
+    deleted_at          INTEGER, over_https INTEGER NOT NULL DEFAULT 0
+    CHECK (over_https IN (0, 1) AND (over_https = 0 OR origin = 'local')),
     CHECK (origin = 'local' OR token_hash IS NULL),
     CHECK ((token_hash IS NULL) = (token_issued_at IS NULL) AND (token_hash IS NULL) = (token_expires_at IS NULL)),
     CHECK (token_expires_at IS NULL OR token_expires_at <= token_issued_at + 31536000000),

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autarquico/supermgmt/internal/auth"
 	"github.com/autarquico/supermgmt/internal/auth/oauthfake"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
@@ -277,5 +278,42 @@ func TestOAuthEndpointsGoThroughNetguard(t *testing.T) {
 	}
 	if calls := fake.JWKSCalls(); calls != 0 {
 		t.Errorf("the fake saw %d JWKS requests, want 0: netguard must refuse loopback", calls)
+	}
+}
+
+func TestMCPHTTPSResolverIsWiredOnlyWithMCPAndTheFlagBothOn(t *testing.T) {
+	tests := []struct {
+		name               string
+		enabled, overHTTPS bool
+		wantResolver       bool
+	}{
+		{"both off", false, false, false},
+		{"mcp on, flag off (default)", true, false, false},
+		{"mcp off, flag on", false, true, false},
+		{"both on", true, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := remoteBuilder(t, newRemoteFake(t), func(c *config.Config) {
+				c.MCP.Enabled, c.MCP.TokenOverHTTPS = tt.enabled, tt.overHTTPS
+			})
+
+			got := b.mcpHTTPSResolver()
+
+			if !tt.wantResolver {
+				if got != nil {
+					t.Fatalf("resolver = %#v, want none", got)
+				}
+				srv := serveRemote(t, b)
+				if status, _, _ := remoteCall(t, srv, http.MethodGet, "/api/v1/me", "smm_"+strings.Repeat("a", 40), ""); status != http.StatusUnauthorized {
+					t.Errorf("an smm_ token over HTTPS = %d, want 401", status)
+				}
+				return
+			}
+			resolver, ok := got.(auth.MCPResolver)
+			if !ok || !resolver.OverHTTPS || !resolver.Enabled {
+				t.Errorf("resolver = %#v, want an auth.MCPResolver for HTTPS", got)
+			}
+		})
 	}
 }

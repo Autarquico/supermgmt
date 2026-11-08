@@ -52,10 +52,14 @@ func (q *Queries) Me(ctx context.Context, by Caller) (wire.Me, error) {
 	if name == "" {
 		name = identity.Subject
 	}
-	return wire.Me{
+	me := wire.Me{
 		IdentityID: identity.ID, ActorType: identity.ActorType, DisplayName: name,
 		Credential: by.Credential.Kind, Roles: nonNil(actor.Roles), InstanceMode: string(q.mode),
-	}, nil
+	}
+	if by.Credential.Kind == domain.CredentialMCPToken {
+		me.MCP = &wire.MeMCP{WriteToolsEnabled: q.cfg.MCPWritesEnabled}
+	}
+	return me, nil
 }
 
 // RequireRead authorizes a query action on ref for the caller and audits a

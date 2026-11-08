@@ -224,6 +224,9 @@ func (v *validator) mcp() {
 	if m.OAuth.IntrospectionClientSecretRef != "" {
 		v.secretRefOnly("mcp.oauth.introspection_client_secret_ref", m.OAuth.IntrospectionClientSecretRef)
 	}
+	if m.TokenOverHTTPS && v.cfg.Instance.Mode != ModeServer {
+		v.add("mcp.token_over_https", "requires instance.mode server, got %q", v.cfg.Instance.Mode)
+	}
 	if !m.RemoteEnabled {
 		return
 	}

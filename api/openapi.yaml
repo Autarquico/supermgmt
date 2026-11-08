@@ -1445,6 +1445,12 @@ components:
         credential: {type: string}
         roles: {type: array, items: {type: string}}
         instance_mode: {type: string}
+        mcp:
+          type: object
+          description: Present only when the caller authenticated with an MCP client token.
+          required: [write_tools_enabled]
+          properties:
+            write_tools_enabled: {type: boolean}
     SSHKey:
       type: object
       required: [ref, version, authorized_key, fingerprint_sha256]
@@ -2216,6 +2222,7 @@ components:
         identity_id: {$ref: '#/components/schemas/ID'}
         name: {type: string}
         origin: {type: string, enum: [local, remote]}
+        over_https: {type: boolean, description: Present and true when the token of this local client is accepted on the HTTPS listener of a server.}
         state: {type: string, enum: [pending_token, active, deleted]}
         subject: {type: string, description: OAuth subject of a remote client.}
         client_id: {type: string, description: OAuth client_id of a remote client.}
@@ -2230,6 +2237,7 @@ components:
       properties:
         name: {type: string}
         origin: {type: string, enum: [local, remote]}
+        over_https: {type: boolean, description: Local clients only. Accept the token on the HTTPS listener of a server (mcp.token_over_https); required on a server, refused elsewhere.}
         subject: {type: string, description: Required for a remote client.}
         client_id: {type: string, description: Required for a remote client.}
     IssueMCPTokenRequest:

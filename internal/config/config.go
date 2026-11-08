@@ -157,6 +157,7 @@ type MCP struct {
 	OAuth                MCPOAuth `yaml:"oauth"`
 	AllowInteractiveExec bool     `yaml:"allow_interactive_exec"`
 	WriteToolsEnabled    bool     `yaml:"write_tools_enabled"`
+	TokenOverHTTPS       bool     `yaml:"token_over_https"`
 }
 
 // MCPOAuth configures remote MCP as an OAuth 2.0 protected resource (spec

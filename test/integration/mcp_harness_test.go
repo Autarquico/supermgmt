@@ -108,6 +108,7 @@ type mcpRigTransport string
 const (
 	mcpRigSocket    mcpRigTransport = "socket"
 	mcpRigInProcess mcpRigTransport = "in-process"
+	mcpRigHTTPS     mcpRigTransport = "https"
 	// mcpRigLocalUser is the human on the socket without a token. It only
 	// builds fixtures; it is never a subject of the matrix.
 	mcpRigLocalUser mcpRigTransport = "local-user"
@@ -125,6 +126,14 @@ type mcpRig struct {
 	ids    domain.IDGenerator
 	server *api.Server
 	writes bool
+
+	// httpsServer is the same services behind the HTTPS transport, which admits
+	// only the token of a client marked over_https (ADR-0044); httpsToken is that
+	// client's. It listens on plain TCP, since the transport is not TLS itself.
+	httpsServer *api.Server
+	httpsToken  string
+	https       *http.Client
+	services    api.Services
 
 	admin, mcp app.Caller
 	fixtures   map[string]string
@@ -162,6 +171,7 @@ func newMCPRigGranting(t *testing.T, writes bool, rules string) *mcpRig {
 	rig.seedInventory()
 	rig.server = rig.startServer(ctx, cfg)
 	rig.listen()
+	rig.listenHTTPS()
 	rig.seedPlan()
 	rig.seedGovernedResources()
 	rig.seedEnrollment()
@@ -374,12 +384,74 @@ func (rig *mcpRig) startServer(ctx context.Context, cfg app.Config) *api.Server 
 	})
 	mcpRigMust(t, err)
 
+	rig.services = svc
 	server, err := api.New(api.Options{
 		Services: svc, IDs: rig.ids, Identity: rig.admin.ID, DB: rig.db, Clock: rig.clock,
 		MCPResolver: mcpRigResolver{caller: rig.mcp},
 	})
 	mcpRigMust(t, err)
 	return server
+}
+
+// noHumanTokens is the HTTPS resolver of a rig where only MCP clients exist.
+type noHumanTokens struct{}
+
+func (noHumanTokens) Resolve(context.Context, string) (app.Caller, error) {
+	return app.Caller{}, smerr.New(smerr.CodeUnauthenticated, "", "unknown token")
+}
+
+// listenHTTPS serves the rig's services on the HTTPS transport with the real
+// resolver of marked clients, and registers the rig's mcp identity as one.
+func (rig *mcpRig) listenHTTPS() {
+	t := rig.t
+	t.Helper()
+	token, hash, err := auth.Mint(auth.KindMCP)
+	mcpRigMust(t, err)
+	rig.httpsToken = string(token)
+	rig.inTx(func(ctx context.Context, tx *database.Tx) error {
+		now, id := rig.clock.Now(), domain.ID(rig.mcp.Credential.ID)
+		err := database.CreateMCPClient(ctx, tx, database.MCPClient{
+			ID: id, IdentityID: rig.mcp.ID, Name: "https-rig-client", Origin: database.MCPOriginLocal, OverHTTPS: true,
+			State: database.MCPClientPendingToken, RequestedBy: rig.admin.ID, ApprovedAt: now, CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = database.IssueMCPToken(ctx, tx, id, hash, now, now.Add(90*24*time.Hour))
+		return err
+	})
+	rig.httpsServer, err = api.New(api.Options{
+		Services: rig.services, IDs: rig.ids, DB: rig.db, Clock: rig.clock,
+		Resolver:    noHumanTokens{},
+		MCPResolver: auth.MCPResolver{DB: rig.db, Clock: rig.clock, Enabled: true, OverHTTPS: true},
+	})
+	mcpRigMust(t, err)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	mcpRigMust(t, err)
+	go func() { _ = rig.httpsServer.Serve(listener) }()
+	t.Cleanup(func() { _ = rig.httpsServer.Shutdown(context.Background()) })
+	rig.https = &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+		},
+	}}
+	t.Cleanup(rig.https.CloseIdleConnections)
+}
+
+// servesVia is whether the transport serves the route: the HTTPS table has no
+// unixOnly route.
+func (rig *mcpRig) servesVia(via mcpRigTransport, route string) bool {
+	server := rig.server
+	if via == mcpRigHTTPS {
+		server = rig.httpsServer
+	}
+	method, pattern, _ := strings.Cut(route, " ")
+	for _, rt := range server.Routes() {
+		if rt.Method == method && rt.Pattern == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 // seedPlan stores a plan the mcp identity itself created, so submit has a
@@ -401,6 +473,14 @@ func (rig *mcpRig) seedPlan() {
 
 func (rig *mcpRig) listen() {
 	rig.t.Helper()
+	rig.socket = rig.serveSocket(rig.server)
+	rig.inproc = &http.Client{Transport: rig.server.InProcess(rig.mcp)}
+}
+
+// serveSocket serves a socket-transport server on a fresh Unix socket and
+// returns a client that dials it.
+func (rig *mcpRig) serveSocket(server *api.Server) *http.Client {
+	rig.t.Helper()
 	dir, err := os.MkdirTemp("", "smi")
 	mcpRigMust(rig.t, err)
 	rig.t.Cleanup(func() { _ = os.RemoveAll(dir) })
@@ -408,16 +488,16 @@ func (rig *mcpRig) listen() {
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
 	mcpRigMust(rig.t, err)
 	go func() {
-		_ = rig.server.Serve(api.RestrictToUID(listener, uint32(os.Getuid()), api.PeerUID, nil))
+		_ = server.Serve(api.RestrictToUID(listener, uint32(os.Getuid()), api.PeerUID, nil))
 	}()
-	rig.t.Cleanup(func() { _ = rig.server.Shutdown(context.Background()) })
-	rig.socket = &http.Client{Transport: &http.Transport{
+	rig.t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	client := &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", path)
 		},
 	}}
-	rig.t.Cleanup(rig.socket.CloseIdleConnections)
-	rig.inproc = &http.Client{Transport: rig.server.InProcess(rig.mcp)}
+	rig.t.Cleanup(client.CloseIdleConnections)
+	return client
 }
 
 // keyed is the header list of a mutation that takes an Idempotency-Key.
@@ -455,6 +535,9 @@ func (rig *mcpRig) sendCtx(ctx context.Context, via mcpRigTransport, method, pat
 	case mcpRigSocket:
 		client = rig.socket
 		req.Header.Set(wire.HeaderAuthorization, "Bearer "+mcpRigToken)
+	case mcpRigHTTPS:
+		client = rig.https
+		req.Header.Set(wire.HeaderAuthorization, "Bearer "+rig.httpsToken)
 	case mcpRigLocalUser:
 		client = rig.socket
 	}

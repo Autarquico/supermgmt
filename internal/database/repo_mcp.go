@@ -42,6 +42,7 @@ type MCPClient struct {
 	IdentityID        domain.ID
 	Name              string
 	Origin            MCPClientOrigin
+	OverHTTPS         bool
 	State             MCPClientState
 	RequestedBy       domain.ID
 	RegistrationJobID *domain.ID
@@ -55,7 +56,7 @@ type MCPClient struct {
 	DeletedAt         *time.Time
 }
 
-const mcpClientColumns = `id, identity_id, name, origin, state, requested_by, registration_job_id, approved_at,
+const mcpClientColumns = `id, identity_id, name, origin, over_https, state, requested_by, registration_job_id, approved_at,
 	token_issued_at, token_expires_at, revoked_at, last_used_at, created_at, updated_at, deleted_at`
 
 func scanMCPClient(row scanner) (MCPClient, error) {
@@ -66,7 +67,7 @@ func scanMCPClient(row scanner) (MCPClient, error) {
 		issuedMs, expiresMs, revokedMs   sql.NullInt64
 		lastUsedMs, deletedMs            sql.NullInt64
 	)
-	err := row.Scan(&c.ID, &c.IdentityID, &c.Name, &c.Origin, &c.State, &c.RequestedBy, &job, &approvedMs,
+	err := row.Scan(&c.ID, &c.IdentityID, &c.Name, &c.Origin, &c.OverHTTPS, &c.State, &c.RequestedBy, &job, &approvedMs,
 		&issuedMs, &expiresMs, &revokedMs, &lastUsedMs, &createdMs, &updatedMs, &deletedMs)
 	if err != nil {
 		return MCPClient{}, err
@@ -83,10 +84,10 @@ func scanMCPClient(row scanner) (MCPClient, error) {
 // identity or with the same name is CONFLICT; the identity must be an mcp one.
 func CreateMCPClient(ctx context.Context, q Querier, c MCPClient) error {
 	_, err := q.ExecContext(ctx, `
-		INSERT INTO mcp_clients (id, identity_id, name, origin, state, requested_by, registration_job_id,
+		INSERT INTO mcp_clients (id, identity_id, name, origin, over_https, state, requested_by, registration_job_id,
 		                         approved_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.IdentityID, c.Name, c.Origin, c.State, c.RequestedBy, nullID(c.RegistrationJobID),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.IdentityID, c.Name, c.Origin, c.OverHTTPS, c.State, c.RequestedBy, nullID(c.RegistrationJobID),
 		millis(c.ApprovedAt), millis(c.CreatedAt), millis(c.UpdatedAt))
 	if err != nil {
 		return conflictIfDuplicate(err, "mcp client")
@@ -104,6 +105,15 @@ func GetMCPClient(ctx context.Context, q Querier, id domain.ID) (MCPClient, erro
 func GetMCPClientByTokenHash(ctx context.Context, q Querier, tokenHash string) (MCPClient, error) {
 	c, err := scanMCPClient(q.QueryRowContext(ctx,
 		`SELECT `+mcpClientColumns+` FROM mcp_clients WHERE token_hash = ?`, tokenHash))
+	return c, getErr(err, "mcp client")
+}
+
+// GetHTTPSMCPClientByTokenHash is GetMCPClientByTokenHash restricted to clients
+// marked over_https: the token of an unmarked client is a miss, exactly as an
+// unknown token is.
+func GetHTTPSMCPClientByTokenHash(ctx context.Context, q Querier, tokenHash string) (MCPClient, error) {
+	c, err := scanMCPClient(q.QueryRowContext(ctx,
+		`SELECT `+mcpClientColumns+` FROM mcp_clients WHERE token_hash = ? AND over_https = 1`, tokenHash))
 	return c, getErr(err, "mcp client")
 }
 

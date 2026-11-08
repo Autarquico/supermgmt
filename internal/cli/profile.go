@@ -34,6 +34,17 @@ type target struct {
 	configFile string
 }
 
+// describe says where the target points, for a human.
+func (t target) describe() string {
+	switch {
+	case t.remote != nil:
+		return "profile " + t.name + " (" + t.remote.URL + ")"
+	case t.name != "":
+		return "profile " + t.name + " (local daemon)"
+	}
+	return "the local daemon"
+}
+
 // resolveTarget decides where a command goes. An explicit --config always
 // means the local instance it names. Otherwise the current profile decides,
 // and with none the local default applies, exactly as in M1.
@@ -46,13 +57,18 @@ func resolveTarget(cmd *cobra.Command, env []string) (target, error) {
 		return target{}, err
 	}
 	name, profile, ok := profiles.Active()
-	switch {
-	case !ok:
+	if !ok {
 		return target{}, nil
-	case profile.Type == client.ProfileLocal:
-		return target{name: name, configFile: profile.Config}, nil
 	}
-	return target{name: name, remote: &profile}, nil
+	return targetOf(name, profile), nil
+}
+
+// targetOf is where a command goes when it names profile.
+func targetOf(name string, profile client.Profile) target {
+	if profile.Type == client.ProfileLocal {
+		return target{name: name, configFile: profile.Config}
+	}
+	return target{name: name, remote: &profile}
 }
 
 // remoteClient builds the client of a remote profile with its stored token.
