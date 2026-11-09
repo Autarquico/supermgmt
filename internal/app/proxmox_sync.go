@@ -397,12 +397,6 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the cluster: %w", err)
 	}
-	if len(inventory.Nodes) == 0 && len(inventory.Guests) == 0 {
-		// A cluster always has a node: an answer with neither nodes nor guests
-		// is a token with no rights, and taking it for a healthy cluster would
-		// turn every object into "inaccessible".
-		return clusterRead{}, errNoRights
-	}
 	known, err := database.ListNodes(ctx, s.cfg.DB.Reader())
 	if err != nil {
 		return clusterRead{}, err
@@ -410,6 +404,9 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	access, err := readAccess(ctx, client, aclPathsToJudge(p, inventory, known))
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the token's permissions: %w", err)
+	}
+	if noRights(inventory, access) {
+		return clusterRead{}, errNoRights
 	}
 	return clusterRead{inventory: inventory, access: access, readAt: s.cfg.Clock.Now(), clockSkew: skew, clockSkewKnown: skewKnown}, nil
 }
@@ -431,6 +428,9 @@ func aclPathsToJudge(p domain.Provider, inventory proxmox.Inventory, known []dom
 			add(guestACLPath(g.Ref.VMID))
 		}
 	}
+	for _, n := range inventory.Nodes {
+		add(nodeACLPath(n.Name))
+	}
 	reported := reportedNatives(inventory)
 	for _, n := range known {
 		if n.ProviderID == p.ID && isDiscoveredKind(n.Kind) && !reported[n.NativeID] {
@@ -439,6 +439,23 @@ func aclPathsToJudge(p domain.Provider, inventory proxmox.Inventory, known []dom
 	}
 	return paths
 }
+
+// noRights is true for a token that may see no guest and may not audit any
+// node it is shown. PVE lists every node whatever the rights (stripped of its
+// statistics), so the answer alone cannot tell a healthy cluster from this.
+func noRights(inventory proxmox.Inventory, access map[string]proxmox.Privileges) bool {
+	if len(inventory.Guests) > 0 {
+		return false
+	}
+	for _, n := range inventory.Nodes {
+		if access[nodeACLPath(n.Name)].Has(privSysAudit) {
+			return false
+		}
+	}
+	return true
+}
+
+func nodeACLPath(name string) string { return "/nodes/" + name }
 
 func reportedNatives(inventory proxmox.Inventory) map[string]bool {
 	out := map[string]bool{}
@@ -723,6 +740,7 @@ type objectSpec struct {
 	status             string
 	metrics            wire.Metrics
 	powerPath          string // the ACL path that grants power over the guest; empty for cluster nodes
+	noStats            bool   // PVE stripped the statistics: record no metrics rather than zeros
 }
 
 func clusterNodeSpec(n proxmox.ClusterNode) objectSpec {
@@ -730,8 +748,10 @@ func clusterNodeSpec(n proxmox.ClusterNode) objectSpec {
 		native: "node/" + n.Name, name: n.Name, kind: proxmox.KindNode, status: n.Status,
 		metadata: map[string]any{"pve_node": n.Name, "type": "node", "maxcpu": n.MaxCPU, "maxmem": n.MaxMem},
 		metrics: wire.Metrics{
-			CPUPercent: n.CPU * 100, MemoryUsedBytes: n.Mem, MemoryTotalBytes: n.MaxMem, UptimeSeconds: n.Uptime,
+			CPUPercent: n.CPU * 100, MemoryUsedBytes: n.Mem, MemoryTotalBytes: n.MaxMem,
+			DiskUsedBytes: n.Disk, DiskTotalBytes: n.MaxDisk, UptimeSeconds: n.Uptime,
 		},
+		noStats: !n.HasStats(),
 	}
 }
 
@@ -771,7 +791,7 @@ func guestACLPath(vmid int) string { return "/vms/" + strconv.Itoa(vmid) }
 func visibilityPath(n domain.Node) string {
 	if n.Kind == proxmox.KindNode {
 		name, _ := n.Metadata["pve_node"].(string)
-		return "/nodes/" + name
+		return nodeACLPath(name)
 	}
 	vmid, _ := n.Metadata["vmid"].(float64) // metadata comes back from JSON
 	return guestACLPath(int(vmid))
@@ -789,9 +809,11 @@ func (t *treeSync) present(o objectSpec) error {
 	if err := database.TouchLastSeen(t.ctx, t.q, node.ID, at); err != nil {
 		return err
 	}
-	o.metrics.ObservedAt = at
-	if err := t.observe(t.ctx, t.q, nodeRef(node.ID), observationMetrics, o.metrics, at); err != nil {
-		return err
+	if !o.noStats {
+		o.metrics.ObservedAt = at
+		if err := t.observe(t.ctx, t.q, nodeRef(node.ID), observationMetrics, o.metrics, at); err != nil {
+			return err
+		}
 	}
 	if err := t.observe(t.ctx, t.q, nodeRef(node.ID), proxmox.ObservationStatus, ProxmoxStatus{Status: o.status, Presence: PresencePresent}, at); err != nil {
 		return err

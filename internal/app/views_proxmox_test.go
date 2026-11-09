@@ -165,3 +165,35 @@ func TestSetupViewShowsTheTLSServerNameOfAProxmoxSetup(t *testing.T) {
 		t.Errorf("a node set up without --proxmox shows %q", got)
 	}
 }
+
+func TestNodeViewsCarryTheMetricsAClusterSyncRecordedForNodesAndGuests(t *testing.T) {
+	c := newPVECluster(t)
+	c.doSync()
+
+	views := c.nodeViews()
+
+	for _, name := range []string{"pve1", "web"} {
+		m := views[name].Metrics
+		if m == nil || m.MemoryTotalBytes <= 0 || m.DiskTotalBytes <= 0 {
+			t.Errorf("%s metrics = %+v, want memory and disk from the sync", name, m)
+		}
+	}
+}
+
+func TestNodeViewsLeaveMetricsEmptyForANodeWhoseStatisticsPVEStripped(t *testing.T) {
+	c := newPVECluster(t)
+	c.fake.Revoke(pveTokenUser, "/", pveRole)
+	for _, path := range []string{"/vms", "/storage"} {
+		c.fake.Grant(pveTokenUser, path, pveRole, true)
+	}
+	c.doSync()
+
+	views := c.nodeViews()
+
+	if m := views["pve1"].Metrics; m != nil {
+		t.Errorf("pve1 metrics = %+v, want none: the token cannot audit the node", m)
+	}
+	if m := views["web"].Metrics; m == nil || m.MemoryTotalBytes <= 0 {
+		t.Errorf("web metrics = %+v", m)
+	}
+}

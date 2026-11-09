@@ -355,6 +355,18 @@ func TestProxmoxSyncATokenWithNoRightsFailsTheProviderAndKeepsWhatIsKnown(t *tes
 	}
 }
 
+func TestProxmoxSyncATokenThatMayOnlyAuditOneNodeIsNotATokenWithNoRights(t *testing.T) {
+	c := newPVECluster(t)
+	c.fake.Revoke(pveTokenUser, "/", pveRole)
+	c.fake.Grant(pveTokenUser, "/nodes/pve1", pveRole, true)
+
+	c.doSync()
+
+	if p := c.providerRow(); p.Status != ProviderStatusOK {
+		t.Errorf("provider status = %q, want ok", p.Status)
+	}
+}
+
 func TestProxmoxSyncAGuestOutsideTheTokensPathsIsInaccessibleNotAbsent(t *testing.T) {
 	c := newPVECluster(t)
 	c.doSync()

@@ -71,7 +71,13 @@ type ClusterNode struct {
 	CPU    float64
 	Mem    int64
 	Uptime int64
+	// MaxDisk and Disk are the node's root filesystem.
+	MaxDisk, Disk int64
 }
+
+// HasStats reports whether PVE sent the node's statistics. Without Sys.Audit
+// on the node PVE still lists it, online, but strips them.
+func (n ClusterNode) HasStats() bool { return n.MaxMem > 0 }
 
 // Guest is a VM or container from /cluster/resources (type vm).
 type Guest struct {

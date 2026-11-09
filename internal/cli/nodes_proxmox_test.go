@@ -307,16 +307,27 @@ func TestNodesPowerWaitFailsWithTheJobsFailureAndSaysWhenOutcomeIsUnknown(t *tes
 	}
 }
 
-func TestNodeNamesSharedByAnSSHNodeAndItsDiscoveredProxmoxNodeResolveToTheRightOne(t *testing.T) {
+func TestNodeNamesSharedByAnSSHNodeAndItsDiscoveredProxmoxNodeResolveToTheSSHNode(t *testing.T) {
 	ssh := wire.Node{ID: newTestID(), Name: "pve1", Kind: "ssh", Provider: "lab"}
 	pve := proxmoxNode("pve1", "pve1", wire.ProxmoxGuest{Type: "node", Status: "online"})
-	all := []wire.Node{pve, ssh}
 
-	if got, err := pickByName(all, "pve1", false); err != nil || got != ssh.ID {
+	if got, err := pickByName([]wire.Node{pve, ssh}, "pve1", false); err != nil || got != ssh.ID {
 		t.Errorf("pickByName = %v, %v; want the SSH node", got, err)
 	}
-	if got, err := pickByName(all, "pve1", true); err != nil || got != pve.ID {
-		t.Errorf("pickByName(guest) = %v, %v; want the Proxmox node", got, err)
+	if _, err := pickByName([]wire.Node{pve, ssh}, "pve1", true); err == nil {
+		t.Error("power picked the Proxmox node: it only takes guests")
+	}
+}
+
+func TestPowerPrefersTheGuestWhenAnSSHNodeSharesItsNameAndAGuestIsNotAmbiguousForOtherCommands(t *testing.T) {
+	ssh := wire.Node{ID: newTestID(), Name: "web", Kind: "ssh", Provider: "lab"}
+	guest := proxmoxNode("web", "pve1", wire.ProxmoxGuest{VMID: 100, Type: "qemu", Status: "running"})
+
+	if got, err := pickByName([]wire.Node{guest, ssh}, "web", true); err != nil || got != guest.ID {
+		t.Errorf("power = %v, %v; want the guest", got, err)
+	}
+	if _, err := pickByName([]wire.Node{guest, ssh}, "web", false); err == nil {
+		t.Error("a guest and an SSH node with the same name must stay ambiguous for node commands")
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 )
 
 func newNodesCmd(env []string) *cobra.Command {
@@ -323,7 +324,7 @@ func newNodesRemoveCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirm(cmd, fmt.Sprintf("Retire node %s?", node.Name), assumeYes); err != nil {
+			if err := confirm(cmd, fmt.Sprintf("Retire node %s (%s)?", node.Name, node.ID), assumeYes); err != nil {
 				return err
 			}
 			direct, err := api.RemoveNode(cmd.Context(), id, node.SpecRevision)
@@ -361,14 +362,14 @@ func newNodesProbeCmd(env []string) *cobra.Command {
 }
 
 // resolveNode accepts a node id or an exact node name. When the name is both
-// an SSH node and the Proxmox node discovered on that host, the SSH node is
+// an SSH node and the proxmox.node discovered on that host, the SSH node is
 // meant: it is the one commands operate on.
 func resolveNode(ctx context.Context, api *client.Client, ref string) (domain.ID, error) {
 	return resolveNamed(ctx, api, ref, false)
 }
 
 // resolveGuest is resolveNode for Proxmox power: a name shared by an SSH node
-// and a discovered Proxmox object means the Proxmox object.
+// and a Proxmox guest means the guest.
 func resolveGuest(ctx context.Context, api *client.Client, ref string) (domain.ID, error) {
 	return resolveNamed(ctx, api, ref, true)
 }
@@ -384,6 +385,16 @@ func resolveNamed(ctx context.Context, api *client.Client, ref string, guest boo
 	return pickByName(all, ref, guest)
 }
 
+// dropsFor reports whether n is ruled out when a name is shared. For a node
+// command the Proxmox node discovered on the host gives way to the SSH node;
+// for power only a guest (qemu or lxc) is a target.
+func dropsFor(n wire.Node, guest bool) bool {
+	if guest {
+		return n.Proxmox == nil || n.Kind == proxmox.KindNode
+	}
+	return n.Kind == proxmox.KindNode
+}
+
 func pickByName(all []wire.Node, ref string, guest bool) (domain.ID, error) {
 	var match []wire.Node
 	for _, n := range all {
@@ -391,8 +402,10 @@ func pickByName(all []wire.Node, ref string, guest bool) (domain.ID, error) {
 			match = append(match, n)
 		}
 	}
-	if preferred := slices.DeleteFunc(slices.Clone(match), func(n wire.Node) bool { return (n.Proxmox != nil) != guest }); len(preferred) == 1 {
-		match = preferred
+	if len(match) > 1 {
+		if preferred := slices.DeleteFunc(slices.Clone(match), func(n wire.Node) bool { return dropsFor(n, guest) }); len(preferred) == 1 {
+			match = preferred
+		}
 	}
 	switch len(match) {
 	case 0:

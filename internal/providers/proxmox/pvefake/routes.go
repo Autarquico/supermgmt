@@ -70,14 +70,14 @@ func (f *Fake) getResources(w http.ResponseWriter, c *call) {
 	rows := []map[string]any{}
 	if want == "" || want == "node" {
 		for _, name := range f.sortedNodes() {
-			if !f.allowed(c.tokenID, "/nodes/"+name, "Sys.Audit") {
-				continue
-			}
+			// Like PVE: every node is listed, and without Sys.Audit its statistics are stripped.
 			status := map[bool]string{true: "online", false: "offline"}[f.nodes[name].online]
-			rows = append(rows, map[string]any{
-				"id": "node/" + name, "type": "node", "node": name, "status": status,
-				"maxcpu": 8, "maxmem": 16 << 30, "cpu": 0.05, "mem": 4 << 30, "uptime": 86400,
-			})
+			row := map[string]any{"id": "node/" + name, "type": "node", "node": name, "status": status}
+			if f.allowed(c.tokenID, "/nodes/"+name, "Sys.Audit") {
+				row["maxcpu"], row["maxmem"], row["cpu"], row["mem"], row["uptime"] = 8, 16<<30, 0.05, 4<<30, 86400
+				row["maxdisk"], row["disk"] = 100<<30, 20<<30
+			}
+			rows = append(rows, row)
 		}
 	}
 	if want == "" || want == "vm" {

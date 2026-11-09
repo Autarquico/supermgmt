@@ -229,7 +229,7 @@ sm providers refresh pve             # discover now; exit 0 if it worked, 8 if t
 sm nodes list --tree                 # providers, cluster nodes and their guests, with CPU, memory, disk and storages
 ```
 
-`sm nodes get` shows the TLS server name `setup --proxmox` chose. A discovered Proxmox node is not probed over SSH (it has no SSH endpoint). When an SSH node and the Proxmox node discovered on the same host share a name, commands by that name mean the SSH node, and `sm nodes power` means the Proxmox node; use the id for the other.
+`sm nodes get` shows the TLS server name `setup --proxmox` chose. A discovered Proxmox node is not probed over SSH (it has no SSH endpoint). When an SSH node and the Proxmox node discovered on the same host share a name, commands by that name mean the SSH node; use the id for the Proxmox node. `sm nodes power` takes guests only, so a guest that shares a name with an SSH node is the one it means.
 
 `refresh` is `POST /api/v1/providers/{id}/refresh`, authorized as `provider.read` and rate limited per caller and provider (6 per minute, burst 3). It changes nothing on the cluster, only what SuperMgmt knows. In the TUI the palette has `refresh proxmox [provider]`. `sm doctor` has a `providers` check: `ok` after a recent successful sync, `warn` while the first sync is pending or when none succeeded for three intervals, `fail` when the last sync failed; the appliance installer waits for it.
 
