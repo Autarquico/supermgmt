@@ -1,0 +1,30 @@
+# The Compose project `shop` of the node fixture (spec app-panels): two services, one with a healthcheck, a named
+# volume, a published port and a secret in the environment. Its image is imported from the busybox rootfs baked
+# into the node image, so starting it pulls nothing.
+name: shop
+services:
+  web:
+    image: sm-shop-base:local
+    pull_policy: never
+    restart: unless-stopped
+    command: ["sh", "-c", "touch /tmp/ready; echo 'web ready'; exec httpd -f -p 8080 -h /tmp"]
+    environment:
+      DB_PASSWORD: sm-fixture-s3cret-value
+      APP_MODE: production
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 1s
+      timeout: 1s
+      retries: 2
+    depends_on:
+      - db
+  db:
+    image: sm-shop-base:local
+    pull_policy: never
+    command: ["sh", "-c", "echo 'db started'; exec sleep infinity"]
+    volumes:
+      - shop-data:/data
+volumes:
+  shop-data: {}

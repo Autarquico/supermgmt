@@ -1,0 +1,12 @@
+[Unit]
+Description=SuperMgmt fixture Compose project shop (started by the tests that read apps; pulls nothing)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=180
+Environment=HOME=/root
+ExecStartPre=/bin/sh -c 'docker image inspect sm-shop-base:local >/dev/null 2>&1 || tar -C /usr/share/sm-fixture/busybox-rootfs -c . | docker import - sm-shop-base:local'
+ExecStart=/usr/bin/docker compose -f /usr/share/sm-fixture/shop/compose.yaml up --detach --wait

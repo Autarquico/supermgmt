@@ -8,6 +8,9 @@ ADD --checksum=sha256:732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171e
     https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-aarch64 /docker-compose
 FROM compose-${TARGETARCH} AS compose
 
+# The rootfs of the demo container's image, so the fixture's Compose project needs no pull at test time.
+FROM busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e AS busybox
+
 # SuperMgmt M1 node fixture (ADR-0009): Debian + systemd PID 1 + sshd + sudo + docker.
 # It has a bootstrap account `admin` with NOPASSWD sudo and NO `supermgmt` user:
 # `node.setup` must create that user. Host keys and authorized_keys are injected
@@ -34,6 +37,8 @@ RUN useradd --create-home --shell /bin/bash admin \
 COPY --from=compose --chmod=0755 /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 COPY sshd_fixture.conf /etc/ssh/sshd_config.d/10-fixture.conf
 COPY units/ /etc/systemd/system/
+COPY --from=busybox / /usr/share/sm-fixture/busybox-rootfs/
+COPY shop/ /usr/share/sm-fixture/shop/
 
 # sshd is started by the helper once it has injected the host keys.
 RUN systemctl disable ssh.service ssh.socket \
