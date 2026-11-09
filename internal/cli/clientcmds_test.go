@@ -241,6 +241,27 @@ func TestServiceRestartSubmitsAJobAndSaysWhenApprovalIsNeeded(t *testing.T) {
 	}
 }
 
+func TestServiceRestartAcceptsUnitAtNodeAndYes(t *testing.T) {
+	node, svc := newTestID(), newTestID()
+	f := newFakeAPI(t, router(map[string]http.HandlerFunc{
+		"GET " + wire.PathNodes: func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Page[wire.Node]{Items: []wire.Node{{ID: node, Name: "web1"}}})
+		},
+		"GET " + wire.Path(wire.PathNodeServices, string(node)): func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Page[wire.Service]{Items: []wire.Service{{ID: newTestID(), Name: "cron"}, {ID: svc, Name: "nginx"}}})
+		},
+		"POST " + wire.Path(wire.PathServiceRestart, string(svc)): func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 202, wire.Submission{Job: wire.Job{ID: newTestID(), Type: "service.restart", State: domain.JobQueued}})
+		},
+	}))
+	if r := f.run("services", "restart", "nginx@web1", "--yes"); r.code != 0 {
+		t.Errorf("code=%d out=%q err=%q", r.code, r.stdout, r.stderr)
+	}
+	if r := f.run("services", "restart", "apache@web1"); r.code == 0 || !strings.Contains(r.stderr, `no service named "apache"`) {
+		t.Errorf("unknown unit: code=%d err=%q", r.code, r.stderr)
+	}
+}
+
 func TestServicesLogsPrintsLinesAndFlagsTruncation(t *testing.T) {
 	id := newTestID()
 	f := newFakeAPI(t, router(map[string]http.HandlerFunc{

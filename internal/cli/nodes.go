@@ -335,7 +335,7 @@ func newNodesRemoveCmd(env []string) *cobra.Command {
 }
 
 func newNodesProbeCmd(env []string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "probe <node>",
 		Short: "Probe a node now (an audited job)",
 		Args:  cobra.ExactArgs(1),
@@ -355,6 +355,8 @@ func newNodesProbeCmd(env []string) *cobra.Command {
 			return submissionOutput(cmd, submission)
 		},
 	}
+	cmd.Flags().Bool("yes", false, "accepted for scripts; a probe asks no confirmation")
+	return cmd
 }
 
 // resolveNode accepts a node id or an exact node name.
