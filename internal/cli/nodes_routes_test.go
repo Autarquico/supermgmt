@@ -152,8 +152,10 @@ func TestNodesRoutesAllAsksForRemovedRoutesToo(t *testing.T) {
 	}
 }
 
+// The retired deployment commands stay retired. `sm apps list|show|logs` are the unrelated reads of the app
+// panels, so the `apps` group exists and refuses every other subcommand.
 func TestTheDeploymentCommandsAreGone(t *testing.T) {
-	for _, args := range [][]string{{"apps", "list"}, {"apps", "expose"}, {"deploy"}, {"rollback"}, {"deployments", "list"}} {
+	for _, args := range [][]string{{"apps", "expose"}, {"apps", "move"}, {"apps", "moves"}, {"deploy"}, {"rollback"}, {"deployments", "list"}} {
 		if r := run(args...); r.code != 2 {
 			t.Errorf("sm %s still exists", strings.Join(args, " "))
 		}

@@ -76,6 +76,60 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+### sm apps
+
+List the apps (Compose projects) on the nodes, show one and read its logs
+
+```text
+sm apps
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm apps list
+
+List the apps of every node, or of one (id or name)
+
+List the apps with their state, restarts, current CPU and memory and recent error count. The node is read
+live; when it cannot be, the last discovery is shown and marked stale. A node whose Docker is not accessible
+says which command a person runs to allow it. The error count needs permission to read logs.
+
+```text
+sm apps list [<node>]
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm apps logs
+
+Show the recent logs of an app's component, follow them or search them
+
+Credentials are removed from the lines before they leave the daemon. --follow keeps reading until it is
+interrupted and says when lines were lost between two reads. --search looks for a term in a bounded window
+of recent lines and says which window it covered; the term is never sent to the node.
+
+```text
+sm apps logs <node> <project> <component> [flags]
+```
+
+Flags:
+
+- `--follow` (bool): keep reading new lines
+- `--lines` (int): number of lines (default 200, max 1000)
+- `--search` (string): only lines with this text, among the recent ones
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm apps show
+
+Show an app: components, ports, volumes and configuration (secrets redacted)
+
+```text
+sm apps show <node> <project>
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 ### sm assistant
 
 Talk to your own Claude Code, limited to SuperMgmt's MCP tools

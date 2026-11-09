@@ -46,6 +46,8 @@ tags:
     description: Nodes and interactive sessions.
   - name: services
     description: Runtime-native services.
+  - name: apps
+    description: Compose projects on the nodes, read live.
   - name: events
     description: The audit event log and its stream.
   - name: keys
@@ -1206,6 +1208,101 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfNodeRoute'}}}]}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/apps:
+    get:
+      operationId: listApps
+      summary: The apps (Compose projects) of every node the caller may read service on.
+      description: Nodes the caller may not read are left out. Each node is read live; one that cannot be read carries its problem and its last discovery, stale.
+      tags: [apps]
+      x-supermgmt-route: action:service.read
+      parameters:
+        - $ref: '#/components/parameters/WithStats'
+        - $ref: '#/components/parameters/WithErrors'
+      responses:
+        '200':
+          description: The apps of each node.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfNodeApps'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/apps:
+    get:
+      operationId: listNodeApps
+      summary: The apps of a node and its other services.
+      description: Read live; when the node cannot be reached, or Docker is not accessible, problem says so and the apps are the last discovery, stale. The error counts need service.logs and are absent without it.
+      tags: [apps]
+      x-supermgmt-route: action:service.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/WithStats'
+        - $ref: '#/components/parameters/WithErrors'
+      responses:
+        '200':
+          description: The apps.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/NodeApps'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/apps/{project}:
+    get:
+      operationId: getNodeApp
+      summary: One app, with the configuration its containers report.
+      description: Environment values are masked by key, and credentials in commands, entrypoints and label values are removed, for every caller.
+      tags: [apps]
+      x-supermgmt-route: action:service.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/WithStats'
+        - $ref: '#/components/parameters/WithErrors'
+      responses:
+        '200':
+          description: The app.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/App'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/apps/{project}/stats:
+    get:
+      operationId: getNodeAppStats
+      summary: One sample of the resource use of an app.
+      description: One sample per node at a time is shared by the callers that ask together. Nothing is stored.
+      tags: [apps]
+      x-supermgmt-route: action:service.read
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Project'
+      responses:
+        '200':
+          description: The sample.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/AppStats'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/apps/{project}/logs:
+    get:
+      operationId: getNodeAppLogs
+      summary: Logs of one component of an app, credentials removed.
+      description: |
+        Without cursor or search, the last lines. With a cursor from a previous answer, the lines after it; `gap` says
+        lines were lost between the two reads. With a search, the matching lines among a bounded window of recent
+        ones, which the answer states; the term never reaches the node.
+      tags: [apps]
+      x-supermgmt-route: action:service.logs
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Project'
+        - {name: component, in: query, required: true, description: The Compose service name of the component., schema: {type: string, minLength: 1}}
+        - {name: lines, in: query, required: false, description: Number of lines; 0 or absent means 200., schema: {type: integer, minimum: 0, maximum: 1000}}
+        - {name: cursor, in: query, required: false, description: Opaque cursor of a previous answer; does not combine with search., schema: {type: string}}
+        - {name: search, in: query, required: false, description: Text to look for, case-insensitively, after credentials are removed., schema: {type: string, maxLength: 256}}
+      responses:
+        '200':
+          description: The log lines.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/AppLogs'}}}]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/mcp/clients:
     get:
       operationId: listMCPClients
@@ -1310,6 +1407,24 @@ components:
       required: true
       description: Canonical hostname of the route.
       schema: {type: string, minLength: 1}
+    Project:
+      name: project
+      in: path
+      required: true
+      description: Compose project name; lowercase letters, digits, - and _.
+      schema: {type: string, pattern: '^[a-z0-9][a-z0-9_-]*$', maxLength: 128}
+    WithStats:
+      name: stats
+      in: query
+      required: false
+      description: Also take a resource sample (shared with concurrent callers; stored nowhere).
+      schema: {type: boolean}
+    WithErrors:
+      name: errors
+      in: query
+      required: false
+      description: Also count recent error lines per component; needs service.logs and is absent without it.
+      schema: {type: boolean}
     TunnelEnrollmentName:
       name: name
       in: path
@@ -2214,6 +2329,129 @@ components:
       required: [items, next_cursor]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/NodeRoute'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    ResourceUse:
+      type: object
+      description: CPU and memory at the moment of a sample.
+      required: [cpu_percent, mem_used_bytes, mem_limit_bytes]
+      properties:
+        cpu_percent: {type: number}
+        mem_used_bytes: {type: integer, minimum: 0}
+        mem_limit_bytes: {type: integer, minimum: 0}
+    AppMount:
+      type: object
+      required: [type, source, destination, read_write]
+      properties:
+        type: {type: string}
+        name: {type: string}
+        source: {type: string}
+        destination: {type: string}
+        read_write: {type: boolean}
+    AppConfig:
+      type: object
+      description: The configuration the runtime reports, redacted before it leaves the daemon.
+      required: [restart_policy, env, command, entrypoint, labels]
+      properties:
+        restart_policy: {type: string}
+        env: {type: array, items: {type: string}, description: 'KEY=VALUE with the value masked by key and by content.'}
+        command: {type: array, items: {type: string}}
+        entrypoint: {type: array, items: {type: string}}
+        labels: {type: object, additionalProperties: {type: string}}
+    AppComponent:
+      type: object
+      description: One container of an app. restart_count is the lifetime count, not a state; the live fields are absent from a stale answer; recent_errors is absent, not zero, without service.logs.
+      required: [name, image, status, health]
+      properties:
+        name: {type: string}
+        service_id: {$ref: '#/components/schemas/ID'}
+        image: {type: string}
+        status: {type: string}
+        health: {type: string}
+        started_at: {type: string}
+        restart_count: {type: integer}
+        recent_errors: {type: integer}
+        stats: {$ref: '#/components/schemas/ResourceUse'}
+        ports: {type: array, items: {type: string}}
+        mounts: {type: array, items: {$ref: '#/components/schemas/AppMount'}}
+        config: {$ref: '#/components/schemas/AppConfig'}
+    App:
+      type: object
+      description: A Compose project of a node. state is degraded when any component is not running or is unhealthy. A stale app is the last discovery, read_at being when it was seen.
+      required: [project, node_id, node, state, read_at, stale, components]
+      properties:
+        project: {type: string}
+        node_id: {$ref: '#/components/schemas/ID'}
+        node: {type: string}
+        state: {type: string, enum: [running, degraded]}
+        restart_count: {type: integer}
+        recent_errors: {type: integer}
+        stats: {$ref: '#/components/schemas/ResourceUse'}
+        stats_at: {$ref: '#/components/schemas/Timestamp'}
+        read_at: {$ref: '#/components/schemas/Timestamp'}
+        stale: {type: boolean}
+        components: {type: array, items: {$ref: '#/components/schemas/AppComponent'}}
+    OtherService:
+      type: object
+      description: A service that belongs to no app.
+      required: [service_id, name, kind, status, health]
+      properties:
+        service_id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        kind: {type: string}
+        status: {type: string}
+        health: {type: string}
+    NodeApps:
+      type: object
+      required: [node_id, node, apps, other_services]
+      properties:
+        node_id: {$ref: '#/components/schemas/ID'}
+        node: {type: string}
+        problem: {type: string, enum: [docker_unavailable, node_unreachable], description: Why the apps could not be read live; they are then the last discovery, stale.}
+        hint: {type: string, description: 'For docker_unavailable, the command a person runs to allow Docker access: sm nodes setup <node> --docker-access.'}
+        apps: {type: array, items: {$ref: '#/components/schemas/App'}}
+        other_services: {type: array, items: {$ref: '#/components/schemas/OtherService'}}
+    ComponentUse:
+      type: object
+      required: [name, use]
+      properties:
+        name: {type: string}
+        use: {$ref: '#/components/schemas/ResourceUse'}
+    AppStats:
+      type: object
+      description: One sample, taken at sampled_at and stored nowhere.
+      required: [project, node_id, sampled_at, total, components]
+      properties:
+        project: {type: string}
+        node_id: {$ref: '#/components/schemas/ID'}
+        sampled_at: {$ref: '#/components/schemas/Timestamp'}
+        total: {$ref: '#/components/schemas/ResourceUse'}
+        components: {type: array, items: {$ref: '#/components/schemas/ComponentUse'}}
+    LogWindow:
+      type: object
+      description: What a search covered.
+      required: [lines]
+      properties:
+        lines: {type: integer}
+        from: {$ref: '#/components/schemas/Timestamp'}
+        to: {$ref: '#/components/schemas/Timestamp'}
+    AppLogs:
+      type: object
+      description: Log lines of a component, credentials removed, keeping Docker's timestamp prefix. A search carries window and no cursor.
+      required: [project, component, lines, gap, truncated, collected_at]
+      properties:
+        project: {type: string}
+        component: {type: string}
+        lines: {type: array, items: {type: string}}
+        cursor: {type: string, description: Opaque; pass it back to read what came after.}
+        gap: {type: boolean, description: Lines were lost between two reads.}
+        truncated: {type: boolean}
+        window: {$ref: '#/components/schemas/LogWindow'}
+        collected_at: {$ref: '#/components/schemas/Timestamp'}
+    PageOfNodeApps:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/NodeApps'}}
         next_cursor: {type: string, description: Opaque; empty on the last page.}
     MCPClient:
       type: object

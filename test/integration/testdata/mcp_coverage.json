@@ -12,6 +12,18 @@
   "approvals": {
    "tool": "infra_list_approvals"
   },
+  "apps": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "apps list": {
+   "tool": "infra_list_apps"
+  },
+  "apps logs": {
+   "tool": "infra_search_app_logs"
+  },
+  "apps show": {
+   "tool": "infra_get_app"
+  },
   "assistant": {
    "reason": "local-only: runs on this machine, not through the control plane (it is an MCP host: it launches the operator's own claude with the MCP tools)"
   },
@@ -311,6 +323,9 @@
   "GET /api/v1/approvals": {
    "tool": "infra_list_approvals"
   },
+  "GET /api/v1/apps": {
+   "tool": "infra_list_apps"
+  },
   "GET /api/v1/backups": {
    "tool": "infra_list_backups"
   },
@@ -340,6 +355,18 @@
   },
   "GET /api/v1/nodes/{id}": {
    "tool": "infra_get_node"
+  },
+  "GET /api/v1/nodes/{id}/apps": {
+   "tool": "infra_list_apps"
+  },
+  "GET /api/v1/nodes/{id}/apps/{project}": {
+   "tool": "infra_get_app"
+  },
+  "GET /api/v1/nodes/{id}/apps/{project}/logs": {
+   "tool": "infra_search_app_logs"
+  },
+  "GET /api/v1/nodes/{id}/apps/{project}/stats": {
+   "tool": "infra_get_app_stats"
   },
   "GET /api/v1/nodes/{id}/connect-info": {
    "reason": "interactive node session (node.connect), forbidden to MCP identities"

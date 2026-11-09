@@ -12,6 +12,8 @@ github.com/autarquico/supermgmt/internal/api.readInput  FuzzReadInput
 github.com/autarquico/supermgmt/internal/api.reading  exempt: route registration helper, not a parser
 github.com/autarquico/supermgmt/internal/api.routeSet.read  exempt: route registration helper, not a parser
 github.com/autarquico/supermgmt/internal/api.routeSet.reads  exempt: route registration helper, not a parser
+github.com/autarquico/supermgmt/internal/api/wire.ParseAppLogQuery  FuzzParseQueries
+github.com/autarquico/supermgmt/internal/api/wire.ParseAppsQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseEventQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseJobQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseLogQuery  FuzzParseQueries
@@ -20,12 +22,14 @@ github.com/autarquico/supermgmt/internal/api/wire.ParsePageQuery  FuzzParseQueri
 github.com/autarquico/supermgmt/internal/api/wire.ParseUnitSpec  FuzzParseUnitSpec
 github.com/autarquico/supermgmt/internal/app.DecodePendingAudit  FuzzDecodePendingAudit
 github.com/autarquico/supermgmt/internal/app.HoldService.Load  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.Inventory.readNodeApps  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.Inventory.readableNode  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.ProxmoxEvidence.Collect  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.ProxmoxSync.read  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.ProxmoxSync.readInventory  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.activeKEK  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.canonicalHostname  FuzzRouteHostname
+github.com/autarquico/supermgmt/internal/app.decodeLogCursor  FuzzAppLogCursor
 github.com/autarquico/supermgmt/internal/app.decodeObservation  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.fromParams  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.loadActor  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
@@ -264,7 +268,12 @@ github.com/autarquico/supermgmt/internal/pveid.rowOf  FuzzParsePVEList
 github.com/autarquico/supermgmt/internal/pveid.unmarshalRows  FuzzParsePVEList
 github.com/autarquico/supermgmt/internal/runtimes/docker.decodeInspect  FuzzDecodeInspect
 github.com/autarquico/supermgmt/internal/runtimes/docker.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/docker.parseMemUsage  FuzzParseSize
+github.com/autarquico/supermgmt/internal/runtimes/docker.parsePercent  FuzzParseStats
+github.com/autarquico/supermgmt/internal/runtimes/docker.parseSize  FuzzParseSize
+github.com/autarquico/supermgmt/internal/runtimes/docker.parseStats  FuzzParseStats
 github.com/autarquico/supermgmt/internal/runtimes/docker.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/docker.readLogs  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/systemd.ValidateConnectorToken  FuzzValidateConnectorToken
 github.com/autarquico/supermgmt/internal/runtimes/systemd.keyringFingerprint  FuzzKeyringFingerprint
 github.com/autarquico/supermgmt/internal/runtimes/systemd.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions

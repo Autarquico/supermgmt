@@ -110,7 +110,8 @@ func TestAServerServesTheNodeRoutes(t *testing.T) {
 	if status, body := r.call(http.MethodGet, wire.PathNodeRoutesAll, token, ""); status != http.StatusOK {
 		t.Errorf("GET %s = %d %s", wire.PathNodeRoutesAll, status, body)
 	}
-	for _, path := range []string{"/api/v1/apps", "/api/v1/deployments", "/api/v1/github/webhook"} {
+	// /api/v1/apps is the read of Compose projects (spec app-panels), not the retired app routes.
+	for _, path := range []string{"/api/v1/deployments", "/api/v1/github/webhook"} {
 		if status, _ := r.call(http.MethodGet, path, token, ""); status != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", path, status)
 		}
