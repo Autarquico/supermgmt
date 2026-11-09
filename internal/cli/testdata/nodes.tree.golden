@@ -2,9 +2,11 @@ lab
 ├─ old-box  ssh  unreachable (stale)  managed
 └─ web-1    ssh  reachable            managed
 pve
-├─ pve1      node      online   discovered
-│  ├─ web    qemu/100  running  discovered
-│  └─ base   qemu/300  stopped  discovered  [template]
-└─ pve2      node      online   discovered
-   ├─ db     lxc/200   unknown  discovered  [absent]
-   └─ cache  lxc/210   unknown  discovered  [inaccessible]
+├─ pve1      node         online   discovered  12%  6.0G/32.0G   12.0G/100.0G
+│  ├─ local  storage/dir                                         12.0G/100.0G
+│  ├─ ceph   storage/rbd                                         1.0T/2.0T  [shared]
+│  ├─ web    qemu/100     running  discovered  3%   512.0M/2.0G  4.0G/32.0G
+│  └─ base   qemu/300     stopped  discovered                      [template]
+└─ pve2      node         online   discovered
+   ├─ db     lxc/200      unknown  discovered        [absent]
+   └─ cache  lxc/210      unknown  discovered        [inaccessible]

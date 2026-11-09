@@ -71,6 +71,7 @@ func decodeInventory(data []byte) (Inventory, error) {
 			inv.Nodes = append(inv.Nodes, ClusterNode{
 				Name: r.Node, Status: r.Status, MaxCPU: r.MaxCPU.int(), MaxMem: r.MaxMem.int64(),
 				CPU: float64(r.CPU), Mem: r.Mem.int64(), Uptime: r.Uptime.int64(),
+				MaxDisk: r.MaxDisk.int64(), Disk: r.Disk.int64(),
 			})
 		case string(GuestQEMU), string(GuestLXC):
 			if r.VMID <= 0 || !nodeNamePattern.MatchString(r.Node) {

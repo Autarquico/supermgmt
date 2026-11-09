@@ -44,6 +44,7 @@ var schemaTypes = map[string]reflect.Type{
 	"Node":             reflect.TypeFor[wire.Node](),
 	"Endpoint":         reflect.TypeFor[wire.Endpoint](),
 	"ProxmoxGuest":     reflect.TypeFor[wire.ProxmoxGuest](),
+	"ProxmoxStorage":   reflect.TypeFor[wire.ProxmoxStorage](),
 	"Capability":       reflect.TypeFor[wire.Capability](),
 	"Address":          reflect.TypeFor[wire.Address](),
 	"Connection":       reflect.TypeFor[wire.Connection](),

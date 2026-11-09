@@ -133,8 +133,10 @@ func TestPrivilegesAreEnforcedPerPath(t *testing.T) {
 	blind := f.AddToken("blind@pve", "t", true)
 	f.Grant("blind@pve", "/", "SMPower", true)
 	f.Grant("blind@pve!t", "/", "SMPower", true)
-	if got := newProbe(t, f, blind).do(t, "GET", "/cluster/resources", nil); len(got.body["data"].([]any)) != 0 {
-		t.Errorf("a token without audit privileges sees %v", got.body["data"])
+	for _, row := range newProbe(t, f, blind).do(t, "GET", "/cluster/resources", nil).body["data"].([]any) {
+		if r := row.(map[string]any); r["type"] != "node" || r["maxmem"] != nil || r["status"] != "online" {
+			t.Errorf("a token without audit privileges sees %v: want only nodes, online, without statistics", r)
+		}
 	}
 }
 

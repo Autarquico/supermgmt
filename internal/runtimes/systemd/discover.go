@@ -20,6 +20,10 @@ var defaultExcludes = []string{
 	"modprobe@*", "dpkg-*", "e2scrub*", "blk-availability", "lvm2-*",
 }
 
+// operatorUnits are the systemd-* services an operator does act on, so the
+// default excludes leave them visible.
+var operatorUnits = []string{"systemd-timesyncd", "systemd-resolved", "systemd-networkd", "systemd-logind"}
+
 // Discover lists loaded service units. Include and Exclude are shell globs on
 // the unit name, with or without the `.service` suffix; Exclude wins.
 func (Adapter) Discover(ctx context.Context, ex transport.Executor, f runtimes.Filter) (runtimes.Discovered, error) {
@@ -88,12 +92,12 @@ func parseUnits(out string) []unitLine {
 	return units
 }
 
-type selection struct{ include, exclude []string }
+type selection struct{ include, exclude, machinery []string }
 
 func newSelection(f runtimes.Filter) (selection, error) {
 	s := selection{include: f.Include, exclude: f.Exclude}
 	if len(f.Include) == 0 {
-		s.exclude = append(append([]string{}, defaultExcludes...), f.Exclude...)
+		s.machinery = defaultExcludes
 	}
 	for _, pattern := range append(append([]string{}, s.include...), s.exclude...) {
 		if _, err := path.Match(pattern, ""); err != nil {
@@ -105,6 +109,9 @@ func newSelection(f runtimes.Filter) (selection, error) {
 
 func (s selection) admits(unit string) bool {
 	if matchesAny(s.exclude, unit) {
+		return false
+	}
+	if matchesAny(s.machinery, unit) && !matchesAny(operatorUnits, unit) {
 		return false
 	}
 	return len(s.include) == 0 || matchesAny(s.include, unit)

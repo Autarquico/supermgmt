@@ -90,7 +90,10 @@ func TestFixturesSystemd_DiscoveryLogsAndTrust(t *testing.T) {
 			}
 		}
 		for _, name := range names {
-			if strings.HasPrefix(name, "systemd-") {
+			operatorUnit := slices.Contains([]string{
+				"systemd-timesyncd.service", "systemd-resolved.service", "systemd-networkd.service", "systemd-logind.service",
+			}, name)
+			if strings.HasPrefix(name, "systemd-") && !operatorUnit {
 				t.Errorf("default excludes must hide %s", name)
 			}
 		}

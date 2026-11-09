@@ -127,7 +127,7 @@ func (r *Refresher) Pass(ctx context.Context) error {
 	}
 	now := r.cfg.Clock.Now()
 	for _, n := range nodes {
-		if n.ManagementState == domain.ManagementRetired {
+		if n.ManagementState == domain.ManagementRetired || !hasSSHEndpoint(n) {
 			continue
 		}
 		scope, due := r.due(n.ID, now)

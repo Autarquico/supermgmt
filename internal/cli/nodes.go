@@ -20,6 +20,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/providers/proxmox"
 )
 
 func newNodesCmd(env []string) *cobra.Command {
@@ -168,6 +169,9 @@ func writeNode(w io.Writer, n wire.Node) error {
 		{"setup", setupSummary(n.Setup)},
 		{"last seen", formatTimePtr(n.LastSeenAt)},
 		{"spec revision", fmt.Sprint(n.SpecRevision)},
+	}
+	if n.Setup != nil && n.Setup.Proxmox {
+		pairs = append(pairs, [2]string{"proxmox tls name", orDash(n.Setup.ProxmoxTLSServerName)})
 	}
 	if n.Connection.LastError != "" {
 		pairs = append(pairs, [2]string{"last error", n.Connection.LastError})
@@ -323,7 +327,7 @@ func newNodesRemoveCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirm(cmd, fmt.Sprintf("Retire node %s?", node.Name), assumeYes); err != nil {
+			if err := confirm(cmd, fmt.Sprintf("Retire node %s (%s)?", node.Name, node.ID), assumeYes); err != nil {
 				return err
 			}
 			direct, err := api.RemoveNode(cmd.Context(), id, node.SpecRevision)
@@ -362,8 +366,20 @@ func newNodesProbeCmd(env []string) *cobra.Command {
 	return cmd
 }
 
-// resolveNode accepts a node id or an exact node name.
+// resolveNode accepts a node id or an exact node name. When the name is both
+// an SSH node and the proxmox.node discovered on that host, the SSH node is
+// meant: it is the one commands operate on.
 func resolveNode(ctx context.Context, api *client.Client, ref string) (domain.ID, error) {
+	return resolveNamed(ctx, api, ref, false)
+}
+
+// resolveGuest is resolveNode for Proxmox power: a name shared by an SSH node
+// and a Proxmox guest means the guest.
+func resolveGuest(ctx context.Context, api *client.Client, ref string) (domain.ID, error) {
+	return resolveNamed(ctx, api, ref, true)
+}
+
+func resolveNamed(ctx context.Context, api *client.Client, ref string, guest bool) (domain.ID, error) {
 	if id, err := domain.ParseID(ref); err == nil {
 		return id, nil
 	}
@@ -371,10 +387,29 @@ func resolveNode(ctx context.Context, api *client.Client, ref string) (domain.ID
 	if err != nil {
 		return "", err
 	}
+	return pickByName(all, ref, guest)
+}
+
+// dropsFor reports whether n is ruled out when a name is shared. For a node
+// command the Proxmox node discovered on the host gives way to the SSH node;
+// for power only a guest (qemu or lxc) is a target.
+func dropsFor(n wire.Node, guest bool) bool {
+	if guest {
+		return n.Proxmox == nil || n.Kind == proxmox.KindNode
+	}
+	return n.Kind == proxmox.KindNode
+}
+
+func pickByName(all []wire.Node, ref string, guest bool) (domain.ID, error) {
 	var match []wire.Node
 	for _, n := range all {
 		if n.Name == ref {
 			match = append(match, n)
+		}
+	}
+	if len(match) > 1 {
+		if preferred := slices.DeleteFunc(slices.Clone(match), func(n wire.Node) bool { return dropsFor(n, guest) }); len(preferred) == 1 {
+			match = preferred
 		}
 	}
 	switch len(match) {
@@ -416,7 +451,8 @@ func listNodeTree(cmd *cobra.Command, api *client.Client, q wire.NodeQuery) erro
 
 // writeNodeTree groups nodes by provider. Under a Proxmox provider each
 // cluster node holds the guests that run on it; every other node stands alone.
-// Rows are NAME, TYPE, STATE, MANAGEMENT and marks.
+// Rows are NAME, TYPE, STATE, MANAGEMENT, CPU, MEMORY, DISK and marks; a cluster
+// node also lists its storages, with their usage under DISK.
 func writeNodeTree(w io.Writer, nodes []wire.Node) error {
 	byProvider := map[string][]wire.Node{}
 	for _, n := range nodes {
@@ -450,7 +486,7 @@ func providerTree(nodes []wire.Node) []string {
 	}
 	slices.SortFunc(standalone, func(a, b wire.Node) int { return strings.Compare(a.Name, b.Name) })
 	for _, n := range standalone {
-		branches = append(branches, []string{treeRow(n.Name, n.Kind, string(n.Reachability)+staleSuffix(n.Stale), string(n.ManagementState), "")})
+		branches = append(branches, []string{treeRow(n.Name, n.Kind, string(n.Reachability)+staleSuffix(n.Stale), string(n.ManagementState), n.Metrics, "")})
 	}
 	var lines []string
 	for i, branch := range branches {
@@ -476,12 +512,19 @@ func clusterBranch(pveNode string, members []wire.Node) []string {
 		}
 	}
 	slices.SortFunc(guests, func(a, b wire.Node) int { return a.Proxmox.VMID - b.Proxmox.VMID })
-	lines := []string{treeRow(pveNode, proxmoxNodeType, "unknown", "-", "[node not listed]")}
+	lines := []string{treeRow(pveNode, proxmoxNodeType, "unknown", "-", nil, "[node not listed]")}
+	var children []string
 	if head != nil {
 		lines = []string{proxmoxRow(head.Name, *head)}
+		for _, st := range head.Proxmox.Storages {
+			children = append(children, storageRow(st))
+		}
 	}
-	for i, g := range guests {
-		lines = append(lines, guestPrefix(i == len(guests)-1)+proxmoxRow(g.Name, g))
+	for _, g := range guests {
+		children = append(children, proxmoxRow(g.Name, g))
+	}
+	for i, child := range children {
+		lines = append(lines, guestPrefix(i == len(children)-1)+child)
 	}
 	return lines
 }
@@ -523,12 +566,49 @@ func proxmoxRow(name string, n wire.Node) string {
 	if g.Inaccessible {
 		marks = append(marks, "[inaccessible]")
 	}
-	return treeRow(name, kind, g.Status, string(n.ManagementState), strings.Join(marks, " "))
+	return treeRow(name, kind, g.Status, string(n.ManagementState), n.Metrics, strings.Join(marks, " "))
 }
 
-func treeRow(name, kind, state, management, marks string) string {
-	cells := []string{name, kind, state, management, marks}
+func storageRow(st wire.ProxmoxStorage) string {
+	cells := []string{st.ID, "storage/" + st.Plugin, "", "", "", "", usage(st.UsedBytes, st.TotalBytes), ""}
+	if st.Shared {
+		cells[len(cells)-1] = "[shared]"
+	}
 	return strings.TrimRight(strings.Join(cells, "\t"), "\t")
+}
+
+func treeRow(name, kind, state, management string, m *wire.Metrics, marks string) string {
+	cpu, mem, disk := "", "", ""
+	if m != nil {
+		cpu = fmt.Sprintf("%.0f%%", m.CPUPercent)
+		mem, disk = usage(m.MemoryUsedBytes, m.MemoryTotalBytes), usage(m.DiskUsedBytes, m.DiskTotalBytes)
+	}
+	cells := []string{name, kind, state, management, cpu, mem, disk, marks}
+	return strings.TrimRight(strings.Join(cells, "\t"), "\t")
+}
+
+// usage is "used/total" in binary units, empty when the total is unknown.
+func usage(used, total int64) string {
+	if total <= 0 {
+		return ""
+	}
+	return sizeText(used) + "/" + sizeText(total)
+}
+
+func sizeText(n int64) string {
+	const unit = 1024
+	value, suffix := float64(n), "B"
+	for _, s := range []string{"K", "M", "G", "T"} {
+		if value < unit {
+			break
+		}
+		value /= unit
+		suffix = s
+	}
+	if suffix == "B" {
+		return fmt.Sprintf("%.0fB", value)
+	}
+	return fmt.Sprintf("%.1f%s", value, suffix)
 }
 
 // ---- power -----------------------------------------------------------------
@@ -560,7 +640,7 @@ func newNodesPowerCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := resolveNode(cmd.Context(), api, args[0])
+			id, err := resolveGuest(cmd.Context(), api, args[0])
 			if err != nil {
 				return err
 			}

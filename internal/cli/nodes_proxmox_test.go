@@ -20,6 +20,11 @@ func proxmoxNode(name, pveNode string, g wire.ProxmoxGuest) wire.Node {
 	}
 }
 
+func withMetrics(n wire.Node, m wire.Metrics) wire.Node {
+	n.Metrics = &m
+	return n
+}
+
 func treeInventory() []wire.Node {
 	managed := wire.Node{
 		ID: newTestID(), Name: "web-1", Kind: "ssh", Provider: "lab", ManagementState: domain.ManagementManaged,
@@ -30,10 +35,14 @@ func treeInventory() []wire.Node {
 		Reachability: domain.ReachabilityUnreachable, Stale: true,
 	}
 	return []wire.Node{
-		proxmoxNode("web", "pve1", wire.ProxmoxGuest{VMID: 100, Type: "qemu", Status: "running"}),
+		withMetrics(proxmoxNode("web", "pve1", wire.ProxmoxGuest{VMID: 100, Type: "qemu", Status: "running"}),
+			wire.Metrics{CPUPercent: 3, MemoryUsedBytes: 512 << 20, MemoryTotalBytes: 2 << 30, DiskUsedBytes: 4 << 30, DiskTotalBytes: 32 << 30}),
 		proxmoxNode("pve2", "pve2", wire.ProxmoxGuest{Type: "node", Status: "online"}),
 		proxmoxNode("db", "pve2", wire.ProxmoxGuest{VMID: 200, Type: "lxc", Status: "unknown", Absent: true}),
-		proxmoxNode("pve1", "pve1", wire.ProxmoxGuest{Type: "node", Status: "online"}),
+		withMetrics(proxmoxNode("pve1", "pve1", wire.ProxmoxGuest{Type: "node", Status: "online", Storages: []wire.ProxmoxStorage{
+			{ID: "local", Plugin: "dir", Content: []string{"iso"}, TotalBytes: 100 << 30, UsedBytes: 12 << 30},
+			{ID: "ceph", Plugin: "rbd", Content: []string{"images"}, TotalBytes: 2 << 40, UsedBytes: 1 << 40, Shared: true},
+		}}), wire.Metrics{CPUPercent: 12.4, MemoryUsedBytes: 6 << 30, MemoryTotalBytes: 32 << 30, DiskUsedBytes: 12 << 30, DiskTotalBytes: 100 << 30}),
 		proxmoxNode("base", "pve1", wire.ProxmoxGuest{VMID: 300, Type: "qemu", Status: "stopped", Template: true}),
 		proxmoxNode("cache", "pve2", wire.ProxmoxGuest{VMID: 210, Type: "lxc", Status: "unknown", Inaccessible: true}),
 		managed, offline,
@@ -295,5 +304,38 @@ func TestNodesPowerWaitFailsWithTheJobsFailureAndSaysWhenOutcomeIsUnknown(t *tes
 				t.Errorf("code=%d stderr=%q, want %q", r.code, r.stderr, tt.want)
 			}
 		})
+	}
+}
+
+func TestNodeNamesSharedByAnSSHNodeAndItsDiscoveredProxmoxNodeResolveToTheSSHNode(t *testing.T) {
+	ssh := wire.Node{ID: newTestID(), Name: "pve1", Kind: "ssh", Provider: "lab"}
+	pve := proxmoxNode("pve1", "pve1", wire.ProxmoxGuest{Type: "node", Status: "online"})
+
+	if got, err := pickByName([]wire.Node{pve, ssh}, "pve1", false); err != nil || got != ssh.ID {
+		t.Errorf("pickByName = %v, %v; want the SSH node", got, err)
+	}
+	if _, err := pickByName([]wire.Node{pve, ssh}, "pve1", true); err == nil {
+		t.Error("power picked the Proxmox node: it only takes guests")
+	}
+}
+
+func TestPowerPrefersTheGuestWhenAnSSHNodeSharesItsNameAndAGuestIsNotAmbiguousForOtherCommands(t *testing.T) {
+	ssh := wire.Node{ID: newTestID(), Name: "web", Kind: "ssh", Provider: "lab"}
+	guest := proxmoxNode("web", "pve1", wire.ProxmoxGuest{VMID: 100, Type: "qemu", Status: "running"})
+
+	if got, err := pickByName([]wire.Node{guest, ssh}, "web", true); err != nil || got != guest.ID {
+		t.Errorf("power = %v, %v; want the guest", got, err)
+	}
+	if _, err := pickByName([]wire.Node{guest, ssh}, "web", false); err == nil {
+		t.Error("a guest and an SSH node with the same name must stay ambiguous for node commands")
+	}
+}
+
+func TestNodesGetShowsTheProxmoxTLSServerName(t *testing.T) {
+	n := wire.Node{Name: "pve1", Setup: &wire.Setup{SetupVersion: 4, Proxmox: true, ProxmoxTLSServerName: "pve.lab.example"}}
+	var out strings.Builder
+
+	if err := writeNode(&out, n); err != nil || !strings.Contains(out.String(), "proxmox tls name") || !strings.Contains(out.String(), "pve.lab.example") {
+		t.Errorf("err %v, output:\n%s", err, out.String())
 	}
 }
