@@ -2,7 +2,7 @@
 codename: supermgmt
 title: "sm assistant: ask in natural language, through SuperMgmt's MCP tools"
 type: task
-status: active
+status: shipped
 priority: P1
 size: L
 issue: 89
@@ -12,7 +12,7 @@ depends_on: [mcp-tool-coverage, mcp-https-token, mcp-node-tools]
 supersedes: []
 related_specs: []
 created: 2026-11-08
-updated: 2026-11-08
+updated: 2026-11-09
 ---
 
 # sm assistant: ask in natural language, through SuperMgmt's MCP tools

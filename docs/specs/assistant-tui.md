@@ -2,17 +2,17 @@
 codename: supermgmt
 title: The assistant in the TUI
 type: task
-status: active
+status: shipped
 priority: P1
 size: M
-issue: null
+issue: 91
 prs: [92]
 related_issues: [91]
 depends_on: [assistant-claude-cli]
 supersedes: []
 related_specs: [assistant-claude-cli]
 created: 2026-11-08
-updated: 2026-11-08
+updated: 2026-11-09
 ---
 
 # The assistant in the TUI
