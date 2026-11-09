@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/autarquico/supermgmt/internal/domain"
@@ -31,7 +32,7 @@ func (h setupHandler) bootstrapAdmin(ctx context.Context, run *tunnelRun, node d
 	if err != nil {
 		return nil, err
 	}
-	err = requireBootstrap(ctx, admin, asRoot)
+	err = requireSetupBootstrap(ctx, admin, asRoot)
 	if err == nil || !mayFallBackToDirect(ctx, run, node, err) {
 		return admin, err
 	}
@@ -52,15 +53,25 @@ func (h setupHandler) bootstrapDirect(ctx context.Context, run *tunnelRun, asRoo
 	}
 	admin, err := h.conn.Admin(direct)
 	if err == nil {
-		err = requireBootstrap(ctx, admin, asRoot)
+		err = requireSetupBootstrap(ctx, admin, asRoot)
 	}
 	if err == nil {
 		return admin, nil
 	}
 	if smerr.CodeOf(err) != smerr.CodeNodeUnreachable || ssh.IsAuthRejected(err) {
 		return nil, smerr.Wrap(err, smerr.CodeOf(err), "",
-			"setup failed over direct SSH, after the tunnel could not carry the stream")
+			"setup failed over direct SSH, after the tunnel could not carry the stream: "+causeMessage(err))
 	}
 	return nil, smerr.Wrap(err, smerr.CodeNodeUnreachable, "", fmt.Sprintf(
 		"the node could not be reached for setup through the tunnel (%v) nor over direct SSH", tunnelErr))
+}
+
+// causeMessage is the message of the typed error inside err: the part of a
+// failure a job keeps, so a wrapper does not hide what was missing.
+func causeMessage(err error) string {
+	var typed *smerr.Error
+	if errors.As(err, &typed) {
+		return typed.Message
+	}
+	return err.Error()
 }

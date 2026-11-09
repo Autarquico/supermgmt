@@ -60,7 +60,7 @@ func (s *Store) Fail(ctx context.Context, lease Lease, runErr error) error {
 }
 
 // FailTerminal ends the job as failed regardless of its retry class (panics,
-// unknown job types).
+// unknown job types, ErrPermanent failures).
 func (s *Store) FailTerminal(ctx context.Context, lease Lease, runErr error) error {
 	return s.fenced(ctx, lease, func(ctx context.Context, tx *database.Tx) error {
 		failure := FailureOf(runErr)

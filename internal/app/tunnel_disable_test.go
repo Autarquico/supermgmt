@@ -247,6 +247,18 @@ func TestADirectPathThatCannotBeVerifiedChangesNothing(t *testing.T) {
 	}
 }
 
+func TestDisableDoesNotNeedTheCommandsSetupRuns(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	ts.dialer.as("admin").reply("probe", strings.Replace(linuxProbe, "@@sudo\nyes", "@@sudo\nyes\nmissing=visudo\nmissing=useradd", 1))
+	ts.planDisable()
+
+	mustf(t, ts.attempt(), "disable on a node without the setup commands")
+
+	if got := ts.currentNode().Endpoint.Transport; got != domain.TransportDirect {
+		t.Errorf("transport = %q, want direct", got)
+	}
+}
+
 func TestEveryFaultAfterEveryMutationOfADisableConverges(t *testing.T) {
 	clean := newEnabledTunnel(t)
 	base := len(clean.cf.Mutations())

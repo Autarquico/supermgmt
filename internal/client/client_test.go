@@ -303,6 +303,30 @@ func TestAutostartGivesUpAfterTheWaitAndPointsAtTheLog(t *testing.T) {
 	}
 }
 
+func TestAutostartSurfacesWhyTheDaemonFailedToStart(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh(1) on PATH")
+	}
+	dir := shortDir(t)
+	logPath := filepath.Join(dir, "daemon.log")
+	if err := os.WriteFile(logPath, []byte("an earlier run failed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := client.New(client.Options{Socket: filepath.Join(dir, "none"), Autostart: &client.Autostart{
+		Executable: sh, Args: []string{"-c", "echo 'provider \"pve1\" duplicates the ssh provider' >&2; exit 3"},
+		LogPath: logPath, Wait: 300 * time.Millisecond, Poll: 20 * time.Millisecond,
+	}})
+	_, err = c.Me(context.Background())
+	var unavailable *client.DaemonUnavailableError
+	if !errors.As(err, &unavailable) || !strings.Contains(err.Error(), "duplicates the ssh provider") {
+		t.Fatalf("got %v, want the daemon's own start error", err)
+	}
+	if strings.Contains(err.Error(), "earlier run") {
+		t.Fatalf("got %v: want only this run's output", err)
+	}
+}
+
 func TestPresenceIsHeldAndReconnectsUntilCancelled(t *testing.T) {
 	var connections atomic.Int32
 	d := startFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {

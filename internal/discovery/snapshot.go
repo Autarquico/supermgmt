@@ -34,8 +34,10 @@ type Snapshot struct {
 	Tools           Tools
 	// PasswordlessSudo is true when `sudo -n true` worked for the probing user.
 	PasswordlessSudo bool
-	Probed           ProbedAs
-	Addresses        []Address
+	// MissingSetupCommands are the commands node.setup runs that the node lacks.
+	MissingSetupCommands []string
+	Probed               ProbedAs
+	Addresses            []Address
 
 	// Setup is the node's recorded node.setup metadata (ADR-0009 f). The probe
 	// cannot know it: the caller fills it from the stored capability.

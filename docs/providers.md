@@ -76,7 +76,7 @@ Bootstrap privilege:
 - Otherwise `admin_user` needs passwordless sudo: each privileged command runs as `sudo -n ...`. SuperMgmt never prompts for a password; without it setup fails before changing anything.
 - If you added a temporary `NOPASSWD` rule for this, revoke it afterwards. SuperMgmt needs it again only to re-run setup.
 
-Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo; otherwise the job fails with nothing changed.
+Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo, and that the node has the commands setup runs (`sudo`, `visudo`, `useradd`, `usermod`, `gpasswd`, `runuser`, `install`, `systemd-tmpfiles`); otherwise the job fails with nothing changed (with `--tunnel` on a node that is not yet behind a tunnel, this happens before anything is created in Cloudflare; on a node already reached through the tunnel, the tunnel is needed to probe, so the check runs once it is open). A missing command is named with the package that provides it, and the failure is final: the job is not retried (`internal/app/setup.go`, `jobs.Permanent`).
 
 What setup does, in order, and how it ends:
 
@@ -184,10 +184,11 @@ When it finishes, it prints the provider block:
 ```yaml
 providers:
   - type: proxmox
-    name: pve1
+    name: pve1-pve
     via_node: pve1
 ```
 
+- The provider is named after the node plus `-pve`, because the node's own SSH provider is already called `pve1` and provider names are unique.
 - `via_node` replaces `endpoint`: exactly one of the two is set. `credential_ref`, `ca_file` and `tls_server_name` are optional and override what setup recorded. `verify_tls` must still be `true`.
 - The API is reached through an SSH session that runs one fixed command, `socat STDIO TCP:127.0.0.1:8006`, as the dedicated account. No SSH forwarding is enabled: the dedicated key stays `restrict`.
 - A provider whose node is missing, is not an SSH node, or was not set up with `--proxmox` is unavailable, and its error names the command that fixes it. A repin, a transport switch or a new setup takes effect at the next sync.

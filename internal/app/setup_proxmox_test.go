@@ -336,7 +336,7 @@ func TestProxmoxSetupProvesTLSAndTheAPIBeforeRecordingAnything(t *testing.T) {
 		t.Fatalf("completion events = %d", len(completed))
 	}
 	raw, _ := json.Marshal(completed[0].Data["proxmox"])
-	if !strings.Contains(string(raw), "type: proxmox\\nname: web-1\\nvia_node: web-1") {
+	if !strings.Contains(string(raw), "type: proxmox\\nname: web-1-pve\\nvia_node: web-1") {
 		t.Errorf("completion lacks the provider block: %s", raw)
 	}
 }

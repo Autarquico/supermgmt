@@ -3,6 +3,7 @@ package discovery
 import (
 	"math"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ func Parse(output []byte) (Snapshot, error) {
 	s.Docker = parseDocker(sections["docker"])
 	s.Tools = parseTools(sections["tools"])
 	s.PasswordlessSudo = firstLine(sections["sudo"]) == "yes"
+	s.MissingSetupCommands = missingSetupCommands(sections["sudo"])
 	s.Probed = parseSetup(sections["setup"])
 	s.Addresses = parseAddresses(sections["addresses"])
 	return s, nil
@@ -60,6 +62,17 @@ func splitSections(output string) (map[string][]string, error) {
 		}
 	}
 	return sections, nil
+}
+
+// missingSetupCommands reads, from the commands setup runs, the "missing=<command>" lines that follow the sudo answer.
+func missingSetupCommands(lines []string) []string {
+	var missing []string
+	for _, l := range lines {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(l), "missing="); ok && slices.Contains(templates.SetupCommands, name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 func firstLine(lines []string) string {

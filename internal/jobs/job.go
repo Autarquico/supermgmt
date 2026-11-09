@@ -36,6 +36,25 @@ var ErrLeaseLost = errors.New("job lease lost")
 // completion is proven: only proven failure may fail the job.
 var ErrOutcomeUnknown = errors.New("operation outcome unknown")
 
+// ErrPermanent is wrapped (with %w) around a failure that no retry can cure: a
+// precondition the operator must fix. The Engine fails the job at once, whatever
+// its retry class, instead of requeueing an idempotent one.
+var ErrPermanent = errors.New("permanent failure")
+
+// Permanent marks err as not worth retrying. The typed error inside stays
+// visible to FailureOf and smerr.CodeOf.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w%w", err, permanentMark{})
+}
+
+type permanentMark struct{}
+
+func (permanentMark) Error() string        { return "" }
+func (permanentMark) Is(target error) bool { return target == ErrPermanent }
+
 // ErrInfrastructure marks an error from a Revalidator or LockPlanner as a
 // storage or connection problem: the claim is aborted and the job stays queued.
 // Typed *smerr.Error values fail the job instead, and so does any other error

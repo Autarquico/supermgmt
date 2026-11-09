@@ -322,3 +322,14 @@ func TestProbeRunsOneSession(t *testing.T) {
 		t.Errorf("snapshot = %+v, sessions = %d, err = %v", s, ex.rans, err)
 	}
 }
+
+func TestParseReportsTheSetupCommandsTheNodeLacks(t *testing.T) {
+	probe := strings.Replace(linuxProbe, "@@sudo\nyes\n", "@@sudo\nyes\nmissing=visudo\nmissing=useradd\nmissing=rm\n", 1)
+	s, err := Parse([]byte(probe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.MissingSetupCommands, ","); got != "visudo,useradd" {
+		t.Errorf("missing = %q; want the known commands only", got)
+	}
+}

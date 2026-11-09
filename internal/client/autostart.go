@@ -3,13 +3,18 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/autarquico/supermgmt/internal/audit"
+	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
 const (
@@ -41,18 +46,24 @@ func (a *autostarter) ensure(ctx context.Context, cfg *Autostart, dial dialFunc)
 	if conn, err := dial(ctx); err == nil || !daemonAbsent(err) {
 		return conn, err
 	}
-	if err := spawn(cfg); err != nil {
+	child, err := spawn(cfg)
+	if err != nil {
 		return nil, &DaemonUnavailableError{Detail: "cannot start the daemon: " + err.Error(), Err: err}
 	}
-	return poll(ctx, cfg, dial)
+	return poll(ctx, cfg, dial, child)
 }
 
-func poll(ctx context.Context, cfg *Autostart, dial dialFunc) (net.Conn, error) {
+// poll dials until the daemon answers. A daemon that exits with an error may
+// only have lost the lock race to another daemon that is still starting, so the
+// wait goes on; if it ends unanswered, the message carries what the daemon
+// logged.
+func poll(ctx context.Context, cfg *Autostart, dial dialFunc, child *daemonProcess) (net.Conn, error) {
 	wait := cmpOr(cfg.Wait, defaultAutostartWait)
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	ticker := time.NewTicker(cmpOr(cfg.Poll, defaultAutostartPoll))
 	defer ticker.Stop()
+	var exitErr error
 	for {
 		conn, err := dial(ctx)
 		if err == nil || !daemonAbsent(err) {
@@ -62,28 +73,67 @@ func poll(ctx context.Context, cfg *Autostart, dial dialFunc) (net.Conn, error) 
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline.C:
-			return nil, &DaemonUnavailableError{
-				Detail: fmt.Sprintf("the daemon did not start within %s; see %s", wait, cfg.LogPath), Err: err,
+			detail := fmt.Sprintf("the daemon did not start within %s; see %s", wait, cfg.LogPath)
+			if exitErr != nil {
+				detail = fmt.Sprintf("the daemon did not start (%v): %s; see %s", exitErr, child.startError(cfg.LogPath), cfg.LogPath)
 			}
+			return nil, &DaemonUnavailableError{Detail: detail, Err: err}
+		case exited := <-child.exited:
+			child.exited = nil
+			exitErr = exited
 		case <-ticker.C:
 		}
 	}
 }
 
-func spawn(cfg *Autostart) error {
+// daemonProcess is a spawned daemon: where its output starts in the log, and
+// how it ended (one value, nil for a clean exit).
+type daemonProcess struct {
+	logStart int64
+	exited   chan error
+}
+
+// startError is the last lines the daemon logged since it was spawned, scrubbed
+// and capped.
+func (d *daemonProcess) startError(logPath string) string {
+	f, err := os.Open(logPath) //nolint:gosec // the instance state dir
+	if err != nil {
+		return "it logged nothing"
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.NewSectionReader(f, d.logStart, maxStartLog))
+	if err != nil || len(strings.TrimSpace(string(raw))) == 0 {
+		return "it logged nothing"
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	tail := textsafe.Line(audit.ScrubString(strings.Join(lines[max(0, len(lines)-3):], " | ")))
+	return string([]rune(tail)[:min(len([]rune(tail)), maxStartLogShown)])
+}
+
+const (
+	maxStartLog      = 16 << 10 // read at most this much of the log after the spawn
+	maxStartLogShown = 400      // runes of it put in the error
+)
+
+func spawn(cfg *Autostart) (*daemonProcess, error) {
 	log, err := openLog(cfg.LogPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = log.Close() }()
+	start, err := log.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("read daemon log: %w", err)
+	}
 	cmd := exec.Command(cfg.Executable, cfg.Args...) //nolint:gosec,noctx // our own binary with caller-fixed args; the daemon outlives this process
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
-	go func() { _ = cmd.Wait() }() // reap a daemon that loses the lock race
-	return nil
+	child := &daemonProcess{logStart: start, exited: make(chan error, 1)}
+	go func() { child.exited <- cmd.Wait() }() // also reaps a daemon that loses the lock race
+	return child, nil
 }
 
 func openLog(path string) (*os.File, error) {

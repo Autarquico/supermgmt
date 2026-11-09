@@ -135,7 +135,7 @@ func (e *Engine) execute(ctx context.Context, c Claimed) {
 		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.Succeed(ctx, c.Lease) })
 	case errors.Is(runErr, ErrOutcomeUnknown):
 		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.Interrupt(ctx, c.Lease, runErr) })
-	case errors.Is(runErr, errHandlerPanic):
+	case errors.Is(runErr, errHandlerPanic), errors.Is(runErr, ErrPermanent):
 		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.FailTerminal(ctx, c.Lease, runErr) })
 	default:
 		e.finish(ctx, c.Lease, func(ctx context.Context) error { return e.cfg.Store.Fail(ctx, c.Lease, runErr) })
