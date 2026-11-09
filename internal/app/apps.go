@@ -139,7 +139,7 @@ func (i *Inventory) GetApp(ctx context.Context, by Caller, id domain.ID, project
 			return app, nil
 		}
 	}
-	return wire.App{}, smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("app %s not found on node %s", project, node.Name))
+	return wire.App{}, appNotFound(project, node.Name)
 }
 
 // AppStats takes one sample of the app's containers. Samples of a node are shared between callers that ask
@@ -157,13 +157,13 @@ func (i *Inventory) AppStats(ctx context.Context, by Caller, id domain.ID, proje
 	if exErr == nil {
 		if details, ok := liveProject(ctx, ex, project); ok {
 			if len(details) == 0 {
-				return wire.AppStats{}, smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("app %s not found on node %s", project, node.Name))
+				return wire.AppStats{}, appNotFound(project, node.Name)
 			}
 			members = liveMembers(details)
 		}
 	}
 	if members == nil {
-		rows, err := i.projectRows(ctx, node.ID, project)
+		rows, err := i.projectRows(ctx, node, project)
 		if err != nil {
 			return wire.AppStats{}, err
 		}
@@ -219,7 +219,7 @@ func (i *Inventory) AppLogs(ctx context.Context, by Caller, id domain.ID, projec
 		}
 	}
 	if !live {
-		rows, err := i.projectRows(ctx, node.ID, project)
+		rows, err := i.projectRows(ctx, node, project)
 		if err != nil {
 			return wire.AppLogs{}, err
 		}
@@ -466,15 +466,19 @@ func parallel(n int, fn func(int)) {
 
 // ---- building apps ----------------------------------------------------------------
 
+func appNotFound(project, node string) error {
+	return smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("app %s not found on node %s", project, node))
+}
+
 // projectRows are the discovered containers of one project; NOT_FOUND when there are none.
-func (i *Inventory) projectRows(ctx context.Context, node domain.ID, project string) ([]domain.Service, error) {
-	rows, err := database.ListServices(ctx, i.cfg.DB.Reader(), node)
+func (i *Inventory) projectRows(ctx context.Context, node domain.Node, project string) ([]domain.Service, error) {
+	rows, err := database.ListServices(ctx, i.cfg.DB.Reader(), node.ID)
 	if err != nil {
 		return nil, err
 	}
 	projects, _ := groupServices(rows)
 	if len(projects[project]) == 0 {
-		return nil, smerr.New(smerr.CodeNotFound, "", "app "+project+" not found")
+		return nil, appNotFound(project, node.Name)
 	}
 	return projects[project], nil
 }

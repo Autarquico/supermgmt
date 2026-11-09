@@ -478,8 +478,8 @@ func TestAPEMBlockSplitAcrossTwoPollsIsRedactedWhole(t *testing.T) {
 	if strings.Contains(all, "b3Blbn") || strings.Contains(all, "QUFBQUJt") {
 		t.Errorf("the key leaked across the poll boundary:\n%s", all)
 	}
-	if len(next.Lines) != 1 || !strings.HasSuffix(next.Lines[0], "after the key") {
-		t.Errorf("second poll = %q, want only the line after the key", next.Lines)
+	if len(next.Lines) != 3 || !strings.HasSuffix(next.Lines[2], "after the key") {
+		t.Errorf("second poll = %q, want two markers and the line after the key", next.Lines)
 	}
 }
 
@@ -601,7 +601,7 @@ func TestScrubLinesKeepsLinesApartAndSaysWhereEachStarted(t *testing.T) {
 		t.Errorf("lines = %+v", got)
 	}
 	collapsed := scrubLines([]string{"x -----BEGIN RSA PRIVATE KEY-----", "body", "-----END RSA PRIVATE KEY----- tail", "next"})
-	if len(collapsed) != 2 || collapsed[0].raw != 0 || collapsed[1].raw != 3 || strings.Contains(collapsed[0].text, "body") {
+	if len(collapsed) != 4 || collapsed[0].text != "x [REDACTED]" || collapsed[1].text != "[REDACTED]" || collapsed[2].text != "[REDACTED] tail" || collapsed[3].text != "next" {
 		t.Errorf("collapsed = %+v", collapsed)
 	}
 }

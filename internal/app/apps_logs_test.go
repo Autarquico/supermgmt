@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -149,15 +150,15 @@ func TestAWindowThatCutsABlockIsRedactedFromTheOverlapRead(t *testing.T) {
 
 	got := f.logs(wire.AppLogQuery{Lines: 2})
 
-	if len(got.Lines) != 1 || !strings.HasSuffix(got.Lines[0], "after") {
-		t.Errorf("lines = %q, want the line after the block only: the end line belongs to the block", got.Lines)
+	if len(got.Lines) != 2 || !strings.HasSuffix(got.Lines[0], audit.Redacted) || !strings.HasSuffix(got.Lines[1], "after") {
+		t.Errorf("lines = %q, want the end line as a marker and the line after the block", got.Lines)
 	}
 }
 
 func TestScrubLinesMasksFromTheStartOfAChunkThroughAnENDWithNoBEGIN(t *testing.T) {
 	got := scrubLines([]string{"b3Blbn", "QUFB", "-----END OPENSSH PRIVATE KEY----- tail", "next"})
 
-	if len(got) != 2 || got[0].raw != 0 || strings.Contains(got[0].text, "b3Blbn") || strings.Contains(got[0].text, "QUFB") || got[1].text != "next" {
+	if len(got) != 4 || got[0].text != audit.Redacted || got[1].text != audit.Redacted || got[2].text != audit.Redacted+" tail" || got[3].text != "next" {
 		t.Errorf("lines = %+v", got)
 	}
 	whole := scrubLines([]string{"-----BEGIN RSA PRIVATE KEY-----", "body", "-----END RSA PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----", "x"})
@@ -185,5 +186,54 @@ func TestFollowDeliversTheLineAfterOneEndingInASensitiveKey(t *testing.T) {
 
 	if len(next.Lines) != 1 || next.Lines[0] != stamped(2, "next line") || next.Gap {
 		t.Errorf("lines %q gap %v", next.Lines, next.Gap)
+	}
+}
+
+func TestAChunkWithAHeaderMentionKeepsTheOrdinaryLinesAround(t *testing.T) {
+	got := scrubLines([]string{
+		"boot", "pem: expected -----BEGIN RSA PRIVATE KEY----- header, got garbage", "request handled", "request handled again",
+	})
+
+	if len(got) != 4 || got[0].text != "boot" || got[1].text != "pem: expected "+audit.Redacted || got[2].text != "request handled" || got[3].text != "request handled again" {
+		t.Errorf("lines = %+v", got)
+	}
+}
+
+func TestALoneENDLineHidesNoOrdinaryLineBeforeIt(t *testing.T) {
+	got := scrubLines([]string{"boot", "request handled", "saw -----END PRIVATE KEY-----", "request handled again"})
+
+	if len(got) != 4 || got[0].text != "boot" || got[1].text != "request handled" || got[3].text != "request handled again" {
+		t.Errorf("lines = %+v", got)
+	}
+}
+
+func TestABlockEndsAtTheFirstLineThatIsNotKeyMaterial(t *testing.T) {
+	got := scrubLines([]string{"-----BEGIN PRIVATE KEY-----", pemBody, "not key material", pemBody + "x"})
+
+	if got[1].text != audit.Redacted || got[2].text != "not key material" || got[3].text != pemBody+"x" {
+		t.Errorf("lines = %+v", got)
+	}
+}
+
+func TestAHeaderMentionDoesNotBlindRecentFollowOrSearch(t *testing.T) {
+	f := newAppsFixture(t)
+	held := []string{
+		stamped(0, "boot"), stamped(1, "pem: expected -----BEGIN RSA PRIVATE KEY----- header"), stamped(2, "request handled"),
+	}
+	f.writeLog(webID, &held)
+
+	first := f.logs(wire.AppLogQuery{})
+	held = append(held, stamped(3, "request handled again"))
+	next := f.logs(wire.AppLogQuery{Cursor: first.Cursor})
+	found := f.logs(wire.AppLogQuery{Search: "request handled"})
+
+	if len(first.Lines) != 3 || !strings.HasSuffix(first.Lines[2], "request handled") {
+		t.Errorf("recent = %q", first.Lines)
+	}
+	if len(next.Lines) != 1 || !strings.HasSuffix(next.Lines[0], "request handled again") {
+		t.Errorf("follow = %q, want the new line within one poll", next.Lines)
+	}
+	if len(found.Lines) != 2 {
+		t.Errorf("search = %q, want both request lines", found.Lines)
 	}
 }

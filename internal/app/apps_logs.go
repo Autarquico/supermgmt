@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -99,52 +98,83 @@ type scrubbedLine struct {
 }
 
 var (
-	lineMarker = regexp.MustCompile("\x00([0-9]+)\x00")
-	pemBegin   = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
-	pemEnd     = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
+	pemBegin = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+	pemEnd   = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
+	// pemBodyLine is a line of a key between its headers: base64, which RFC 7468 wraps at 64 characters.
+	pemBodyLine = regexp.MustCompile(`^[A-Za-z0-9+/=]{1,80}$`)
 )
 
-// scrubLines redacts the lines and says which raw line each surviving line started at. A PEM block is
-// removed on the lines as one text, so it cannot survive a line break: a block collapses into the line it
-// began on, and a chunk that starts inside a block (an END with no BEGIN before it) is masked from its start
-// through that END. Every other credential is removed line by line, so a line ending in `password:` cannot
-// take the next one for its value. Raw lines carry no control characters, so the markers cannot clash with
-// their text.
-func scrubLines(raw []string) []scrubbedLine {
-	var b strings.Builder
-	for i, line := range raw {
-		if i > 0 {
-			b.WriteByte('\n')
+// splitStamp separates the timestamp Docker puts first on a line, with its space, from the rest.
+func splitStamp(line string) (stamp, content string) {
+	if token, rest, found := strings.Cut(line, " "); found {
+		if _, ok := stampOf(token); ok {
+			return token + " ", rest
 		}
-		b.WriteString("\x00" + strconv.Itoa(i) + "\x00" + line)
 	}
-	scrubbed := audit.ScrubString(maskOpenBlockHead(b.String()))
-	marks := lineMarker.FindAllStringSubmatchIndex(scrubbed, -1)
-	out := make([]scrubbedLine, 0, len(marks))
-	for k, m := range marks {
-		end := len(scrubbed)
-		if k+1 < len(marks) {
-			end = marks[k+1][0]
+	return "", line
+}
+
+// scrubLines redacts the lines and says which raw line each one started at; it returns one line per raw line.
+// A private key is removed line by line: the BEGIN line from its header on, every following PEM body line,
+// and the END line through its header, each as a [REDACTED] marker of its own, so the reader sees how many
+// lines were withheld. An open block ends at the first line that is not a body line, so a line that only
+// mentions a header hides nothing around it. A chunk that starts inside a block (an END with no BEGIN
+// before it) is masked backwards over the body lines that precede that END. Every other credential is
+// removed line by line, so a line ending in `password:` cannot take the next one for its value.
+func scrubLines(raw []string) []scrubbedLine {
+	out := make([]scrubbedLine, 0, len(raw))
+	open := false
+	for i, line := range raw {
+		stamp, content := splitStamp(line)
+		if open && pemBodyLine.MatchString(content) {
+			out = append(out, scrubbedLine{raw: i, text: stamp + audit.Redacted})
+			continue
 		}
-		index, _ := strconv.Atoi(scrubbed[m[2]:m[3]])
-		text := strings.TrimSuffix(scrubbed[m[1]:end], "\n")
-		out = append(out, scrubbedLine{raw: index, text: audit.ScrubCredentials(text)})
+		var text strings.Builder
+		text.WriteString(stamp)
+		rest := content
+		if open {
+			open = false
+			if end := pemEnd.FindStringIndex(rest); end != nil {
+				text.WriteString(audit.Redacted)
+				rest = rest[end[1]:]
+			}
+		}
+		for rest != "" {
+			begin, end := pemBegin.FindStringIndex(rest), pemEnd.FindStringIndex(rest)
+			switch {
+			case end != nil && (begin == nil || end[0] < begin[0]):
+				maskBodyBefore(out, raw)
+				text.WriteString(audit.Redacted)
+				rest = rest[end[1]:]
+			case begin != nil:
+				text.WriteString(rest[:begin[0]] + audit.Redacted)
+				tail := rest[begin[1]:]
+				if end := pemEnd.FindStringIndex(tail); end != nil {
+					rest = tail[end[1]:]
+					continue
+				}
+				open, rest = true, ""
+			default:
+				text.WriteString(rest)
+				rest = ""
+			}
+		}
+		out = append(out, scrubbedLine{raw: i, text: audit.ScrubCredentials(text.String())})
 	}
 	return out
 }
 
-// maskOpenBlockHead masks the start of text through the first END of a private key that has no BEGIN before
-// it: the chunk began inside a block, whose head it cannot see.
-func maskOpenBlockHead(text string) string {
-	end := pemEnd.FindStringIndex(text)
-	if end == nil {
-		return text
+// maskBodyBefore masks the run of body lines that ends the lines scrubbed so far: they precede an END whose
+// BEGIN is not in the chunk.
+func maskBodyBefore(out []scrubbedLine, raw []string) {
+	for j := len(out) - 1; j >= 0; j-- {
+		stamp, content := splitStamp(raw[out[j].raw])
+		if !pemBodyLine.MatchString(content) {
+			return
+		}
+		out[j].text = stamp + audit.Redacted
 	}
-	if begin := pemBegin.FindStringIndex(text); begin != nil && begin[0] < end[0] {
-		return text
-	}
-	first := lineMarker.FindString(text) // text starts with the marker of line 0
-	return first + audit.Redacted + text[end[1]:]
 }
 
 func texts(lines []scrubbedLine) []string {
