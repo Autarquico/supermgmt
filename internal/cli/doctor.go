@@ -77,6 +77,9 @@ func newDoctorCmd(env []string) *cobra.Command {
 					report = newDoctorReport(checks)
 				}
 			}
+			if t, err := resolveTarget(cmd, env); err == nil && t.remote != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: this checked the local install on this machine, not %s\n", t.describe())
+			}
 			if err := writeDoctorReport(cmd.OutOrStdout(), report, asJSON); err != nil {
 				return err
 			}

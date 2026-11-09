@@ -23,7 +23,7 @@ const minimalLocalConfig = "version: 1\ninstance:\n  mode: local\n"
 // newDaemonCmd is `sm daemon`: the resident process of spec §2.1.1. Clients
 // autostart it; it exits 2 when another daemon owns the database or the socket.
 func newDaemonCmd(env []string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the SuperMgmt daemon (started on demand by the other commands)",
 		Args:  noArgs,
@@ -54,6 +54,8 @@ func newDaemonCmd(env []string) *cobra.Command {
 			return daemonExit(cmd, err)
 		},
 	}
+	cmd.AddCommand(newDaemonRestartCmd(env))
+	return cmd
 }
 
 // loadDaemonConfig loads the file, or the built-in local-mode defaults when
