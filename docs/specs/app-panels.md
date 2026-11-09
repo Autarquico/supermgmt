@@ -42,9 +42,9 @@ This is the first of three slices: reads, panels and their MCP tools. External c
 ## Decisions
 
 - **Reads are live.** App detail, stats and restart counts come from the node when asked, through named, allowlisted templates. A panel states the time of its data and, when the node cannot be reached, shows the last discovery marked as stale.
-- **No new `app.*` action.** `app.read` and `app.write` are retired names (`internal/policy/retired.go:27-30`). Reading an app requires `service.read`, its logs `service.logs`. Actions stay per service.
+- **No new `app.*` action.** `app.read` and `app.write` are retired names (`internal/policy/retired.go:27-30`). Reading an app requires `service.read` on its node, its logs and error count `service.logs` on its node. Actions stay per service.
 - **Docker access is granted by a person.** Reads need the session user to reach Docker (`internal/app/probe.go:101`) and MCP cannot plan a setup that grants it (`docs/mcp.md:66`). The panel says so and names the command; it never enables it on its own.
-- **Log output keeps the existing boundaries:** `Inventory.redacted` (`internal/app/inventory.go:818-828`), the MCP cap (`internal/mcp/api.go:79`) and the untrusted-content marking (`docs/mcp.md:292`) apply to follow and search too. Search runs on a bounded window of lines and says what window it covered.
+- **App logs and configuration are scrubbed for every reader:** credentials are removed before they leave the daemon, on recent logs, follow, search, environment, commands and labels, with no switch to turn it off. The MCP cap (`internal/mcp/api.go:79`) and the untrusted-content marking (`docs/mcp.md:292`) apply too. Search runs on a bounded window of lines and says what window it covered.
 - **ADR-0043 is amended:** "resource use over time" becomes the current sample, with an in-memory trend while a panel is open; interactive exec and database connection are for people only, stated in the MCP coverage map.
 
 ## Scenarios
