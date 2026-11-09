@@ -819,6 +819,8 @@ func (m *Model) updatesText() string {
 func (m *Model) helpBody(bw int) []string {
 	rows := [][2]string{
 		{"1-7", "Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings"},
+		{"9", "apps: the Compose apps on each node; enter opens one, l its logs"},
+		{"", "app logs: f follows, / searches them (not the palette), esc clears"},
 		{"8", "assistant: enter sends, ctrl+x stops, esc leaves, ctrl+c quits"},
 		{"", "card: A then y approves, R rejects, esc leaves it pending"},
 		{"", "pgup/pgdn scroll the transcript (j/k on a card)"},

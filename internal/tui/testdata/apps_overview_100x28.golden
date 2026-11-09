@@ -1,0 +1,28 @@
+┌ SuperMgmt · Apps ─────────────────────────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                                                  │
+│ Apps                                                                                             │
+│                                                                                                  │
+│ ● web-1 · production · reachable                                                                 │
+│ ▸ ● blog (1)     running  restarts 0 cpu 1% mem 64M/1.0G 12:00:03                                │
+│   ● shop (2)     degraded restarts 3 cpu 12% mem 410M/2.0G errors 5 12:00:03                     │
+│   other services                                                                                 │
+│   · redis                    docker_container   running    healthy                               │
+│   · sm-demo.service          systemd_unit       active     healthy                               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                                  │
+│ j/k move  enter open  r refresh  esc back  / command  ? help  q quit                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘

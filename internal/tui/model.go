@@ -74,6 +74,9 @@ const (
 	screenSettings
 	screenHelp
 	screenAssistant
+	screenApps
+	screenApp
+	screenAppLogs
 )
 
 var screenTitles = map[screen]string{
@@ -81,6 +84,7 @@ var screenTitles = map[screen]string{
 	screenService: "Service", screenLogs: "Logs", screenJobs: "Jobs", screenJob: "Job",
 	screenApprovals: "Approvals", screenEvents: "Events", screenProviders: "Providers",
 	screenSettings: "Settings", screenHelp: "Help", screenAssistant: "Assistant",
+	screenApps: "Apps", screenApp: "App", screenAppLogs: "App logs",
 }
 
 // Model is the Bubble Tea model. It is only ever touched by Update and View;
@@ -95,6 +99,7 @@ type Model struct {
 	screen        screen
 	back          []screen
 	loads         map[loadKey]*loadState
+	ticks         int // periodic refreshes so far
 
 	me        wire.Me
 	nodes     []wire.Node
@@ -131,6 +136,7 @@ type Model struct {
 	input      textinput.Model
 
 	asst assistantState
+	apps appsState
 	send func(tea.Msg) // delivers a message to the running program; nil outside Run
 }
 
@@ -156,6 +162,7 @@ func New(api API, o Options) *Model {
 		width: 80, height: 24, screen: screenDashboard,
 		loads: map[loadKey]*loadState{}, svcCache: map[domain.ID][]wire.Service{},
 		logsView: viewport.New(), input: input, asst: newAssistantState(),
+		apps: appsState{logs: appLogs{view: viewport.New()}},
 	}
 	m.sizeAssistant()
 	return m
@@ -233,8 +240,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.sizeLogs()
 		m.sizeAssistant()
+		m.sizeAppLogs()
 		return m, nil
 	case tickMsg:
+		m.ticks++
 		return m, tea.Batch(m.reload(false, m.screenLoaders()...), m.tick())
 	case streamEventMsg:
 		return m, m.reload(false, m.screenLoaders()...)
@@ -244,6 +253,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loadedMsg:
 		m.onLoaded(msg)
 		return m, nil
+	case appLogsTickMsg:
+		return m, m.onAppLogsTick(msg)
+	case appLogsPolledMsg:
+		return m, m.onAppLogsPolled(msg)
+	case componentServiceMsg:
+		return m, m.onComponentService(msg)
 	case actedMsg:
 		return m, m.onActed(msg)
 	case planMsg:
@@ -295,6 +310,12 @@ func (m *Model) screenLoaders() []loader {
 		return append(always, loader{keyEvents, m.loadEvents})
 	case screenProviders:
 		return append(always, loader{keyProviders, m.loadProviders})
+	case screenApps:
+		return append(always, loader{keyApps, m.loadApps})
+	case screenApp:
+		return append(always, loader{keyApp, m.loadApp}, loader{keyAppStats, m.loadAppStats})
+	case screenAppLogs:
+		return append(always, loader{keyAppLogs, m.loadAppLogs})
 	case screenResources, screenApprovals, screenSettings, screenHelp, screenAssistant:
 		return always
 	}
@@ -335,6 +356,11 @@ func (m *Model) onKey(key tea.KeyPressMsg) tea.Cmd {
 	case m.screen == screenAssistant:
 		return m.assistantKey(key)
 	}
+	if m.screen == screenAppLogs {
+		if cmd, ok := m.appLogsKey(key); ok {
+			return cmd
+		}
+	}
 	switch key.String() {
 	case "q", "ctrl+c":
 		return tea.Quit
@@ -361,6 +387,8 @@ func (m *Model) onKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jump(screenSettings)
 	case "8":
 		return m.openAssistant()
+	case "9":
+		return m.jump(screenApps)
 	case "r":
 		return m.reload(true, m.screenLoaders()...)
 	case "esc":
@@ -387,6 +415,12 @@ func (m *Model) screenKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.jobKey(key)
 	case screenApprovals:
 		return m.approvalsKey(key)
+	case screenApps:
+		return m.appsKey(key)
+	case screenApp:
+		return m.appKey(key)
+	case screenAppLogs:
+		return m.appLogsKeyScroll(key)
 	case screenDashboard, screenEvents, screenProviders, screenSettings, screenHelp, screenAssistant:
 		return nil
 	}

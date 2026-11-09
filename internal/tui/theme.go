@@ -12,6 +12,7 @@ import (
 type theme struct {
 	title, dim, accent, selected lipgloss.Style
 	ok, warn, bad, info          lipgloss.Style
+	match                        lipgloss.Style // a search hit in a log line
 }
 
 func newTheme() theme {
@@ -25,6 +26,7 @@ func newTheme() theme {
 		warn:     fg("#f59e0b"),
 		bad:      fg("#f43f5e"),
 		info:     fg("#0ea5e9"),
+		match:    lipgloss.NewStyle().Bold(true).Reverse(true),
 	}
 }
 

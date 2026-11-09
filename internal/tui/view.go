@@ -124,6 +124,12 @@ func (m *Model) body(bw, bh int) []string {
 		return m.helpBody(bw)
 	case screenAssistant:
 		return m.assistantBody(bw, bh)
+	case screenApps:
+		return m.appsBody(bw, bh)
+	case screenApp:
+		return m.appBody(bw, bh)
+	case screenAppLogs:
+		return m.appLogsBody(bw)
 	}
 	return nil
 }
@@ -223,6 +229,12 @@ func (m *Model) keyHints() string {
 		return "j/k move  enter detail  c cancel  esc back  " + global
 	case screenJob:
 		return "c cancel  esc back  " + global
+	case screenApps:
+		return "j/k move  enter open  r refresh  esc back  " + global
+	case screenApp:
+		return "j/k component  l logs  " + "R restart  S start  X stop  " + "pgup/pgdn scroll  esc back  " + global
+	case screenAppLogs:
+		return "f follow  / search  j/k scroll  G end  r reload  esc back  q quit"
 	case screenHelp:
 		return "esc back  q quit"
 	case screenApprovals:

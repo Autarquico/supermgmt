@@ -405,8 +405,8 @@ func (m *Model) promptKey(key tea.KeyPressMsg) tea.Cmd {
 }
 
 const (
-	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · add node <name> tunnel · setup <node> [docker|no-docker] [broker|journal] [tunnel] [proxmox] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · expose <node> <hostname> <port> [public|owners] · unexpose <node> <hostname>"
-	paletteShortcut = "ssh · logs · services · add node · setup · tunnel-disable · probe · power · refresh · expose · unexpose   (? arguments)"
+	paletteHint     = "ssh <node> [tool] · logs <service> · services <node> · apps [<node> <project>] · add node <name> tunnel · setup <node> [docker|no-docker] [broker|journal] [tunnel] [proxmox] [unit <unit>[:verbs]]… [no-units] · tunnel-disable <node> · probe <node> · power <node> <verb> · refresh [proxmox [provider]] · expose <node> <hostname> <port> [public|owners] · unexpose <node> <hostname>"
+	paletteShortcut = "ssh · logs · services · apps · add node · setup · tunnel-disable · probe · power · refresh · expose · unexpose   (? arguments)"
 )
 
 func (m *Model) openPalette() tea.Cmd {
@@ -432,6 +432,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.commandRoute(cmd, args)
 	case "add":
 		return m.commandAdd(args)
+	case "apps":
+		return m.commandApps(args)
 	}
 	m.notice = notice{text: fmt.Sprintf("unknown command %q: %s", cmd, paletteHint), isErr: true}
 	return nil
