@@ -12,7 +12,7 @@ import (
 
 // The app tools (spec app-panels): what runs on each node, as Compose projects. They read live from the node
 // and say so; everything the node reported sits under an untrusted Remote object. Logs need service.logs,
-// which the default policy grants an MCP client through builtin-mcp-operate.
+// which the default policy grants an MCP client through builtin-mcp-operate (service.read comes with *.read).
 
 type listAppsInput struct {
 	Node string `json:"node,omitempty" jsonschema:"only the apps of this node (id or exact name)"`
@@ -31,12 +31,12 @@ type searchAppLogsInput struct {
 
 func addAppTools(s *sdk.Server, api API) {
 	readTool(s, "infra_list_apps",
-		"List the apps (Compose projects) of every node, or of one node (id or exact name): per app its state (running or degraded), restarts, current CPU and memory with the time of the sample, and recent error count. Containers outside a project and units are listed as other_services. Read live from the node; when it cannot be read the last discovery is returned with stale=true and its time. A node whose Docker is not accessible says so in problem and names, in hint, the command a person runs to allow it; you cannot. recent_errors is absent without service.logs."+remoteDataNotice,
+		"List the apps (Compose projects) of every node, or of one node (id or exact name): per app its state (running or degraded), restarts, current CPU and memory with the time of the sample, and recent error count. Containers outside a project and units are listed as other_services. Read live from the node; when it cannot be read the last discovery is returned with stale=true and its time. A node whose Docker is not accessible says so in problem and names, in hint, the command a person runs to allow it; you cannot. recent_errors is absent without service.logs. Needs service.read. Next step: infra_get_app for one project."+remoteDataNotice,
 		func(ctx context.Context, in listAppsInput) (listResult[NodeAppsView], error) {
 			return listApps(ctx, api, in)
 		})
 	readTool(s, "infra_get_app",
-		"Get one app of a node: each component's state, image, restarts, ports, volumes and the configuration the runtime reports with environment, command and label secrets redacted."+remoteDataNotice,
+		"Get one app of a node: each component's state, image, restarts, ports, volumes and the configuration the runtime reports with environment, command and label secrets redacted. Needs service.read. Component names here are what infra_search_app_logs takes."+remoteDataNotice,
 		func(ctx context.Context, in appInput) (AppView, error) {
 			node, err := resolveNode(ctx, api, in.Node)
 			if err != nil {
@@ -46,7 +46,7 @@ func addAppTools(s *sdk.Server, api API) {
 			return ViewApp(app), err
 		})
 	readTool(s, "infra_get_app_stats",
-		"Take one sample of the CPU and memory of an app's components. The result says when it was sampled; nothing is stored."+remoteDataNotice,
+		"Take one sample of the CPU and memory of an app's components. The result says when it was sampled; nothing is stored. Needs service.read."+remoteDataNotice,
 		func(ctx context.Context, in appInput) (AppStatsView, error) {
 			node, err := resolveNode(ctx, api, in.Node)
 			if err != nil {
@@ -56,7 +56,7 @@ func addAppTools(s *sdk.Server, api API) {
 			return ViewAppStats(stats), err
 		})
 	readTool(s, "infra_search_app_logs",
-		"Search the recent logs of one component of an app for a term (needs service.logs). The daemon reads a bounded window of recent lines, masks credentials, then matches; the result states the window it covered. The term never reaches the node. At most 500 lines and 64 KiB."+remoteDataNotice,
+		"Search the recent logs of one component of an app for a term (needs service.logs, which the default policy grants MCP clients through builtin-mcp-operate). The daemon reads a bounded window of recent lines, masks credentials, then matches; the result states the window it covered. The term never reaches the node. At most 500 lines and 64 KiB; truncated=true says a cap cut the result, so narrow the term."+remoteDataNotice,
 		func(ctx context.Context, in searchAppLogsInput) (AppLogsView, error) {
 			node, err := resolveNode(ctx, api, in.Node)
 			if err != nil {

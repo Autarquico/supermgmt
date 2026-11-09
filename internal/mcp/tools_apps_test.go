@@ -199,3 +199,74 @@ func TestSearchAppLogs_ADeniedReadIsAToolErrorWithItsCode(t *testing.T) {
 		t.Errorf("code = %s", failure.Code)
 	}
 }
+
+func TestAppTools_DescriptionsStateTheActionTheyNeedAndFlagNodeContent(t *testing.T) {
+	needs := map[string]string{
+		"infra_list_apps": "service.read", "infra_get_app": "service.read", "infra_get_app_stats": "service.read",
+		"infra_search_app_logs": "builtin-mcp-operate",
+	}
+	seen := 0
+	for _, tool := range listedTools(t, readToolsSession(t, appsFake())) {
+		want, ok := needs[tool.Name]
+		if !ok {
+			continue
+		}
+		seen++
+		for _, part := range []string{want, "untrusted_remote_output"} {
+			if !strings.Contains(tool.Description, part) {
+				t.Errorf("%s does not say %q: %q", tool.Name, part, tool.Description)
+			}
+		}
+	}
+	if seen != len(needs) {
+		t.Errorf("listed %d of %d app tools", seen, len(needs))
+	}
+}
+
+func TestSearchAppLogs_TheResultKeepsTheMCPLogCaps(t *testing.T) {
+	api := appsFake()
+	api.apps.logs.Lines = nil
+	for range 800 {
+		api.apps.logs.Lines = append(api.apps.logs.Lines, "timeout "+strings.Repeat("x", 200))
+	}
+	out := readToolStructured(t, callReadTool(t, readToolsSession(t, api), "infra_search_app_logs", map[string]any{
+		"node": "web-1", "project": "shop", "component": "web", "term": "timeout",
+	}))
+
+	log := out["log"].(map[string]any)
+	text := log["text"].(string)
+	if lines := strings.Count(text, "\n") + 1; lines > MaxUntrustedLines || len(text) > MaxUntrustedBytes || log["truncated"] != true {
+		t.Errorf("lines=%d bytes=%d truncated=%v", strings.Count(text, "\n")+1, len(text), log["truncated"])
+	}
+}
+
+func TestAppTools_AKeyValueSecretAndAPEMBlockAreRedactedInEveryResult(t *testing.T) {
+	const pemBody = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
+	api := appsFake()
+	api.apps.logs.Lines = []string{
+		"2026-11-09T09:59:00Z login failed password=hunter2",
+		"2026-11-09T09:59:01Z -----BEGIN PRIVATE KEY-----",
+		"2026-11-09T09:59:02Z " + pemBody,
+		"2026-11-09T09:59:03Z -----END PRIVATE KEY-----",
+		"2026-11-09T09:59:04Z login failed again",
+	}
+	api.apps.app.Components[0].Config.Labels = map[string]string{"api_token": "hunter2", "note": "password=hunter2"}
+	session := readToolsSession(t, api)
+
+	results := map[string]string{
+		"logs": readToolText(t, callReadTool(t, session, "infra_search_app_logs", map[string]any{
+			"node": "web-1", "project": "shop", "component": "web", "term": "login",
+		})),
+		"app": readToolText(t, callReadTool(t, session, "infra_get_app", map[string]any{"node": "web-1", "project": "shop"})),
+	}
+	for name, text := range results {
+		for _, secret := range []string{"hunter2", pemBody} {
+			if strings.Contains(text, secret) {
+				t.Errorf("%s result carries %q: %s", name, secret, text)
+			}
+		}
+	}
+	if !strings.Contains(results["logs"], "login failed again") {
+		t.Errorf("the line after the block was lost: %s", results["logs"])
+	}
+}
