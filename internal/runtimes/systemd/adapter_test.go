@@ -73,6 +73,33 @@ func TestDiscoverDefaultSelectionKeepsTheSystemdServicesAnOperatorActsOn(t *test
 	}
 }
 
+func TestDiscoverDefaultSelectionHidesSystemdUnitsItDoesNotName(t *testing.T) {
+	list := `  systemd-pcrphase.service  loaded inactive dead TPM2 PCR Barrier
+  systemd-firstboot.service loaded inactive dead First Boot Wizard
+  systemd-logind.service    loaded active running User Login Management
+`
+	node := newFakeNode(t).reply("systemd.version", "systemd 257 (257.9-1)\n").reply("systemd.list_units", list)
+	d, err := New().Discover(context.Background(), node, runtimes.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(names(d), ","), "systemd-logind.service"; got != want {
+		t.Errorf("services = %s, want %s", got, want)
+	}
+}
+
+func TestDiscoverExcludeHidesAnOperatorUnit(t *testing.T) {
+	list := "  systemd-logind.service loaded active running User Login Management\n"
+	node := newFakeNode(t).reply("systemd.version", "systemd 257 (257.9-1)\n").reply("systemd.list_units", list)
+	d, err := New().Discover(context.Background(), node, runtimes.Filter{Exclude: []string{"systemd-logind"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(d); len(got) != 0 {
+		t.Errorf("services = %v, want none", got)
+	}
+}
+
 func TestDiscoverIncludeReplacesDefaultsAndExcludeWins(t *testing.T) {
 	tests := []struct {
 		name   string
