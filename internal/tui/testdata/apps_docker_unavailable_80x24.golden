@@ -3,9 +3,9 @@
 │ Apps                                                                         │
 │                                                                              │
 │ ● db-1 · production · reachable                                              │
-│   apps cannot be read: Docker is not accessible to SuperMgmt's user on this  │
-│     node. A person allows it with: sm nodes setup db-1 --docker-access       │
-│                                                                              │
+│   apps cannot be read: Docker is not installed or not accessible to          │
+│     SuperMgmt's user on this node. If it is installed, a person allows it    │
+│     with: sm nodes setup db-1 --docker-access                                │
 │                                                                              │
 │                                                                              │
 │                                                                              │

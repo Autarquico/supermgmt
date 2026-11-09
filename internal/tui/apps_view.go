@@ -168,7 +168,7 @@ func (m *Model) appsProblem(n wire.NodeApps, bw int) []string {
 	case "":
 		return nil
 	case wire.AppsProblemDocker:
-		text = "apps cannot be read: Docker is not accessible to SuperMgmt's user on this node. A person allows it with: " + safe(n.Hint)
+		text = "apps cannot be read: Docker is not installed or not accessible to SuperMgmt's user on this node. If it is installed, a person allows it with: " + safe(n.Hint)
 	case wire.AppsProblemUnreachable:
 		text = "the node cannot be reached: showing the last discovery, marked stale"
 		if n.Hint != "" {
