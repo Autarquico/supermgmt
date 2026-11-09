@@ -82,6 +82,46 @@ type LogChunk struct {
 	Truncated bool
 }
 
+// ContainerStats is one container's resource use at the moment of a read.
+type ContainerStats struct {
+	ID            string
+	Name          string
+	CPUPercent    float64
+	MemUsedBytes  uint64
+	MemLimitBytes uint64
+}
+
+// ContainerMount is one volume or bind mount of a container.
+type ContainerMount struct {
+	Type        string
+	Name        string
+	Source      string
+	Destination string
+	ReadWrite   bool
+}
+
+// ContainerDetail is what `docker inspect` reports about one container. Env,
+// Cmd, Entrypoint, Labels and Mounts are raw: the caller redacts them before
+// they leave the daemon.
+type ContainerDetail struct {
+	ID                string
+	Name              string
+	Image             string
+	Project           string // the Compose project label, "" outside one
+	Status            string
+	Health            string
+	StartedAt         string
+	RestartCount      int
+	RestartPolicy     string
+	RestartMaxRetries int
+	Ports             []string
+	Mounts            []ContainerMount
+	Env               []string
+	Cmd               []string
+	Entrypoint        []string
+	Labels            map[string]string
+}
+
 // UnitGrant is the set of verbs node.setup granted on one unit through the
 // sudoers drop-in (ADR-0009 d).
 type UnitGrant struct {
