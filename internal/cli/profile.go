@@ -233,15 +233,29 @@ func writeProfiles(w io.Writer, p *client.Profiles, views []profileView) error {
 }
 
 func newProfileUseCmd(env []string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "use <name>",
-		Short: "Make a profile the current one",
-		Args:  cobra.ExactArgs(1),
+	var local bool
+	cmd := &cobra.Command{
+		Use:   "use (<name> | --local)",
+		Short: "Make a profile the current one, or go back to the implicit local daemon with --local",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if local == (len(args) == 1) {
+				return usageErrorf("give a profile name, or --local (not both)")
+			}
 			path := profilesFile(env)
 			profiles, err := client.LoadProfiles(path)
 			if err != nil {
 				return err
+			}
+			if local {
+				profiles.Current = ""
+				if err := client.SaveProfiles(path, profiles); err != nil {
+					return err
+				}
+				return emit(cmd, map[string]string{"current": ""}, func(w io.Writer) error {
+					_, err := fmt.Fprintln(w, "now using the local daemon (no current profile)")
+					return err
+				})
 			}
 			if err := profiles.Use(args[0]); err != nil {
 				return err
@@ -255,6 +269,8 @@ func newProfileUseCmd(env []string) *cobra.Command {
 			})
 		},
 	}
+	cmd.Flags().BoolVar(&local, "local", false, "stop using a profile: go back to the local daemon")
+	return cmd
 }
 
 func newProfileRemoveCmd(env []string) *cobra.Command {

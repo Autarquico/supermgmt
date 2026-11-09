@@ -198,6 +198,19 @@ func TestProfileAddListUseRemove(t *testing.T) {
 	if use := b.run("", "profile", "use", "work"); use.code != 0 {
 		t.Fatalf("use: %s", use.stderr)
 	}
+	if back := b.run("", "profile", "use", "--local"); back.code != 0 {
+		t.Fatalf("use --local: %s", back.stderr)
+	}
+	var after []profileView
+	if current := b.run("", "--json", "profile", "list"); json.Unmarshal([]byte(current.stdout), &after) != nil || len(after) != 2 || after[0].Current || after[1].Current {
+		t.Errorf("--local left a profile current: %q", current.stdout)
+	}
+	if both := b.run("", "profile", "use", "work", "--local"); both.code != exitUsage {
+		t.Errorf("name and --local together: exit %d", both.code)
+	}
+	if use := b.run("", "profile", "use", "work"); use.code != 0 {
+		t.Fatalf("use: %s", use.stderr)
+	}
 	if again := b.run("", "profile", "add", "work", "--url", "https://x.example.com"); again.code != 1 {
 		t.Errorf("duplicate add: exit %d, %q", again.code, again.stderr)
 	}
