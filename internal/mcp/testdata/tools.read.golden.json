@@ -212,10 +212,16 @@
             "array"
           ]
         },
+        "hint": {
+          "type": "string"
+        },
         "node": {
           "type": "string"
         },
         "node_id": {
+          "type": "string"
+        },
+        "problem": {
           "type": "string"
         },
         "project": {
@@ -1992,10 +1998,16 @@
                         "array"
                       ]
                     },
+                    "hint": {
+                      "type": "string"
+                    },
                     "node": {
                       "type": "string"
                     },
                     "node_id": {
+                      "type": "string"
+                    },
+                    "problem": {
                       "type": "string"
                     },
                     "project": {

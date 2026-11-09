@@ -2390,6 +2390,8 @@ components:
         read_at: {$ref: '#/components/schemas/Timestamp'}
         stale: {type: boolean}
         components: {type: array, items: {$ref: '#/components/schemas/AppComponent'}}
+        problem: {type: string, enum: [docker_unavailable, node_unreachable], description: 'Set on the answer for one app only: why it could not be read live, as NodeApps says it.'}
+        hint: {type: string, description: 'For docker_unavailable, the command a person runs to allow Docker access.'}
     OtherService:
       type: object
       description: A service that belongs to no app.

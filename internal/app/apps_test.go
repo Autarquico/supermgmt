@@ -76,9 +76,10 @@ func stampAt(i int) string {
 
 type appsFixture struct {
 	*nodeFixture
-	node    *fakeNode // what the node answers to its automation user
-	viewer  domain.ID // reads services, not logs
-	nodeOne domain.ID // reads the node only
+	node    *fakeNode            // what the node answers to its automation user
+	viewer  domain.ID            // reads services, not logs
+	nodeOne domain.ID            // reads the node only
+	held    map[string]*[]string // the log lines the node holds, by container
 }
 
 func newAppsFixture(t *testing.T) *appsFixture {
@@ -547,7 +548,7 @@ func TestSearchRunsAfterScrubbingOnABoundedWindowAndNeverSendsTheTerm(t *testing
 			t.Errorf("the term reached the node: %s", call.Line)
 		}
 	}
-	if !strings.Contains(f.node.calls[0].Line, fmt.Sprintf("--tail '%d'", searchWindow)) {
+	if !strings.Contains(f.node.calls[0].Line, fmt.Sprintf("--tail '%d'", searchWindow+followOverlap)) {
 		t.Errorf("window not bounded: %s", f.node.calls[0].Line)
 	}
 }

@@ -270,3 +270,11 @@ func TestAppTools_AKeyValueSecretAndAPEMBlockAreRedactedInEveryResult(t *testing
 		t.Errorf("the line after the block was lost: %s", results["logs"])
 	}
 }
+
+func TestViewApp_CarriesWhyTheAppWasNotReadLiveAndTheCommand(t *testing.T) {
+	view := ViewApp(wire.App{Project: "shop", Stale: true, Problem: wire.AppsProblemDocker, Hint: "sm nodes setup web-1 --docker-access"})
+
+	if view.Problem != wire.AppsProblemDocker || view.Hint != "sm nodes setup web-1 --docker-access" {
+		t.Errorf("problem %q hint %q", view.Problem, view.Hint)
+	}
+}

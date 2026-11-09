@@ -83,17 +83,25 @@ func writeNodeApps(w io.Writer, nodes []wire.NodeApps) error {
 		return err
 	}
 	for _, n := range nodes {
-		switch n.Problem {
-		case wire.AppsProblemDocker:
-			_, _ = fmt.Fprintf(w, "%s: apps cannot be read, Docker is not accessible; a person can allow it with: %s\n", n.Node, n.Hint)
-		case wire.AppsProblemUnreachable:
-			_, _ = fmt.Fprintf(w, "%s: the node cannot be reached; showing the last discovery\n", n.Node)
+		if reason := appProblemText(n.Problem, n.Hint); reason != "" {
+			_, _ = fmt.Fprintf(w, "%s: %s\n", n.Node, reason)
 		}
 		if len(n.OtherServices) > 0 {
 			_, _ = fmt.Fprintf(w, "%s: %d other services outside an app (sm services list %s)\n", n.Node, len(n.OtherServices), n.Node)
 		}
 	}
 	return nil
+}
+
+// appProblemText is why apps were not read live, for the overview and for one app alike.
+func appProblemText(problem, hint string) string {
+	switch problem {
+	case wire.AppsProblemDocker:
+		return "apps cannot be read, Docker is not accessible; a person can allow it with: " + hint
+	case wire.AppsProblemUnreachable:
+		return "the node cannot be reached; showing the last discovery"
+	}
+	return ""
 }
 
 func appStaleMark(a wire.App) string {
@@ -163,6 +171,9 @@ func writeApp(w io.Writer, a wire.App) error {
 		{"errors", countOrDash(a.RecentErrors)},
 	}); err != nil {
 		return err
+	}
+	if reason := appProblemText(a.Problem, a.Hint); reason != "" {
+		_, _ = fmt.Fprintln(w, reason)
 	}
 	rows := make([][]string, len(a.Components))
 	for i, c := range a.Components {

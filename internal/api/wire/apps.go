@@ -102,6 +102,10 @@ type App struct {
 	ReadAt       time.Time      `json:"read_at"`
 	Stale        bool           `json:"stale"`
 	Components   []AppComponent `json:"components"`
+	// Problem and Hint are set on the answer for one app only: why it could not be read live, as NodeApps
+	// says it for the overview.
+	Problem string `json:"problem,omitempty"`
+	Hint    string `json:"hint,omitempty"`
 }
 
 // OtherService is a service that belongs to no app: a container outside a Compose project or a unit.

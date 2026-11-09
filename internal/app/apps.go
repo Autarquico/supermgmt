@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -34,7 +35,20 @@ const (
 
 	// appsParallel bounds the nodes, and the containers of a node, read at once.
 	appsParallel = 4
+
+	// minNodeBudget is the least a node's live read is given, however many nodes share the overview.
+	minNodeBudget = 3 * time.Second
 )
+
+// appsBudget is how long the live reads of one answer may take in all. It is below the 20 s the TUI waits, so
+// a node that is slow or silent is shown from its last discovery instead of failing the answer for every node.
+var appsBudget = 15 * time.Second
+
+// nodeBudget is the time each of n nodes read appsParallel at a time is given to answer.
+func nodeBudget(n int) time.Duration {
+	rounds := max((n+appsParallel-1)/appsParallel, 1)
+	return max(appsBudget/time.Duration(rounds), min(appsBudget, minNodeBudget))
+}
 
 // projectName is the Compose project name rule; anything else never reaches a query or a node.
 var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
@@ -61,7 +75,8 @@ type appRead struct {
 	stats   bool
 	errors  bool
 	config  bool
-	project string // only this app, when set
+	project string        // only this app, when set
+	budget  time.Duration // how long the live read may take; none when zero
 }
 
 // NodeApps returns the apps of a node and its other services. Errors counts need service.logs on the node and
@@ -71,7 +86,8 @@ func (i *Inventory) NodeApps(ctx context.Context, by Caller, id domain.ID, q wir
 	if err != nil {
 		return wire.NodeApps{}, err
 	}
-	return i.readNodeApps(ctx, node, appRead{stats: q.Stats, errors: q.Errors && i.mayOnNode(ctx, actor, actionServiceLogs, id)})
+	read := appRead{stats: q.Stats, errors: q.Errors && i.mayOnNode(ctx, actor, actionServiceLogs, id), budget: appsBudget}
+	return i.readNodeApps(ctx, node, read)
 }
 
 // Apps returns the apps of every node the caller may read service on; the others are left out.
@@ -88,10 +104,11 @@ func (i *Inventory) Apps(ctx context.Context, by Caller, q wire.AppsQuery) (wire
 	nodes := slices.DeleteFunc(all, func(n domain.Node) bool {
 		return n.ManagementState == domain.ManagementRetired || !i.mayOnNode(ctx, actor, actionServiceRead, n.ID)
 	})
+	budget := nodeBudget(len(nodes))
 	items := make([]wire.NodeApps, len(nodes))
 	failures := make([]error, len(nodes))
 	parallel(len(nodes), func(k int) {
-		read := appRead{stats: q.Stats, errors: q.Errors && i.mayOnNode(ctx, actor, actionServiceLogs, nodes[k].ID)}
+		read := appRead{stats: q.Stats, errors: q.Errors && i.mayOnNode(ctx, actor, actionServiceLogs, nodes[k].ID), budget: budget}
 		items[k], failures[k] = i.readNodeApps(ctx, nodes[k], read)
 	})
 	for _, err := range failures {
@@ -111,13 +128,14 @@ func (i *Inventory) GetApp(ctx context.Context, by Caller, id domain.ID, project
 	if err != nil {
 		return wire.App{}, err
 	}
-	read := appRead{stats: q.Stats, errors: q.Errors && i.mayOnNode(ctx, actor, actionServiceLogs, id), config: true, project: project}
+	read := appRead{stats: q.Stats, errors: q.Errors && i.mayOnNode(ctx, actor, actionServiceLogs, id), config: true, project: project, budget: appsBudget}
 	apps, err := i.readNodeApps(ctx, node, read)
 	if err != nil {
 		return wire.App{}, err
 	}
 	for _, app := range apps.Apps {
 		if app.Project == project {
+			app.Problem, app.Hint = apps.Problem, apps.Hint
 			return app, nil
 		}
 	}
@@ -148,9 +166,10 @@ func (i *Inventory) AppStats(ctx context.Context, by Caller, id domain.ID, proje
 	}
 	out := wire.AppStats{Project: project, NodeID: node.ID, SampledAt: at, Components: []wire.ComponentUse{}}
 	var total wire.ResourceUse
-	for _, row := range rows {
+	names := rowNames(rows)
+	for k, row := range rows {
 		if use, ok := useOf(stats, row.NativeID); ok {
-			out.Components = append(out.Components, wire.ComponentUse{Name: componentOf(row), Use: use})
+			out.Components = append(out.Components, wire.ComponentUse{Name: names[k], Use: use})
 			total = addUse(total, use)
 		}
 	}
@@ -260,7 +279,7 @@ func (i *Inventory) readNodeApps(ctx context.Context, node domain.Node, read app
 		return wire.NodeApps{}, err
 	}
 	if problem == "" {
-		out.Apps = live
+		out.Apps = nonNil(live)
 		return out, nil
 	}
 	out.Problem = problem
@@ -277,6 +296,32 @@ func (i *Inventory) liveApps(ctx context.Context, node domain.Node, rows []domai
 	if !i.dockerReadable(ctx, node.ID) {
 		return nil, wire.AppsProblemDocker, nil
 	}
+	if read.budget <= 0 {
+		return i.queryLive(ctx, node, rows, read)
+	}
+	type answer struct {
+		apps    []wire.App
+		problem string
+		err     error
+	}
+	ctx, cancel := context.WithTimeout(ctx, read.budget)
+	defer cancel()
+	done := make(chan answer, 1)
+	go func() {
+		a, p, e := i.queryLive(ctx, node, rows, read)
+		done <- answer{a, p, e}
+	}()
+	select {
+	case got := <-done:
+		return got.apps, got.problem, got.err
+	case <-ctx.Done():
+		// The read is abandoned, not waited for: a pooled connection that went silent may not honour the
+		// context until its own timeout.
+		return nil, wire.AppsProblemUnreachable, nil
+	}
+}
+
+func (i *Inventory) queryLive(ctx context.Context, node domain.Node, rows []domain.Service, read appRead) (apps []wire.App, problem string, err error) {
 	ex, err := i.dockerExecutor(ctx, node)
 	if err != nil {
 		return nil, wire.AppsProblemUnreachable, nil //nolint:nilerr // an executor that cannot be built is a node that cannot be reached
@@ -372,12 +417,12 @@ func (i *Inventory) countErrors(ctx context.Context, ex transport.Executor, node
 }
 
 func containerRef(node domain.ID, details []runtimes.ContainerDetail, component string) (runtimes.ServiceRef, bool) {
-	for _, d := range details {
-		if detailComponent(d) == component {
-			return runtimes.ServiceRef{NodeID: node, Kind: domain.ServiceDockerContainer, NativeID: d.ID, Name: d.Name}, true
-		}
+	k := slices.Index(detailNames(details), component)
+	if k < 0 {
+		return runtimes.ServiceRef{}, false
 	}
-	return runtimes.ServiceRef{}, false
+	d := details[k]
+	return runtimes.ServiceRef{NodeID: node, Kind: domain.ServiceDockerContainer, NativeID: d.ID, Name: d.Name}, true
 }
 
 // parallel runs fn for 0..n-1, at most appsParallel at a time, and waits for all.
@@ -425,24 +470,54 @@ func groupServices(rows []domain.Service) (map[string][]domain.Service, []wire.O
 	return projects, others
 }
 
-func componentOf(s domain.Service) string {
-	if labels, ok := s.Metadata["labels"].(map[string]any); ok {
-		if name, ok := labels[composeServiceLabel].(string); ok && name != "" {
-			return name
+// containerIdent is what names a container as a component: the Compose service label, when it has one, and
+// its name.
+type containerIdent struct{ service, name string }
+
+// componentNames gives each container of a project its component name: the service label, or the container
+// name when the label is missing or shared with another container, as it is when a service is scaled. The
+// names are unique, so logs, use and error counts of one replica are never taken for another's.
+func componentNames(containers []containerIdent) []string {
+	label := func(c containerIdent) string { return cmp.Or(c.service, c.name) }
+	uses := map[string]int{}
+	for _, c := range containers {
+		uses[label(c)]++
+	}
+	names := make([]string, len(containers))
+	for k, c := range containers {
+		names[k] = c.name
+		if uses[label(c)] == 1 {
+			names[k] = label(c)
 		}
 	}
-	return s.Name
+	return names
 }
 
-func detailComponent(d runtimes.ContainerDetail) string {
-	if name := d.Labels[composeServiceLabel]; name != "" {
-		return name
+func detailNames(details []runtimes.ContainerDetail) []string {
+	idents := make([]containerIdent, len(details))
+	for k, d := range details {
+		idents[k] = containerIdent{d.Labels[composeServiceLabel], d.Name}
 	}
-	return d.Name
+	return componentNames(idents)
 }
 
+func rowNames(rows []domain.Service) []string {
+	idents := make([]containerIdent, len(rows))
+	for k, s := range rows {
+		labels, _ := s.Metadata["labels"].(map[string]any)
+		service, _ := labels[composeServiceLabel].(string)
+		idents[k] = containerIdent{service, s.Name}
+	}
+	return componentNames(idents)
+}
+
+// findComponent finds the container the component names. The container's own name finds it too, for a panel
+// that read the node live while the rows still know the service as one.
 func findComponent(rows []domain.Service, name string) (domain.Service, bool) {
-	k := slices.IndexFunc(rows, func(s domain.Service) bool { return componentOf(s) == name })
+	k := slices.Index(rowNames(rows), name)
+	if k < 0 {
+		k = slices.IndexFunc(rows, func(s domain.Service) bool { return s.Name == name })
+	}
 	if k < 0 {
 		return domain.Service{}, false
 	}
@@ -471,11 +546,12 @@ func liveApp(node domain.Node, project string, details []runtimes.ContainerDetai
 	restarts := 0
 	var total wire.ResourceUse
 	sampled := false
-	for _, d := range details {
+	names := detailNames(details)
+	for k, d := range details {
 		restart := d.RestartCount
 		restarts += restart
 		c := wire.AppComponent{
-			Name: detailComponent(d), Image: d.Image, Status: d.Status, Health: d.Health, StartedAt: d.StartedAt,
+			Name: names[k], Image: d.Image, Status: d.Status, Health: d.Health, StartedAt: d.StartedAt,
 			RestartCount: &restart, Ports: d.Ports,
 		}
 		if k := slices.IndexFunc(rows, func(s domain.Service) bool { return s.NativeID == d.ID }); k >= 0 {
@@ -519,11 +595,12 @@ func discoveredApps(node domain.Node, projects map[string][]domain.Service, only
 		}
 		components := make([]wire.AppComponent, 0, len(projects[project]))
 		var seen time.Time
-		for _, s := range projects[project] {
+		names := rowNames(projects[project])
+		for k, s := range projects[project] {
 			image, _ := s.Metadata["image"].(string)
 			started, _ := s.Metadata["started_at"].(string)
 			ports, _ := s.Metadata["ports"].([]any)
-			c := wire.AppComponent{Name: componentOf(s), ServiceID: s.ID, Image: image, Status: s.Status, Health: s.Health, StartedAt: started}
+			c := wire.AppComponent{Name: names[k], ServiceID: s.ID, Image: image, Status: s.Status, Health: s.Health, StartedAt: started}
 			for _, p := range ports {
 				if text, ok := p.(string); ok {
 					c.Ports = append(c.Ports, text)

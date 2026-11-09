@@ -183,3 +183,16 @@ func TestAppsLogsFollowAndSearchDoNotCombineAndTheGroupTakesNoOtherSubcommand(t 
 		}
 	}
 }
+
+func TestAppsShowSaysWhyTheAppWasNotReadLiveAndNamesTheCommand(t *testing.T) {
+	node, apps := appsFixture()
+	apps.Apps[0].Stale = true
+	apps.Apps[0].Problem, apps.Apps[0].Hint = wire.AppsProblemDocker, "sm nodes setup web-1 --docker-access"
+	f := appsAPI(t, node, apps, nil)
+
+	r := f.run("apps", "show", "web-1", "shop")
+
+	if r.code != 0 || !strings.Contains(r.stdout, "Docker is not accessible; a person can allow it with: sm nodes setup web-1 --docker-access") {
+		t.Errorf("code=%d output:\n%s %s", r.code, r.stdout, r.stderr)
+	}
+}

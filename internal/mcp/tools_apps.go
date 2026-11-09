@@ -122,6 +122,8 @@ type AppView struct {
 	ReadAt       time.Time         `json:"read_at"`
 	Stale        bool              `json:"stale"`
 	Components   []ComponentView   `json:"components"`
+	Problem      string            `json:"problem,omitempty"`
+	Hint         string            `json:"hint,omitempty"`
 }
 
 type ComponentView struct {
@@ -186,7 +188,7 @@ func ViewApp(a wire.App) AppView {
 	return AppView{
 		Project: a.Project, NodeID: a.NodeID, Node: operatorLine(a.Node), State: a.State,
 		RestartCount: a.RestartCount, RecentErrors: a.RecentErrors, Stats: a.Stats, StatsAt: a.StatsAt,
-		ReadAt: a.ReadAt, Stale: a.Stale, Components: components,
+		ReadAt: a.ReadAt, Stale: a.Stale, Components: components, Problem: a.Problem, Hint: operatorLine(a.Hint),
 	}
 }
 

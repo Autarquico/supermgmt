@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,11 +69,18 @@ type scrubbedLine struct {
 	text string
 }
 
-var lineMarker = regexp.MustCompile("\x00([0-9]+)\x00")
+var (
+	lineMarker = regexp.MustCompile("\x00([0-9]+)\x00")
+	pemBegin   = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+	pemEnd     = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
+)
 
-// scrubLines redacts the lines as one text, so a credential that spans lines cannot survive, and says which
-// raw line each surviving line started at. A redacted block collapses into the line it began on. Raw lines
-// carry no control characters, so the markers cannot clash with their text.
+// scrubLines redacts the lines and says which raw line each surviving line started at. A PEM block is
+// removed on the lines as one text, so it cannot survive a line break: a block collapses into the line it
+// began on, and a chunk that starts inside a block (an END with no BEGIN before it) is masked from its start
+// through that END. Every other credential is removed line by line, so a line ending in `password:` cannot
+// take the next one for its value. Raw lines carry no control characters, so the markers cannot clash with
+// their text.
 func scrubLines(raw []string) []scrubbedLine {
 	var b strings.Builder
 	for i, line := range raw {
@@ -81,7 +89,7 @@ func scrubLines(raw []string) []scrubbedLine {
 		}
 		b.WriteString("\x00" + strconv.Itoa(i) + "\x00" + line)
 	}
-	scrubbed := audit.ScrubCredentials(b.String())
+	scrubbed := audit.ScrubString(maskOpenBlockHead(b.String()))
 	marks := lineMarker.FindAllStringSubmatchIndex(scrubbed, -1)
 	out := make([]scrubbedLine, 0, len(marks))
 	for k, m := range marks {
@@ -90,9 +98,24 @@ func scrubLines(raw []string) []scrubbedLine {
 			end = marks[k+1][0]
 		}
 		index, _ := strconv.Atoi(scrubbed[m[2]:m[3]])
-		out = append(out, scrubbedLine{raw: index, text: strings.TrimSuffix(scrubbed[m[1]:end], "\n")})
+		text := strings.TrimSuffix(scrubbed[m[1]:end], "\n")
+		out = append(out, scrubbedLine{raw: index, text: audit.ScrubCredentials(text)})
 	}
 	return out
+}
+
+// maskOpenBlockHead masks the start of text through the first END of a private key that has no BEGIN before
+// it: the chunk began inside a block, whose head it cannot see.
+func maskOpenBlockHead(text string) string {
+	end := pemEnd.FindStringIndex(text)
+	if end == nil {
+		return text
+	}
+	if begin := pemBegin.FindStringIndex(text); begin != nil && begin[0] < end[0] {
+		return text
+	}
+	first := lineMarker.FindString(text) // text starts with the marker of line 0
+	return first + audit.Redacted + text[end[1]:]
 }
 
 func texts(lines []scrubbedLine) []string {
@@ -103,13 +126,26 @@ func texts(lines []scrubbedLine) []string {
 	return out
 }
 
+// lastOf is the lines that started at raw line from or later.
+func lastOf(lines []scrubbedLine, from int) []scrubbedLine {
+	k := slices.IndexFunc(lines, func(l scrubbedLine) bool { return l.raw >= from })
+	if k < 0 {
+		return nil
+	}
+	return lines[k:]
+}
+
+// withContext is how many lines a read asks for to deliver n of them: the overlap more, so a block that
+// began before the first delivered line is whole in what is redacted.
+func withContext(n int) int { return min(n+followOverlap, runtimes.MaxLogLines) }
+
 // recent is the first read of a follow: the last lines, and the cursor from which to continue.
 func (a appLogReader) recent(lines int) (wire.AppLogs, error) {
-	chunk, err := a.tail(lines)
+	chunk, err := a.tail(withContext(lines))
 	if err != nil {
 		return wire.AppLogs{}, err
 	}
-	out := a.result(texts(scrubLines(chunk.Lines)))
+	out := a.result(texts(lastOf(scrubLines(chunk.Lines), len(chunk.Lines)-lines)))
 	out.Truncated = chunk.Truncated
 	cursor, ok := nextCursor(chunk.Lines, time.Unix(0, 0).UTC())
 	out.Cursor, out.Gap = cursor.encode(), !ok
@@ -118,31 +154,28 @@ func (a appLogReader) recent(lines int) (wire.AppLogs, error) {
 
 // follow reads what came after cursor. The lines of the overlap are read and redacted together with the new
 // ones and only the new ones are returned.
+//
+// It asks for one line more than the overlap and the lines to deliver, so a full answer proves the node cut
+// the oldest lines: the cursor's lines cannot be told from the new ones, and the newest `lines` are
+// delivered with a gap.
 func (a appLogReader) follow(cursor string, lines int) (wire.AppLogs, error) {
 	at, err := decodeLogCursor(cursor)
 	if err != nil {
 		return wire.AppLogs{}, err
 	}
-	chunk, err := a.since(at.Since, lines)
+	asked := min(at.Skip+lines+1, runtimes.MaxLogLines)
+	chunk, err := a.since(at.Since, asked)
 	if err != nil {
 		return wire.AppLogs{}, err
 	}
 	skip, gap := at.Skip, chunk.Truncated
-	if skip > 0 {
-		first, ok := stampOf(firstOf(chunk.Lines))
-		if len(chunk.Lines) < skip || !ok || !first.Equal(at.Since) {
-			skip, gap = 0, true // the lines the cursor stood on are gone: rotated, or cut by the line limit
-		}
-	} else if len(chunk.Lines) >= lines {
-		gap = true // more lines than asked for may have been written since
+	switch first, ok := stampOf(firstOf(chunk.Lines)); {
+	case len(chunk.Lines) >= asked:
+		skip, gap = max(len(chunk.Lines)-lines, 0), true
+	case skip > 0 && (len(chunk.Lines) < skip || !ok || !first.Equal(at.Since)):
+		skip, gap = 0, true // the lines the cursor stood on are gone: rotated
 	}
-	var fresh []string
-	for _, l := range scrubLines(chunk.Lines) {
-		if l.raw >= skip {
-			fresh = append(fresh, l.text)
-		}
-	}
-	out := a.result(fresh)
+	out := a.result(texts(lastOf(scrubLines(chunk.Lines), skip)))
 	next, ok := nextCursor(chunk.Lines, at.Since)
 	out.Cursor, out.Gap, out.Truncated = next.encode(), gap || !ok, chunk.Truncated
 	return out, nil
@@ -186,13 +219,14 @@ func (a appLogReader) search(term string) (wire.AppLogs, error) {
 	if term == "" || textsafe.Line(term) != term {
 		return wire.AppLogs{}, smerr.New(smerr.CodeInvalidArgument, "", "search term must be a non-empty single line without control characters")
 	}
-	chunk, err := a.tail(searchWindow)
+	chunk, err := a.tail(withContext(searchWindow))
 	if err != nil {
 		return wire.AppLogs{}, err
 	}
+	first := max(len(chunk.Lines)-searchWindow, 0)
 	needle := strings.ToLower(term)
 	var matches []string
-	for _, l := range scrubLines(chunk.Lines) {
+	for _, l := range lastOf(scrubLines(chunk.Lines), first) {
 		if strings.Contains(strings.ToLower(l.text), needle) {
 			matches = append(matches, l.text)
 		}
@@ -203,7 +237,7 @@ func (a appLogReader) search(term string) (wire.AppLogs, error) {
 	}
 	out := a.result(matches)
 	out.Truncated = truncated
-	out.Window = windowOf(chunk.Lines)
+	out.Window = windowOf(chunk.Lines[first:])
 	return out, nil
 }
 
