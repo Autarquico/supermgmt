@@ -153,6 +153,12 @@ func (h setupHandler) runTunnel(ctx context.Context, lease jobs.Lease, job jobs.
 	if err := requireTunnelAllowed(h.tunnel != nil, node); err != nil {
 		return err
 	}
+	if node.Endpoint.Transport.Effective() == domain.TransportDirect {
+		// nothing is created in Cloudflare for a node that setup would refuse
+		if _, err := h.bootstrapAdmin(ctx, nil, node, node.Endpoint.AdminUser == adminRoot); err != nil {
+			return err
+		}
+	}
 	run, err := h.tunnel.begin(ctx, lease, job, node, req, id)
 	if err != nil {
 		return err
@@ -252,11 +258,21 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	return outcome, err
 }
 
-// requireBootstrap checks, before anything changes, that the node runs Linux,
-// has every command setup runs, and that admin_user can do what setup needs: be
-// root, or run sudo without a password (ADR-0009 c). Each refusal is permanent:
-// retrying cannot install a package.
+// requireBootstrap checks, before anything changes, that the node runs Linux
+// and that admin_user can do what privileged work needs: be root, or run sudo
+// without a password (ADR-0009 c). Each refusal is permanent: retrying cannot
+// fix the node.
 func requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool) error {
+	return checkBootstrap(ctx, admin, asRoot, false)
+}
+
+// requireSetupBootstrap is requireBootstrap plus the commands node.setup runs
+// on the node. Only setup needs them: removing the tunnel does not.
+func requireSetupBootstrap(ctx context.Context, admin transport.Executor, asRoot bool) error {
+	return checkBootstrap(ctx, admin, asRoot, true)
+}
+
+func checkBootstrap(ctx context.Context, admin transport.Executor, asRoot, setupCommands bool) error {
 	snapshot, err := discovery.Probe(ctx, admin)
 	if err != nil {
 		return err
@@ -264,7 +280,7 @@ func requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool
 	if !snapshot.IsLinux() {
 		return jobs.Permanent(smerr.New(smerr.CodeCapabilityUnavailable, "", "setup needs a Linux node; this one runs "+snapshot.KernelName()))
 	}
-	if len(snapshot.MissingSetupCommands) > 0 {
+	if setupCommands && len(snapshot.MissingSetupCommands) > 0 {
 		return jobs.Permanent(smerr.New(smerr.CodeCapabilityUnavailable, "", missingCommandsMessage(snapshot.MissingSetupCommands)))
 	}
 	if !asRoot && !snapshot.PasswordlessSudo {
@@ -281,6 +297,8 @@ var setupPackages = map[string][2]string{
 	"useradd":          {"passwd", "shadow-utils"},
 	"usermod":          {"passwd", "shadow-utils"},
 	"install":          {"coreutils", "coreutils"},
+	"runuser":          {"util-linux", "util-linux"},
+	"gpasswd":          {"passwd", "shadow-utils"},
 	"systemd-tmpfiles": {"systemd", "systemd"},
 }
 
@@ -290,8 +308,9 @@ func missingCommandsMessage(missing []string) string {
 		pkgs := setupPackages[command]
 		apt, dnf = appendUnique(apt, pkgs[0]), appendUnique(dnf, pkgs[1])
 	}
-	return "setup needs " + strings.Join(missing, ", ") + " on the node, and it is missing: install it first (apt install " +
-		strings.Join(apt, " ") + " or dnf install " + strings.Join(dnf, " ") + ") and run setup again"
+	return "setup needs " + strings.Join(missing, ", ") + " on the node, and it is missing: install " +
+		strings.Join(apt, ", ") + " (apt install " + strings.Join(apt, " ") + "; on Red Hat-like nodes dnf install " +
+		strings.Join(dnf, " ") + ") and run setup again"
 }
 
 func appendUnique(list []string, item string) []string {

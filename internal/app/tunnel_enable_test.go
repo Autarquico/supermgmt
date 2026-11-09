@@ -68,6 +68,24 @@ func TestTunnelSetupProvisionsEverythingProvesTheTunnelAndOnlyThenSwitches(t *te
 	}
 }
 
+func TestATunnelSetupOfANodeMissingACommandCreatesNothingInCloudflare(t *testing.T) {
+	ts := newTunnelSetting(t)
+	ts.dialer.as("admin").reply("probe", strings.Replace(linuxProbe, "@@sudo\nyes", "@@sudo\nyes\nmissing=visudo", 1))
+	ts.plan()
+
+	err := ts.attempt()
+
+	if err == nil || !strings.Contains(err.Error(), "visudo") || !errors.Is(err, jobs.ErrPermanent) {
+		t.Fatalf("error = %v, want a permanent refusal naming visudo", err)
+	}
+	if got := ts.cf.Mutations(); len(got) != 0 {
+		t.Errorf("%d Cloudflare mutations, want none", len(got))
+	}
+	if ops := ts.operations(); len(ops) != 0 {
+		t.Errorf("operations = %+v, want none", ops)
+	}
+}
+
 func TestTheTunnelPathIsVerifiedOverAFreshCloudflareConnectionWithThePinnedKey(t *testing.T) {
 	ts := newTunnelSetting(t)
 	ts.plan()

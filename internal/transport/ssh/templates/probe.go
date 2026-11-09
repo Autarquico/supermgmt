@@ -93,7 +93,7 @@ true
 
 // SetupCommands are the commands node.setup runs on the node, which the probe
 // reports as missing before setup changes anything.
-var SetupCommands = []string{"sudo", "visudo", "useradd", "usermod", "install", "systemd-tmpfiles"}
+var SetupCommands = []string{"sudo", "visudo", "useradd", "usermod", "install", "runuser", "gpasswd", "systemd-tmpfiles"}
 
 // probeTemplates holds the node probe (spec §12): one session returns every value.
 var probeTemplates = []Template{{

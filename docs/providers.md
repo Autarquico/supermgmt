@@ -76,7 +76,7 @@ Bootstrap privilege:
 - Otherwise `admin_user` needs passwordless sudo: each privileged command runs as `sudo -n ...`. SuperMgmt never prompts for a password; without it setup fails before changing anything.
 - If you added a temporary `NOPASSWD` rule for this, revoke it afterwards. SuperMgmt needs it again only to re-run setup.
 
-Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo, and that the node has the commands setup runs (`sudo`, `visudo`, `useradd`, `usermod`, `install`, `systemd-tmpfiles`); otherwise the job fails with nothing changed. A missing command is named with the package that provides it, and the failure is final: the job is not retried (`internal/app/setup.go`, `jobs.Permanent`).
+Before it changes anything, setup checks that `admin_user` is root or has passwordless sudo, and that the node has the commands setup runs (`sudo`, `visudo`, `useradd`, `usermod`, `install`, `systemd-tmpfiles`); otherwise the job fails with nothing changed (with `--tunnel` on a node that is not yet behind a tunnel, this happens before anything is created in Cloudflare; on a node already reached through the tunnel, the tunnel is needed to probe, so the check runs once it is open). A missing command is named with the package that provides it, and the failure is final: the job is not retried (`internal/app/setup.go`, `jobs.Permanent`).
 
 What setup does, in order, and how it ends:
 

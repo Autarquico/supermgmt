@@ -35,6 +35,9 @@ func (s *stack) scanControlPlane() map[string][]byte {
 func TestNoCredentialLeaksFromTheControlPlaneThroughEnableAndFailure(t *testing.T) {
 	s := newStack(t, stackOptions{poolConfig: &fastPool})
 	node := s.addNode("web1", unreachable(t), "secret://ssh/default")
+	// A node already behind a tunnel is not probed before Cloudflare is provisioned
+	// (the tunnel is what reaches it), so the job provisions, then fails.
+	s.setTunnelEndpoint(node.ID, "ssh-web1.example.test")
 	creds := credentials{}
 
 	// A fault after the third Cloudflare mutation and another after the fifth:

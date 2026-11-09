@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/autarquico/supermgmt/internal/audit"
 	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
@@ -92,15 +93,27 @@ type daemonProcess struct {
 	exited   chan error
 }
 
-// startError is the last lines the daemon logged since it was spawned.
+// startError is the last lines the daemon logged since it was spawned, scrubbed
+// and capped.
 func (d *daemonProcess) startError(logPath string) string {
-	raw, err := os.ReadFile(logPath) //nolint:gosec // the instance state dir
-	if err != nil || int64(len(raw)) <= d.logStart {
+	f, err := os.Open(logPath) //nolint:gosec // the instance state dir
+	if err != nil {
 		return "it logged nothing"
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw[d.logStart:])), "\n")
-	return textsafe.Line(strings.Join(lines[max(0, len(lines)-3):], " | "))
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.NewSectionReader(f, d.logStart, maxStartLog))
+	if err != nil || len(strings.TrimSpace(string(raw))) == 0 {
+		return "it logged nothing"
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	tail := textsafe.Line(audit.ScrubString(strings.Join(lines[max(0, len(lines)-3):], " | ")))
+	return string([]rune(tail)[:min(len([]rune(tail)), maxStartLogShown)])
 }
+
+const (
+	maxStartLog      = 16 << 10 // read at most this much of the log after the spawn
+	maxStartLogShown = 400      // runes of it put in the error
+)
 
 func spawn(cfg *Autostart) (*daemonProcess, error) {
 	log, err := openLog(cfg.LogPath)
