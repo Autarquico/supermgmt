@@ -9,6 +9,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/providers/proxmox/pvefake"
+	"github.com/autarquico/supermgmt/internal/runtimes"
 )
 
 func (c *pveCluster) inventory() *Inventory {
@@ -49,7 +50,7 @@ func TestNodeViewsCarryTheProxmoxIdentityStatusAndPresenceOfDiscoveredObjects(t 
 	views := c.nodeViews()
 
 	web := views["web"].Proxmox
-	if web == nil || *web != (wire.ProxmoxGuest{PVENode: "pve1", VMID: 100, Type: "qemu", Status: "running"}) {
+	if web == nil || web.PVENode != "pve1" || web.VMID != 100 || web.Type != "qemu" || web.Status != "running" || web.Absent || web.Inaccessible || web.Template {
 		t.Errorf("web = %+v", web)
 	}
 	if db := views["db"].Proxmox; db == nil || db.Type != "lxc" || db.PVENode != "pve2" || db.Status != "stopped" {
@@ -63,7 +64,7 @@ func TestNodeViewsCarryTheProxmoxIdentityStatusAndPresenceOfDiscoveredObjects(t 
 	}
 }
 
-func TestNodeViewsMarkAGoneGuestAbsentAndEverythingInaccessibleWhenTheACLIsRevoked(t *testing.T) {
+func TestNodeViewsMarkAGoneGuestAbsentAndWhatTheTokenNoLongerSeesInaccessible(t *testing.T) {
 	c := newPVECluster(t)
 	c.doSync()
 	c.fake.RemoveGuest(200)
@@ -76,10 +77,43 @@ func TestNodeViewsMarkAGoneGuestAbsentAndEverythingInaccessibleWhenTheACLIsRevok
 
 	c.fake.Revoke(pveTokenUser, "/", pveRole)
 	c.clock.Advance(time.Minute)
+	_ = c.sync.Sync(context.Background(), c.provider.ID)
+
+	if db := c.nodeViews()["db"].Proxmox; db == nil || !db.Absent || db.Inaccessible {
+		t.Errorf("removed guest once every right is gone = %+v, want it to stay absent", db)
+	}
+
+	for _, path := range []string{"/nodes", "/storage", "/vms/100"} {
+		c.fake.Grant(pveTokenUser, path, pveRole, true)
+	}
+	c.clock.Advance(time.Minute)
 	c.doSync()
 
-	if web := c.nodeViews()["web"].Proxmox; web == nil || !web.Inaccessible || web.Absent {
-		t.Errorf("guest after revocation = %+v, want inaccessible only", web)
+	views := c.nodeViews()
+	if base := views["base"].Proxmox; base == nil || !base.Inaccessible || base.Absent {
+		t.Errorf("guest out of the token's sight = %+v, want inaccessible only", base)
+	}
+	if web := views["web"].Proxmox; web == nil || web.Inaccessible || web.Absent {
+		t.Errorf("guest the token still sees = %+v", web)
+	}
+}
+
+func TestNodeViewsListTheStoragesOfTheirClusterMember(t *testing.T) {
+	c := newPVECluster(t)
+	c.doSync()
+
+	for name, view := range c.nodeViews() {
+		if view.Proxmox == nil {
+			continue
+		}
+		if (view.Proxmox.Type == "node") != (len(view.Proxmox.Storages) > 0) {
+			t.Errorf("%s (%s) lists %d storages: only a cluster member has any", name, view.Proxmox.Type, len(view.Proxmox.Storages))
+		}
+		for _, st := range view.Proxmox.Storages {
+			if st.ID == "" || st.TotalBytes <= 0 {
+				t.Errorf("%s storage = %+v", name, st)
+			}
+		}
 	}
 }
 
@@ -118,5 +152,16 @@ func TestProviderViewsReportWhyTheLatestSyncFailedAndClearItOnRecovery(t *testin
 	c.doSync()
 	if got := c.providerView().LastError; got != "" {
 		t.Errorf("last_error after recovery = %q", got)
+	}
+}
+
+func TestSetupViewShowsTheTLSServerNameOfAProxmoxSetup(t *testing.T) {
+	meta := runtimes.SetupMeta{SetupVersion: runtimes.SetupVersion, Proxmox: &runtimes.ProxmoxMeta{TLSServerName: "pve.lab.example"}}
+
+	if got := setupView(meta).ProxmoxTLSServerName; got != "pve.lab.example" {
+		t.Errorf("tls server name = %q", got)
+	}
+	if got := setupView(runtimes.SetupMeta{SetupVersion: runtimes.SetupVersion}).ProxmoxTLSServerName; got != "" {
+		t.Errorf("a node set up without --proxmox shows %q", got)
 	}
 }

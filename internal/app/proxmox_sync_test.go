@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,37 +319,39 @@ func TestProxmoxSyncAGuestThatIsGoneIsAbsentWhenTheTokenStillSeesItsPath(t *test
 	}
 }
 
-func TestProxmoxSyncARevokedACLMakesEverythingInaccessibleKeepsTheRowsAndDropsCapabilities(t *testing.T) {
+func TestProxmoxSyncATokenWithNoRightsFailsTheProviderAndKeepsWhatIsKnown(t *testing.T) {
 	c := newPVECluster(t)
 	c.doSync()
-	if !c.canPower("qemu/100") {
-		t.Fatal("precondition: web is power-managed")
-	}
-
-	c.fake.Revoke(pveTokenUser, "/", pveRole)
+	c.fake.RemoveGuest(200)
 	c.clock.Advance(time.Minute)
 	c.doSync()
 
+	c.fake.Revoke(pveTokenUser, "/", pveRole)
+	c.clock.Advance(time.Minute)
+	err := c.sync.Sync(context.Background(), c.provider.ID)
+
+	var failure *SyncFailure
+	if !errors.As(err, &failure) || !errors.Is(err, errNoRights) {
+		t.Fatalf("Sync = %v, want a failure saying the token has no rights", err)
+	}
+	if p := c.providerRow(); p.Status != ProviderStatusError {
+		t.Errorf("provider status = %q, want error: the token sees nothing", p.Status)
+	}
 	if len(c.objects()) != 5 {
-		t.Errorf("objects after revocation = %d, want all 5 rows kept", len(c.objects()))
+		t.Errorf("objects = %d, want all 5 rows kept", len(c.objects()))
 	}
-	for _, native := range []string{"node/pve1", "node/pve2", "qemu/100", "lxc/200", "qemu/300"} {
-		if got := c.status(native); got.Presence != PresenceInaccessible {
-			t.Errorf("%s presence = %q, want inaccessible (never absent: the token cannot tell)", native, got.Presence)
-		}
+	if got := c.status("qemu/100"); got.Presence != PresencePresent {
+		t.Errorf("web presence = %q: an unreadable cluster must not change what is known", got.Presence)
 	}
-	if c.canPower("qemu/100") || c.canPower("lxc/200") {
-		t.Error("capability proxmox.vm.power survived the loss of the permission")
-	}
-	if p := c.providerRow(); p.Status != ProviderStatusOK {
-		t.Errorf("provider status = %q: the sync itself worked", p.Status)
+	if got := c.status("lxc/200"); got.Presence != PresenceAbsent {
+		t.Errorf("the deleted guest is %q, want it to stay absent", got.Presence)
 	}
 
 	c.fake.Grant(pveTokenUser, "/", pveRole, true)
 	c.clock.Advance(time.Minute)
 	c.doSync()
-	if got := c.status("qemu/100"); got.Presence != PresencePresent || !c.canPower("qemu/100") {
-		t.Errorf("after the ACL came back: %+v, can power %v", got, c.canPower("qemu/100"))
+	if got := c.status("qemu/100"); got.Presence != PresencePresent || !c.canPower("qemu/100") || c.providerRow().Status != ProviderStatusOK {
+		t.Errorf("after the ACL came back: %+v, can power %v, provider %q", got, c.canPower("qemu/100"), c.providerRow().Status)
 	}
 }
 
@@ -412,6 +415,33 @@ func TestProxmoxSyncAFailedReadIsRecordedAuditedOnTransitionsAndKeepsTheLastSync
 	c.doSync()
 	if c.providerRow().Status != ProviderStatusOK || len(c.events(eventProviderSync)) != 3 {
 		t.Errorf("recovery was not recorded: status %q, %d events", c.providerRow().Status, len(c.events(eventProviderSync)))
+	}
+}
+
+func TestProxmoxSyncARefusedTokenSaysHowToRecoverIt(t *testing.T) {
+	c := newPVECluster(t)
+	c.fake.Inject(pvefake.Rule{
+		Method: "GET", PathSuffix: "/cluster/resources", Times: 1,
+		Fault: pvefake.Respond(401, `{"data":null}`),
+	})
+
+	_ = c.sync.Sync(context.Background(), c.provider.ID)
+
+	report, _ := LatestSyncReport(context.Background(), c.db.Reader(), c.provider.ID)
+	if !strings.Contains(report.Error, "HTTP 401") || !strings.Contains(report.Error, "token was refused") {
+		t.Errorf("error = %q, want the 401 and a hint", report.Error)
+	}
+}
+
+func TestRefusedHintNamesTheSetupCommandOfAViaNodeProvider(t *testing.T) {
+	refused := fmt.Errorf("read the cluster: %w", &proxmox.APIError{Status: 401})
+	via := domain.Provider{Config: map[string]any{providerConfigViaNode: "pve1"}}
+
+	if got := refusedHint(via, refused); !strings.Contains(got, "`sm nodes setup pve1 --proxmox`") {
+		t.Errorf("hint = %q", got)
+	}
+	if got := refusedHint(via, fmt.Errorf("read the cluster: %w", &proxmox.APIError{Status: 500})); got != "" {
+		t.Errorf("a 500 got the hint %q", got)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -357,6 +358,8 @@ func requireSyncable(p domain.Provider) error {
 	return nil
 }
 
+var errNoRights = errors.New("the API token sees no node and no guest: it has no rights")
+
 // clusterRead is one successful read of a cluster: what it reports, and what
 // the token may do on the ACL paths the sync decides on (each asked of PVE
 // for that exact path, never inferred from the paths PVE lists).
@@ -393,6 +396,12 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	inventory, skew, skewKnown, err := s.readInventory(ctx, client)
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the cluster: %w", err)
+	}
+	if len(inventory.Nodes) == 0 && len(inventory.Guests) == 0 {
+		// A cluster always has a node: an answer with neither nodes nor guests
+		// is a token with no rights, and taking it for a healthy cluster would
+		// turn every object into "inaccessible".
+		return clusterRead{}, errNoRights
 	}
 	known, err := database.ListNodes(ctx, s.cfg.DB.Reader())
 	if err != nil {
@@ -547,7 +556,7 @@ func (s *ProxmoxSync) fence(ctx context.Context, q database.Querier, read domain
 }
 
 func (s *ProxmoxSync) recordFailure(ctx context.Context, p domain.Provider, cause error) error {
-	message := limitText(textsafe.Line(cause.Error()), syncErrorLimit)
+	message := limitText(textsafe.Line(cause.Error()), syncErrorLimit) + refusedHint(p, cause)
 	return s.write(ctx, func(ctx context.Context, tx *database.Tx) error {
 		if err := s.fence(ctx, tx, p); err != nil {
 			return err
@@ -557,6 +566,19 @@ func (s *ProxmoxSync) recordFailure(ctx context.Context, p domain.Provider, caus
 		}
 		return s.recordOutcome(ctx, tx, p, SyncReport{Error: message})
 	})
+}
+
+// refusedHint tells how to recover when PVE refused the token (HTTP 401): a
+// via_node provider's token is the one `sm nodes setup --proxmox` creates.
+func refusedHint(p domain.Provider, cause error) string {
+	var api *proxmox.APIError
+	if !errors.As(cause, &api) || api.Status != http.StatusUnauthorized {
+		return ""
+	}
+	if via, _ := p.Config[providerConfigViaNode].(string); via != "" {
+		return fmt.Sprintf(" (run `sm nodes setup %s --proxmox` to create the token again)", textsafe.Line(via))
+	}
+	return " (the token was refused: check that it exists and has not expired)"
 }
 
 // recordOutcome keeps the sync observation current and audits a change of

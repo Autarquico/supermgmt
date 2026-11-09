@@ -1517,6 +1517,20 @@ components:
         template: {type: boolean}
         inaccessible: {type: boolean}
         absent: {type: boolean}
+        storages:
+          type: array
+          description: The storages of a cluster member, from the latest sync.
+          items: {$ref: '#/components/schemas/ProxmoxStorage'}
+    ProxmoxStorage:
+      type: object
+      required: [id, plugin, content, total_bytes, used_bytes, shared]
+      properties:
+        id: {type: string}
+        plugin: {type: string}
+        content: {type: array, items: {type: string}}
+        total_bytes: {type: integer, format: int64}
+        used_bytes: {type: integer, format: int64}
+        shared: {type: boolean}
     Endpoint:
       type: object
       required: [host, port, user, admin_user, host_public_key, host_key_fingerprint_sha256]
@@ -1572,6 +1586,7 @@ components:
         units: {type: array, items: {$ref: '#/components/schemas/UnitGrant'}}
         key_fingerprint: {type: string}
         proxmox: {type: boolean}
+        proxmox_tls_server_name: {type: string, description: The certificate name setup chose for the Proxmox API; absent without --proxmox.}
     UnitGrant:
       type: object
       required: [unit, verbs]

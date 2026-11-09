@@ -108,6 +108,18 @@ type ProxmoxGuest struct {
 	Template     bool   `json:"template"`
 	Inaccessible bool   `json:"inaccessible"`
 	Absent       bool   `json:"absent"`
+	// Storages are the storages of a cluster member, from the latest sync.
+	Storages []ProxmoxStorage `json:"storages,omitempty"`
+}
+
+// ProxmoxStorage is one storage of a Proxmox cluster member.
+type ProxmoxStorage struct {
+	ID         string   `json:"id"`
+	Plugin     string   `json:"plugin"`
+	Content    []string `json:"content"`
+	TotalBytes int64    `json:"total_bytes"`
+	UsedBytes  int64    `json:"used_bytes"`
+	Shared     bool     `json:"shared"`
 }
 
 // Endpoint is the configured management endpoint (spec §6.4, ADR-0009 b).
@@ -171,6 +183,8 @@ type Setup struct {
 	Units          []UnitGrant `json:"units"`
 	KeyFingerprint string      `json:"key_fingerprint"`
 	Proxmox        bool        `json:"proxmox"` // the node was set up with --proxmox
+	// ProxmoxTLSServerName is the certificate name setup chose for the Proxmox API; empty without --proxmox.
+	ProxmoxTLSServerName string `json:"proxmox_tls_server_name,omitempty"`
 }
 
 type UnitGrant struct {

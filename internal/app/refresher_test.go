@@ -9,6 +9,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/config"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -209,5 +210,36 @@ func TestFocusLeasesExpire(t *testing.T) {
 	none.Touch(p.node.ID)
 	if none.Active(p.node.ID) {
 		t.Error("a nil Focus must hold no leases")
+	}
+}
+
+func TestTheRefresherNeverDialsADiscoveredGuestThatHasNoSSHEndpoint(t *testing.T) {
+	p := newProbing(t)
+	var guest domain.ID
+	p.inTx(func(ctx context.Context, tx *database.Tx) error {
+		provider, err := database.CreateProvider(ctx, tx, domain.Provider{
+			ID: p.ids.NewID(), Type: "proxmox", Name: "pve", Origin: domain.ProviderStatic, CreatedAt: p.clock.Now(), UpdatedAt: p.clock.Now(),
+		})
+		if err != nil {
+			return err
+		}
+		created, err := database.CreateNode(ctx, tx, domain.Node{
+			ID: p.ids.NewID(), ProviderID: provider.ID, NativeID: "qemu/100", Name: "web", Kind: "proxmox.qemu",
+			ManagementState: domain.ManagementDiscovered, Reachability: domain.ReachabilityUnknown,
+			CreatedAt: p.clock.Now(), UpdatedAt: p.clock.Now(),
+		})
+		guest = created.ID
+		return err
+	})
+	r := p.refresher(t, func(o *RefresherOptions) { o.OnError = func(domain.ID, error) { t.Error("a probe failed") } })
+
+	mustf(t, r.Pass(context.Background()), "pass")
+	r.Wait()
+
+	if got := p.probesOf(); got != 1 {
+		t.Errorf("probes = %d, want only the SSH node's", got)
+	}
+	if err := p.probe.Probe(context.Background(), guest, ProbeFull, nil); smerr.CodeOf(err) != smerr.CodeCapabilityUnavailable {
+		t.Errorf("probing the guest = %v, want CAPABILITY_UNAVAILABLE", err)
 	}
 }

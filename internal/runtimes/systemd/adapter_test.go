@@ -57,6 +57,22 @@ func TestDiscoverDefaultSelectionHidesSystemMachinery(t *testing.T) {
 	}
 }
 
+func TestDiscoverDefaultSelectionKeepsTheSystemdServicesAnOperatorActsOn(t *testing.T) {
+	list := `  systemd-timesyncd.service  loaded active running Network Time Synchronization
+  systemd-resolved.service   loaded active running Network Name Resolution
+  systemd-journald.service   loaded active running Journal Service
+  systemd-tmpfiles-setup.service loaded active exited Create Volatile Files
+`
+	node := newFakeNode(t).reply("systemd.version", "systemd 257 (257.9-1)\n").reply("systemd.list_units", list)
+	d, err := New().Discover(context.Background(), node, runtimes.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(names(d), ","), "systemd-timesyncd.service,systemd-resolved.service"; got != want {
+		t.Errorf("services = %s, want %s", got, want)
+	}
+}
+
 func TestDiscoverIncludeReplacesDefaultsAndExcludeWins(t *testing.T) {
 	tests := []struct {
 		name   string

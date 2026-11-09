@@ -14,9 +14,14 @@ import (
 )
 
 // defaultExcludes keep the UI free of the machinery every systemd host runs;
-// they apply only when the filter names no Include pattern (spec §16).
+// they apply only when the filter names no Include pattern (spec §16). The
+// systemd units an operator acts on (timesyncd, resolved, networkd, logind)
+// are deliberately not here.
 var defaultExcludes = []string{
-	"systemd-*", "user@*", "user-runtime-dir@*", "*getty@*", "console-getty",
+	"systemd-journal*", "systemd-udev*", "systemd-tmpfiles*", "systemd-sysctl", "systemd-sysusers",
+	"systemd-remount-fs", "systemd-random-seed", "systemd-update-utmp", "systemd-user-sessions",
+	"systemd-binfmt", "systemd-modules-load", "systemd-fsck@*", "systemd-vconsole-setup", "systemd-pstore",
+	"systemd-machine-id-commit", "systemd-hwdb-update", "systemd-ask-password-*", "user@*", "user-runtime-dir@*", "*getty@*", "console-getty",
 	"modprobe@*", "dpkg-*", "e2scrub*", "blk-availability", "lvm2-*",
 }
 

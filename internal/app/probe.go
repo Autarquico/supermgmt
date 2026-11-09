@@ -62,6 +62,9 @@ func (p *Prober) Probe(ctx context.Context, id domain.ID, scope ProbeScope, fenc
 	if node.ManagementState == domain.ManagementRetired {
 		return smerr.New(smerr.CodeConflict, "", "the node is retired")
 	}
+	if !hasSSHEndpoint(node) {
+		return smerr.New(smerr.CodeCapabilityUnavailable, "", "the node has no ssh endpoint to probe")
+	}
 	setup, err := loadSetup(ctx, p.cfg.DB.Reader(), id)
 	if err != nil {
 		return err
