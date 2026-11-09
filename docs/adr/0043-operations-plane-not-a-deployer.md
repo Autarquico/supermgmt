@@ -34,8 +34,8 @@ Out of scope:
 
 ### What the operator sees
 
-- **Overview panel:** the machines, the apps discovered on each (a Compose project is an app; its containers are its components), and per app its health and activity: container state and restarts, resource use over time, error rate from its logs, and the state of its external checks (healthchecks.io first).
-- **App panel, in the spirit of lazydocker:** one app's insides: components, their logs (live and searchable), resource stats, configuration, volumes and published ports, with restart, exec and database connection as governed actions.
+- **Overview panel:** the machines, the apps discovered on each (a Compose project is an app; its containers are its components), and per app its health and activity: container state and restarts, current resource use, error rate from its logs, and the state of its external checks (healthchecks.io first).
+- **App panel, in the spirit of lazydocker:** one app's insides: components, their logs (live and searchable), resource stats, configuration, volumes and published ports, with restart as a governed action, and exec and database connection for people only.
 - **The same through MCP, with priority:** every read and action of both panels is an MCP tool, so an AI can answer free-form questions about an app (for example, "review the reservit app and tell me whether anything has been failing") from its logs, stats and checks. This makes [#63](https://github.com/Autarquico/supermgmt/issues/63) and the built-in assistant of [#64](https://github.com/Autarquico/supermgmt/issues/64) part of this scope. Reading an app's logs through MCP then has to be grantable by default for owners' own clients, behind the redaction boundary in `docs/mcp.md`.
 
 ### How it is built
@@ -61,6 +61,12 @@ SuperMgmt may provision, on a node it manages, what a project's CI/CD needs to d
 
 A route publishes a port of a node, not a service of a deployment: `hostname → node, port, access (public | owners)`. It no longer waits for a succeeded deployment; it is active once the ingress, the Access application (owners) and the DNS record exist, in the order ADR-0040 fixes.
 
+### Amendment: app panels (spec app-panels, 2026-11-09)
+
+- An app is a Compose project. A plain container or a systemd unit is not an app: it is listed on its node as another service, ungrouped.
+- Resource use is the current sample, taken at the moment of asking, with at most one read in flight per node. A trend exists only in memory while a panel is open; nothing is stored.
+- Interactive exec and database connection are for people only, in the TUI and CLI, and are not MCP tools. The statement above that every read and action is an MCP tool does not cover them.
+
 ## Consequences
 
 - Projects deploy as they are; SuperMgmt never asks them to change.
@@ -73,4 +79,3 @@ A route publishes a port of a node, not a service of a deployment: `hostname →
 
 - Which databases the first version of "connect" supports (proposal: PostgreSQL first, discovered from a container's image).
 - Which external check services come after healthchecks.io.
-- Apps that are not Compose projects (a systemd service, a plain container): whether they are apps too, and how they are grouped.

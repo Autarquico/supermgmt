@@ -53,7 +53,7 @@ func dockerAccessHint(node domain.Node) string {
 
 func dockerUnavailable(node domain.Node) error {
 	return smerr.New(smerr.CodeCapabilityUnavailable, "",
-		"apps cannot be read: Docker is not accessible to the node's SuperMgmt user; a person can allow it with: "+dockerAccessHint(node))
+		"apps cannot be read: Docker is not installed or not accessible to the node's SuperMgmt user; if it is installed, a person can allow it with: "+dockerAccessHint(node))
 }
 
 // appRead is what one read of a node returns, besides the services rows.
