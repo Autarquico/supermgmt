@@ -152,13 +152,22 @@ func (i *Inventory) AppStats(ctx context.Context, by Caller, id domain.ID, proje
 	if err != nil {
 		return wire.AppStats{}, err
 	}
-	rows, err := i.projectRows(ctx, node.ID, project)
-	if err != nil {
-		return wire.AppStats{}, err
+	ex, exErr := i.dockerExecutor(ctx, node)
+	var members []member
+	if exErr == nil {
+		if details, ok := liveProject(ctx, ex, project); ok {
+			members = liveMembers(details)
+		}
 	}
-	ex, err := i.dockerExecutor(ctx, node)
-	if err != nil {
-		return wire.AppStats{}, err
+	if members == nil {
+		rows, err := i.projectRows(ctx, node.ID, project)
+		if err != nil {
+			return wire.AppStats{}, err
+		}
+		if exErr != nil {
+			return wire.AppStats{}, exErr
+		}
+		members = rowMembers(rows)
 	}
 	stats, at, err := i.sampleStats(ctx, node.ID, ex)
 	if err != nil {
@@ -166,10 +175,9 @@ func (i *Inventory) AppStats(ctx context.Context, by Caller, id domain.ID, proje
 	}
 	out := wire.AppStats{Project: project, NodeID: node.ID, SampledAt: at, Components: []wire.ComponentUse{}}
 	var total wire.ResourceUse
-	names := rowNames(rows)
-	for k, row := range rows {
-		if use, ok := useOf(stats, row.NativeID); ok {
-			out.Components = append(out.Components, wire.ComponentUse{Name: names[k], Use: use})
+	for _, m := range members {
+		if use, ok := useOf(stats, m.nativeID); ok {
+			out.Components = append(out.Components, wire.ComponentUse{Name: m.name, Use: use})
 			total = addUse(total, use)
 		}
 	}
@@ -198,19 +206,32 @@ func (i *Inventory) AppLogs(ctx context.Context, by Caller, id domain.ID, projec
 	if err != nil {
 		return wire.AppLogs{}, err
 	}
-	rows, err := i.projectRows(ctx, node.ID, project)
-	if err != nil {
-		return wire.AppLogs{}, err
+	ex, exErr := i.dockerExecutor(ctx, node)
+	var ref runtimes.ServiceRef
+	found, live := false, false
+	if exErr == nil {
+		var details []runtimes.ContainerDetail
+		if details, live = liveProject(ctx, ex, project); live {
+			ref, found = containerRef(node.ID, details, q.Component)
+		}
 	}
-	row, ok := findComponent(rows, q.Component)
-	if !ok {
+	if !live {
+		rows, err := i.projectRows(ctx, node.ID, project)
+		if err != nil {
+			return wire.AppLogs{}, err
+		}
+		if exErr != nil {
+			return wire.AppLogs{}, exErr
+		}
+		var row domain.Service
+		if row, found = findComponent(rows, q.Component); found {
+			ref = serviceRef(row)
+		}
+	}
+	if !found {
 		return wire.AppLogs{}, smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("app %s has no component %q", project, q.Component))
 	}
-	ex, err := i.dockerExecutor(ctx, node)
-	if err != nil {
-		return wire.AppLogs{}, err
-	}
-	reader := appLogReader{ctx: ctx, ex: ex, ref: serviceRef(row), project: project, component: q.Component, collected: i.cfg.Clock.Now()}
+	reader := appLogReader{ctx: ctx, ex: ex, ref: ref, project: project, component: q.Component, collected: i.cfg.Clock.Now()}
 	switch {
 	case q.Search != "":
 		return reader.search(q.Search)
@@ -471,22 +492,29 @@ func groupServices(rows []domain.Service) (map[string][]domain.Service, []wire.O
 }
 
 // containerIdent is what names a container as a component: the Compose service label, when it has one, and
-// its name.
-type containerIdent struct{ service, name string }
+// its name. A gone container is one discovery saw vanish.
+type containerIdent struct {
+	service, name string
+	gone          bool
+}
 
 // componentNames gives each container of a project its component name: the service label, or the container
-// name when the label is missing or shared with another container, as it is when a service is scaled. The
-// names are unique, so logs, use and error counts of one replica are never taken for another's.
+// name when the label is missing or shared with another existing container, as it is when a service is
+// scaled. The names are unique, so logs, use and error counts of one replica are never taken for another's.
+// A gone container does not count as a use of its label, so the one that replaced it keeps the label's name,
+// and it is named by its own.
 func componentNames(containers []containerIdent) []string {
 	label := func(c containerIdent) string { return cmp.Or(c.service, c.name) }
 	uses := map[string]int{}
 	for _, c := range containers {
-		uses[label(c)]++
+		if !c.gone {
+			uses[label(c)]++
+		}
 	}
 	names := make([]string, len(containers))
 	for k, c := range containers {
 		names[k] = c.name
-		if uses[label(c)] == 1 {
+		if !c.gone && uses[label(c)] == 1 {
 			names[k] = label(c)
 		}
 	}
@@ -496,7 +524,7 @@ func componentNames(containers []containerIdent) []string {
 func detailNames(details []runtimes.ContainerDetail) []string {
 	idents := make([]containerIdent, len(details))
 	for k, d := range details {
-		idents[k] = containerIdent{d.Labels[composeServiceLabel], d.Name}
+		idents[k] = containerIdent{service: d.Labels[composeServiceLabel], name: d.Name}
 	}
 	return componentNames(idents)
 }
@@ -506,22 +534,67 @@ func rowNames(rows []domain.Service) []string {
 	for k, s := range rows {
 		labels, _ := s.Metadata["labels"].(map[string]any)
 		service, _ := labels[composeServiceLabel].(string)
-		idents[k] = containerIdent{service, s.Name}
+		idents[k] = containerIdent{service, s.Name, s.Status == database.StatusGone}
 	}
 	return componentNames(idents)
 }
 
-// findComponent finds the container the component names. The container's own name finds it too, for a panel
-// that read the node live while the rows still know the service as one.
+// member is a container of an app under the name the panel offers for it.
+type member struct{ nativeID, name string }
+
+func liveMembers(details []runtimes.ContainerDetail) []member {
+	names := detailNames(details)
+	out := make([]member, len(details))
+	for k, d := range details {
+		out[k] = member{d.ID, names[k]}
+	}
+	return out
+}
+
+// rowMembers are the containers discovery last saw that still exist.
+func rowMembers(rows []domain.Service) []member {
+	names := rowNames(rows)
+	out := []member{}
+	for k, s := range rows {
+		if s.Status != database.StatusGone {
+			out = append(out, member{s.NativeID, names[k]})
+		}
+	}
+	return out
+}
+
+// liveProject reads the containers of one project as they are now: the source of the names the panel offers.
+// It says false when they cannot be read, and the caller falls back to the last discovery.
+func liveProject(ctx context.Context, ex transport.Executor, project string) ([]runtimes.ContainerDetail, bool) {
+	details, err := docker.New().Details(ctx, ex)
+	if err != nil {
+		return nil, false
+	}
+	var out []runtimes.ContainerDetail
+	for _, d := range details {
+		if d.Project == project {
+			out = append(out, d)
+		}
+	}
+	return out, true
+}
+
+// findComponent finds the existing container the component names. The container's own name finds it too, for
+// a panel that read the node live while the rows still know the service as one.
 func findComponent(rows []domain.Service, name string) (domain.Service, bool) {
-	k := slices.Index(rowNames(rows), name)
-	if k < 0 {
-		k = slices.IndexFunc(rows, func(s domain.Service) bool { return s.Name == name })
+	names := rowNames(rows)
+	exists := func(k int) bool { return rows[k].Status != database.StatusGone }
+	for _, named := range []func(int) bool{
+		func(k int) bool { return names[k] == name },
+		func(k int) bool { return rows[k].Name == name },
+	} {
+		for k := range rows {
+			if exists(k) && named(k) {
+				return rows[k], true
+			}
+		}
 	}
-	if k < 0 {
-		return domain.Service{}, false
-	}
-	return rows[k], true
+	return domain.Service{}, false
 }
 
 func isHealthy(status, health string) bool { return status == "running" && health != "unhealthy" }

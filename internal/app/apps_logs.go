@@ -1,6 +1,9 @@
 package app
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"regexp"
@@ -38,22 +41,48 @@ type logCursor struct {
 	Skip  int       `json:"k"`
 }
 
-func (c logCursor) encode() string {
-	raw, _ := json.Marshal(c) // two plain fields cannot fail
-	return base64.RawURLEncoding.EncodeToString(raw)
+// cursorKey authenticates the cursors this daemon issues. It is random per process, never stored or logged:
+// after a restart the cursors of the earlier run are no longer valid, which a follow reports as a gap.
+var cursorKey = newCursorKey()
+
+func newCursorKey() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic("app: no randomness for the log cursor key: " + err.Error())
+	}
+	return key
 }
 
-func decodeLogCursor(s string) (logCursor, error) {
-	invalid := smerr.New(smerr.CodeInvalidArgument, "", "invalid cursor")
-	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return logCursor{}, invalid
+func cursorMAC(payload []byte) []byte {
+	mac := hmac.New(sha256.New, cursorKey)
+	mac.Write(payload)
+	return mac.Sum(nil)
+}
+
+// encode is the payload and its MAC, so the client cannot choose where a follow reads from: the overlap that
+// completes a split credential always starts where the daemon put it.
+func (c logCursor) encode() string {
+	raw, _ := json.Marshal(c) // two plain fields cannot fail
+	return base64.RawURLEncoding.EncodeToString(raw) + "." + base64.RawURLEncoding.EncodeToString(cursorMAC(raw))
+}
+
+// decodeLogCursor is false for a cursor this daemon did not issue, whether forged, damaged or from before a
+// restart.
+func decodeLogCursor(s string) (logCursor, bool) {
+	payload, tag, found := strings.Cut(s, ".")
+	if !found {
+		return logCursor{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	sum, err2 := base64.RawURLEncoding.DecodeString(tag)
+	if err != nil || err2 != nil || !hmac.Equal(sum, cursorMAC(raw)) {
+		return logCursor{}, false
 	}
 	var c logCursor
 	if err := json.Unmarshal(raw, &c); err != nil || c.Skip < 0 || c.Skip > runtimes.MaxLogLines || c.Since.IsZero() {
-		return logCursor{}, invalid
+		return logCursor{}, false
 	}
-	return c, nil
+	return c, true
 }
 
 // stampOf reads the RFC 3339 timestamp Docker puts first on every line.
@@ -155,13 +184,18 @@ func (a appLogReader) recent(lines int) (wire.AppLogs, error) {
 // follow reads what came after cursor. The lines of the overlap are read and redacted together with the new
 // ones and only the new ones are returned.
 //
+// A cursor this daemon did not issue is no cursor: the read starts at the tail, with the head masked, and
+// reports a gap.
+//
 // It asks for one line more than the overlap and the lines to deliver, so a full answer proves the node cut
 // the oldest lines: the cursor's lines cannot be told from the new ones, and the newest `lines` are
 // delivered with a gap.
 func (a appLogReader) follow(cursor string, lines int) (wire.AppLogs, error) {
-	at, err := decodeLogCursor(cursor)
-	if err != nil {
-		return wire.AppLogs{}, err
+	at, ok := decodeLogCursor(cursor)
+	if !ok {
+		out, err := a.recent(lines)
+		out.Gap = true
+		return out, err
 	}
 	asked := min(at.Skip+lines+1, runtimes.MaxLogLines)
 	chunk, err := a.since(at.Since, asked)

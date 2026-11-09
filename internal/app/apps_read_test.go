@@ -174,3 +174,86 @@ func TestEachNodeGetsTheBudgetOfItsRoundSoManyNodesFitTheCallersTimeout(t *testi
 		t.Errorf("400 nodes: %v, want the floor %v", got, minNodeBudget)
 	}
 }
+
+// panelNamesAnswer reads the panel of shop and checks that logs, stats and error counts answer for each name it
+// offers; it returns the names.
+func (f *appsFixture) panelNamesAnswer(t *testing.T) []string {
+	t.Helper()
+	ctx, by := context.Background(), f.caller(f.alice)
+	app, err := f.inv.GetApp(ctx, by, f.nodeID(), "shop", wire.AppsQuery{Stats: true, Errors: true})
+	mustf(t, err, "GetApp")
+	stats, err := f.inv.AppStats(ctx, by, f.nodeID(), "shop")
+	mustf(t, err, "AppStats")
+	statNames := map[string]bool{}
+	for _, c := range stats.Components {
+		statNames[c.Name] = true
+	}
+	var names []string
+	for _, c := range app.Components {
+		names = append(names, c.Name)
+		if _, err := f.inv.AppLogs(ctx, by, f.nodeID(), "shop", wire.AppLogQuery{Component: c.Name}); err != nil {
+			t.Errorf("logs of %q: %v", c.Name, err)
+		}
+		if !statNames[c.Name] && c.Stats != nil {
+			t.Errorf("stats do not answer for %q, they name %v", c.Name, statNames)
+		}
+		if c.RecentErrors == nil {
+			t.Errorf("no error count for %q", c.Name)
+		}
+	}
+	return names
+}
+
+func TestAGoneRowOfAnOldContainerDoesNotRenameTheLiveOne(t *testing.T) {
+	f := newAppsFixture(t)
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		rows, err := database.ListServices(ctx, tx, f.nodeID())
+		if err != nil {
+			return err
+		}
+		seen := epoch
+		_, err = database.CreateService(ctx, tx, domain.Service{
+			ID: f.ids.NewID(), RuntimeID: rows[0].RuntimeID, NodeID: f.nodeID(), NativeID: web2ID, Name: "shop-web-0",
+			Kind: string(domain.ServiceDockerContainer), Status: database.StatusGone, LastSeenAt: &seen,
+			Metadata: map[string]any{"compose_project": "shop", "labels": map[string]any{"com.docker.compose.service": "web"}, "image": "shop/web:0", "ports": []any{}},
+		})
+		return err
+	})
+	for _, name := range []string{webID, dbID} {
+		held := []string{stamped(1, "line")}
+		f.writeLog(name, &held)
+	}
+
+	names := f.panelNamesAnswer(t)
+
+	if strings.Join(names, ",") != "db,web" {
+		t.Errorf("components = %v", names)
+	}
+	f.node.down("docker.inspect_all", errors.New("connection refused"))
+	stale, err := f.inv.NodeApps(context.Background(), f.caller(f.alice), f.nodeID(), wire.AppsQuery{})
+	mustf(t, err, "stale")
+	for _, c := range stale.Apps[0].Components {
+		if c.Name == "web" && c.Status != "running" {
+			t.Errorf("the gone container took the name of the live one: %+v", c)
+		}
+	}
+	if _, err := f.inv.AppLogs(context.Background(), f.caller(f.alice), f.nodeID(), "shop", wire.AppLogQuery{Component: "web"}); err != nil {
+		t.Errorf("logs of web while the node cannot be read live: %v", err)
+	}
+}
+
+func TestAScaleDownBeforeTheNextDiscoveryStillAnswersForTheNameThePanelOffers(t *testing.T) {
+	f := newAppsFixture(t)
+	f.scaled()
+	f.node.reply("docker.inspect_all", inspectOf(defaultWebEnv)) // web-2 is gone from the node; both rows still run
+	for _, name := range []string{webID, dbID} {
+		held := []string{stamped(1, "line")}
+		f.writeLog(name, &held)
+	}
+
+	names := f.panelNamesAnswer(t)
+
+	if strings.Join(names, ",") != "db,web" {
+		t.Errorf("components = %v", names)
+	}
+}

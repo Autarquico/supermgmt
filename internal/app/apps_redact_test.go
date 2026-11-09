@@ -16,6 +16,11 @@ func TestASensitiveKeyLeaksNoByteOfItsValue(t *testing.T) {
 			t.Errorf("value %q leaked in:\n%s", value, all)
 		}
 	}
+	for _, flag := range []string{"--api_key", "--dsn", "--private-key", "--cookie", "--password"} {
+		if got := redactedArgs([]string{flag, "DUMMYSECRET9", "--port", "80"}); strings.Contains(strings.Join(got, " "), "DUMMYSECRET9") || got[3] != "80" {
+			t.Errorf("%s leaked or masked too much: %q", flag, got)
+		}
+	}
 	if got := redactedEnv([]string{"MODE=prod a,b"}); got[0] != "MODE=prod a,b" {
 		t.Errorf("a harmless key was masked: %q", got)
 	}

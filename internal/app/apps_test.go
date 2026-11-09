@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -512,15 +514,43 @@ func TestFollowReportsAGapWhenTheNodeCutsTheOutput(t *testing.T) {
 	}
 }
 
-func TestAForgedCursorIsRefused(t *testing.T) {
+func TestACursorTheDaemonDidNotIssueIsNoCursorAndReportsAGap(t *testing.T) {
 	f := newAppsFixture(t)
-	for _, cursor := range []string{"x", "!!!", "e30", "eyJzIjoiMjAyNi0xMS0wOVQxMDowMDowMFoiLCJrIjotMX0"} {
-		if _, err := f.follow(cursor); smerr.CodeOf(err) != smerr.CodeInvalidArgument {
-			t.Errorf("cursor %q: %v", cursor, err)
+	held := []string{stamped(1, "one"), stamped(2, "two")}
+	f.writeLog(webID, &held)
+	valid := f.logs(wire.AppLogQuery{}).Cursor
+	forged := base64.RawURLEncoding.EncodeToString([]byte(`{"s":"2026-11-09T10:00:00Z","k":0}`))
+	for name, cursor := range map[string]string{
+		"garbage": "x", "no tag": forged, "wrong tag": forged + ".AAAA", "payload swapped": forged + "." + strings.SplitN(valid, ".", 2)[1],
+	} {
+		got, err := f.follow(cursor)
+		mustf(t, err, "%s", name)
+		if !got.Gap || len(got.Lines) != 2 {
+			t.Errorf("%s: gap %v lines %q, want the tail and a gap", name, got.Gap, got.Lines)
+		}
+		if n := f.node.count("docker.logs_since"); n != 0 {
+			t.Errorf("%s: a chosen Since reached the node", name)
 		}
 	}
-	if len(f.node.ran()) != 0 {
-		t.Errorf("a forged cursor reached the node: %v", f.node.ran())
+}
+
+func TestACursorOfAnEarlierDaemonRunIsStale(t *testing.T) {
+	f := newAppsFixture(t)
+	held := []string{stamped(1, "one")}
+	f.writeLog(webID, &held)
+	old := f.logs(wire.AppLogQuery{}).Cursor
+	was := cursorKey
+	t.Cleanup(func() { cursorKey = was })
+	cursorKey = newCursorKey()
+
+	got, err := f.follow(old)
+
+	if mustf(t, err, "follow"); !got.Gap || len(got.Lines) != 1 {
+		t.Errorf("gap %v lines %q", got.Gap, got.Lines)
+	}
+	again, err := f.follow(got.Cursor)
+	if mustf(t, err, "again"); again.Gap {
+		t.Errorf("the cursor issued after the restart reports a gap")
 	}
 }
 
@@ -548,8 +578,9 @@ func TestSearchRunsAfterScrubbingOnABoundedWindowAndNeverSendsTheTerm(t *testing
 			t.Errorf("the term reached the node: %s", call.Line)
 		}
 	}
-	if !strings.Contains(f.node.calls[0].Line, fmt.Sprintf("--tail '%d'", searchWindow+followOverlap)) {
-		t.Errorf("window not bounded: %s", f.node.calls[0].Line)
+	read := slices.IndexFunc(f.node.calls, func(c templates.Command) bool { return c.Template == "docker.logs" })
+	if read < 0 || !strings.Contains(f.node.calls[read].Line, fmt.Sprintf("--tail '%d'", searchWindow+followOverlap)) {
+		t.Errorf("window not bounded: %v", f.node.calls)
 	}
 }
 

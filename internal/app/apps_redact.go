@@ -72,7 +72,7 @@ func redactedArgs(args []string) []string {
 			out[i] = name + "=" + audit.Redacted
 		default:
 			out[i] = redactText(arg)
-			maskNext = !assigned && strings.HasPrefix(arg, "-") && sensitiveFlagName(arg)
+			maskNext = !assigned && strings.HasPrefix(arg, "-") && sensitiveName(arg)
 		}
 	}
 	return out
