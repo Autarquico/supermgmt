@@ -61,9 +61,26 @@ func decisionError(res policy.Result) error {
 	case policy.DecisionCapabilityUnavailable:
 		return smerr.New(smerr.CodeCapabilityUnavailable, "", "target does not advertise the required capability")
 	case policy.DecisionDeny:
-		return smerr.FromReason(res.Reason, "action denied by policy")
+		return smerr.FromReason(res.Reason, denialMessage(res.Reason))
 	}
 	return smerr.FromReason(smerr.ReasonDefaultDeny, "unrecognized policy decision")
+}
+
+// denialMessage says which rule or gate refused, so the person knows what to change.
+func denialMessage(reason smerr.Reason) string {
+	switch reason {
+	case smerr.ReasonDestructiveGate:
+		return "action denied by the destructive gate: no allowing rule sets allow_destructive (see the admins-may-remove-nodes example in docs/policies.md)"
+	case smerr.ReasonSelfApproval:
+		return "action denied: you cannot approve your own plan; security.allow_self_approval is off (the default on a server), so another approver is needed"
+	case smerr.ReasonDefaultDeny:
+		return "action denied by policy: no allowing rule matches"
+	case smerr.ReasonDenyRule:
+		return "action denied by policy: a deny rule matches"
+	case smerr.ReasonScopeDenied:
+		return "action denied: the credential's scopes do not include this action"
+	}
+	return "action denied by policy"
 }
 
 // auditDecision records a DENY or CAPABILITY_UNAVAILABLE outcome (spec §11.3).

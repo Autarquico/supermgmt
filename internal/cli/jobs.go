@@ -217,6 +217,7 @@ func newJobsApproveCmd(env []string) *cobra.Command {
 		Short: "Approve a job awaiting approval, bound to the plan you reviewed",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			planHash = withHashPrefix(planHash)
 			return decide(cmd, env, args[0], planHash, func(api *client.Client, id domain.ID) (wire.Job, error) {
 				return api.Approve(cmd.Context(), id, wire.DecisionRequest{PlanHash: planHash})
 			})
@@ -233,6 +234,7 @@ func newJobsRejectCmd(env []string) *cobra.Command {
 		Short: "Reject a job awaiting approval",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			planHash = withHashPrefix(planHash)
 			if reason == "" {
 				return usageErrorf("--reason is required")
 			}
@@ -253,6 +255,7 @@ func newJobsCancelCmd(env []string) *cobra.Command {
 		Short: "Cancel a job that has not started running",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			planHash = withHashPrefix(planHash)
 			return decide(cmd, env, args[0], planHash, func(api *client.Client, id domain.ID) (wire.Job, error) {
 				return api.CancelJob(cmd.Context(), id, planHash)
 			})
@@ -270,6 +273,7 @@ func newJobsResolveCmd(env []string) *cobra.Command {
 		Short: "Settle an interrupted job after checking the node yourself",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			planHash = withHashPrefix(planHash)
 			switch o := wire.Outcome(outcome); o {
 			case wire.OutcomeSucceeded, wire.OutcomeFailed, wire.OutcomeRollbackFailed:
 			default:
@@ -341,7 +345,7 @@ func writeApprovals(w io.Writer, page wire.Page[wire.Approval], showPlan bool) e
 	for i, a := range page.Items {
 		rows[i] = []string{
 			string(a.Job.ID), a.Job.Type, orDash(strings.Join(a.Environments, ",")),
-			fmt.Sprintf("%d/%d", a.Approvals, a.Quorum), formatTime(a.ExpiresAt), a.Job.PlanHash,
+			fmt.Sprintf("%d/%d", a.Approvals, a.Quorum), formatTime(a.ExpiresAt), a.Job.PlanHash + staleMark(a),
 		}
 	}
 	if err := table(w, []string{"JOB", "TYPE", "ENVIRONMENT", "APPROVALS", "EXPIRES", "PLAN HASH"}, rows); err != nil {
@@ -356,6 +360,23 @@ func writeApprovals(w io.Writer, page wire.Page[wire.Approval], showPlan bool) e
 	}
 	moreHint(w, page.NextCursor)
 	return nil
+}
+
+// staleMark flags a plan whose target changed after it was made: approving it
+// would only fail with a stale-plan error.
+func staleMark(a wire.Approval) string {
+	if a.Stale {
+		return "  STALE: target changed, do not approve"
+	}
+	return ""
+}
+
+// withHashPrefix lets a bare sha256 hex digest stand for the stored "sha256:" form.
+func withHashPrefix(hash string) string {
+	if len(hash) == 64 && !strings.Contains(hash, ":") {
+		return "sha256:" + hash
+	}
+	return hash
 }
 
 func writePlan(w io.Writer, a wire.Approval) error {
