@@ -232,7 +232,7 @@ func (m *Model) keyHints() string {
 	case screenApps:
 		return "j/k move  enter open  r refresh  esc back  " + global
 	case screenApp:
-		return "j/k component  l logs  " + "R restart  S start  X stop  " + "pgup/pgdn scroll  esc back  " + global
+		return "j/k component  l logs  R restart  S start  X stop  esc back  ? help  q quit"
 	case screenAppLogs:
 		return "f follow  / search  j/k scroll  G end  r reload  esc back  q quit"
 	case screenHelp:

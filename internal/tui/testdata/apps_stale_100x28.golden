@@ -2,7 +2,7 @@
 │                                                                                                  │
 │ Apps                                                                                             │
 │                                                                                                  │
-│ ● web-1 · production · reachable                                                                 │
+│ ● web-1                                                                                          │
 │   the node cannot be reached: showing the last discovery, marked stale                           │
 │ ▸ ◌ blog (1)     running · stale, last seen 10-10 11:50:00                                       │
 │   ◌ shop (2)     degraded · stale, last seen 10-10 11:50:00                                      │

@@ -20,5 +20,5 @@
 │ rows 1-18 of 25 · pgup/pgdn scroll                                           │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│ j/k component  l logs  R restart  S start  X stop  pgup/pgdn scroll  esc ba… │
+│ j/k component  l logs  R restart  S start  X stop  esc back  ? help  q quit  │
 └──────────────────────────────────────────────────────────────────────────────┘

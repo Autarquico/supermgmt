@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	idShopWeb domain.ID = "0192a000-0000-7000-8000-00000000f001"
-	idShopDB  domain.ID = "0192a000-0000-7000-8000-00000000f002"
-	idPlain   domain.ID = "0192a000-0000-7000-8000-00000000f003"
+	idShopWeb  domain.ID = "0192a000-0000-7000-8000-00000000f001"
+	idShopDB   domain.ID = "0192a000-0000-7000-8000-00000000f002"
+	idShopWeb2 domain.ID = "0192a000-0000-7000-8000-00000000f004"
+	idPlain    domain.ID = "0192a000-0000-7000-8000-00000000f003"
 
 	cursorOne = "cursor-1"
 	cursorTwo = "cursor-2"
@@ -32,6 +33,7 @@ type appsFake struct {
 
 	logQueries []wire.AppLogQuery
 	listed     []wire.AppsQuery
+	appQueries []wire.AppsQuery
 }
 
 func newAppsFake() *appsFake {
@@ -103,10 +105,11 @@ func (f *appsFake) ListApps(ctx context.Context, q wire.AppsQuery) (wire.Page[wi
 	return wire.Page[wire.NodeApps]{Items: slices.Clone(f.nodes)}, err
 }
 
-func (f *appsFake) GetNodeApp(ctx context.Context, _ domain.ID, project string, _ wire.AppsQuery) (wire.App, error) {
+func (f *appsFake) GetNodeApp(ctx context.Context, _ domain.ID, project string, q wire.AppsQuery) (wire.App, error) {
 	err := f.enter(ctx, "GetNodeApp")
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.appQueries = append(f.appQueries, q)
 	app := f.app
 	app.Project = project
 	return app, err

@@ -418,3 +418,143 @@ func TestAppsGoldenViews(t *testing.T) {
 		})
 	}
 }
+
+// Leaving the logs for help ends the follow: the status says paused on return and nothing polls.
+func TestFollowEndsWhenHelpCoversTheLogs(t *testing.T) {
+	api := newAppsFake()
+	h := openShop(t, api, 120, 30)
+	h.press("l", "f")
+	seq := h.m.apps.logs.seq
+	h.press("?")
+	if cmd := h.send(appLogsTickMsg{seq: seq}); cmd != nil {
+		t.Error("a tick over help scheduled work")
+	}
+	h.press("esc")
+	before := api.count("NodeAppLogs") // returning reloads once
+	if h.m.screen != screenAppLogs {
+		t.Fatalf("esc from help: screen %v", h.m.screen)
+	}
+	v := h.view()
+	contains(t, v, "paused")
+	lacks(t, v, "following")
+	if cmd := h.send(appLogsTickMsg{seq: seq}); cmd != nil {
+		t.Error("a tick after the follow ended scheduled work")
+	}
+	if n := api.count("NodeAppLogs"); n != before {
+		t.Errorf("NodeAppLogs ran %d times, want %d", n, before)
+	}
+}
+
+func TestSearchCountsMatchesInTheirPlural(t *testing.T) {
+	for _, tc := range []struct {
+		lines []string
+		want  string
+	}{
+		{nil, "0 matches"},
+		{[]string{"2026-10-10T12:00:02Z a", "2026-10-10T12:00:03Z b"}, "2 matches"},
+		{[]string{"2026-10-10T12:00:02Z a"}, "1 match ·"},
+	} {
+		api := newAppsFake()
+		api.search.Lines = tc.lines
+		h := openShop(t, api, 120, 30)
+		h.press("l", "/")
+		h.typeText("x")
+		h.press("enter")
+		contains(t, h.view(), tc.want)
+		lacks(t, h.view(), "matchs")
+	}
+}
+
+func TestSearchCappedSaysSoAndShowsNoGap(t *testing.T) {
+	api := newAppsFake()
+	api.search.Truncated = true
+	h := openShop(t, api, 120, 30)
+	h.press("l", "/")
+	h.typeText("timeout")
+	h.press("enter")
+	v := h.view()
+	contains(t, v, "only the latest matches are shown")
+	lacks(t, v, "gap: lines are missing")
+}
+
+func TestPanelShowsTheProblemAndHintOfTheOverview(t *testing.T) {
+	api := newAppsFake()
+	api.app.Stale = true
+	api.app.Problem, api.app.Hint = wire.AppsProblemDocker, "sm nodes setup web-1 --docker-access"
+	h := openShop(t, api, 140, 30)
+	contains(t, h.view(), "sm nodes setup web-1 --docker-access")
+	contains(t, h.view(), "Docker is not installed or not accessible")
+	h.press("R")
+	contains(t, h.m.notice.text, "sm nodes setup web-1 --docker-access")
+	if len(api.planRequests) != 0 {
+		t.Error("an action was planned without live access")
+	}
+}
+
+func TestPanelAsksForErrorCounts(t *testing.T) {
+	api := newAppsFake()
+	openShop(t, api, 100, 28)
+	if len(api.appQueries) == 0 || !api.appQueries[0].Errors {
+		t.Errorf("panel queries = %+v, want errors asked", api.appQueries)
+	}
+}
+
+// Replicas of a service have their own component names: logs, stats and actions follow the one selected.
+func TestScaledServiceComponentsAreEachLoggedMeasuredAndActedOn(t *testing.T) {
+	api := newAppsFake()
+	first, second := api.app.Components[0], api.app.Components[0]
+	first.Name, second.Name = "shop-web-1", "shop-web-2"
+	second.ServiceID = idShopWeb2
+	api.services[idWeb] = append(api.services[idWeb], wire.Service{
+		ID: idShopWeb2, NodeID: idWeb, Node: "web-1", RuntimeType: domain.RuntimeDocker, Kind: domain.ServiceDockerContainer, NativeID: "shop-web-2", Name: "shop-web-2",
+		Status: "running", Health: "healthy", Actions: []domain.ServiceVerb{domain.VerbRestart},
+	})
+	api.app.Components = []wire.AppComponent{first, second}
+	api.stats.Components = []wire.ComponentUse{
+		{Name: "shop-web-1", Use: wire.ResourceUse{CPUPercent: 1, MemUsedBytes: 10 << 20}},
+		{Name: "shop-web-2", Use: wire.ResourceUse{CPUPercent: 77, MemUsedBytes: 20 << 20}},
+	}
+	h := openShop(t, api, 120, 40)
+	h.press("j")
+	v := h.view()
+	contains(t, v, "shop-web-2")
+	if n := strings.Count(v, "cpu 77"); n != 1 {
+		t.Errorf("use of the second replica shown %d times in %q", n, v)
+	}
+	h.drain(h.send(tickMsg{})) // a reload keeps the cursor on the replica picked
+	if c, _ := h.m.selectedComponent(); c.Name != "shop-web-2" {
+		t.Errorf("cursor after a reload on %q", c.Name)
+	}
+	h.press("R")
+	if len(api.planRequests) != 1 || len(api.planRequests[0].Targets) != 1 || api.planRequests[0].Targets[0].ID != idShopWeb2 {
+		t.Errorf("restart plan = %+v, want the second replica's service", api.planRequests)
+	}
+	h.press("n", "l")
+	if q := api.lastLogQuery(); q.Component != "shop-web-2" {
+		t.Errorf("logs asked for %q", q.Component)
+	}
+}
+
+func TestFailedReadsDoNotSayLoading(t *testing.T) {
+	api := newAppsFake()
+	api.hook("GetNodeApp", func(context.Context) error { return errors.New("boom") })
+	h := openApps(t, api, 100, 28)
+	h.press("j", "enter")
+	lacks(t, h.view(), "reading apps")
+	contains(t, h.view(), "apps could not be read")
+}
+
+func TestUnreachableNodeHeaderDoesNotClaimReachable(t *testing.T) {
+	api := newAppsFake()
+	api.nodes[0].Problem = wire.AppsProblemUnreachable
+	v := openApps(t, api, 100, 28).view()
+	contains(t, v, "the node cannot be reached")
+	lacks(t, v, "reachable")
+}
+
+func TestPanelKeyHintsFitEightyColumns(t *testing.T) {
+	h := openShop(t, newAppsFake(), 80, 24)
+	if hints := h.m.keyHints(); len([]rune(hints)) > 78 {
+		t.Errorf("hints are %d columns: %q", len([]rune(hints)), hints)
+	}
+}

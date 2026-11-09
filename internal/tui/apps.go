@@ -61,6 +61,7 @@ type appLogs struct {
 	seq    int    // identifies the follow session that may still poll
 
 	following bool
+	capped    bool // a search had more matches than the daemon returns
 	search    string
 	window    *wire.LogWindow
 	readAt    time.Time
@@ -202,7 +203,7 @@ func (m *Model) loadApp() tea.Cmd {
 	node, project := m.apps.node, m.apps.project
 	return loadWithin(m, keyApp, m.appsTimeout(),
 		func(ctx context.Context) (wire.App, error) {
-			return api.GetNodeApp(ctx, node, project, wire.AppsQuery{})
+			return api.GetNodeApp(ctx, node, project, wire.AppsQuery{Errors: true})
 		},
 		func(m *Model, a wire.App) {
 			if m.apps.node != node || m.apps.project != project {
@@ -279,7 +280,7 @@ func (m *Model) componentAction(verb domain.ServiceVerb) tea.Cmd {
 	case !ok:
 		return nil
 	case m.apps.app.Stale:
-		m.notice = notice{text: fmt.Sprintf("cannot %s %s: the node cannot be read live, this is its last discovery", verb, safe(c.Name)), isErr: true}
+		m.notice = notice{text: fmt.Sprintf("cannot %s %s: %s", verb, safe(c.Name), m.appUnreadable()), isErr: true}
 		return nil
 	case c.ServiceID == "":
 		m.notice = notice{text: fmt.Sprintf("cannot %s %s: discovery has no service for it yet (r refreshes)", verb, safe(c.Name)), isErr: true}
@@ -290,6 +291,14 @@ func (m *Model) componentAction(verb domain.ServiceVerb) tea.Cmd {
 		s, err := within(parent, timeout, func(ctx context.Context) (wire.Service, error) { return api.GetService(ctx, id) })
 		return componentServiceMsg{verb: verb, project: project, service: s, err: err}
 	}
+}
+
+// appUnreadable is why the open app is only its last discovery, with the hint the overview gives.
+func (m *Model) appUnreadable() string {
+	if text := problemText(m.apps.app.Problem, m.apps.app.Hint); text != "" {
+		return text
+	}
+	return "the node cannot be read live, this is its last discovery"
 }
 
 func (m *Model) onComponentService(msg componentServiceMsg) tea.Cmd {
@@ -328,7 +337,7 @@ func (m *Model) loadAppLogs() tea.Cmd {
 			if l.node != node || l.project != project || l.component != q.Component || l.search != q.Search {
 				return
 			}
-			l.lines, l.rev = nil, l.rev+1
+			l.lines, l.capped, l.rev = nil, false, l.rev+1
 			l.append(logs)
 			l.cursor, l.window = logs.Cursor, logs.Window
 			m.sizeAppLogs()
@@ -338,7 +347,10 @@ func (m *Model) loadAppLogs() tea.Cmd {
 
 // append adds what a read returned; lines the daemon did not deliver show as a gap.
 func (l *appLogs) append(logs wire.AppLogs) {
-	if logs.Gap || logs.Truncated {
+	switch {
+	case logs.Truncated && l.search != "": // a cap on matches, not lines missing from the log
+		l.capped = true
+	case logs.Gap || logs.Truncated:
 		l.lines = append(l.lines, logLine{gap: true})
 	}
 	for _, text := range logs.Lines {
@@ -404,6 +416,14 @@ func (m *Model) following(seq int) bool {
 	return m.screen == screenAppLogs && m.apps.logs.following && m.apps.logs.seq == seq
 }
 
+// endFollowOffScreen turns the follow off when its poll finds the logs screen covered (help over it): the chain of
+// polls ends there, so the screen must stop saying it follows.
+func (m *Model) endFollowOffScreen(seq int) {
+	if l := &m.apps.logs; l.following && l.seq == seq {
+		l.following = false
+	}
+}
+
 func (m *Model) appLogsTick() tea.Cmd {
 	seq := m.apps.logs.seq
 	return tea.Tick(appLogsPoll, func(time.Time) tea.Msg { return appLogsTickMsg{seq: seq} })
@@ -413,6 +433,7 @@ func (m *Model) onAppLogsTick(msg appLogsTickMsg) tea.Cmd {
 	api, ok := m.appsAPI()
 	l := &m.apps.logs
 	if !ok || !m.following(msg.seq) {
+		m.endFollowOffScreen(msg.seq)
 		return nil
 	}
 	if l.cursor == "" { // nothing was read yet: there is nothing to follow from
@@ -429,6 +450,7 @@ func (m *Model) onAppLogsTick(msg appLogsTickMsg) tea.Cmd {
 
 func (m *Model) onAppLogsPolled(msg appLogsPolledMsg) tea.Cmd {
 	if !m.following(msg.seq) {
+		m.endFollowOffScreen(msg.seq)
 		return nil
 	}
 	l := &m.apps.logs

@@ -135,14 +135,14 @@ func (m *Model) appsBody(bw, bh int) []string {
 	default:
 		for _, n := range m.nodes {
 			rows = append(rows, "", " "+m.reachGlyph(n)+" "+m.th.title.Render(clip(safe(n.Name), bw-4)))
-			rows = append(rows, "   "+m.th.dim.Render(m.emptyApps()))
+			rows = append(rows, "   "+m.th.dim.Render(m.emptyApps(keyApps)))
 		}
 	}
 	return append(lines, window(rows, cursorLine, max(bh-len(lines), 1))...)
 }
 
-func (m *Model) emptyApps() string {
-	if st := m.state(keyApps); st.err != nil {
+func (m *Model) emptyApps(key loadKey) string {
+	if st := m.state(key); st.err != nil {
 		return "apps could not be read"
 	}
 	return "reading apps…"
@@ -152,7 +152,7 @@ func (m *Model) appsNodeHeader(n wire.NodeApps, bw int) string {
 	text := safe(n.Node)
 	glyph := m.th.dim.Render("●")
 	for _, node := range m.nodes {
-		if node.ID == n.NodeID {
+		if node.ID == n.NodeID && n.Problem != wire.AppsProblemUnreachable { // the live read outranks the stored state
 			glyph = m.reachGlyph(node)
 			text += " · " + safe(node.Environment) + " · " + nodeState(node)
 			break
@@ -163,19 +163,29 @@ func (m *Model) appsNodeHeader(n wire.NodeApps, bw int) string {
 
 // appsProblem says why the apps of a node were not read live, with what a person can do about it.
 func (m *Model) appsProblem(n wire.NodeApps, bw int) []string {
-	var text string
-	switch n.Problem {
+	return m.warnLines(problemText(n.Problem, n.Hint), bw)
+}
+
+// problemText is the one wording of a problem, on the overview and on the panel.
+func problemText(problem, hint string) string {
+	switch problem {
 	case "":
-		return nil
+		return ""
 	case wire.AppsProblemDocker:
-		text = "apps cannot be read: Docker is not installed or not accessible to SuperMgmt's user on this node. If it is installed, a person allows it with: " + safe(n.Hint)
+		return "apps cannot be read: Docker is not installed or not accessible to SuperMgmt's user on this node. If it is installed, a person allows it with: " + safe(hint)
 	case wire.AppsProblemUnreachable:
-		text = "the node cannot be reached: showing the last discovery, marked stale"
-		if n.Hint != "" {
-			text += ". " + safe(n.Hint)
+		text := "the node cannot be reached: showing the last discovery, marked stale"
+		if hint != "" {
+			text += ". " + safe(hint)
 		}
-	default:
-		text = "apps cannot be read: " + safe(n.Problem) + ". " + safe(n.Hint)
+		return text
+	}
+	return "apps cannot be read: " + safe(problem) + ". " + safe(hint)
+}
+
+func (m *Model) warnLines(text string, bw int) []string {
+	if text == "" {
+		return nil
 	}
 	var out []string
 	for _, l := range wrap(text, bw-4, "  ") {
@@ -207,12 +217,13 @@ func (m *Model) appBody(bw, bh int) []string {
 		return append(lines, "", m.th.dim.Render(" "+unavailableApps))
 	}
 	if !m.state(keyApp).loaded {
-		return append(lines, "", m.th.dim.Render(" "+m.emptyApps()))
+		return append(lines, "", m.th.dim.Render(" "+m.emptyApps(keyApp)))
 	}
 	lines = append(lines, m.kv("read", m.when(a.ReadAt), bw))
 	if a.Stale {
 		lines = append(lines, " "+m.th.warn.Render(clip("stale: the node cannot be read live; this is its last discovery", bw-2)))
 	}
+	lines = append(lines, m.warnLines(problemText(a.Problem, a.Hint), bw)...)
 	if a.RestartCount != nil {
 		lines = append(lines, m.kv("restarts", fmt.Sprint(*a.RestartCount), bw))
 	}
@@ -326,7 +337,9 @@ func (m *Model) appLogsBody(bw int) []string {
 	}
 	if len(l.lines) == 0 {
 		empty := "loading…"
-		if m.state(keyAppLogs).loaded {
+		if m.state(keyAppLogs).err != nil {
+			empty = "logs could not be read"
+		} else if m.state(keyAppLogs).loaded {
 			empty = "no log lines"
 			if l.search != "" {
 				empty = "no matches"
@@ -337,15 +350,25 @@ func (m *Model) appLogsBody(bw int) []string {
 	return append(lines, strings.Split(l.view.View(), "\n")...)
 }
 
+func matchCount(n int) string {
+	if n == 1 {
+		return "1 match"
+	}
+	return fmt.Sprintf("%d matches", n)
+}
+
 func (m *Model) appLogsStatus() string {
 	l := &m.apps.logs
 	if l.search != "" {
-		text := fmt.Sprintf("search %q: %s", l.search, plural(len(l.lines), "match"))
+		text := fmt.Sprintf("search %q: %s", l.search, matchCount(len(l.lines)))
 		if w := l.window; w != nil {
 			text += fmt.Sprintf(" · searched the last %s", plural(w.Lines, "line"))
 			if w.From != nil && w.To != nil {
 				text += fmt.Sprintf(" (%s to %s)", m.clock(*w.From), m.clock(*w.To))
 			}
+		}
+		if l.capped {
+			text += " · only the latest matches are shown"
 		}
 		return text + " · esc clears"
 	}
