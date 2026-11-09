@@ -56,11 +56,13 @@ func stopLocalDaemon(dbPath string, timeout time.Duration) (bool, error) {
 	if err := syscall.Kill(held.PID, syscall.SIGTERM); err != nil {
 		return false, fmt.Errorf("stop PID %d: %w", held.PID, err)
 	}
-	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+	const poll = 100 * time.Millisecond
+	for waited := time.Duration(0); waited < timeout; waited += poll {
 		if lock, err := database.AcquireDatabaseLock(dbPath); err == nil {
 			_ = lock.Release()
 			return true, nil
 		}
+		time.Sleep(poll)
 	}
 	return false, fmt.Errorf("PID %d did not stop within %s", held.PID, timeout)
 }

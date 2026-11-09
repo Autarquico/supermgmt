@@ -32,7 +32,7 @@ func tunnelInfo(t *testing.T) wire.ConnectInfo {
 	return info
 }
 
-func TestInteractiveCommandCloudflareOnlyChangesTheProxyCommandAndTheNamedHost(t *testing.T) {
+func TestInteractiveCommandCloudflareOnlyChangesTheProxyCommand(t *testing.T) {
 	direct := connectInfo(t)
 	tunnel := direct
 	tunnel.Transport, tunnel.TunnelHostname = domain.TransportCloudflare, "ssh-web1.example.com"

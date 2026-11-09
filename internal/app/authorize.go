@@ -68,19 +68,18 @@ func decisionError(res policy.Result) error {
 
 // denialMessage says which rule or gate refused, so the person knows what to change.
 func denialMessage(reason smerr.Reason) string {
-	switch reason {
-	case smerr.ReasonDestructiveGate:
-		return "action denied by the destructive gate: no allowing rule sets allow_destructive (see the admins-may-remove-nodes example in docs/policies.md)"
-	case smerr.ReasonSelfApproval:
-		return "action denied: you cannot approve your own plan; security.allow_self_approval is off (the default on a server), so another approver is needed"
-	case smerr.ReasonDefaultDeny:
-		return "action denied by policy: no allowing rule matches"
-	case smerr.ReasonDenyRule:
-		return "action denied by policy: a deny rule matches"
-	case smerr.ReasonScopeDenied:
-		return "action denied: the credential's scopes do not include this action"
+	if m, ok := denialMessages[reason]; ok {
+		return m
 	}
 	return "action denied by policy"
+}
+
+var denialMessages = map[smerr.Reason]string{
+	smerr.ReasonDestructiveGate: "action denied by the destructive gate: no allowing rule sets allow_destructive (see the admins-may-remove-nodes example in docs/policies.md)",
+	smerr.ReasonSelfApproval:    "action denied: you cannot approve your own plan; security.allow_self_approval is off (the default on a server), so another approver is needed",
+	smerr.ReasonDefaultDeny:     "action denied by policy: no allowing rule matches",
+	smerr.ReasonDenyRule:        "action denied by policy: a deny rule matches",
+	smerr.ReasonScopeDenied:     "action denied: the credential's scopes do not include this action",
 }
 
 // auditDecision records a DENY or CAPABILITY_UNAVAILABLE outcome (spec §11.3).

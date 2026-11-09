@@ -45,6 +45,9 @@
   "daemon": {
    "reason": "local-only: runs on this machine, not through the control plane (runs the server)"
   },
+  "daemon restart": {
+   "reason": "local-only: runs on this machine, not through the control plane (stops the local daemon)"
+  },
   "docker": {
    "reason": "interactive node session (node.connect), forbidden to MCP identities"
   },
