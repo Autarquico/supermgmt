@@ -299,6 +299,25 @@ func TestSetupRefusesAnAdminWithoutPasswordlessSudo(t *testing.T) {
 	}
 }
 
+func TestSetupRefusesANodeMissingACommandBeforeChangingIt(t *testing.T) {
+	s := newSetting(t)
+	s.dialer.as("admin").reply("probe", strings.Replace(linuxProbe, "@@sudo\nyes", "@@sudo\nyes\nmissing=visudo", 1))
+	s.setupPlan(defaultSetup())
+
+	err := s.run()
+
+	wantError(t, err, smerr.CodeCapabilityUnavailable, "")
+	if !errors.Is(err, jobs.ErrPermanent) {
+		t.Error("a missing command is retried: it must fail once")
+	}
+	if !strings.Contains(err.Error(), "visudo") || !strings.Contains(err.Error(), "apt install sudo") {
+		t.Errorf("error = %v; want the command and how to install it", err)
+	}
+	if got := s.dialer.as("admin").count("setup.user_add.sudo"); got != 0 {
+		t.Errorf("%d privileged steps ran after the preflight failed", got)
+	}
+}
+
 func TestSetupRefusesANodeThatIsNotLinux(t *testing.T) {
 	s := newSetting(t)
 	s.dialer.as("admin").reply("probe", strings.Replace(linuxProbe, "Linux 6.12.43-amd64 x86_64", "Darwin 25.0.0 arm64", 1))

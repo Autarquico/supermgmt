@@ -173,9 +173,11 @@ func ProxmoxPreview(node string) string {
 }
 
 // ProviderBlock is the three-line provider the user adds to the configuration
-// once a node is set up for Proxmox.
+// once a node is set up for Proxmox. Its name is the node's plus "-pve": the
+// node's own SSH provider already has the node's name, and provider names are
+// unique.
 func ProviderBlock(node string) string {
-	return "type: proxmox\nname: " + node + "\nvia_node: " + node
+	return "type: proxmox\nname: " + node + "-pve\nvia_node: " + node
 }
 
 // ProxmoxTokenRef is where setup stores a node's PVE API token.

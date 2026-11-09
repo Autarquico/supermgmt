@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 type handlerFunc func(ctx context.Context, lease Lease) error
@@ -136,6 +137,19 @@ func TestEngineRecoversFromHandlerPanics(t *testing.T) {
 	}
 	if e.get(panicking.ID).Attempts != 1 {
 		t.Fatal("a panicking job must not be retried")
+	}
+}
+
+func TestEngineDoesNotRetryAPermanentFailure(t *testing.T) {
+	e := newEnv(t)
+	job := e.enqueue(func(nj *NewJob) { nj.RetryClass, nj.MaxAttempts = domain.RetryIdempotent, 3 })
+	cause := smerr.New(smerr.CodeCapabilityUnavailable, "", "visudo is missing")
+	running(t, e, map[string]Handler{"test.job": handlerFunc(func(context.Context, Lease) error { return Permanent(cause) })})
+
+	eventually(t, "job failed", func() bool { return e.state(job.ID) == domain.JobFailed })
+	got := e.get(job.ID)
+	if got.Attempts != 1 || got.Error == nil || got.Error.Code != smerr.CodeCapabilityUnavailable || got.Error.Message != "visudo is missing" {
+		t.Fatalf("attempts = %d, error = %+v; want one attempt with the cause", got.Attempts, got.Error)
 	}
 }
 

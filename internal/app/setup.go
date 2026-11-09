@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -251,21 +252,53 @@ func (h setupHandler) provision(ctx context.Context, lease jobs.Lease, job jobs.
 	return outcome, err
 }
 
-// requireBootstrap checks, before anything changes, that the node runs Linux
-// and that admin_user can do what setup needs: be root, or run sudo without a
-// password (ADR-0009 c).
+// requireBootstrap checks, before anything changes, that the node runs Linux,
+// has every command setup runs, and that admin_user can do what setup needs: be
+// root, or run sudo without a password (ADR-0009 c). Each refusal is permanent:
+// retrying cannot install a package.
 func requireBootstrap(ctx context.Context, admin transport.Executor, asRoot bool) error {
 	snapshot, err := discovery.Probe(ctx, admin)
 	if err != nil {
 		return err
 	}
 	if !snapshot.IsLinux() {
-		return smerr.New(smerr.CodeCapabilityUnavailable, "", "setup needs a Linux node; this one runs "+snapshot.KernelName())
+		return jobs.Permanent(smerr.New(smerr.CodeCapabilityUnavailable, "", "setup needs a Linux node; this one runs "+snapshot.KernelName()))
+	}
+	if len(snapshot.MissingSetupCommands) > 0 {
+		return jobs.Permanent(smerr.New(smerr.CodeCapabilityUnavailable, "", missingCommandsMessage(snapshot.MissingSetupCommands)))
 	}
 	if !asRoot && !snapshot.PasswordlessSudo {
-		return smerr.New(smerr.CodeCapabilityUnavailable, "", bootstrapRequirement)
+		return jobs.Permanent(smerr.New(smerr.CodeCapabilityUnavailable, "", bootstrapRequirement))
 	}
 	return nil
+}
+
+// setupPackages names the package that provides each command setup runs, on
+// Debian-like and Red Hat-like nodes.
+var setupPackages = map[string][2]string{
+	"sudo":             {"sudo", "sudo"},
+	"visudo":           {"sudo", "sudo"},
+	"useradd":          {"passwd", "shadow-utils"},
+	"usermod":          {"passwd", "shadow-utils"},
+	"install":          {"coreutils", "coreutils"},
+	"systemd-tmpfiles": {"systemd", "systemd"},
+}
+
+func missingCommandsMessage(missing []string) string {
+	var apt, dnf []string
+	for _, command := range missing {
+		pkgs := setupPackages[command]
+		apt, dnf = appendUnique(apt, pkgs[0]), appendUnique(dnf, pkgs[1])
+	}
+	return "setup needs " + strings.Join(missing, ", ") + " on the node, and it is missing: install it first (apt install " +
+		strings.Join(apt, " ") + " or dnf install " + strings.Join(dnf, " ") + ") and run setup again"
+}
+
+func appendUnique(list []string, item string) []string {
+	if slices.Contains(list, item) {
+		return list
+	}
+	return append(list, item)
 }
 
 // ensureDeployRoot creates deploy_root owned by the dedicated user, 0750, so it

@@ -31,7 +31,9 @@ const ProbeFormatVersion = 1
 //	           (empty when the daemon is unreachable or access is denied) and
 //	           "compose=<version>" (empty when the plugin is missing)
 //	tools      one name per line, from: lazydocker btop tmux
-//	sudo       "yes" when "sudo -n true" succeeds, otherwise "no"
+//	sudo       "yes" when "sudo -n true" succeeds, otherwise "no"; then one
+//	           "missing=<command>" line per command node.setup runs that is
+//	           not on the node (SetupCommands), searched in the sbin directories too
 //	setup      "user=<id -un>", "home=exists|absent" for /var/lib/supermgmt,
 //	           "markers=writable|unwritable|absent" for the markers directory
 //	addresses  "ip -o addr show" (or "ifconfig -a") lines, at most 64
@@ -77,6 +79,8 @@ fi
 s tools
 for p in lazydocker btop tmux; do command -v "$p" >/dev/null 2>&1 && echo "$p"; done
 s sudo; if t sudo -n true >/dev/null 2>&1; then echo yes; else echo no; fi
+PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+for c in @SETUPCMDS@; do command -v "$c" >/dev/null 2>&1 || echo "missing=$c"; done
 s setup
 echo "user=$(id -un 2>/dev/null)"
 if [ -d /var/lib/supermgmt ]; then echo home=exists; else echo home=absent; fi
@@ -87,10 +91,14 @@ s addresses; { ip -o addr show 2>/dev/null || ifconfig -a 2>/dev/null; } | head 
 true
 `
 
+// SetupCommands are the commands node.setup runs on the node, which the probe
+// reports as missing before setup changes anything.
+var SetupCommands = []string{"sudo", "visudo", "useradd", "usermod", "install", "systemd-tmpfiles"}
+
 // probeTemplates holds the node probe (spec §12): one session returns every value.
 var probeTemplates = []Template{{
 	Name:     "probe",
-	Body:     "sh -c " + Quote(strings.ReplaceAll(probeScript, "@MARKERS@", MarkerDir)),
+	Body:     "sh -c " + Quote(strings.NewReplacer("@MARKERS@", MarkerDir, "@SETUPCMDS@", strings.Join(SetupCommands, " ")).Replace(probeScript)),
 	MaxBytes: 64 << 10,
 	MaxLines: 600,
 }}
