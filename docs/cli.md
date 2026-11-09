@@ -232,6 +232,24 @@ sm daemon
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+#### sm daemon restart
+
+Stop the local daemon; the next command starts a fresh one
+
+Stop the local daemon so the next command starts a fresh one. Only a local-mode daemon is stopped: a
+server, or any other process holding the database, is refused. Jobs that are running or queued would be
+interrupted, so they are listed and the restart is refused unless you pass --force.
+
+```text
+sm daemon restart [flags]
+```
+
+Flags:
+
+- `--force` (bool): restart even though running or queued jobs will be interrupted
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 ### sm docker
 
 Open lazydocker on a node over SSH
@@ -854,8 +872,12 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Probe a node now (an audited job)
 
 ```text
-sm nodes probe <node>
+sm nodes probe <node> [flags]
 ```
+
+Flags:
+
+- `--yes` (bool): accepted for scripts; a probe asks no confirmation
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -1046,11 +1068,15 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 #### sm profile use
 
-Make a profile the current one
+Make a profile the current one, or go back to the implicit local daemon with --local
 
 ```text
-sm profile use <name>
+sm profile use (<name> | --local) [flags]
 ```
+
+Flags:
+
+- `--local` (bool): stop using a profile: go back to the local daemon
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -1292,7 +1318,7 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Show one service
 
 ```text
-sm services get <service-id>
+sm services get <service>
 ```
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
@@ -1317,7 +1343,7 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Show the latest log lines of a service
 
 ```text
-sm services logs <service-id> [flags]
+sm services logs <service> [flags]
 ```
 
 Flags:
@@ -1331,8 +1357,12 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Restart a service (a job; production may wait for approval)
 
 ```text
-sm services restart <service-id>
+sm services restart <service> [flags]
 ```
+
+Flags:
+
+- `--yes` (bool): accepted for scripts; no confirmation is asked, and production jobs still wait for approval
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -1341,8 +1371,12 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Start a service (a job; production may wait for approval)
 
 ```text
-sm services start <service-id>
+sm services start <service> [flags]
 ```
+
+Flags:
+
+- `--yes` (bool): accepted for scripts; no confirmation is asked, and production jobs still wait for approval
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
@@ -1351,8 +1385,12 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Stop a service (a job; production may wait for approval)
 
 ```text
-sm services stop <service-id>
+sm services stop <service> [flags]
 ```
+
+Flags:
+
+- `--yes` (bool): accepted for scripts; no confirmation is asked, and production jobs still wait for approval
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 

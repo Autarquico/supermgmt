@@ -1849,6 +1849,7 @@ components:
         quorum: {type: integer}
         approvals: {type: integer}
         expires_at: {$ref: '#/components/schemas/Timestamp'}
+        stale: {type: boolean, description: "True when the plan target changed after the plan was made; the job cannot run."}
     Event:
       type: object
       required: [event_id, seq, timestamp, actor, source, action, resource, correlation_id, severity, result, data]

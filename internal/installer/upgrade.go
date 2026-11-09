@@ -756,6 +756,9 @@ func (u *upgrader) abortBeforeSwap(ctx context.Context, cause error) error {
 	}
 	_ = u.d.Files.RemoveAll(u.t.staged())
 	outcome := "the previous version is running again"
+	if u.t.unit == nil { // local mode: no service is managed; the daemon starts on demand
+		outcome = "the previous binary is still in place; no service was stopped, and any running daemon was left as it was"
+	}
 	if err := u.startService(ctx, "restart the previous version"); err != nil {
 		outcome = fmt.Sprintf("the previous version could NOT be restarted (%v); start it by hand", err)
 	} else if err := u.hit("U:abort:restarted"); err != nil {

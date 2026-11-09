@@ -448,6 +448,9 @@ type Approval struct {
 	Quorum       int             `json:"quorum"`
 	Approvals    int             `json:"approvals"`
 	ExpiresAt    time.Time       `json:"expires_at"`
+	// Stale is true when what the plan targets changed after it was made: the
+	// job can no longer run and approving it is pointless.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // ---- events ----------------------------------------------------------------

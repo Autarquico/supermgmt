@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -8,8 +9,49 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
+
+// resolveService accepts a service id or <unit>@<node>, the unit name on a
+// node given by id or name.
+func resolveService(ctx context.Context, api *client.Client, ref string) (domain.ID, error) {
+	at := strings.LastIndex(ref, "@")
+	if at < 0 {
+		return parseID(ref)
+	}
+	unit, nodeRef := ref[:at], ref[at+1:]
+	if unit == "" || nodeRef == "" {
+		return "", usageErrorf("%q is not <unit>@<node>", ref)
+	}
+	node, err := resolveNode(ctx, api, nodeRef)
+	if err != nil {
+		return "", err
+	}
+	var match []domain.ID
+	for cursor := ""; ; {
+		page, err := api.ListServices(ctx, node, wire.PageQuery{Limit: wire.MaxLimit, Cursor: cursor})
+		if err != nil {
+			return "", err
+		}
+		for _, s := range page.Items {
+			if s.Name == unit {
+				match = append(match, s.ID)
+			}
+		}
+		if cursor = page.NextCursor; cursor == "" {
+			break
+		}
+	}
+	switch len(match) {
+	case 0:
+		return "", smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("no service named %q on node %q", unit, nodeRef))
+	case 1:
+		return match[0], nil
+	}
+	return "", smerr.New(smerr.CodeConflict, smerr.ReasonAmbiguousTarget, fmt.Sprintf("%d services are named %q on node %q; use the id", len(match), unit, nodeRef))
+}
 
 func newServicesCmd(env []string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -74,15 +116,15 @@ func verbList(verbs []domain.ServiceVerb) string {
 
 func newServicesGetCmd(env []string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <service-id>",
+		Use:   "get <service>",
 		Short: "Show one service",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			api, err := newClient(cmd, env)
 			if err != nil {
 				return err
 			}
-			api, err := newClient(cmd, env)
+			id, err := resolveService(cmd.Context(), api, args[0])
 			if err != nil {
 				return err
 			}
@@ -111,15 +153,15 @@ func newServicesGetCmd(env []string) *cobra.Command {
 func newServicesLogsCmd(env []string) *cobra.Command {
 	var q wire.LogQuery
 	cmd := &cobra.Command{
-		Use:   "logs <service-id>",
+		Use:   "logs <service>",
 		Short: "Show the latest log lines of a service",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			api, err := newClient(cmd, env)
 			if err != nil {
 				return err
 			}
-			api, err := newClient(cmd, env)
+			id, err := resolveService(cmd.Context(), api, args[0])
 			if err != nil {
 				return err
 			}
@@ -143,16 +185,16 @@ func newServicesLogsCmd(env []string) *cobra.Command {
 }
 
 func newServiceActionCmd(env []string, verb domain.ServiceVerb) *cobra.Command {
-	return &cobra.Command{
-		Use:   string(verb) + " <service-id>",
+	cmd := &cobra.Command{
+		Use:   string(verb) + " <service>",
 		Short: fmt.Sprintf("%s a service (a job; production may wait for approval)", capitalize(string(verb))),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			api, err := newClient(cmd, env)
 			if err != nil {
 				return err
 			}
-			api, err := newClient(cmd, env)
+			id, err := resolveService(cmd.Context(), api, args[0])
 			if err != nil {
 				return err
 			}
@@ -163,6 +205,8 @@ func newServiceActionCmd(env []string, verb domain.ServiceVerb) *cobra.Command {
 			return submissionOutput(cmd, submission)
 		},
 	}
+	cmd.Flags().Bool("yes", false, "accepted for scripts; no confirmation is asked, and production jobs still wait for approval")
+	return cmd
 }
 
 func capitalize(s string) string { return strings.ToUpper(s[:1]) + s[1:] }

@@ -59,7 +59,7 @@ func (m *Model) dashboardBody(bw int) []string {
 	}
 	lines = append(lines, "", m.heading("Awaiting approval"))
 	for _, a := range m.approvals {
-		lines = append(lines, "   "+clip(fmt.Sprintf("%s  %s  %d/%d", safe(a.Job.Type), strings.Join(a.Environments, ","), a.Approvals, a.Quorum), bw-4))
+		lines = append(lines, "   "+clip(fmt.Sprintf("%s  %s  %d/%d", safe(a.Job.Type), strings.Join(a.Environments, ","), a.Approvals, a.Quorum)+staleTag(a), bw-4))
 	}
 	if len(m.approvals) == 0 {
 		lines = append(lines, m.th.dim.Render("   nothing is waiting"))
@@ -681,7 +681,7 @@ func (m *Model) approvalList(w, h int) []string {
 	var rows []string
 	for i, a := range m.approvals {
 		selected := i == m.apprCur
-		text := fmt.Sprintf("%s %s %d/%d", shortID(a.Job.ID), safe(a.Job.Type), a.Approvals, a.Quorum)
+		text := fmt.Sprintf("%s %s %d/%d", shortID(a.Job.ID), safe(a.Job.Type), a.Approvals, a.Quorum) + staleTag(a)
 		rows = append(rows, " "+m.marker(selected)+m.rowStyle(selected).Render(clip(text, w-4)))
 	}
 	return append(lines, window(rows, m.apprCur, max(h-2, 1))...)
@@ -702,7 +702,7 @@ func (m *Model) approvalView(a wire.Approval, w int) []string {
 	}
 	lines = append(lines, "",
 		" "+clip(fmt.Sprintf("Environments: %s", safe(dashIfEmpty(strings.Join(a.Environments, ", ")))), w-2),
-		" "+clip(fmt.Sprintf("Approvals: %d/%d · expires %s", a.Approvals, a.Quorum, m.when(a.ExpiresAt)), w-2),
+		" "+clip(fmt.Sprintf("Approvals: %d/%d · expires %s", a.Approvals, a.Quorum, m.when(a.ExpiresAt))+staleTag(a), w-2),
 		"",
 		" "+m.th.accent.Render("[A] Approve")+"  "+m.th.bad.Render("[R] Reject"))
 	return lines
@@ -846,4 +846,12 @@ func providerText(n wire.Node) string {
 		return safe(n.Provider)
 	}
 	return safe(n.Provider + " · " + n.Kind)
+}
+
+// staleTag marks a plan whose target changed after it was made.
+func staleTag(a wire.Approval) string {
+	if a.Stale {
+		return " · STALE"
+	}
+	return ""
 }

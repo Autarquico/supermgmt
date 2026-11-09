@@ -51,7 +51,11 @@ func readSecretFromStream(r io.Reader, in secretInput) (string, error) {
 		}
 		raw = line
 	}
-	return checkSecret(strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r"), in.limit)
+	value := strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r")
+	if value == "" {
+		return "", usageErrorf("standard input was empty: pipe the value in, or run on a terminal to be prompted")
+	}
+	return checkSecret(value, in.limit)
 }
 
 func readSecretFromTerminal(cmd *cobra.Command, tty *os.File, in secretInput) (string, error) {

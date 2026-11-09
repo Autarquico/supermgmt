@@ -54,6 +54,7 @@ func TestInteractiveCommandCloudflareOnlyChangesTheProxyCommand(t *testing.T) {
 	if proxy, wantProxy := proxyOf(t, got), "'"+path+"' access ssh --hostname ssh-web1.example.com"; proxy != wantProxy {
 		t.Errorf("ProxyCommand = %q, want %q", proxy, wantProxy)
 	}
+	want[slices.Index(want, "--")+1] = tunnel.TunnelHostname // ssh names the tunnel host, not the direct address
 	i := slices.Index(want, "ProxyCommand=none")
 	want[i] = proxyOption + proxyOf(t, got)
 	if !slices.Equal(got, want) {

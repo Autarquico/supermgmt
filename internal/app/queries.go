@@ -217,7 +217,14 @@ func (q *Queries) approvalView(ctx context.Context, r database.Querier, job jobs
 	return wire.Approval{
 		Job: JobView(job), Plan: json.RawMessage(rec.PlanJSON), Environments: q.environmentsOf(ctx, r, stored),
 		Quorum: q.quorumOf(ctx, r, job, rec), Approvals: granted, ExpiresAt: rec.ExpiresAt,
+		Stale: q.isStale(ctx, r, rec),
 	}, nil
+}
+
+// isStale reports whether the plan's inputs changed since it was made.
+func (q *Queries) isStale(ctx context.Context, r database.Querier, rec database.PlanRecord) bool {
+	_, err := q.rebuild(ctx, r, rec)
+	return errors.Is(err, &smerr.Error{Code: smerr.CodeConflict, Reason: smerr.ReasonPlanStale})
 }
 
 func (q *Queries) environmentsOf(ctx context.Context, r database.Querier, p *plan.Plan) []string {
