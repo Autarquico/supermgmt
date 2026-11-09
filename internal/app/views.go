@@ -59,6 +59,7 @@ type lookups struct {
 	metrics   map[domain.ID]database.Observation
 	system    map[domain.ID]database.Observation
 	proxmox   map[domain.ID]database.Observation
+	storages  map[domain.ID]database.Observation // by provider
 }
 
 func (v viewer) lookups(ctx context.Context, q database.Querier) (lookups, error) {
@@ -84,6 +85,9 @@ func (v viewer) lookups(ctx context.Context, q database.Querier) (lookups, error
 		return lookups{}, err
 	}
 	if l.proxmox, err = database.LatestObservations(ctx, q, domain.ResourceNode, proxmox.ObservationStatus); err != nil {
+		return lookups{}, err
+	}
+	if l.storages, err = database.LatestObservations(ctx, q, domain.ResourceProvider, proxmox.ObservationStorage); err != nil {
 		return lookups{}, err
 	}
 	return l, nil
@@ -132,6 +136,9 @@ func (v viewer) node(ctx context.Context, q database.Querier, l lookups, n domai
 		out.Setup = setupView(*setup)
 	}
 	out.Proxmox = proxmoxView(n, l.proxmox[n.ID])
+	if out.Proxmox != nil && n.Kind == proxmox.KindNode {
+		out.Proxmox.Storages = storagesOn(out.Proxmox.PVENode, l.storages[n.ProviderID])
+	}
 	return out, nil
 }
 
@@ -154,6 +161,25 @@ func proxmoxView(n domain.Node, status database.Observation) *wire.ProxmoxGuest 
 		guest.Inaccessible = observed.Presence == PresenceInaccessible
 	}
 	return guest
+}
+
+// storagesOn are the storages the provider's latest sync reported for one PVE node.
+func storagesOn(pveNode string, obs database.Observation) []wire.ProxmoxStorage {
+	var seen struct {
+		Storages []StorageObservation `json:"storages"`
+	}
+	if obs.Value == nil || decodeObservation(obs, &seen) != nil {
+		return nil
+	}
+	var out []wire.ProxmoxStorage
+	for _, st := range seen.Storages {
+		if st.Node == pveNode {
+			out = append(out, wire.ProxmoxStorage{
+				ID: st.ID, Plugin: st.Plugin, Content: nonNil(st.Content), TotalBytes: st.Total, UsedBytes: st.Used, Shared: st.Shared,
+			})
+		}
+	}
+	return out
 }
 
 func metadataString(m map[string]any, key string) string {
@@ -252,10 +278,14 @@ func setupView(m runtimes.SetupMeta) *wire.Setup {
 	for i, g := range m.Units {
 		units[i] = wire.UnitGrant{Unit: g.Unit, Verbs: g.Verbs}
 	}
-	return &wire.Setup{
+	view := &wire.Setup{
 		SetupVersion: m.SetupVersion, LogsMode: string(m.LogsMode), DockerAccess: m.DockerAccess,
 		Units: units, KeyFingerprint: m.KeyFingerprint, Proxmox: m.ProxmoxState() != nil,
 	}
+	if px := m.ProxmoxState(); px != nil {
+		view.ProxmoxTLSServerName = px.TLSServerName
+	}
+	return view
 }
 
 func nonNil[T any](s []T) []T {

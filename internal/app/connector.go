@@ -121,6 +121,12 @@ func (c Connector) State(n domain.Node) ssh.ConnState {
 
 func isLocal(n domain.Node) bool { return n.Kind == local.NodeKind }
 
+// hasSSHEndpoint reports whether SSH can reach n at all: a discovered guest
+// has no endpoint, and dialling it only fails with "invalid ssh host".
+func hasSSHEndpoint(n domain.Node) bool {
+	return isLocal(n) || n.Endpoint.Host != "" || n.Endpoint.TunnelHostname != ""
+}
+
 func (c Connector) local() (transport.Executor, error) {
 	if c.Local == nil {
 		return nil, smerr.New(smerr.CodeInternal, "", "no local executor is configured")

@@ -217,16 +217,20 @@ A guest renamed in Proxmox is renamed here and its `spec_revision` increases, so
 | Presence | When | Effect |
 |---|---|---|
 | `absent` | The object is missing from a successful read **and** the token still has the audit privilege on the path where it would be (`VM.Audit` on `/vms/<vmid>`, `Sys.Audit` on the node) | The row stays marked gone; its power capability is dropped. |
-| `inaccessible` | It is missing and the token no longer has that privilege (for example the ACL was revoked) | Nothing is known: the row stays, marked inaccessible, capabilities dropped. |
+| `inaccessible` | It is missing and the token no longer has that privilege (for example the ACL was narrowed) | Nothing is known: the row stays, marked inaccessible, capabilities dropped. |
 
-(`TestProxmoxSyncAGuestThatIsGoneIsAbsentWhenTheTokenStillSeesItsPath`, `...ARevokedACLMakesEverythingInaccessibleKeepsTheRowsAndDropsCapabilities`, `...AGuestOutsideTheTokensPathsIsInaccessibleNotAbsent`.) Only one sync per provider runs at a time. Its outcome is on the provider (`status` `ok` or `error`, `last_sync_at`, `last_error`) and is audited when it changes; a provider that leaves the configuration file is marked `removed` and not synced, nothing deleted.
+A token that sees no node and no guest at all has no rights: the sync fails (the provider is `error`, its `last_error` says so) and nothing is changed, so a guest that was `absent` stays `absent`. An HTTP 401 adds how to recover: `sm nodes setup <node> --proxmox` for a provider that reaches PVE through a node.
+
+(`TestProxmoxSyncAGuestThatIsGoneIsAbsentWhenTheTokenStillSeesItsPath`, `...ATokenWithNoRightsFailsTheProviderAndKeepsWhatIsKnown`, `...AGuestOutsideTheTokensPathsIsInaccessibleNotAbsent`.) Only one sync per provider runs at a time. Its outcome is on the provider (`status` `ok` or `error`, `last_sync_at`, `last_error`) and is audited when it changes; a provider that leaves the configuration file is marked `removed` and not synced, nothing deleted.
 
 ```bash
 sm providers list                    # status, last sync, last error
 sm providers get pve
 sm providers refresh pve             # discover now; exit 0 if it worked, 8 if the cluster could not be read
-sm nodes list --tree                 # providers, cluster nodes and their guests
+sm nodes list --tree                 # providers, cluster nodes and their guests, with CPU, memory, disk and storages
 ```
+
+`sm nodes get` shows the TLS server name `setup --proxmox` chose. A discovered Proxmox node is not probed over SSH (it has no SSH endpoint). When an SSH node and the Proxmox node discovered on the same host share a name, commands by that name mean the SSH node; use the id for the Proxmox node. `sm nodes power` takes guests only, so a guest that shares a name with an SSH node is the one it means.
 
 `refresh` is `POST /api/v1/providers/{id}/refresh`, authorized as `provider.read` and rate limited per caller and provider (6 per minute, burst 3). It changes nothing on the cluster, only what SuperMgmt knows. In the TUI the palette has `refresh proxmox [provider]`. `sm doctor` has a `providers` check: `ok` after a recent successful sync, `warn` while the first sync is pending or when none succeeded for three intervals, `fail` when the last sync failed; the appliance installer waits for it.
 

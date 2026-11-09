@@ -174,7 +174,7 @@ After a power action SuperMgmt finds the Proxmox task by matching its start time
 
 ### A Proxmox provider shows `error`
 
-`sm providers refresh <name>` shows the error. Usual causes: a rotated Proxmox certificate not covered by `ca_file`, a revoked token or ACL (guests turn `inaccessible`), or port 8006 blocked ([operations.md](operations.md#proxmox-appliance-recovery)). `sm providers check` also fails (exit 8) unless the token has `Sys.Audit` on `/`.
+`sm providers refresh <name>` shows the error. Usual causes: a rotated Proxmox certificate not covered by `ca_file`, a revoked token or ACL (with no rights left the provider fails; with narrower rights guests turn `inaccessible`), or port 8006 blocked ([operations.md](operations.md#proxmox-appliance-recovery)). `sm providers check` also fails (exit 8) unless the token has `Sys.Audit` on `/`.
 
 ### OIDC login fails with `PROVIDER_ERROR`
 

@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Milestones M0 (repository and core), M1 (local daemon, SSH, TUI), M2 (server, auth, releases), M3 (Proxmox and the appliance installer), M4 (applications, GitHub and deployments), M5 (MCP) and M6 (hardening and the release gate). Pre-alpha: no stable release yet.
 
+### Fixed: providers and inventory on a real Proxmox host (#71)
+
+- Discovered guests are no longer dialled over SSH; a token with no rights fails the provider instead of leaving it `ok` (a deleted guest stays `absent`); an HTTP 401 suggests `sm nodes setup <node> --proxmox`.
+- `sm nodes list --tree` shows CPU, memory, disk and the storages of each cluster node; `sm nodes get` shows the Proxmox TLS server name.
+- `systemd-timesyncd`, `systemd-resolved` and the other systemd services you act on are no longer hidden from the service inventory by default.
+- A name shared by an SSH node and its discovered Proxmox node resolves to the SSH node (to the Proxmox node for `sm nodes power`).
+
 ### Added: `sm assistant` (experimental)
 
 - A conversation in the terminal that works through SuperMgmt's MCP tools and shows approvals in place. It runs the `claude` CLI with your own subscription by default, or with `--auth api-key`.

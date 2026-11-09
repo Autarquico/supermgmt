@@ -662,7 +662,7 @@ func TestPowerRefusesAnUnknownVerb(t *testing.T) {
 
 	job, err := r.run("lxc/200", "poweroff")
 
-	if job.State != domain.JobFailed || smerr.CodeOf(err) != smerr.CodeInvalidArgument || len(r.fake.Requests()) > 3 {
+	if job.State != domain.JobFailed || smerr.CodeOf(err) != smerr.CodeInvalidArgument || r.fake.Count("POST", "/status/") > 0 {
 		t.Errorf("job = %s, err %v; want failed with INVALID_ARGUMENT before any dispatch", job.State, err)
 	}
 	if n := r.posts("poweroff"); n != 0 {
