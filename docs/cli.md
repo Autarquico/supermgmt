@@ -236,9 +236,17 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 Stop the local daemon; the next command starts a fresh one
 
+Stop the local daemon so the next command starts a fresh one. Only a local-mode daemon is stopped: a
+server, or any other process holding the database, is refused. Jobs that are running or queued would be
+interrupted, so they are listed and the restart is refused unless you pass --force.
+
 ```text
-sm daemon restart
+sm daemon restart [flags]
 ```
+
+Flags:
+
+- `--force` (bool): restart even though running or queued jobs will be interrupted
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 

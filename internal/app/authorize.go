@@ -76,8 +76,8 @@ func denialMessage(reason smerr.Reason) string {
 
 var denialMessages = map[smerr.Reason]string{
 	smerr.ReasonDestructiveGate: "action denied by the destructive gate: no allowing rule sets allow_destructive (see the admins-may-remove-nodes example in docs/policies.md)",
-	smerr.ReasonSelfApproval:    "action denied: you cannot approve your own plan; security.allow_self_approval is off (the default on a server), so another approver is needed",
-	smerr.ReasonDefaultDeny:     "action denied by policy: no allowing rule matches",
+	smerr.ReasonSelfApproval:    "action denied: you cannot decide on a job you requested; security.allow_self_approval is off (the default on a server), so another person must",
+	smerr.ReasonDefaultDeny:     "action denied by policy: no rule allows this for this caller (an MCP client can never approve or reject)",
 	smerr.ReasonDenyRule:        "action denied by policy: a deny rule matches",
 	smerr.ReasonScopeDenied:     "action denied: the credential's scopes do not include this action",
 }

@@ -12,7 +12,7 @@ func TestDenialsNameTheRuleOrGateThatRefused(t *testing.T) {
 	cases := map[smerr.Reason]string{
 		smerr.ReasonDestructiveGate: "allow_destructive",
 		smerr.ReasonSelfApproval:    "allow_self_approval",
-		smerr.ReasonDefaultDeny:     "no allowing rule",
+		smerr.ReasonDefaultDeny:     "no rule allows this",
 		smerr.ReasonDenyRule:        "deny rule",
 		smerr.ReasonScopeDenied:     "scopes",
 	}

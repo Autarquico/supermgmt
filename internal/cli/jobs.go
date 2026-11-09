@@ -363,7 +363,7 @@ func writeApprovals(w io.Writer, page wire.Page[wire.Approval], showPlan bool) e
 }
 
 // staleMark flags a plan whose target changed after it was made: approving it
-// would only fail with a stale-plan error.
+// would be refused as stale when the job is claimed.
 func staleMark(a wire.Approval) string {
 	if a.Stale {
 		return "  STALE: target changed, do not approve"
