@@ -11,6 +11,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 	"github.com/autarquico/supermgmt/internal/transport"
 	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
@@ -255,5 +256,13 @@ func TestAScaleDownBeforeTheNextDiscoveryStillAnswersForTheNameThePanelOffers(t 
 
 	if strings.Join(names, ",") != "db,web" {
 		t.Errorf("components = %v", names)
+	}
+}
+
+func TestAppStatsOfAProjectThatDoesNotExistIsNotFound(t *testing.T) {
+	f := newAppsFixture(t)
+	_, err := f.inv.AppStats(context.Background(), f.caller(f.alice), f.nodeID(), "nosuch")
+	if smerr.CodeOf(err) != smerr.CodeNotFound {
+		t.Errorf("AppStats = %v, want NOT_FOUND", err)
 	}
 }

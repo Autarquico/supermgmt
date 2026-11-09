@@ -156,6 +156,9 @@ func (i *Inventory) AppStats(ctx context.Context, by Caller, id domain.ID, proje
 	var members []member
 	if exErr == nil {
 		if details, ok := liveProject(ctx, ex, project); ok {
+			if len(details) == 0 {
+				return wire.AppStats{}, smerr.New(smerr.CodeNotFound, "", fmt.Sprintf("app %s not found on node %s", project, node.Name))
+			}
 			members = liveMembers(details)
 		}
 	}
