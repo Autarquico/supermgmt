@@ -1,13 +1,13 @@
 ---
 codename: supermgmt
-title: App panels: see what runs on each node, as apps
+title: "App panels: see what runs on each node, as apps"
 type: feature
-status: draft
+status: active
 priority: P1
 size: L
-issue:
+issue: 96
 prs: []
-related_issues: []
+related_issues: [96]
 depends_on: []
 supersedes: []
 related_specs: [retire-deployments, mcp-tool-coverage, assistant-tui]
