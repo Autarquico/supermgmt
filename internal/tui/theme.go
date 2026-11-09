@@ -67,15 +67,13 @@ func wrap(s string, w int, indent string) []string {
 			flush()
 			continue
 		}
-		for lipgloss.Width(prefix+word) > w {
-			room := []rune(word)
-			n := len(room)
-			for n > 1 && lipgloss.Width(prefix+string(room[:n])) > w {
-				n--
+		if lipgloss.Width(prefix+word) > w {
+			var rows []string
+			rows, word = splitWord(word, prefix, indent, w)
+			for _, row := range rows {
+				line = row
+				flush()
 			}
-			line = prefix + string(room[:n])
-			word = string(room[n:])
-			flush()
 		}
 		switch {
 		case word == "":
@@ -89,6 +87,33 @@ func wrap(s string, w int, indent string) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// splitWord cuts a word wider than a line into rows of at most w cells, the
+// first behind prefix and the rest behind indent, and returns what is left
+// once it fits. It walks the word once, so its cost is linear in the word.
+func splitWord(word, prefix, indent string, w int) (rows []string, rest string) {
+	runes := []rune(word)
+	for {
+		room := w - lipgloss.Width(prefix)
+		n, used := 0, 0
+		for n < len(runes) {
+			cells := lipgloss.Width(string(runes[n]))
+			if n > 0 && used+cells > room {
+				break
+			}
+			used += cells
+			n++
+		}
+		if n == len(runes) && used <= room {
+			return rows, string(runes)
+		}
+		rows = append(rows, prefix+string(runes[:n]))
+		runes, prefix = runes[n:], indent
+		if len(runes) == 0 {
+			return rows, ""
+		}
+	}
 }
 
 // padTo right-pads s with spaces to w cells; longer text is left as is.

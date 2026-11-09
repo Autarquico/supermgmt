@@ -819,20 +819,18 @@ func (m *Model) updatesText() string {
 func (m *Model) helpBody(bw int) []string {
 	rows := [][2]string{
 		{"1-7", "Dashboard, Resources, Jobs, Approvals, Events, Providers, Settings"},
+		{"8", "assistant: enter sends, ctrl+x stops, esc leaves, ctrl+c quits"},
+		{"", "card: A then y approves, R rejects, esc leaves it pending"},
+		{"", "pgup/pgdn scroll the transcript (j/k on a card)"},
 		{"j k / arrows", "move; g top, G bottom"},
-		{"enter", "open the selected item"},
-		{"esc", "back"},
-		{"v", "services of the node"},
-		{"l", "logs of the service"},
-		{"s", "SSH shell on the node (your own credentials)"},
-		{"d", "lazydocker on the node, when Docker is available"},
+		{"enter / esc", "open the selected item / back"},
+		{"v / l", "services of the node / logs of the service"},
+		{"s / d", "SSH shell on the node (your own credentials) / lazydocker"},
 		{"p", "probe the node (Node screen)"},
 		{"R S X", "restart, start, stop the service (opens a plan to confirm)"},
 		{"A R", "approve or reject the plan on screen (Approvals)"},
-		{"c", "cancel a job (asks first)"},
-		{"r", "refresh the screen"},
-		{"/", "command palette"},
-		{"q", "quit"},
+		{"c / r", "cancel a job (asks first) / refresh the screen"},
+		{"/ / q", "command palette / quit"},
 	}
 	lines := []string{"", m.heading("Keys")}
 	for _, r := range rows {

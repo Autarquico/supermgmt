@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/assistant"
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/tui"
 )
@@ -17,13 +18,19 @@ import (
 const daemonStartWait = 10 * time.Second
 
 func newTUICmd(env []string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "tui",
+	var auth string
+	cmd := &cobra.Command{
+		Use:   "tui [--auth subscription|api-key]",
 		Short: "Open the terminal UI",
-		Long:  "Open the terminal UI (also what plain `sm` does in an interactive terminal).",
-		Args:  noArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runTUI(cmd, env) },
+		Long: "Open the terminal UI (also what plain `sm` does in an interactive terminal).\n\n" +
+			"Key 8 opens the assistant, the same conversation as `sm assistant`. Nothing is started until you send its\n" +
+			"first message. --auth subscription uses the signed-in claude; --auth api-key runs it with ANTHROPIC_API_KEY\n" +
+			"from the environment.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runTUI(cmd, env, auth) },
 	}
+	cmd.Flags().StringVar(&auth, "auth", string(assistant.AuthSubscription), "how the assistant's claude signs in: subscription|api-key")
+	return cmd
 }
 
 // runBareTUI is the RunE of the root command: the TUI in an interactive
@@ -33,11 +40,15 @@ func runBareTUI(env []string) func(cmd *cobra.Command, args []string) error {
 		if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 			return cmd.Help()
 		}
-		return runTUI(cmd, env)
+		return runTUI(cmd, env, string(assistant.AuthSubscription))
 	}
 }
 
-func runTUI(cmd *cobra.Command, env []string) error {
+func runTUI(cmd *cobra.Command, env []string, authFlag string) error {
+	auth, err := validateAssistantAuth(env, authFlag)
+	if err != nil {
+		return err
+	}
 	if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 		return usageErrorf("the TUI needs an interactive terminal; use the sm subcommands in scripts")
 	}
@@ -50,7 +61,9 @@ func runTUI(cmd *cobra.Command, env []string) error {
 	if _, err := api.Me(ready); err != nil {
 		return err
 	}
-	return tui.Run(cmd.Context(), api, tuiOptions(api, where))
+	opts := tuiOptions(api, where)
+	opts.Assistant = assistantLauncher(env, defaultAssistantDeps(env), api, where, defaultAssistantClient, auth)
+	return tui.Run(cmd.Context(), api, opts)
 }
 
 // tuiOptions wires the TUI to its target. A local daemon is kept resident by

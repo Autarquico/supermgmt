@@ -1,0 +1,24 @@
+┌ SuperMgmt · Assistant ────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ assistant · ready                                                            │
+│ Ask in plain language. The assistant works through SuperMgmt's tools as its  │
+│ own client, never as you.                                                    │
+│ A change that needs approval comes back here as a card for you to decide.    │
+│ esc leaves this screen; the conversation keeps going.                        │
+│ [sm] assistant on the local daemon (client assistant, your claude            │
+│      subscription).                                                          │
+│ > what is running on web-1?                                                  │
+│ | web-1 runs two services:                                                   │
+│ | sm-demo.service (active) and sm-demo-web (unhealthy).                      │
+│ | [tool] service_list {"node":"web-1"}                                       │
+│ | [result] service_list: 2 services                                          │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│ > why is the second one unhealthy?                                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ enter send  pgup/pgdn scroll  esc back  ctrl+c quit                          │
+└──────────────────────────────────────────────────────────────────────────────┘

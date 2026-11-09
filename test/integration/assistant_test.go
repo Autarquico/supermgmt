@@ -261,14 +261,21 @@ type terminal struct {
 	cmd  *exec.Cmd
 	mu   sync.Mutex
 	buf  bytes.Buffer
+	mark int // length of the styled-free screen when a key was last pressed (assistant_tui_test.go)
 	done chan error
 }
 
 func (a *assistantRig) terminal(env []string, args ...string) *terminal {
 	a.t.Helper()
-	cmd := exec.CommandContext(context.Background(), a.sm, append([]string{"assistant"}, args...)...)
+	return a.terminalRunning(env, pty.Winsize{}, append([]string{"assistant"}, args...)...)
+}
+
+// terminalRunning runs `sm <args>` under a pseudo-terminal of the given size (zero: the pty default).
+func (a *assistantRig) terminalRunning(env []string, size pty.Winsize, args ...string) *terminal {
+	a.t.Helper()
+	cmd := exec.CommandContext(context.Background(), a.sm, args...)
 	cmd.Dir, cmd.Env = a.home, env
-	ptmx, err := pty.Start(cmd)
+	ptmx, err := pty.StartWithSize(cmd, &size)
 	mcpRigMust(a.t, err)
 	x := &terminal{t: a.t, ptmx: ptmx, cmd: cmd, done: make(chan error, 1)}
 	go func() {

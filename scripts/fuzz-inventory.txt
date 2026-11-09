@@ -47,6 +47,8 @@ github.com/autarquico/supermgmt/internal/app.setupParamsOf  exempt: loads or con
 github.com/autarquico/supermgmt/internal/app.toParams  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.validDNSLabel  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.verbOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/assistant.LoadApproval  exempt: typed daemon API calls through the human client; the job and plan are shown through textsafe.Line
+github.com/autarquico/supermgmt/internal/assistant.NewCard  exempt: reads the plan the daemon returned; every step is sanitised through textsafe.Line and the card is bounded (card_test.go)
 github.com/autarquico/supermgmt/internal/assistant.describeResult  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.approvalSignal  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.blocks  FuzzStreamParser
@@ -77,8 +79,6 @@ github.com/autarquico/supermgmt/internal/backup.readJournal  FuzzReadJournal
 github.com/autarquico/supermgmt/internal/backup.readKeyFile  exempt: reads local archive metadata and raw key files; manifests are parsed by FuzzParseManifest/FuzzReadArchive
 github.com/autarquico/supermgmt/internal/backup.readManifestMember  FuzzReadArchive
 github.com/autarquico/supermgmt/internal/cli.adminCall  exempt: operator-local CLI input or file; trusted by the operator running the command
-github.com/autarquico/supermgmt/internal/cli.approver.load  exempt: typed daemon API calls through the human client; the job and plan are shown through textsafe.Line
-github.com/autarquico/supermgmt/internal/cli.decodeCardPlan  exempt: reads the plan the daemon returned to its own CLI; every step is printed through textsafe.Line
 github.com/autarquico/supermgmt/internal/cli.describePlan  exempt: reads the plan the daemon returned to its own CLI; every step is printed through textsafe.Line
 github.com/autarquico/supermgmt/internal/cli.describePowerRisk  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.loadCAPool  exempt: operator-local CLI input or file; trusted by the operator running the command
@@ -311,6 +311,7 @@ github.com/autarquico/supermgmt/internal/tui.Model.loadService  exempt: loads ty
 github.com/autarquico/supermgmt/internal/tui.Model.loadServices  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.decodePlan  exempt: operator-typed wizard text and daemon-built plan JSON shown in the TUI; bounded by the form
 github.com/autarquico/supermgmt/internal/tui.load  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
+github.com/autarquico/supermgmt/internal/tui.loadCard  exempt: wraps assistant.LoadApproval and assistant.NewCard; the card is rendered through the sanitising wrap
 github.com/autarquico/supermgmt/internal/tui.parseSetupWords  exempt: splits palette words the operator typed into flags; each unit word goes to wire.ParseUnitSpec, which is fuzzed
 github.com/autarquico/supermgmt/internal/yamlstrict.Decode  FuzzDecode
 github.com/autarquico/supermgmt/internal/yamlstrict.readSingleDocument  FuzzDecode

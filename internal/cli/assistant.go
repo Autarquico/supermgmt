@@ -34,19 +34,8 @@ const (
 // registration and the jobs, and decides approvals. The model never touches it.
 type assistantAPI interface {
 	ListMCPClients(ctx context.Context) (wire.Page[wire.MCPClient], error)
-	GetJob(ctx context.Context, id domain.ID) (wire.JobDetail, error)
-	ListApprovals(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Approval], error)
-	Approve(ctx context.Context, job domain.ID, r wire.DecisionRequest) (wire.Job, error)
-	Reject(ctx context.Context, job domain.ID, r wire.DecisionRequest) (wire.Job, error)
-	GetService(ctx context.Context, id domain.ID) (wire.Service, error)
-	GetNode(ctx context.Context, id domain.ID, focus bool) (wire.Node, error)
-}
-
-type assistantSession interface {
-	Start(ctx context.Context) error
-	Send(text string) error
-	Events() <-chan assistant.Event
-	Close() error
+	assistant.Reader
+	assistant.Decider
 }
 
 // assistantDeps are the seams `sm assistant` runs through.
@@ -54,7 +43,7 @@ type assistantDeps struct {
 	connect     func(cmd *cobra.Command) (assistantAPI, target, error)
 	nativeStore func() (client.CredentialStore, bool)
 	executable  func() (string, error)
-	newSession  func(assistant.Config) (assistantSession, error)
+	newSession  func(assistant.Config) (assistant.Conversation, error)
 	interactive func(cmd *cobra.Command) bool
 	// claudeAvailable fails with assistant.ErrClaudeNotFound before anything is registered.
 	claudeAvailable func() error
@@ -75,7 +64,7 @@ func defaultAssistantDeps(env []string) assistantDeps {
 		},
 		nativeStore: func() (client.CredentialStore, bool) { return client.OpenNativeCredentialStore(runtime.GOOS, env) },
 		executable:  os.Executable,
-		newSession:  func(cfg assistant.Config) (assistantSession, error) { return assistant.New(cfg) },
+		newSession:  func(cfg assistant.Config) (assistant.Conversation, error) { return assistant.New(cfg) },
 		interactive: stdinIsTerminal,
 		claudeAvailable: func() error {
 			if _, err := exec.LookPath("claude"); err != nil {
@@ -122,12 +111,9 @@ func newAssistantCmdWith(env []string, deps assistantDeps) *cobra.Command {
 }
 
 func runAssistant(cmd *cobra.Command, env []string, deps assistantDeps, f assistantFlags) error {
-	auth := assistant.Auth(f.auth)
-	if auth != assistant.AuthSubscription && auth != assistant.AuthAPIKey {
-		return usageErrorf("--auth must be subscription or api-key, not %q", f.auth)
-	}
-	if auth == assistant.AuthAPIKey && envMap(env)[envAnthropicKey] == "" {
-		return usageErrorf("--auth api-key needs %s in the environment", envAnthropicKey)
+	auth, err := validateAssistantAuth(env, f.auth)
+	if err != nil {
+		return err
 	}
 	if err := deps.claudeAvailable(); err != nil {
 		return err
@@ -139,35 +125,23 @@ func runAssistant(cmd *cobra.Command, env []string, deps assistantDeps, f assist
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	token := assistantTokenAt(env, deps, f.client, where)
-	me, err := requireAssistantClient(ctx, api, f.client, token, where)
+	setup := assistantSetup{env: env, deps: deps, api: api, where: where, clientName: f.client, auth: auth}
+	me, err := setup.identity(ctx)
 	if err != nil {
 		return err
 	}
-	if err := token.exists(ctx, deps, f.client, where.remote != nil); err != nil {
-		return err
-	}
-	exe, err := deps.executable()
-	if err != nil {
-		return fmt.Errorf("locate the sm executable: %w", err)
-	}
-	session, err := deps.newSession(assistant.Config{
-		Auth: auth, SMBinary: exe, Token: token.location(), Target: assistantTarget(where, env), Env: env,
-	})
+	session, err := setup.start(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = session.Close() }()
-	if err := session.Start(ctx); err != nil {
-		return err
-	}
 	lines, inputErr := readLines(cmd.InOrStdin())
 	repl := &assistantRepl{
 		out: cmd.OutOrStdout(), session: session, lines: lines, inputErr: inputErr, width: deps.termWidth(cmd),
-		greeting: assistantGreeting(where, me.Name, auth),
+		greeting: assistantGreeting(where, me.ClientName, auth),
 		approver: &approver{
-			api: api, out: cmd.OutOrStdout(), lines: lines, assistantID: me.IdentityID, clientName: me.Name,
-			instance: instanceLabel(where), interactive: deps.interactive(cmd), discard: func() { deps.flushInput(cmd) },
+			api: api, out: cmd.OutOrStdout(), lines: lines, assistantID: me.ClientID, clientName: me.ClientName,
+			instance: me.Instance, interactive: deps.interactive(cmd), discard: func() { deps.flushInput(cmd) },
 		},
 	}
 	return repl.run(ctx)

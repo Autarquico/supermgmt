@@ -1476,9 +1476,17 @@ Open the terminal UI
 
 Open the terminal UI (also what plain `sm` does in an interactive terminal).
 
+Key 8 opens the assistant, the same conversation as `sm assistant`. Nothing is started until you send its
+first message. --auth subscription uses the signed-in claude; --auth api-key runs it with ANTHROPIC_API_KEY
+from the environment.
+
 ```text
-sm tui
+sm tui [--auth subscription|api-key] [flags]
 ```
+
+Flags:
+
+- `--auth` (string, default `subscription`): how the assistant's claude signs in: subscription|api-key
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 

@@ -374,7 +374,16 @@ func (h *harness) drain(cmd tea.Cmd) {
 		if c == nil {
 			continue
 		}
-		msg := c()
+		// A timer (the arming delay, the stall watch, the cursor blink) is not waited for:
+		// tests deliver its message themselves, so they decide when it fires.
+		done := make(chan tea.Msg, 1)
+		go func() { done <- c() }()
+		var msg tea.Msg
+		select {
+		case msg = <-done:
+		case <-time.After(60 * time.Millisecond):
+			continue
+		}
 		if batch, ok := msg.(tea.BatchMsg); ok {
 			queue = append(queue, batch...)
 			continue

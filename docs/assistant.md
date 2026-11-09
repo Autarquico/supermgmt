@@ -45,6 +45,14 @@ When the assistant's token has expired, `sm assistant` stops before starting and
 
 If `sm` cannot start its tools for the session, the usual cause is, on a server, `mcp.token_over_https` not being set ([how to set it](mcp.md#drive-a-server-from-your-workstation)).
 
+## In the TUI
+
+Press `8` for the assistant screen, or start the TUI with `sm tui --auth api-key` for the API key mode. Nothing runs until you send the first message. The conversation continues while you visit other screens and ends when you quit.
+
+A card opens when an approval is needed. Scroll with `pgup` and `pgdn`, wait for it to arm (it arms once it has been on your screen for a moment with no key pressed), then press `A`, wait for the confirmation to arm the same way, and press `y`, or `R` and give a reason. At the confirmation, only `y` after the pause approves; any other key, or a key during the pause, goes back. `Esc` leaves that job pending and shows the next card, if any. Pasted text is taken as one line.
+
+On this screen `q`, digits and `?` are text. `Esc` leaves the screen, `pgup` and `pgdn` scroll the transcript, `ctrl+x` stops a session that is working, and `ctrl+c` quits the TUI and ends the session.
+
 ## What the model can do
 
 The model has only SuperMgmt's tools. `claude` runs with no built-in tools (no shell, no files, no web fetch tool), one MCP server, no slash commands, and no saved session, from an empty temporary directory. After your first message, `claude` reports its session and `sm` checks its tools and its server; if any tool is not SuperMgmt's, it stops before showing any output or letting any tool run.

@@ -26,7 +26,7 @@ type Session struct {
 	cfg    Config
 	events chan Event
 
-	mu    sync.Mutex // guards stdin writes and closing
+	mu    sync.Mutex // serialises stdin writes; Close never takes it, so a stalled write cannot hold it back
 	stdin io.WriteCloser
 
 	quit     chan struct{} // closed by Close
@@ -86,6 +86,7 @@ func (s *Session) launch(ctx context.Context, claude, dir string, env []string) 
 	}
 	cmd := exec.CommandContext(ctx, claude, claudeArgs(s.cfg, mcpPath)...) //nolint:gosec // claude is the operator's own binary, the arguments are built here
 	cmd.Dir, cmd.Env = dir, env
+	ownGroup(cmd)
 	cmd.WaitDelay = waitDelay // a grandchild holding stderr must not stall the reap
 	stderr := &tailBuffer{max: stderrTail}
 	cmd.Stderr = stderr
@@ -146,9 +147,7 @@ func (s *Session) Send(text string) error {
 func (s *Session) Close() error {
 	s.quitOnce.Do(func() {
 		close(s.quit)
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.stdin != nil {
+		if s.stdin != nil { // closing the pipe also unblocks a Send stuck in Write
 			_ = s.stdin.Close()
 		}
 	})
@@ -218,7 +217,7 @@ func (s *Session) pump(r *bufio.Reader) error {
 // descendant keeps the pipe open.
 func (s *Session) kill() {
 	s.stopped.Store(true)
-	_ = s.cmd.Process.Kill()
+	_ = killGroup(s.cmd)
 	_ = s.stdout.Close()
 }
 

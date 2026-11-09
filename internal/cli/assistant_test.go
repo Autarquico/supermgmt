@@ -256,7 +256,7 @@ func (r *asstRig) runCtx(ctx context.Context, t *testing.T, stdin string, env []
 			return asstStore{}, r.keychain
 		},
 		executable: func() (string, error) { return "/usr/local/bin/sm", nil },
-		newSession: func(cfg assistant.Config) (assistantSession, error) {
+		newSession: func(cfg assistant.Config) (assistant.Conversation, error) {
 			r.cfg, r.launched = cfg, true
 			return r.session, nil
 		},
@@ -857,30 +857,4 @@ func TestAssistantCtrlCWhileEventsAreBufferedIsNotAFailure(t *testing.T) {
 			t.Fatal("Ctrl-C was recorded as a failed session")
 		}
 	}
-}
-
-func TestAssistantTargetNameKeepsARemoteNameToOneRow(t *testing.T) {
-	api := newAsstRig().api
-	hostile := "nginx" + strings.Repeat(" ", 200) + "Risk: low"
-	a := &approver{api: &renamedAPI{asstAPI: api, name: hostile}}
-	got := a.targetName(context.Background(), "service", string(asstService))
-	if strings.Contains(got, "  ") || len([]rune(got)) > 2*maxNameRunes+100 {
-		t.Fatalf("target row = %q", got)
-	}
-	if !strings.Contains(got, string(asstService)) {
-		t.Fatalf("id lost: %q", got)
-	}
-	long := &approver{api: &renamedAPI{asstAPI: api, name: strings.Repeat("x", 500)}}
-	if got := long.targetName(context.Background(), "service", string(asstService)); len([]rune(got)) > 2*maxNameRunes+100 {
-		t.Fatalf("a long name was not cut: %d runes", len([]rune(got)))
-	}
-}
-
-type renamedAPI struct {
-	*asstAPI
-	name string
-}
-
-func (r *renamedAPI) GetService(_ context.Context, id domain.ID) (wire.Service, error) {
-	return wire.Service{ID: id, Name: r.name, Node: "web-1"}, nil
 }
