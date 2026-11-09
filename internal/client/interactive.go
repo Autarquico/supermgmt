@@ -181,11 +181,21 @@ func interactiveCommand(info wire.ConnectInfo, tool wire.Tool, knownHostsPath st
 	if remote != "" {
 		argv = append(argv, "-t")
 	}
-	argv = append(argv, "--", info.Host)
+	argv = append(argv, "--", destination(info))
 	if remote != "" {
 		argv = append(argv, remote)
 	}
 	return argv, nil
+}
+
+// destination is what ssh names in its own messages ("Connection to X closed"):
+// the tunnel hostname for a tunnel node, since the proxy never uses the direct
+// address.
+func destination(info wire.ConnectInfo) string {
+	if info.Transport.Effective() == domain.TransportCloudflare {
+		return info.TunnelHostname
+	}
+	return info.Host
 }
 
 func validateConnectInfo(info wire.ConnectInfo) error {

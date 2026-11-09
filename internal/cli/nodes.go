@@ -119,6 +119,9 @@ func endpointOf(n wire.Node) string {
 	if n.Endpoint.Host == "" {
 		return n.Kind
 	}
+	if n.Endpoint.Transport.Effective() == domain.TransportCloudflare && n.Endpoint.TunnelHostname != "" {
+		return fmt.Sprintf("%s@%s (tunnel)", n.Endpoint.AdminUser, n.Endpoint.TunnelHostname)
+	}
 	return fmt.Sprintf("%s@%s:%d", n.Endpoint.AdminUser, n.Endpoint.Host, n.Endpoint.Port)
 }
 
