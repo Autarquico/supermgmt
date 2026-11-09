@@ -1295,7 +1295,7 @@ paths:
         - {name: component, in: query, required: true, description: The Compose service name of the component., schema: {type: string, minLength: 1}}
         - {name: lines, in: query, required: false, description: Number of lines; 0 or absent means 200., schema: {type: integer, minimum: 0, maximum: 1000}}
         - {name: cursor, in: query, required: false, description: Opaque cursor of a previous answer; does not combine with search., schema: {type: string}}
-        - {name: search, in: query, required: false, description: Text to look for, case-insensitively, after credentials are removed., schema: {type: string, maxLength: 256}}
+        - {name: search, in: query, required: false, description: 'Text to look for, case-insensitively, after credentials are removed.', schema: {type: string, maxLength: 256}}
       responses:
         '200':
           description: The log lines.
