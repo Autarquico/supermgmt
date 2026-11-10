@@ -80,6 +80,7 @@ var schemaTypes = map[string]reflect.Type{
 	"SecretVersion":    reflect.TypeFor[wire.SecretVersion](),
 	"Backup":           reflect.TypeFor[wire.Backup](),
 	"MasterKey":        reflect.TypeFor[wire.MasterKey](),
+	"Secret":           reflect.TypeFor[wire.Secret](),
 	"EnrollmentIssued": reflect.TypeFor[wire.EnrollmentIssued](),
 	"Enrolled":         reflect.TypeFor[wire.Enrolled](),
 	"MCPClient":        reflect.TypeFor[wire.MCPClient](),
@@ -145,6 +146,7 @@ var schemaTypes = map[string]reflect.Type{
 	"PageOfToken":     reflect.TypeFor[wire.Page[wire.Token]](),
 	"PageOfBackup":    reflect.TypeFor[wire.Page[wire.Backup]](),
 	"PageOfMasterKey": reflect.TypeFor[wire.Page[wire.MasterKey]](),
+	"PageOfSecret":    reflect.TypeFor[wire.Page[wire.Secret]](),
 	"PageOfMCPClient": reflect.TypeFor[wire.Page[wire.MCPClient]](),
 
 	"DirectOfProvider":         reflect.TypeFor[wire.Direct[wire.Provider]](),

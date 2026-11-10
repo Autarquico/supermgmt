@@ -46,6 +46,26 @@ func (k *KeyManager) ListKeys(ctx context.Context, by Caller) ([]wire.MasterKey,
 	return out, nil
 }
 
+// ListSecrets describes every named secret by its latest version (action
+// config.read, like the master keys): name, version, purpose, source and when
+// that version was stored. It never opens a secret.
+func (k *KeyManager) ListSecrets(ctx context.Context, by Caller) ([]wire.Secret, error) {
+	if _, err := k.authorizeOn(ctx, by, actionConfigRead, domain.ResourceRef{Type: domain.ResourceInstance}); err != nil {
+		return nil, err
+	}
+	summaries, err := database.ListSecretSummaries(ctx, k.cfg.DB.Reader())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]wire.Secret, len(summaries))
+	for i, s := range summaries {
+		purpose, _ := s.Metadata["purpose"].(string)
+		source, _ := s.Metadata["source"].(string)
+		out[i] = wire.Secret{Name: s.Name, Version: s.Version, Purpose: purpose, Source: source, CreatedAt: s.CreatedAt}
+	}
+	return out, nil
+}
+
 // activeKEK is the id in settings.active_kek_id, or "" before the first key.
 func activeKEK(ctx context.Context, q database.Querier) (domain.ID, error) {
 	setting, err := database.GetSetting(ctx, q, activeKEKSetting)

@@ -187,6 +187,10 @@ func (rs *routeSet) keys() {
 		method: http.MethodGet, pattern: wire.PathMasterKeys, action: actionConfigRead,
 		do: s.requireKeys(reading(s, s.listMasterKeys)),
 	})
+	rs.add(route{
+		method: http.MethodGet, pattern: wire.PathSecrets, action: actionConfigRead,
+		do: s.requireKeys(reading(s, s.listSecrets)),
+	})
 	// Export answers with a wrapped master key. It exists only on the local
 	// socket (spec §10) and never goes through the Idempotency-Key store: the
 	// execution is single-use by itself (ADR-0021).
@@ -218,6 +222,14 @@ func (s *Server) listMasterKeys(ctx context.Context, by app.Caller, _ input) (wi
 		keys = []wire.MasterKey{}
 	}
 	return wire.Page[wire.MasterKey]{Items: keys}, err
+}
+
+func (s *Server) listSecrets(ctx context.Context, by app.Caller, _ input) (wire.Page[wire.Secret], error) {
+	secrets, err := s.svc.Keys.ListSecrets(ctx, by)
+	if secrets == nil {
+		secrets = []wire.Secret{}
+	}
+	return wire.Page[wire.Secret]{Items: secrets}, err
 }
 
 func (s *Server) requireKeys(next endpoint) endpoint {

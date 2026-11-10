@@ -395,6 +395,9 @@
   "GET /api/v1/providers": {
    "tool": "infra_list_providers"
   },
+  "GET /api/v1/secrets": {
+   "reason": "secrets: names, purposes and versions are metadata of values the model must not reach"
+  },
   "GET /api/v1/secrets/master-keys": {
    "reason": "secrets: the value or key material would cross the model's transcript (key ids and states are metadata of it)"
   },

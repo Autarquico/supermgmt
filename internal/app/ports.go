@@ -49,6 +49,8 @@ type Keys interface {
 	RotateSSHIdentity(ctx context.Context, by Caller) (DirectResult[wire.SSHKey], error)
 	// ListKeys describes the master keys: metadata, never key material.
 	ListKeys(ctx context.Context, by Caller) ([]wire.MasterKey, error)
+	// ListSecrets describes the named secrets: metadata, never values.
+	ListSecrets(ctx context.Context, by Caller) ([]wire.Secret, error)
 }
 
 // Backups is backup.create (a job) and backup.read (spec §29.1, ADR-0020).

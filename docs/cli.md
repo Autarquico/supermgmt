@@ -610,6 +610,20 @@ sm jobs list
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+#### sm jobs logs
+
+Show the events of a job: each state it reached, who moved it and why it failed
+
+```text
+sm jobs logs <job-id> [flags]
+```
+
+Flags:
+
+- `--follow` (bool): keep streaming the job's new events; reconnects by itself
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 #### sm jobs reject
 
 Reject a job awaiting approval
@@ -1297,6 +1311,16 @@ and whether the daemon holds each. Key material is never shown.
 
 ```text
 sm secrets keys
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm secrets list
+
+List the named secrets and their latest version (never the values)
+
+```text
+sm secrets list
 ```
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.

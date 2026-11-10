@@ -17,6 +17,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 const defaultWatchInterval = 2 * time.Second
@@ -64,7 +65,7 @@ func newJobsCmd(env []string) *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return runJobsList(cmd, env, &f) },
 	}
 	cmd.AddCommand(list, newJobsGetCmd(env), newJobsApproveCmd(env), newJobsRejectCmd(env),
-		newJobsResolveCmd(env), newJobsCancelCmd(env))
+		newJobsResolveCmd(env), newJobsCancelCmd(env), newJobsLogsCmd(env))
 	return cmd
 }
 
@@ -170,12 +171,39 @@ func newJobsGetCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emit(cmd, detail, func(w io.Writer) error { return writeJobDetail(w, detail) })
+			return emit(cmd, detail, func(w io.Writer) error {
+				return writeJobDetail(w, detail, jobPlanSummary(cmd.Context(), api, detail.Job))
+			})
 		},
 	}
 }
 
-func writeJobDetail(w io.Writer, d wire.JobDetail) error {
+// jobPlanSummary is what the job's plan does: its action and parameters,
+// which name the subject (a secret import names the secret) and never hold
+// a secret value. A job without a plan has none.
+func jobPlanSummary(ctx context.Context, api *client.Client, j wire.Job) [][2]string {
+	if j.PlanID == nil {
+		return nil
+	}
+	created, err := api.GetPlan(ctx, *j.PlanID)
+	if err != nil {
+		return [][2]string{{"plan", fmt.Sprintf("%s (unreadable: %s)", *j.PlanID, smerr.CodeOf(err))}}
+	}
+	var doc struct {
+		Action     string          `json:"action"`
+		Parameters json.RawMessage `json:"parameters"`
+	}
+	if err := json.Unmarshal(created.Plan, &doc); err != nil {
+		return [][2]string{{"plan", fmt.Sprintf("%s (not a plan document)", *j.PlanID)}}
+	}
+	parameters := string(doc.Parameters)
+	if parameters == "" || parameters == "null" || parameters == "{}" {
+		parameters = "-"
+	}
+	return [][2]string{{"action", orDash(doc.Action)}, {"parameters", parameters}}
+}
+
+func writeJobDetail(w io.Writer, d wire.JobDetail, plan [][2]string) error {
 	j := d.Job
 	pairs := [][2]string{
 		{"id", string(j.ID)},
@@ -184,12 +212,15 @@ func writeJobDetail(w io.Writer, d wire.JobDetail) error {
 		{"risk", string(j.Risk)},
 		{"retry class", string(j.RetryClass)},
 		{"resource", fmt.Sprintf("%s %s", j.Resource.Type, j.Resource.ID)},
+	}
+	pairs = append(pairs, plan...)
+	pairs = append(pairs, [][2]string{
 		{"plan hash", orDash(j.PlanHash)},
 		{"attempts", fmt.Sprintf("%d/%d", j.Attempts, j.MaxAttempts)},
 		{"created", formatTime(j.CreatedAt)},
 		{"started", formatTimePtr(j.StartedAt)},
 		{"finished", formatTimePtr(j.FinishedAt)},
-	}
+	}...)
 	if j.Error != nil {
 		pairs = append(pairs, [2]string{"error", fmt.Sprintf("%s: %s", j.Error.Code, j.Error.Message)})
 	}
