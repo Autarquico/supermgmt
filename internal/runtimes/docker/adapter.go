@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -35,13 +36,26 @@ func (Adapter) Type() domain.RuntimeType { return domain.RuntimeDocker }
 // Logs reads the last q.Lines lines of the container's output (timestamped,
 // stdout and stderr merged). q.Mode does not apply to Docker.
 func (Adapter) Logs(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, q runtimes.LogQuery) (runtimes.LogChunk, error) {
+	return readLogs(ctx, ex, s, "docker.logs", q.Lines, nil)
+}
+
+// LogsSince reads up to lines lines written at or after since, oldest first.
+// Docker's boundary is inclusive: the caller drops what it already has.
+func (Adapter) LogsSince(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, since time.Time, lines int) (runtimes.LogChunk, error) {
+	stamp := since.UTC().Format("2006-01-02T15:04:05.999999999Z")
+	return readLogs(ctx, ex, s, "docker.logs_since", lines, map[string]string{"since": stamp})
+}
+
+func readLogs(ctx context.Context, ex transport.Executor, s runtimes.ServiceRef, template string, lines int, extra map[string]string) (runtimes.LogChunk, error) {
 	if err := checkContainer(s); err != nil {
 		return runtimes.LogChunk{}, err
 	}
-	if q.Lines < 1 || q.Lines > runtimes.MaxLogLines {
+	if lines < 1 || lines > runtimes.MaxLogLines {
 		return runtimes.LogChunk{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("lines must be in 1..%d", runtimes.MaxLogLines))
 	}
-	res, err := read(ctx, ex, "docker.logs", map[string]string{"container": s.NativeID, "lines": strconv.Itoa(q.Lines)})
+	args := map[string]string{"container": s.NativeID, "lines": strconv.Itoa(lines)}
+	maps.Copy(args, extra)
+	res, err := read(ctx, ex, template, args)
 	if err != nil {
 		return runtimes.LogChunk{}, err
 	}

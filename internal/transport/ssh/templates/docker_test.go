@@ -3,6 +3,7 @@ package templates
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDockerActionsAreMarkerWrappedAndPutDoubleDashFirst(t *testing.T) {
@@ -53,5 +54,33 @@ func TestDockerLogsMergeStreamsAndBoundLines(t *testing.T) {
 	}
 	if _, err := Render("docker.logs", map[string]string{"container": "web", "lines": "10001"}); err == nil {
 		t.Error("10001 lines accepted")
+	}
+}
+
+func TestDockerLogsSinceTakesAnAnchoredUTCTimestamp(t *testing.T) {
+	args := func(since string) map[string]string {
+		return map[string]string{"container": "web", "since": since, "lines": "50"}
+	}
+	c, err := Render("docker.logs_since", args("2026-11-09T10:00:00.123456789Z"))
+	if err != nil || c.Line != "docker logs --timestamps --since '2026-11-09T10:00:00.123456789Z' --tail '50' -- 'web' 2>&1" {
+		t.Errorf("line = %q, %v", c.Line, err)
+	}
+	if _, err := Render("docker.logs_since", args("2026-11-09T10:00:00Z")); err != nil {
+		t.Errorf("whole seconds rejected: %v", err)
+	}
+	for _, bad := range []string{"", "10m", "2026-11-09T10:00:00+01:00", "2026-11-09T10:00:00.1234567890Z", "2026-11-09T10:00:00Z; id", "2026-11-09T10:00:00Z\n", " 2026-11-09T10:00:00Z", "-1h"} {
+		if _, err := Render("docker.logs_since", args(bad)); err == nil {
+			t.Errorf("since %q accepted", bad)
+		}
+	}
+}
+
+func TestDockerStatsIsOneJSONSampleWithRoomToFinish(t *testing.T) {
+	c, err := Render("docker.stats", nil)
+	if err != nil || c.Line != "docker stats --no-stream --format json" {
+		t.Errorf("line = %q, %v", c.Line, err)
+	}
+	if c.Deadline <= time.Second {
+		t.Errorf("deadline %s does not outlast the sample", c.Deadline)
 	}
 }

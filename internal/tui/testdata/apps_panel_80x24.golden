@@ -1,0 +1,24 @@
+┌ SuperMgmt · App ──────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│                                                                              │
+│ shop on web-1 · degraded                                                     │
+│ read          10-10 12:00:03                                                 │
+│ restarts      3                                                              │
+│ now           cpu 12%  mem 410M/2.0G  at 12:00:03                            │
+│ memory trend  collecting samples while this panel is open                    │
+│                                                                              │
+│ Components                                                                   │
+│ ▸ ● web            running    healthy   nginx:1.27                           │
+│   ● db             running    unhealthy postgres:16                          │
+│                                                                              │
+│ web                                                                          │
+│ image         nginx:1.27                                                     │
+│ status        running · healthy                                              │
+│ started       2026-10-10T08:00:00Z                                           │
+│ restarts      3                                                              │
+│ errors        5 in the recent log                                            │
+│ use           cpu 4%  mem 100M/512M                                          │
+│ rows 1-18 of 25 · pgup/pgdn scroll                                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ j/k component  l logs  R restart  S start  X stop  esc back  ? help  q quit  │
+└──────────────────────────────────────────────────────────────────────────────┘

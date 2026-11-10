@@ -12,17 +12,21 @@
 - #42 flake: TestHandoffWithMissingSSHShowsErrorAndEndsSessionAsLaunchFailed — sm did not exit after q (macOS PTY loop)
 - #43 flake: TestKeyProducesAFrameWithinBudgetWhileADaemonRouteHangs — 70 ms over a 50 ms budget (macOS PTY loop)
 - #44 flake: TestFixturesSetup_AdminRootRunsWithoutSudo — systemctl was not found on the node (debian13)
-- #52 Move an app target to another node
 - #56 Move an app target's Cloudflare routes with it
 - #63 mcp: drive the whole infrastructure that sm drives, against any instance
+- #64 sm: built-in natural-language assistant that drives SuperMgmt through its MCP tools
 - #68 appliance: the proxmox-lxc installer fails or degrades on a real PVE 9.1 host
 - #69 tunnel: enrollment and re-enable get stuck or fail on a real account
+- #70 node setup: preconditions, retries and the suggested provider block
+- #71 providers and inventory: wrong states and missing data on a real Proxmox host
 - #75 Retire app move
 - #76 Routes publish a node port
 - #77 Retire deployments, apps and the GitHub connector
 - #83 MCP drives what sm operates: reads, jobs and default grants
 - #85 sm mcp reaches a server: MCP client tokens over HTTPS
 - #87 MCP adds and sets up nodes, a person checks the host key
+- #89 sm assistant: ask in natural language, through SuperMgmt's MCP tools
+- #91 The assistant in the TUI
 <!-- /pm-sync:done-this-week -->
 
 ---
@@ -30,7 +34,7 @@
 ## En curso
 
 <!-- pm-sync:in-progress -->
-- #89 sm assistant: ask in natural language, through SuperMgmt's MCP tools
+- #96 App panels: see what runs on each node, as apps
 <!-- /pm-sync:in-progress -->
 
 ---

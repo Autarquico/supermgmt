@@ -560,6 +560,76 @@
    }
   },
   {
+   "route": "GET /api/v1/apps",
+   "class": "query",
+   "path": "/api/v1/apps",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}/apps",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}/apps",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}/apps/{project}",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}/apps/shop",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}/apps/{project}/stats",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}/apps/shop/stats",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
+   "route": "GET /api/v1/nodes/{id}/apps/{project}/logs",
+   "class": "query",
+   "path": "/api/v1/nodes/{node}/apps/shop/logs?component=web",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 404
+   },
+   "on": {
+    "status": 404
+   }
+  },
+  {
    "route": "GET /api/v1/nodes/{id}/connect-info",
    "class": "forbidden",
    "path": "/api/v1/nodes/{node}/connect-info",

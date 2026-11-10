@@ -1,0 +1,28 @@
+┌ SuperMgmt · App logs ─────────────────────────────── 4 nodes · 3 online · 1 warning · 1 approval ┐
+│ logs · web · shop on web-1                                                                       │
+│ following · every 2s · / searches · read 12:00:03                                                │
+│ 2026-10-10T12:00:01Z listening on :80                                                            │
+│ 2026-10-10T12:00:02Z upstream timeout talking to db                                              │
+│ 2026-10-10T12:00:03Z served /                                                                    │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                                  │
+│ f follow  / search  j/k scroll  G end  r reload  esc back  q quit                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘

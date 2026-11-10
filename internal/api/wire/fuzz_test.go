@@ -21,6 +21,10 @@ func FuzzParseQueries(f *testing.F) {
 	f.Add("environment=prod&tag=db&reachability=reachable")
 	f.Add("state=queued&state=running&state=bogus")
 	f.Add("resource_type=node&resource_id=x&after_seq=5")
+	f.Add("component=web&lines=1000&search=timeout")
+	f.Add("cursor=a&search=b")
+	f.Add("stats=true&errors=false")
+	f.Add("stats=maybe")
 	f.Add("lines=10000")
 	f.Add("lines=10001")
 	f.Add("%zz=1&limit=%00")
@@ -40,6 +44,12 @@ func FuzzParseQueries(f *testing.F) {
 
 		logs, err := ParseLogQuery(values)
 		wantFuzzQueryOutcome(t, "log", err, logs.Lines >= 0 && logs.Lines <= 10000)
+
+		appLogs, err := ParseAppLogQuery(values)
+		wantFuzzQueryOutcome(t, "app log", err, appLogs.Lines >= 0 && appLogs.Lines <= MaxAppLogLines &&
+			(appLogs.Cursor == "" || appLogs.Search == "") && len(appLogs.Search) <= MaxSearchTermBytes)
+		_, err = ParseAppsQuery(values)
+		wantFuzzQueryOutcome(t, "apps", err, true)
 	})
 }
 

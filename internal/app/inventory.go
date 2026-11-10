@@ -58,17 +58,18 @@ type InventoryOptions struct {
 // pool state without ever dialing, except for logs and the first-trust scan.
 type Inventory struct {
 	core
-	plans      *Plans
-	jobs       *jobs.Store
-	conn       Connector
-	mode       config.Mode
-	focus      *Focus
-	staleAfter time.Duration
-	scan       func(ctx context.Context, host string, port int) (ssh.HostKey, error)
-	localName  string
-	adapters   Adapters
-	redactLogs bool
-	keys       *KeyManager
+	plans        *Plans
+	jobs         *jobs.Store
+	conn         Connector
+	mode         config.Mode
+	focus        *Focus
+	staleAfter   time.Duration
+	scan         func(ctx context.Context, host string, port int) (ssh.HostKey, error)
+	localName    string
+	adapters     Adapters
+	redactLogs   bool
+	statsFlights statsFlights
+	keys         *KeyManager
 }
 
 // NewInventory validates cfg and the options.

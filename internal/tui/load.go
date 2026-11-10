@@ -28,6 +28,10 @@ const (
 	keyApprovals loadKey = "approvals"
 	keyEvents    loadKey = "events"
 	keyProviders loadKey = "providers"
+	keyApps      loadKey = "apps"
+	keyApp       loadKey = "app"
+	keyAppStats  loadKey = "app-stats"
+	keyAppLogs   loadKey = "app-logs"
 )
 
 type loadState struct {
@@ -35,6 +39,7 @@ type loadState struct {
 	loading bool
 	loaded  bool
 	err     error
+	at      int // the periodic refresh count when the last good reply was applied
 }
 
 // loadedMsg is the reply of one load. It is applied only if its generation is
@@ -92,10 +97,15 @@ func (m *Model) state(key loadKey) *loadState {
 
 // load issues one API read as a command. Nothing here blocks Update or View.
 func load[T any](m *Model, key loadKey, call func(context.Context) (T, error), apply func(*Model, T)) tea.Cmd {
+	return loadWithin(m, key, m.opts.Timeout, call, apply)
+}
+
+// loadWithin is load with its own bound, for reads that do more than one call's work on the daemon.
+func loadWithin[T any](m *Model, key loadKey, timeout time.Duration, call func(context.Context) (T, error), apply func(*Model, T)) tea.Cmd {
 	st := m.state(key)
 	st.gen++
 	st.loading = true
-	gen, timeout, parent := st.gen, m.opts.Timeout, m.ctx
+	gen, parent := st.gen, m.ctx
 	return func() tea.Msg {
 		value, err := within(parent, timeout, call)
 		return loadedMsg{key: key, gen: gen, err: err, apply: func(m *Model) { apply(m, value) }}
@@ -112,7 +122,7 @@ func (m *Model) onLoaded(msg loadedMsg) {
 		st.err = msg.err
 		return
 	}
-	st.err, st.loaded = nil, true
+	st.err, st.loaded, st.at = nil, true, m.ticks
 	msg.apply(m)
 }
 
@@ -122,14 +132,34 @@ type loader struct {
 	run func() tea.Cmd
 }
 
+// refreshEvery is how long the last good reply of a key stands before the periodic refresh asks again, for reads
+// that cost the nodes more than a table scan. A forced reload (entering the screen, r) ignores it.
+var refreshEvery = map[loadKey]time.Duration{
+	keyApps:    appsRefresh,
+	keyAppLogs: time.Hour, // the follow poll reads on; a periodic re-read would replace what it keeps
+}
+
+// refreshTicks is refreshEvery counted in periodic refreshes: the TUI keeps no clock of its own.
+func (m *Model) refreshTicks(key loadKey) int {
+	period := m.opts.Refresh
+	if period <= 0 {
+		period = DefaultRefresh
+	}
+	return int(refreshEvery[key] / period)
+}
+
 // reload runs the loaders; unless force is set it skips keys whose previous
 // request is still in flight, so periodic refresh never piles up on a slow node.
 func (m *Model) reload(force bool, loaders ...loader) tea.Cmd {
 	var cmds []tea.Cmd
 	for _, l := range loaders {
-		if force || !m.state(l.key).loading {
-			cmds = append(cmds, l.run())
+		st := m.state(l.key)
+		switch {
+		case force:
+		case st.loading, st.loaded && m.ticks-st.at < m.refreshTicks(l.key):
+			continue
 		}
+		cmds = append(cmds, l.run())
 	}
 	return tea.Batch(cmds...)
 }

@@ -8,6 +8,8 @@
       "response": {
         "jsonrpc": "2.0", "id": 2,
         "result": {"tools": [
+          {"name": "infra_get_app", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_get_app_stats", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_get_health", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_get_job", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_get_node", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
@@ -19,6 +21,7 @@
           {"name": "infra_get_status", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_actions", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_approvals", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_list_apps", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_backups", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_events", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_jobs", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
@@ -27,7 +30,8 @@
           {"name": "infra_list_routes", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_services", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
           {"name": "infra_list_tunnel_enrollments", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}},
-          {"name": "infra_plan_action", "description": "$string", "inputSchema": {"type": "object"}, "_meta": {"dev.supermgmt/schema_version": 1}}
+          {"name": "infra_plan_action", "description": "$string", "inputSchema": {"type": "object"}, "_meta": {"dev.supermgmt/schema_version": 1}},
+          {"name": "infra_search_app_logs", "description": "$string", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}, "_meta": {"dev.supermgmt/schema_version": 1}}
         ]}
       }
     },
@@ -38,11 +42,11 @@
       "response": {
         "jsonrpc": "2.0", "id": 3,
         "result": {"tools": [
-          {"name": "infra_get_health"}, {"name": "infra_get_job"}, {"name": "infra_get_node"}, {"name": "infra_get_plan"},
+          {"name": "infra_get_app"}, {"name": "infra_get_app_stats"}, {"name": "infra_get_health"}, {"name": "infra_get_job"}, {"name": "infra_get_node"}, {"name": "infra_get_plan"},
           {"name": "infra_get_provider"}, {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_get_ssh_key"},
-          {"name": "infra_get_status"}, {"name": "infra_list_actions"}, {"name": "infra_list_approvals"}, {"name": "infra_list_backups"},
+          {"name": "infra_get_status"}, {"name": "infra_list_actions"}, {"name": "infra_list_approvals"}, {"name": "infra_list_apps"}, {"name": "infra_list_backups"},
           {"name": "infra_list_events"}, {"name": "infra_list_jobs"}, {"name": "infra_list_nodes"}, {"name": "infra_list_providers"},
-          {"name": "infra_list_routes"}, {"name": "infra_list_services"}, {"name": "infra_list_tunnel_enrollments"}, {"name": "infra_plan_action"}
+          {"name": "infra_list_routes"}, {"name": "infra_list_services"}, {"name": "infra_list_tunnel_enrollments"}, {"name": "infra_plan_action"}, {"name": "infra_search_app_logs"}
         ]}
       }
     },
@@ -57,11 +61,11 @@
       "response": {
         "jsonrpc": "2.0", "id": 4,
         "result": {"tools": [
-          {"name": "infra_get_health"}, {"name": "infra_get_job"}, {"name": "infra_get_node"}, {"name": "infra_get_plan"},
+          {"name": "infra_get_app"}, {"name": "infra_get_app_stats"}, {"name": "infra_get_health"}, {"name": "infra_get_job"}, {"name": "infra_get_node"}, {"name": "infra_get_plan"},
           {"name": "infra_get_provider"}, {"name": "infra_get_service"}, {"name": "infra_get_service_logs"}, {"name": "infra_get_ssh_key"},
-          {"name": "infra_get_status"}, {"name": "infra_list_actions"}, {"name": "infra_list_approvals"}, {"name": "infra_list_backups"},
+          {"name": "infra_get_status"}, {"name": "infra_list_actions"}, {"name": "infra_list_approvals"}, {"name": "infra_list_apps"}, {"name": "infra_list_backups"},
           {"name": "infra_list_events"}, {"name": "infra_list_jobs"}, {"name": "infra_list_nodes"}, {"name": "infra_list_providers"},
-          {"name": "infra_list_routes"}, {"name": "infra_list_services"}, {"name": "infra_list_tunnel_enrollments"}, {"name": "infra_plan_action"}
+          {"name": "infra_list_routes"}, {"name": "infra_list_services"}, {"name": "infra_list_tunnel_enrollments"}, {"name": "infra_plan_action"}, {"name": "infra_search_app_logs"}
         ]}
       }
     }

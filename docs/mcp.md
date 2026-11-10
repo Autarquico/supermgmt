@@ -83,6 +83,10 @@ Always registered: read-only tools (`readOnlyHint`) and `infra_plan_action`, whi
 | `infra_list_services` | services of one node |
 | `infra_get_service` | one service, by id or `name@node` |
 | `infra_get_service_logs` | last log lines of a service (at most 500 lines, 64 KiB); needs `service.logs` |
+| `infra_list_apps` | the apps (Compose projects) of every node or of one: state, restarts, current CPU and memory with the time sampled, recent errors; read live, or the last discovery with `stale` when the node does not answer; needs `service.read` (granted by `*.read`); the error count also needs `service.logs` |
+| `infra_get_app` | one app of a node: components, images, ports, volumes and configuration with environment, command and label secrets redacted; needs `service.read` |
+| `infra_get_app_stats` | one CPU and memory sample of an app's components, with its time; nothing is stored; needs `service.read` |
+| `infra_search_app_logs` | a term searched in the recent logs of one component of an app (at most 500 lines, 64 KiB); needs `service.logs`, which `builtin-mcp-operate` grants, not `*.read`: a policy without that rule denies it |
 | `infra_list_routes` | the routes that publish node ports through the node's tunnel, optionally of one node, with hostname, port, access and phase |
 | `infra_list_events` | audit events |
 | `infra_get_health` | derived health of one node or service |
@@ -95,6 +99,8 @@ Always registered: read-only tools (`readOnlyHint`) and `infra_plan_action`, whi
 | `infra_get_ssh_key` | the instance's public SSH key |
 | `infra_list_actions` | the actions `infra_plan_action` accepts, with parameters, risk and target type; `node.setup` is accepted with restricted values and is not listed, use `infra_setup_node` |
 | `infra_plan_action` | builds and stores a plan for one action on one target; nothing runs |
+
+The app tools read; a model has no tool to open a shell in an app's container or to connect to its database. Interactive exec and database connection are for people only: when they exist they are listed in the coverage map (`test/integration/testdata/mcp_coverage.json`) with that reason, and `sm docker` and `sm ssh` already are.
 
 Write tools (**registered only when `mcp.write_tools_enabled: true`**):
 

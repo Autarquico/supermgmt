@@ -38,13 +38,30 @@ func (c containerState) startedAfter(prev containerState) bool {
 
 // inspected is the part of `docker inspect` the adapter reads.
 type inspected struct {
-	ID     string `json:"Id"`
-	Name   string `json:"Name"`
-	Image  string `json:"Image"`
-	Config struct {
-		Image  string            `json:"Image"`
-		Labels map[string]string `json:"Labels"`
+	ID           string `json:"Id"`
+	Name         string `json:"Name"`
+	Image        string `json:"Image"`
+	RestartCount int    `json:"RestartCount"`
+	Config       struct {
+		Image      string            `json:"Image"`
+		Labels     map[string]string `json:"Labels"`
+		Env        []string          `json:"Env"`
+		Cmd        []string          `json:"Cmd"`
+		Entrypoint []string          `json:"Entrypoint"`
 	} `json:"Config"`
+	HostConfig struct {
+		RestartPolicy struct {
+			Name              string `json:"Name"`
+			MaximumRetryCount int    `json:"MaximumRetryCount"`
+		} `json:"RestartPolicy"`
+	} `json:"HostConfig"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+		RW          bool   `json:"RW"`
+	} `json:"Mounts"`
 	State struct {
 		Status    string `json:"Status"`
 		Running   bool   `json:"Running"`

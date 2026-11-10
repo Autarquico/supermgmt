@@ -29,13 +29,13 @@ const (
 
 // readToolNames is the closed set of read tools of spec §24.
 var readToolNames = []string{
-	"infra_get_health", "infra_get_job", "infra_get_node", "infra_get_plan",
+	"infra_get_app", "infra_get_app_stats", "infra_get_health", "infra_get_job", "infra_get_node", "infra_get_plan",
 	"infra_get_provider", "infra_get_service", "infra_get_service_logs",
 	"infra_get_ssh_key", "infra_get_status",
-	"infra_list_actions", "infra_list_approvals", "infra_list_backups",
+	"infra_list_actions", "infra_list_approvals", "infra_list_apps", "infra_list_backups",
 	"infra_list_events", "infra_list_jobs", "infra_list_nodes",
 	"infra_list_providers", "infra_list_routes", "infra_list_services",
-	"infra_list_tunnel_enrollments",
+	"infra_list_tunnel_enrollments", "infra_search_app_logs",
 }
 
 func readTestAPI() *fakeAPI {

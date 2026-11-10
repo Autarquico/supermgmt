@@ -68,6 +68,16 @@ Letters are case-sensitive: `r` reloads, `R` restarts a service or rejects a pla
 
 The `s`, `d` and `p` keys need an SSH endpoint. A Proxmox VM or container has none, so on a guest they are refused with a hint to use `power` from the palette.
 
+## Apps
+
+Key `9` opens the overview: each machine, the apps on it, and what else it runs. An app is a Compose project and its containers are its components; a plain container or a systemd unit is listed under the machine, ungrouped.
+
+For each app the overview shows its state, restarts, current CPU and memory, and how recently that was read. An app is degraded when a component is not running or is unhealthy. Restarts are a count over the container's life, so they do not by themselves mark an app as degraded. The recent error count appears only if you may read its logs.
+
+Figures are read from the node when you ask and are never stored. The trend in the app panel exists only while the panel is open. If a node cannot be reached, you see its last discovery marked stale with its time, and live reads and actions say so. If Docker is not reachable, the machine says so and names the command a person runs to allow it.
+
+Opening an app shows its components, volumes, published ports and configuration, with secret values removed. From there you can follow one component's logs, search them with `/`, and start, stop or restart a component through the usual plan and approval. A gap in followed logs means more lines arrived than one read returns. A search states the window of lines it covered. There is no action on a whole app.
+
 ## Acting: plans first, then confirmation
 
 Nothing that changes a node runs from a single key press. When you press `R`, `S` or `X` on a service, or use `setup` or `power` in the palette, the TUI asks the daemon to build a plan and shows it:

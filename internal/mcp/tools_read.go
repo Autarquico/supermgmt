@@ -94,6 +94,7 @@ func addReadTools(s *sdk.Server, api API) {
 			return health(ctx, api, in)
 		})
 	addOperationReadTools(s, api)
+	addAppTools(s, api)
 }
 
 // readTool registers a read-only tool whose handler returns a view.

@@ -19,6 +19,7 @@ type fakeAPI struct {
 	routes   []wire.NodeRoute
 	events   []wire.Event
 	logs     wire.LogChunk
+	apps     appFixtures
 
 	me          wire.Me
 	jobs        []wire.Job

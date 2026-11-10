@@ -2,6 +2,8 @@
 │                                                                              │
 │ Keys                                                                         │
 │ 1-7           Dashboard, Resources, Jobs, Approvals, Events, Providers, Set… │
+│ 9             apps: the Compose apps on each node; enter opens one, l its l… │
+│               app logs: f follows, / searches them (not the palette), esc c… │
 │ 8             assistant: enter sends, ctrl+x stops, esc leaves, ctrl+c quits │
 │               card: A then y approves, R rejects, esc leaves it pending      │
 │               pgup/pgdn scroll the transcript (j/k on a card)                │
@@ -16,8 +18,6 @@
 │ / / q         command palette / quit                                         │
 │                                                                              │
 │ Palette                                                                      │
-│ ssh <node> [tool] · logs <service> · services <node> · add node <name> tunn… │
-│ Destructive actions never run at once: they open a plan and wait for y.      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │ esc back  q quit                                                             │

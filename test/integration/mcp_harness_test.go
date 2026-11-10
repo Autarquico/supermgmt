@@ -57,13 +57,33 @@ func (r mcpRigResolver) Resolve(_ context.Context, bearer string) (app.Caller, e
 // mcpRigRuntime is the only fake of the rig: the SSH boundary to a node. It
 // answers every command with a short log and counts the commands, so a test
 // can tell that a refused write never reached a node.
-type mcpRigRuntime struct{ commands atomic.Int64 }
+//
+// A test that has a real node (the fixtures suite) sets dialer, and the rig then
+// reaches that node through it; no other test sets it.
+type mcpRigRuntime struct {
+	commands atomic.Int64
+	dialer   app.Dialer
+}
 
-func (r *mcpRigRuntime) For(ssh.Target) transport.Executor { return r }
+func (r *mcpRigRuntime) For(t ssh.Target) transport.Executor {
+	if r.dialer != nil {
+		return r.dialer.For(t)
+	}
+	return r
+}
 
-func (r *mcpRigRuntime) State(domain.ID) ssh.ConnState { return ssh.ConnState{} }
+func (r *mcpRigRuntime) State(node domain.ID) ssh.ConnState {
+	if r.dialer != nil {
+		return r.dialer.State(node)
+	}
+	return ssh.ConnState{}
+}
 
-func (r *mcpRigRuntime) Invalidate(domain.ID, string) {}
+func (r *mcpRigRuntime) Invalidate(node domain.ID, user string) {
+	if r.dialer != nil {
+		r.dialer.Invalidate(node, user)
+	}
+}
 
 func (r *mcpRigRuntime) Run(context.Context, templates.Command) (transport.Result, error) {
 	r.commands.Add(1)

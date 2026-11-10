@@ -12,6 +12,8 @@ github.com/autarquico/supermgmt/internal/api.readInput  FuzzReadInput
 github.com/autarquico/supermgmt/internal/api.reading  exempt: route registration helper, not a parser
 github.com/autarquico/supermgmt/internal/api.routeSet.read  exempt: route registration helper, not a parser
 github.com/autarquico/supermgmt/internal/api.routeSet.reads  exempt: route registration helper, not a parser
+github.com/autarquico/supermgmt/internal/api/wire.ParseAppLogQuery  FuzzParseQueries
+github.com/autarquico/supermgmt/internal/api/wire.ParseAppsQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseEventQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseJobQuery  FuzzParseQueries
 github.com/autarquico/supermgmt/internal/api/wire.ParseLogQuery  FuzzParseQueries
@@ -20,12 +22,14 @@ github.com/autarquico/supermgmt/internal/api/wire.ParsePageQuery  FuzzParseQueri
 github.com/autarquico/supermgmt/internal/api/wire.ParseUnitSpec  FuzzParseUnitSpec
 github.com/autarquico/supermgmt/internal/app.DecodePendingAudit  FuzzDecodePendingAudit
 github.com/autarquico/supermgmt/internal/app.HoldService.Load  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
+github.com/autarquico/supermgmt/internal/app.Inventory.readNodeApps  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.Inventory.readableNode  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.ProxmoxEvidence.Collect  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.ProxmoxSync.read  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.ProxmoxSync.readInventory  exempt: calls the Proxmox client; answers are decoded by the fuzzed decode* functions
 github.com/autarquico/supermgmt/internal/app.activeKEK  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.canonicalHostname  FuzzRouteHostname
+github.com/autarquico/supermgmt/internal/app.decodeLogCursor  FuzzAppLogCursor
 github.com/autarquico/supermgmt/internal/app.decodeObservation  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.fromParams  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/app.loadActor  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
@@ -49,9 +53,9 @@ github.com/autarquico/supermgmt/internal/app.validDNSLabel  FuzzRouteHostname
 github.com/autarquico/supermgmt/internal/app.verbOf  exempt: loads or converts JSON and rows the daemon stored itself through database.Querier
 github.com/autarquico/supermgmt/internal/assistant.LoadApproval  exempt: typed daemon API calls through the human client; the job and plan are shown through textsafe.Line
 github.com/autarquico/supermgmt/internal/assistant.NewCard  exempt: reads the plan the daemon returned; every step is sanitised through textsafe.Line and the card is bounded (card_test.go)
-github.com/autarquico/supermgmt/internal/assistant.describeResult  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.approvalSignal  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.blocks  FuzzStreamParser
+github.com/autarquico/supermgmt/internal/assistant.describeResult  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.parser.parse  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.readLine  FuzzStreamParser
 github.com/autarquico/supermgmt/internal/assistant.resultText  FuzzStreamParser
@@ -136,10 +140,10 @@ github.com/autarquico/supermgmt/internal/database.readSchemaVersion  exempt: SQL
 github.com/autarquico/supermgmt/internal/database.readSnapshot  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.readerQuery  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanAPIToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself
-github.com/autarquico/supermgmt/internal/database.scanNodeRoute  FuzzScanNodeRoute
 github.com/autarquico/supermgmt/internal/database.scanEnvironment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanJoinToken  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/database.scanNode  exempt: SQLite rows, migrations and lock files the daemon wrote itself
+github.com/autarquico/supermgmt/internal/database.scanNodeRoute  FuzzScanNodeRoute
 github.com/autarquico/supermgmt/internal/database.scanTunnelEnrollment  exempt: SQLite rows, migrations and lock files the daemon wrote itself
 github.com/autarquico/supermgmt/internal/discovery.Parse  FuzzParseProbe
 github.com/autarquico/supermgmt/internal/discovery.parseAddresses  FuzzParseProbe
@@ -210,8 +214,8 @@ github.com/autarquico/supermgmt/internal/mcp.planRisk  exempt: renders a plan do
 github.com/autarquico/supermgmt/internal/mcp.readTool  FuzzJSONRPCFrames
 github.com/autarquico/supermgmt/internal/mcp.resolveNode  FuzzResolveRef
 github.com/autarquico/supermgmt/internal/mcp.resolveService  FuzzResolveRef
-github.com/autarquico/supermgmt/internal/mcp.viewPlanDocument  exempt: renders a plan document the daemon built
 github.com/autarquico/supermgmt/internal/mcp.versionsInBody  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/mcp.viewPlanDocument  exempt: renders a plan document the daemon built
 github.com/autarquico/supermgmt/internal/netguard.cappedBody.Read  exempt: gap: its fuzz target went with the GitHub connector; needs one of its own
 github.com/autarquico/supermgmt/internal/policy.Parse  FuzzParsePolicy
 github.com/autarquico/supermgmt/internal/policy.ParseWithWarnings  FuzzParsePolicy
@@ -264,7 +268,12 @@ github.com/autarquico/supermgmt/internal/pveid.rowOf  FuzzParsePVEList
 github.com/autarquico/supermgmt/internal/pveid.unmarshalRows  FuzzParsePVEList
 github.com/autarquico/supermgmt/internal/runtimes/docker.decodeInspect  FuzzDecodeInspect
 github.com/autarquico/supermgmt/internal/runtimes/docker.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/docker.parseMemUsage  FuzzParseSize
+github.com/autarquico/supermgmt/internal/runtimes/docker.parsePercent  FuzzParseStats
+github.com/autarquico/supermgmt/internal/runtimes/docker.parseSize  FuzzParseSize
+github.com/autarquico/supermgmt/internal/runtimes/docker.parseStats  FuzzParseStats
 github.com/autarquico/supermgmt/internal/runtimes/docker.read  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
+github.com/autarquico/supermgmt/internal/runtimes/docker.readLogs  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
 github.com/autarquico/supermgmt/internal/runtimes/systemd.ValidateConnectorToken  FuzzValidateConnectorToken
 github.com/autarquico/supermgmt/internal/runtimes/systemd.keyringFingerprint  FuzzKeyringFingerprint
 github.com/autarquico/supermgmt/internal/runtimes/systemd.observe  exempt: runs a read-only node command and delegates to the fuzzed parse*/decode* functions
@@ -298,7 +307,11 @@ github.com/autarquico/supermgmt/internal/transport/ssh.sanitizeDiagnostic  FuzzS
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ParseMarkerState  FuzzParseMarkerState
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.Render  FuzzMarkerStateRendering
 github.com/autarquico/supermgmt/internal/transport/ssh/templates.ValidateContainer  exempt: gap: its fuzz target went with the deployment validators; needs one of its own
+github.com/autarquico/supermgmt/internal/tui.Model.loadApp  exempt: UI loader calling the typed API client; parses nothing itself
+github.com/autarquico/supermgmt/internal/tui.Model.loadAppLogs  exempt: UI loader calling the typed API client; parses nothing itself
+github.com/autarquico/supermgmt/internal/tui.Model.loadAppStats  exempt: UI loader calling the typed API client; parses nothing itself
 github.com/autarquico/supermgmt/internal/tui.Model.loadApprovals  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
+github.com/autarquico/supermgmt/internal/tui.Model.loadApps  exempt: UI loader calling the typed API client; parses nothing itself
 github.com/autarquico/supermgmt/internal/tui.Model.loadEvents  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.Model.loadJob  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.Model.loadJobs  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
@@ -312,6 +325,7 @@ github.com/autarquico/supermgmt/internal/tui.Model.loadServices  exempt: loads t
 github.com/autarquico/supermgmt/internal/tui.decodePlan  exempt: operator-typed wizard text and daemon-built plan JSON shown in the TUI; bounded by the form
 github.com/autarquico/supermgmt/internal/tui.load  exempt: loads typed responses from the daemon API client into the model; no raw byte parsing
 github.com/autarquico/supermgmt/internal/tui.loadCard  exempt: wraps assistant.LoadApproval and assistant.NewCard; the card is rendered through the sanitising wrap
+github.com/autarquico/supermgmt/internal/tui.loadWithin  exempt: UI loader calling the typed API client; parses nothing itself
 github.com/autarquico/supermgmt/internal/tui.parseSetupWords  exempt: splits palette words the operator typed into flags; each unit word goes to wire.ParseUnitSpec, which is fuzzed
 github.com/autarquico/supermgmt/internal/yamlstrict.Decode  FuzzDecode
 github.com/autarquico/supermgmt/internal/yamlstrict.readSingleDocument  FuzzDecode

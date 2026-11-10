@@ -82,3 +82,18 @@ paths = ['''^internal/app/setup_proxmox_test\.go$''', '''^internal/runtimes/syst
 description = "synthetic Cloudflare connector tokens (secret-sentinel) the tunnel enrollment must store, show once and never log"
 targetRules = ["generic-api-key"]
 paths = ['''^internal/api/routes_tunnel_enroll_test\.go$''', '''^internal/cli/join_tunnel_test\.go$''', '''^internal/cli/nodes_tunnel_enroll_test\.go$''', '''^internal/join/tunnel_test\.go$''']
+
+[[allowlists]]
+description = "PEM-shaped app log lines the app-log scrubber must withhold; synthetic bodies, not a real key"
+targetRules = ["private-key"]
+paths = ['''^internal/app/apps_logs_test\.go$''', '''^internal/app/apps_test\.go$''']
+
+[[allowlists]]
+description = "PEM-shaped and password=... app log lines the MCP app tools must scrub; synthetic"
+targetRules = ["private-key"]
+paths = ['''^internal/mcp/tools_apps_test\.go$''']
+
+[[allowlists]]
+description = "synthetic key body and password the fixture Compose app logs to prove redaction on real Docker"
+targetRules = ["private-key", "generic-api-key"]
+paths = ['''^test/integration/fixtures_apps_test\.go$''']

@@ -93,6 +93,7 @@ func (s *Server) buildRoutes() []route {
 	r.providers()
 	r.proxmox()
 	r.nodeRoutes()
+	r.apps()
 	r.mcpClients()
 	r.nodes()
 	r.tunnelEnrollments()
