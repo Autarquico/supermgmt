@@ -85,7 +85,8 @@ type nodeProxmox struct {
 	px    runtimes.ProxmoxMeta
 }
 
-// viaNode finds the SSH node by name and the Proxmox state its setup recorded.
+// viaNode finds the live SSH node by name and the Proxmox state its setup
+// recorded. A retired node gave its name up and never relays.
 func (s *ProxmoxSync) viaNode(ctx context.Context, name string) (domain.Node, nodeProxmox, error) {
 	q := s.cfg.DB.Reader()
 	nodes, err := database.ListNodes(ctx, q)
@@ -95,7 +96,7 @@ func (s *ProxmoxSync) viaNode(ctx context.Context, name string) (domain.Node, no
 	var node domain.Node
 	found := false
 	for _, n := range nodes {
-		if n.Name == name && n.Kind == sshnode.NodeKind {
+		if n.Name == name && n.Kind == sshnode.NodeKind && n.ManagementState != domain.ManagementRetired {
 			node, found = n, true
 			break
 		}

@@ -329,3 +329,26 @@ func TestRelayIdentityFollowsTheNodeItsHostKeyAndItsProxmoxMetadata(t *testing.T
 		t.Error("identity is not stable")
 	}
 }
+
+func TestViaNodeOfAReusedNameRelaysThroughTheLiveNodeNotTheRetiredOne(t *testing.T) {
+	r := newViaNodeRig(t)
+	ctx := context.Background()
+	old := r.node
+	r.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := r.inv.applyNodeRemove(ctx, tx, systemActor, old)
+		return err
+	})
+	fresh := r.addApplied("web-1", r.withStaging())
+	r.node = domain.Node{ID: fresh.ID}
+	freshPx := r.px
+	freshPx.CAPEM = "-----NEW HOST CA-----"
+	r.setMeta(r.meta, &freshPx)
+
+	target, err := r.sync.resolveTarget(ctx, r.provider())
+	if err != nil {
+		t.Fatalf("resolveTarget: %v", err)
+	}
+	if target.relay.node.ID != fresh.ID || string(target.ca) != freshPx.CAPEM {
+		t.Errorf("relay node %s, want the live node %s (retired %s) and its host CA", target.relay.node.ID, fresh.ID, old.ID)
+	}
+}

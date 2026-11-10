@@ -34,7 +34,7 @@ func newJobsLogsCmd(env []string) *cobra.Command {
 			if follow {
 				return followEvents(cmd, api, q)
 			}
-			var events []wire.Event
+			events := []wire.Event{}
 			for {
 				page, err := api.ListEvents(cmd.Context(), q)
 				if err != nil {
@@ -46,7 +46,7 @@ func newJobsLogsCmd(env []string) *cobra.Command {
 				}
 				q.Cursor = page.NextCursor
 			}
-			return emit(cmd, events, func(w io.Writer) error { return writeJobLogs(w, events) })
+			return emit(cmd, wire.Page[wire.Event]{Items: events}, func(w io.Writer) error { return writeJobLogs(w, events) })
 		},
 	}
 	cmd.Flags().BoolVar(&follow, "follow", false, "keep streaming the job's new events; reconnects by itself")
