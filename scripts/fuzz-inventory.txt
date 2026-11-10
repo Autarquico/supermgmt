@@ -85,6 +85,7 @@ github.com/autarquico/supermgmt/internal/backup.readManifestMember  FuzzReadArch
 github.com/autarquico/supermgmt/internal/cli.adminCall  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.describePlan  exempt: reads the plan the daemon returned to its own CLI; every step is printed through textsafe.Line
 github.com/autarquico/supermgmt/internal/cli.describePowerRisk  exempt: operator-local CLI input or file; trusted by the operator running the command
+github.com/autarquico/supermgmt/internal/cli.jobPlanSummary  exempt: reads the plan the daemon returned to its own CLI; action and parameters are printed through textsafe.Line
 github.com/autarquico/supermgmt/internal/cli.loadCAPool  exempt: operator-local CLI input or file; trusted by the operator running the command
 github.com/autarquico/supermgmt/internal/cli.loadDaemonConfig  exempt: thin wrapper over config.Load/LoadBytes (FuzzLoadBytes)
 github.com/autarquico/supermgmt/internal/cli.loadServerConfig  exempt: thin wrapper over config.Load/LoadBytes (FuzzLoadBytes)

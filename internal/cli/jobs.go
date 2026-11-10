@@ -18,6 +18,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
+	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
 const defaultWatchInterval = 2 * time.Second
@@ -200,7 +201,7 @@ func jobPlanSummary(ctx context.Context, api *client.Client, j wire.Job) [][2]st
 	if parameters == "" || parameters == "null" || parameters == "{}" {
 		parameters = "-"
 	}
-	return [][2]string{{"action", orDash(doc.Action)}, {"parameters", parameters}}
+	return [][2]string{{"action", textsafe.Line(orDash(doc.Action))}, {"parameters", textsafe.Line(parameters)}}
 }
 
 func writeJobDetail(w io.Writer, d wire.JobDetail, plan [][2]string) error {

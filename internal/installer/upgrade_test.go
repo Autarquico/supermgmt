@@ -342,7 +342,6 @@ func TestUpgrade_LocalInstallStopsItsRunningDaemonWithTheNewBinary(t *testing.T)
 	h, ul := localUpgradeHost(t)
 
 	err := New(h.deps()).upgrade(context.Background(), h.upgradeOpts(), defaultHooks())
-
 	if err != nil {
 		t.Fatalf("%v\n%s", err, h.out.String())
 	}

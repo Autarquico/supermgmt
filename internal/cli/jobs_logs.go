@@ -9,6 +9,7 @@ import (
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
+	"github.com/autarquico/supermgmt/internal/textsafe"
 )
 
 // newJobsLogsCmd prints what happened to a job: the audit events whose
@@ -60,8 +61,8 @@ func writeJobLogs(w io.Writer, events []wire.Event) error {
 	rows := make([][]string, len(events))
 	for i, e := range events {
 		rows[i] = []string{
-			formatTime(e.Timestamp), e.Action, string(e.Result),
-			fmt.Sprintf("%s:%s", e.Actor.Type, e.Actor.ID), compactData(e.Data),
+			formatTime(e.Timestamp), textsafe.Line(e.Action), string(e.Result),
+			fmt.Sprintf("%s:%s", e.Actor.Type, e.Actor.ID), textsafe.Line(compactData(e.Data)),
 		}
 	}
 	return table(w, []string{"TIME", "ACTION", "RESULT", "ACTOR", "DETAIL"}, rows)

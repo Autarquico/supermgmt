@@ -114,6 +114,9 @@
   "jobs get": {
    "tool": "infra_get_job"
   },
+  "jobs logs": {
+   "tool": "infra_list_events"
+  },
   "jobs list": {
    "tool": "infra_list_jobs"
   },
@@ -233,6 +236,9 @@
   },
   "secrets keys": {
    "reason": "secrets: the value or key material would cross the model's transcript (key ids and states are metadata of it)"
+  },
+  "secrets list": {
+   "reason": "secrets: names, purposes and versions are metadata of values the model must not reach"
   },
   "secrets retire-key": {
    "reason": "secrets: the value or key material would cross the model's transcript"
