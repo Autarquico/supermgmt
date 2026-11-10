@@ -51,6 +51,7 @@ type uhost struct {
 	startErr     error
 	freeBytes    uint64
 	lockHeld     bool
+	daemonBusy   bool // `sm daemon restart` refuses: jobs run on the local daemon
 	noDisk       bool
 	symlinks     map[string]string // directory -> where it really is, for Canonical
 	linkedFiles  map[string]bool   // files that are symlinks for Lstat
@@ -405,6 +406,12 @@ func (h *uhost) Run(_ context.Context, c Command) ([]byte, error) {
 		return h.doctor(c, f)
 	case "backup":
 		return h.backup(c, f)
+	case "daemon":
+		if h.daemonBusy {
+			return nil, &ExitStatus{Command: c.Name, Code: 2, Stderr: "restarting would interrupt 1 job(s); wait for them or pass --force"}
+		}
+		h.lockHeld = false
+		return []byte("the daemon stopped; the next command starts a fresh one\n"), nil
 	}
 	return nil, fmt.Errorf("unexpected command %v", c.Args)
 }
