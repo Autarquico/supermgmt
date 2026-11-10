@@ -20,6 +20,7 @@ const (
 	SessionTokenKind  byte = 's'
 	APITokenKind      byte = 't'
 	BootstrapCodeKind byte = 'b'
+	RecoveryCodeKind  byte = 'r'
 )
 
 // TokenMinter mints and parses bearer tokens. internal/auth implements it;
@@ -312,17 +313,25 @@ func (a *AuthService) bootstrapOpen(ctx context.Context, q database.Querier) (bo
 }
 
 // IssueBootstrapCode makes a new one-time code, invalidating any unconsumed
-// one, and returns its plaintext once. It refuses once an admin exists.
-func (a *AuthService) IssueBootstrapCode(ctx context.Context, peerUID int) (wire.BootstrapCodeIssued, error) {
+// one, and returns its plaintext once. It refuses once an admin exists, unless
+// recovery asks for a code that creates one more admin (OIDC not configured).
+func (a *AuthService) IssueBootstrapCode(ctx context.Context, peerUID int, recovery bool) (wire.BootstrapCodeIssued, error) {
+	if recovery && a.login != nil {
+		return wire.BootstrapCodeIssued{}, smerr.New(smerr.CodeConflict, "", "recovery codes are for servers without OIDC; recover with sm admin grant")
+	}
 	return commit(ctx, a.core, Caller{Source: adminSocketSource}, func(ctx context.Context, tx *database.Tx) (wire.BootstrapCodeIssued, error) {
 		open, err := a.bootstrapOpen(ctx, tx)
 		if err != nil {
 			return wire.BootstrapCodeIssued{}, err
 		}
-		if !open {
-			return wire.BootstrapCodeIssued{}, smerr.New(smerr.CodeConflict, "", "an admin already exists; recover with sm admin grant")
+		if !open && !recovery {
+			return wire.BootstrapCodeIssued{}, smerr.New(smerr.CodeConflict, "", "an admin already exists; recover with sm admin grant, or sm admin bootstrap-code --recover without OIDC")
 		}
-		secret, hash, err := a.tokens.Mint(BootstrapCodeKind)
+		kind := BootstrapCodeKind
+		if recovery {
+			kind = RecoveryCodeKind
+		}
+		secret, hash, err := a.tokens.Mint(kind)
 		if err != nil {
 			return wire.BootstrapCodeIssued{}, err
 		}
@@ -332,8 +341,11 @@ func (a *AuthService) IssueBootstrapCode(ctx context.Context, peerUID int) (wire
 			return wire.BootstrapCodeIssued{}, err
 		}
 		ref := domain.ResourceRef{Type: domain.ResourceInstance, ID: code.ID}
-		err = a.emit(ctx, tx, systemActor, eventBootstrapIssued, ref, domain.ResultSucceeded,
-			map[string]any{"peer_uid": peerUID, "expires_at": code.ExpiresAt})
+		data := map[string]any{"peer_uid": peerUID, "expires_at": code.ExpiresAt}
+		if recovery {
+			data["recovery"] = true
+		}
+		err = a.emit(ctx, tx, systemActor, eventBootstrapIssued, ref, domain.ResultSucceeded, data)
 		return wire.BootstrapCodeIssued{Code: secret.Reveal(), ExpiresAt: code.ExpiresAt}, err
 	})
 }
@@ -346,6 +358,8 @@ func errInvalidBootstrapCode() error {
 // login in session is bound to admin; without it the exchange creates the
 // admin identity and answers with a session and a first API token. The code is
 // consumed in the same transaction as everything else, so a failure keeps it.
+// A recovery code skips the "no admin yet" condition and is exchanged only
+// without OIDC; the admin it creates is one more, the others are left alone.
 func (a *AuthService) Bootstrap(ctx context.Context, session *Caller, r wire.BootstrapRequest) (wire.Bootstrapped, error) {
 	if session != nil && session.Idempotency != nil {
 		return wire.Bootstrapped{}, errIdempotencyKeyRefused()
@@ -354,7 +368,8 @@ func (a *AuthService) Bootstrap(ctx context.Context, session *Caller, r wire.Boo
 	if err != nil {
 		return wire.Bootstrapped{}, err
 	}
-	if kind != BootstrapCodeKind {
+	recovery := kind == RecoveryCodeKind
+	if kind != BootstrapCodeKind && (!recovery || a.login != nil) {
 		return wire.Bootstrapped{}, errInvalidBootstrapCode()
 	}
 	if a.login != nil && session == nil {
@@ -365,13 +380,13 @@ func (a *AuthService) Bootstrap(ctx context.Context, session *Caller, r wire.Boo
 		if err != nil {
 			return wire.Bootstrapped{}, err
 		}
-		if !open {
+		if !open && !recovery {
 			return wire.Bootstrapped{}, errInvalidBootstrapCode()
 		}
 		if a.login != nil {
 			return a.bindLogin(ctx, tx, *session, hash)
 		}
-		return a.createAdmin(ctx, tx, r.DisplayName, hash)
+		return a.createAdmin(ctx, tx, r.DisplayName, hash, recovery)
 	})
 }
 
@@ -384,7 +399,7 @@ func (a *AuthService) bindLogin(ctx context.Context, tx *database.Tx, session Ca
 	if actor.Type != domain.ActorHuman {
 		return wire.Bootstrapped{}, smerr.New(smerr.CodePolicyDenied, smerr.ReasonDefaultDeny, "only a human can be the first admin")
 	}
-	if err := a.consumeCode(ctx, tx, actor, codeHash); err != nil {
+	if err := a.consumeCode(ctx, tx, actor, codeHash, false); err != nil {
 		return wire.Bootstrapped{}, err
 	}
 	if err := a.bindAdmin(ctx, tx, actor, actor.ID, map[string]any{"via": "bootstrap"}); err != nil {
@@ -394,7 +409,7 @@ func (a *AuthService) bindLogin(ctx context.Context, tx *database.Tx, session Ca
 }
 
 // createAdmin makes the admin identity named by the caller (OIDC not configured).
-func (a *AuthService) createAdmin(ctx context.Context, tx *database.Tx, name, codeHash string) (wire.Bootstrapped, error) {
+func (a *AuthService) createAdmin(ctx context.Context, tx *database.Tx, name, codeHash string, recovery bool) (wire.Bootstrapped, error) {
 	name = limitRunes(textsafe.Line(name), maxDisplayName)
 	if name == "" {
 		return wire.Bootstrapped{}, smerr.New(smerr.CodeInvalidArgument, "", "display_name is required")
@@ -412,7 +427,7 @@ func (a *AuthService) createAdmin(ctx context.Context, tx *database.Tx, name, co
 	if err := a.emit(ctx, tx, actor, eventIdentityCreated, ref, domain.ResultSucceeded, map[string]any{"origin": bootstrapIssuer}); err != nil {
 		return wire.Bootstrapped{}, err
 	}
-	if err := a.consumeCode(ctx, tx, actor, codeHash); err != nil {
+	if err := a.consumeCode(ctx, tx, actor, codeHash, recovery); err != nil {
 		return wire.Bootstrapped{}, err
 	}
 	if err := a.bindAdmin(ctx, tx, actor, id, map[string]any{"via": "bootstrap"}); err != nil {
@@ -429,7 +444,7 @@ func (a *AuthService) createAdmin(ctx context.Context, tx *database.Tx, name, co
 	return wire.Bootstrapped{IdentityID: id, Session: &session, APIToken: &token}, nil
 }
 
-func (a *AuthService) consumeCode(ctx context.Context, tx *database.Tx, actor domain.Actor, codeHash string) error {
+func (a *AuthService) consumeCode(ctx context.Context, tx *database.Tx, actor domain.Actor, codeHash string, recovery bool) error {
 	code, err := database.ConsumeBootstrapCode(ctx, tx, codeHash, actor.ID, a.cfg.Clock.Now())
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
 		return errInvalidBootstrapCode()
@@ -438,7 +453,11 @@ func (a *AuthService) consumeCode(ctx context.Context, tx *database.Tx, actor do
 		return err
 	}
 	ref := domain.ResourceRef{Type: domain.ResourceInstance, ID: code.ID}
-	return a.emit(ctx, tx, actor, eventBootstrapUsed, ref, domain.ResultSucceeded, nil)
+	var data map[string]any
+	if recovery {
+		data = map[string]any{"recovery": true}
+	}
+	return a.emit(ctx, tx, actor, eventBootstrapUsed, ref, domain.ResultSucceeded, data)
 }
 
 // bindAdmin gives identity the admin role. A binding that already exists

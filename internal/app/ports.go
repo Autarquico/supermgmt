@@ -32,7 +32,9 @@ type Auth interface {
 // restore-complete (spec §23.1). peerUID is the verified peer: root or the
 // service user.
 type AdminSocket interface {
-	IssueBootstrapCode(ctx context.Context, peerUID int) (wire.BootstrapCodeIssued, error)
+	// IssueBootstrapCode with recovery set issues a code that works while an
+	// admin exists; it is refused when OIDC is configured.
+	IssueBootstrapCode(ctx context.Context, peerUID int, recovery bool) (wire.BootstrapCodeIssued, error)
 	Grant(ctx context.Context, peerUID int, r wire.GrantRequest) error
 }
 

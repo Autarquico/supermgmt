@@ -101,3 +101,24 @@ func TestLoginBootstrapWithoutOIDCNeedsADisplayNameWhenNotInteractive(t *testing
 		t.Error("a credential was stored without a name")
 	}
 }
+
+func TestWithAnAdminOnlyARecoveryCodeIsIssuedAndItLogsIn(t *testing.T) {
+	b := newRealServerBox(t)
+	if r := b.runLogin(loginDeps{sleep: sleepContext}, b.bootstrapCode()+"\n", "--bootstrap", "--display-name", "Root"); r.code != 0 {
+		t.Fatalf("first login: exit %d, stderr %q", r.code, r.stderr)
+	}
+
+	refused := runServerCmds(b.serverEnv, "admin", "bootstrap-code", "--config", b.serverFile)
+	recovery := runServerCmds(b.serverEnv, "admin", "bootstrap-code", "--recover", "--config", b.serverFile)
+
+	if refused.code == 0 {
+		t.Errorf("a plain code was issued with an admin present: %q", refused.stdout)
+	}
+	code := strings.TrimSpace(recovery.stdout)
+	if recovery.code != 0 || !strings.HasPrefix(code, "smr_") {
+		t.Fatalf("--recover: exit %d, stdout %q, stderr %q", recovery.code, recovery.stdout, recovery.stderr)
+	}
+	if r := b.runLogin(loginDeps{sleep: sleepContext}, code+"\n", "--bootstrap", "--display-name", "Recovered"); r.code != 0 {
+		t.Errorf("login with the recovery code: exit %d, stderr %q", r.code, r.stderr)
+	}
+}

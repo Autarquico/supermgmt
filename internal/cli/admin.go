@@ -42,18 +42,21 @@ func newAdminCmd(env []string) *cobra.Command {
 }
 
 func newBootstrapCodeCmd(env []string) *cobra.Command {
-	return &cobra.Command{
+	var recovery bool
+	cmd := &cobra.Command{
 		Use:   "bootstrap-code",
 		Short: "Issue a one-time code for the first administrator and print it",
 		Long: "Issues a new one-time bootstrap code and prints only the code on stdout. " +
-			"Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold.",
+			"Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold. " +
+			"With --recover it also works while an administrator exists, to regain access when their API token is lost: " +
+			"the exchange creates one more administrator and leaves the others untouched. --recover works only on a server without OIDC.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			admin, err := adminFor(cmd, env)
 			if err != nil {
 				return err
 			}
-			issued, err := adminCall[wire.BootstrapCodeIssued](cmd.Context(), admin, http.MethodPost, wire.AdminPathBootstrapCode, nil)
+			issued, err := adminCall[wire.BootstrapCodeIssued](cmd.Context(), admin, http.MethodPost, wire.AdminPathBootstrapCode, wire.BootstrapCodeRequest{Recover: recovery})
 			if err != nil {
 				return err
 			}
@@ -65,6 +68,8 @@ func newBootstrapCodeCmd(env []string) *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().BoolVar(&recovery, "recover", false, "issue a recovery code although an administrator exists (server without OIDC)")
+	return cmd
 }
 
 func newGrantCmd(env []string) *cobra.Command {

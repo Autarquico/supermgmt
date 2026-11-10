@@ -253,11 +253,11 @@ func TestBootstrapWithoutOIDCCreatesTheAdminOnceAndInvalidatesOlderCodes(t *test
 	f.noAdmin()
 	a := newAuth(t, f, nil)
 	ctx := context.Background()
-	first, err := a.IssueBootstrapCode(ctx, 0)
+	first, err := a.IssueBootstrapCode(ctx, 0, false)
 	if err != nil {
 		t.Fatalf("IssueBootstrapCode: %v", err)
 	}
-	second, err := a.IssueBootstrapCode(ctx, 0)
+	second, err := a.IssueBootstrapCode(ctx, 0, false)
 	if err != nil {
 		t.Fatalf("IssueBootstrapCode: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestBootstrapWithoutOIDCCreatesTheAdminOnceAndInvalidatesOlderCodes(t *test
 	}
 	_, err = a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: second.Code, DisplayName: "Again"})
 	wantError(t, err, smerr.CodeUnauthenticated, "")
-	_, err = a.IssueBootstrapCode(ctx, 0)
+	_, err = a.IssueBootstrapCode(ctx, 0, false)
 	wantError(t, err, smerr.CodeConflict, "")
 	if n := f.count(`SELECT COUNT(*) FROM idempotency_records`); n != 0 {
 		t.Errorf("idempotency_records = %d, want none", n)
@@ -300,7 +300,7 @@ func TestAFailedExchangeKeepsTheCode(t *testing.T) {
 	f := newFixture(t)
 	f.noAdmin()
 	a := newAuth(t, f, nil)
-	code, _ := a.IssueBootstrapCode(context.Background(), 0)
+	code, _ := a.IssueBootstrapCode(context.Background(), 0, false)
 
 	_, err := a.Bootstrap(context.Background(), nil, wire.BootstrapRequest{Code: code.Code})
 	wantError(t, err, smerr.CodeInvalidArgument, "")
@@ -316,7 +316,7 @@ func TestBootstrapWithOIDCBindsTheLoggedInIdentityToAdmin(t *testing.T) {
 	login := &scriptedLogin{claims: ada}
 	a := newAuth(t, f, login)
 	ctx := context.Background()
-	code, _ := a.IssueBootstrapCode(ctx, 0)
+	code, _ := a.IssueBootstrapCode(ctx, 0, false)
 
 	_, err := a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code})
 	wantError(t, err, smerr.CodeUnauthenticated, "")
@@ -470,6 +470,135 @@ func TestScopeCovers(t *testing.T) {
 	for _, tt := range tests {
 		if got := scopeCovers(tt.parent, tt.child); got != tt.want {
 			t.Errorf("scopeCovers(%q, %q) = %v, want %v", tt.parent, tt.child, got, tt.want)
+		}
+	}
+}
+
+func TestRecoveryCodeIsIssuedWithAnAdminAndAPlainCodeStillIsNot(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	ctx := context.Background()
+
+	_, err := a.IssueBootstrapCode(ctx, 0, false)
+	wantError(t, err, smerr.CodeConflict, "")
+	code, err := a.IssueBootstrapCode(ctx, 0, true)
+
+	if err != nil || !strings.HasPrefix(code.Code, "smr_") {
+		t.Fatalf("IssueBootstrapCode(recovery) = %+v, %v; want an smr_ code", code, err)
+	}
+}
+
+func TestRecoveryCodeCreatesAnotherAdminOnceAndLeavesTheOldOne(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	ctx := context.Background()
+	before := f.count(`SELECT COUNT(*) FROM role_bindings`)
+	code, err := a.IssueBootstrapCode(ctx, 0, true)
+	if err != nil {
+		t.Fatalf("IssueBootstrapCode: %v", err)
+	}
+
+	done, err := a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Recovered"})
+	if err != nil || done.Session == nil || done.APIToken == nil {
+		t.Fatalf("Bootstrap = %+v, %v; want a session and an API token", done, err)
+	}
+
+	if n := f.count(`SELECT COUNT(*) FROM role_bindings`); n != before+1 {
+		t.Errorf("role bindings = %d, want %d: the old admin must stay bound", n, before+1)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM role_bindings WHERE identity_id = ?`, f.admin); n != 1 {
+		t.Errorf("old admin bindings = %d, want 1", n)
+	}
+	_, err = a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Again"})
+	wantError(t, err, smerr.CodeUnauthenticated, "")
+}
+
+func TestRecoveryCodeIsRefusedWhenOIDCIsConfigured(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, &scriptedLogin{claims: ada})
+
+	_, err := a.IssueBootstrapCode(context.Background(), 0, true)
+
+	wantError(t, err, smerr.CodeConflict, "")
+	if n := f.count(`SELECT COUNT(*) FROM bootstrap_codes`); n != 0 {
+		t.Errorf("bootstrap_codes = %d, want none", n)
+	}
+}
+
+func TestRecoveryCodeIssuedWithoutOIDCIsRefusedOnceOIDCIsConfigured(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	code, err := newAuth(t, f, nil).IssueBootstrapCode(ctx, 0, true)
+	if err != nil {
+		t.Fatalf("IssueBootstrapCode: %v", err)
+	}
+	withOIDC := newAuth(t, f, &scriptedLogin{claims: ada})
+	session, err := withOIDC.OIDCExchange(ctx, wire.OIDCExchangeRequest{Code: "c", State: "s", CodeVerifier: "v"})
+	if err != nil {
+		t.Fatalf("OIDCExchange: %v", err)
+	}
+	by := Caller{ID: session.IdentityID, Credential: domain.CredentialContext{Kind: domain.CredentialSession, ID: session.SessionID.String()}}
+	before := f.count(`SELECT COUNT(*) FROM role_bindings`)
+
+	_, err = withOIDC.Bootstrap(ctx, &by, wire.BootstrapRequest{Code: code.Code})
+
+	wantError(t, err, smerr.CodeUnauthenticated, "")
+	if n := f.count(`SELECT COUNT(*) FROM role_bindings`); n != before {
+		t.Errorf("role bindings = %d, want %d", n, before)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM bootstrap_codes WHERE consumed_at IS NOT NULL`); n != 0 {
+		t.Errorf("consumed codes = %d, want 0", n)
+	}
+}
+
+func TestAPlainCodeIsNotExchangedWhileAnAdminExists(t *testing.T) {
+	f := newFixture(t)
+	f.noAdmin()
+	a := newAuth(t, f, nil)
+	code, err := a.IssueBootstrapCode(context.Background(), 0, false)
+	if err != nil {
+		t.Fatalf("IssueBootstrapCode: %v", err)
+	}
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		f.identity(ctx, tx, "late-admin", domain.ActorHuman, f.role(ctx, tx, "admin"))
+		return nil
+	})
+
+	_, err = a.Bootstrap(context.Background(), nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Late"})
+
+	wantError(t, err, smerr.CodeUnauthenticated, "")
+}
+
+func TestRecoveryIsMarkedInTheAuditTrail(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	ctx := context.Background()
+	code, _ := a.IssueBootstrapCode(ctx, 0, true)
+	if _, err := a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Recovered"}); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	for _, action := range []string{eventBootstrapIssued, eventBootstrapUsed} {
+		events := f.events(action)
+		if len(events) != 1 || events[0].Data["recovery"] != true {
+			t.Errorf("%s events = %+v, want one with recovery=true", action, events)
+		}
+	}
+}
+
+func TestAPlainBootstrapIsNotMarkedAsRecovery(t *testing.T) {
+	f := newFixture(t)
+	f.noAdmin()
+	a := newAuth(t, f, nil)
+	ctx := context.Background()
+	code, _ := a.IssueBootstrapCode(ctx, 0, false)
+	if _, err := a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Root"}); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	for _, e := range f.events(eventBootstrapIssued, eventBootstrapUsed) {
+		if _, marked := e.Data["recovery"]; marked {
+			t.Errorf("%s carries recovery: %+v", e.Action, e.Data)
 		}
 	}
 }

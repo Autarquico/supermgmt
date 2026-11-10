@@ -118,6 +118,12 @@ type TokenIssued struct {
 
 // ---- admin socket (spec §23.1; not part of /api/v1) -------------------------
 
+// BootstrapCodeRequest is the optional body of the admin-socket bootstrap-code
+// route. Recover asks for a recovery code, which works while an admin exists.
+type BootstrapCodeRequest struct {
+	Recover bool `json:"recover,omitempty"`
+}
+
 // BootstrapCodeIssued is the answer to the admin-socket bootstrap-code route.
 type BootstrapCodeIssued struct {
 	Code      string    `json:"code"`

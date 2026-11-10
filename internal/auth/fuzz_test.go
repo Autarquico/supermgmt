@@ -55,7 +55,7 @@ func FuzzBearer(f *testing.F) {
 		f.Fatal(err)
 	}
 	for _, seed := range []string{
-		"", "sm", "sms_", "smm_", minted.Reveal(), "smt_" + strings.Repeat("A", 60), "smb_" + strings.Repeat("-", 60),
+		"", "sm", "sms_", "smm_", minted.Reveal(), "smt_" + strings.Repeat("A", 60), "smb_" + strings.Repeat("-", 60), "smr_" + strings.Repeat("-", 60),
 		"smj_" + strings.Repeat("0", 60), "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJ4In0.c2ln", "eyJ..", "eyJ.a.b.c", "Bearer x", "\x00",
 	} {
 		f.Add(seed)

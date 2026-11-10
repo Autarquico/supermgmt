@@ -266,7 +266,7 @@ The restored server starts in a hold where nearly every write is refused until `
 ### HTTPS transport, credentials and sessions
 
 - `sm server` serves the same handlers as the local socket over HTTPS. TLS is either terminated by the daemon (`direct`, TLS 1.2 or newer, certificate re-read on `SIGHUP`) or by a reverse proxy (`proxy`); no ACME. In proxy mode forwarding headers are believed only from `server.trusted_proxies`, a forwarded proto other than `https` is a 400, and a loopback peer gets no special trust. Plain HTTP on a non-loopback address is refused by config validation.
-- Credentials are bearer tokens `sm<kind>_<base64url(32 random bytes)>`: `s` session, `t` API token, `b` bootstrap code, `j` join token. Only the SHA-256 is stored, in a unique column; nothing is cached, so a revocation takes effect on the next request. A token of the wrong kind for an endpoint is refused before lookup. The HTTPS listener accepts `Authorization: Bearer` only; the Unix socket still refuses it.
+- Credentials are bearer tokens `sm<kind>_<base64url(32 random bytes)>`: `s` session, `t` API token, `b` bootstrap code, `r` recovery code, `j` join token. Only the SHA-256 is stored, in a unique column; nothing is cached, so a revocation takes effect on the next request. A token of the wrong kind for an endpoint is refused before lookup. The HTTPS listener accepts `Authorization: Bearer` only; the Unix socket still refuses it.
 - API tokens have a mandatory expiry of at most 365 days, scopes that can only narrow the creator's permissions, and a unique name per identity. Sessions last `security.session_ttl`.
 - No cookies, so no CSRF surface. Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; no CORS headers are sent, so browsers refuse cross-origin calls.
 - Token buckets: 10 per minute with a burst of 5 per remote address on `/auth/*` and `/enroll`; 60 per minute with a burst of 20 per identity on writes. Fixed constants; 429 with `Retry-After`.
@@ -276,7 +276,7 @@ The restored server starts in a hold where nearly every write is refused until `
 
 `server.admin_socket` has mode 0660 and is owned by the service user. The server checks the peer UID (root or the service user; a lookup error refuses); the `sm admin` client checks that whoever answered owns the socket file before sending anything. It serves exactly `bootstrap-code`, `grant`, `restore-complete` and read-only `doctor`, and never key management.
 
-The first admin comes from a one-time bootstrap code: at least 128 bits, stored hashed, valid for `auth.bootstrap.code_ttl`, and a new code invalidates the old one. Once an admin exists the code is refused, except during a restore hold. In server mode the daemon never creates a `local:<uid>` admin.
+The first admin comes from a one-time bootstrap code: at least 128 bits, stored hashed, valid for `auth.bootstrap.code_ttl`, and a new code invalidates the old one. Once an admin exists the code is refused, except during a restore hold. The exception is a recovery code (`sm admin bootstrap-code --recover`, servers without OIDC only): it creates an additional admin identity while one exists, so whoever can reach the admin socket (root or the service user) can always regain access. Issue and exchange are audited with `recovery: true`. In server mode the daemon never creates a `local:<uid>` admin.
 
 ### OIDC
 

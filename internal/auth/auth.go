@@ -25,7 +25,9 @@ const (
 	KindSession   Kind = 's'
 	KindAPIToken  Kind = 't'
 	KindBootstrap Kind = 'b'
-	KindJoin      Kind = 'j'
+	// KindRecovery codes are bootstrap codes issued while an admin exists.
+	KindRecovery Kind = 'r'
+	KindJoin     Kind = 'j'
 	// KindMCP tokens authenticate a local MCP client on the admin socket only.
 	KindMCP Kind = 'm'
 )
@@ -40,7 +42,7 @@ var tokenEncoding = base64.RawURLEncoding
 
 func (k Kind) valid() bool {
 	switch k {
-	case KindSession, KindAPIToken, KindBootstrap, KindJoin, KindMCP:
+	case KindSession, KindAPIToken, KindBootstrap, KindRecovery, KindJoin, KindMCP:
 		return true
 	}
 	return false

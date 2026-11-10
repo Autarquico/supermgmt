@@ -23,6 +23,7 @@ type adminCalls struct {
 	calls   []string
 	guarded []string
 	peers   []int
+	recover []bool
 	held    bool
 }
 
@@ -33,8 +34,11 @@ func (c *adminCalls) record(call string, peer int) {
 	c.peers = append(c.peers, peer)
 }
 
-func (c *adminCalls) IssueBootstrapCode(_ context.Context, peer int) (wire.BootstrapCodeIssued, error) {
+func (c *adminCalls) IssueBootstrapCode(_ context.Context, peer int, recovery bool) (wire.BootstrapCodeIssued, error) {
 	c.record("bootstrap-code", peer)
+	c.mu.Lock()
+	c.recover = append(c.recover, recovery)
+	c.mu.Unlock()
 	return wire.BootstrapCodeIssued{Code: "smb_code"}, nil
 }
 
@@ -179,6 +183,24 @@ func TestRootAndTheServiceUserAreServedWithTheirUID(t *testing.T) {
 		if !bytes.Contains([]byte(body), []byte("smb_code")) || h.calls.peers[0] != int(uid) {
 			t.Errorf("uid %d: body %s, peers %v", uid, body, h.calls.peers)
 		}
+	}
+}
+
+func TestBootstrapCodeRecoversOnlyWhenTheBodyAsksForIt(t *testing.T) {
+	h := newAdmin(t, asPeer(0), 0)
+
+	for _, body := range []string{"", `{}`, `{"recover":true}`} {
+		if status, out, err := h.do(http.MethodPost, wire.AdminPathBootstrapCode, body); err != nil || status != http.StatusOK {
+			t.Fatalf("body %q: %d %s %v", body, status, out, err)
+		}
+	}
+	status, _, err := h.do(http.MethodPost, wire.AdminPathBootstrapCode, `{"recover":"yes"}`)
+
+	if err != nil || status != http.StatusBadRequest {
+		t.Errorf("malformed body: status %d, %v; want 400", status, err)
+	}
+	if got := h.calls.recover; len(got) != 3 || got[0] || got[1] || !got[2] {
+		t.Errorf("recover flags = %v, want [false false true]", got)
 	}
 }
 

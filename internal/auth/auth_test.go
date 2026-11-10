@@ -167,7 +167,7 @@ func (w *world) claimFails(id domain.ID, code smerr.Code, reason smerr.Reason) {
 }
 
 func TestMintedTokensHaveTheirKindAndHashToWhatIsStored(t *testing.T) {
-	for _, kind := range []auth.Kind{auth.KindSession, auth.KindAPIToken, auth.KindBootstrap, auth.KindJoin} {
+	for _, kind := range []auth.Kind{auth.KindSession, auth.KindAPIToken, auth.KindBootstrap, auth.KindRecovery, auth.KindJoin} {
 		secret, hash, err := auth.Mint(kind)
 		if err != nil {
 			t.Fatalf("Mint(%c): %v", kind, err)
@@ -222,7 +222,7 @@ func TestHashRejectsMalformedTokensWithoutALookup(t *testing.T) {
 }
 
 func TestMinterAgreesWithTheKindBytesOfTheAppServices(t *testing.T) {
-	for kind, want := range map[byte]auth.Kind{app.SessionTokenKind: auth.KindSession, app.APITokenKind: auth.KindAPIToken, app.BootstrapCodeKind: auth.KindBootstrap} {
+	for kind, want := range map[byte]auth.Kind{app.SessionTokenKind: auth.KindSession, app.APITokenKind: auth.KindAPIToken, app.BootstrapCodeKind: auth.KindBootstrap, app.RecoveryCodeKind: auth.KindRecovery} {
 		if auth.Kind(kind) != want {
 			t.Errorf("app kind %c != auth kind %c", kind, want)
 		}
@@ -372,6 +372,15 @@ func TestResolveDistinguishesExpiredFromRevokedAndUnknown(t *testing.T) {
 	w.wantCode(err, smerr.CodeUnauthenticated, smerr.ReasonCredentialExpired)
 }
 
+func TestARecoveryCodeCannotAuthenticateARequest(t *testing.T) {
+	w := newWorld(t)
+	code, _, _ := auth.Mint(auth.KindRecovery)
+
+	_, err := w.resolve(code.Reveal())
+
+	w.wantCode(err, smerr.CodeUnauthenticated, "")
+}
+
 func TestResolveRefusesADisabledIdentity(t *testing.T) {
 	w := newWorld(t)
 	issued := w.issue()
@@ -428,7 +437,7 @@ func TestNoPlaintextCredentialReachesTheDatabaseOrTheWAL(t *testing.T) {
 	token := w.issue()
 	bootstrapDB := newWorld(t)
 	must(t, deleteBindings(bootstrapDB), "clear bindings")
-	code, err := bootstrapDB.auth.IssueBootstrapCode(ctx, 0)
+	code, err := bootstrapDB.auth.IssueBootstrapCode(ctx, 0, false)
 	must(t, err, "IssueBootstrapCode")
 	done, err := bootstrapDB.auth.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Root"})
 	must(t, err, "Bootstrap")
