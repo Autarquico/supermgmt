@@ -20,6 +20,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/daemon"
 	"github.com/autarquico/supermgmt/internal/database"
 	"github.com/autarquico/supermgmt/internal/domain"
+	"github.com/autarquico/supermgmt/internal/secrets"
 )
 
 const (
@@ -58,7 +59,8 @@ func newDoctorCmd(env []string) *cobra.Command {
 		Long: "Diagnose this machine. --offline checks the configuration, paths and database files without contacting\n" +
 			"the service. Without it, doctor asks a running server what it can tell about itself over its admin\n" +
 			"socket (run it as root or the service user); a local installation has no such socket and gets the\n" +
-			"offline checks, with a running local daemon reported instead of failed.",
+			"offline checks, with a running local daemon reported instead of failed, and with a cloudflare: block\n" +
+			"the checks against Cloudflare's API once the daemon is not running.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configFlag, _ := cmd.Flags().GetString("config")
@@ -325,8 +327,43 @@ func databaseChecks(ctx context.Context, cfg *config.Config, daemonMayRun bool) 
 	}
 	if cfg.Cloudflare != nil {
 		checks = append(checks, tunnelOperationsCheck(ctx, path))
+		if daemonMayRun {
+			checks = append(checks, localCloudflareChecks(ctx, cfg, path, keysDir)...)
+		}
 	}
 	return checks, schema
+}
+
+// localCloudflareChecks run on a local installation the checks a server runs
+// against Cloudflare: its daemon has no admin socket to ask, and the person
+// running doctor owns the secret store. The caller holds the database lock.
+func localCloudflareChecks(ctx context.Context, cfg *config.Config, dbPath, keysDir string) []check {
+	notChecked := func(err error) []check {
+		return []check{{"cloudflare_api_token", statusFail, "not checked: " + err.Error()}}
+	}
+	if _, err := os.Stat(keysDir); errors.Is(err, fs.ErrNotExist) {
+		return []check{{"cloudflare_api_token", statusWarn, "no secret store yet at " + keysDir + ": the token is not stored; tunnel jobs need it"}}
+	}
+	db, err := database.OpenReadOnly(ctx, dbPath)
+	if err != nil {
+		return notChecked(err)
+	}
+	defer func() { _ = db.Close() }()
+	readable := readableSecrets{ReadOnlySecrets: database.ReadOnlySecrets{Q: db.Querier()}}
+	keys, err := secrets.OpenFileKeysReadOnly(ctx, keysDir, readable)
+	if err != nil {
+		return notChecked(err)
+	}
+	store := secrets.NewStore(keys, readable, domain.UUIDv7Generator{}, domain.SystemClock{})
+	doctor := daemon.CloudflareDoctor{
+		Config: *cfg.Cloudflare, Now: domain.SystemClock{}.Now(), DB: db.Querier(),
+		Secrets: store, NewProber: daemon.NewCloudflareProber(cfg.Cloudflare.AccountID),
+	}
+	var out []check
+	for _, c := range doctor.OnlineChecks(ctx) {
+		out = append(out, check{c.Name, c.Status, c.Detail})
+	}
+	return out
 }
 
 // tunnelOperationsCheck reads the unfinished tunnel operations from the
