@@ -2,11 +2,13 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
 	"github.com/autarquico/supermgmt/internal/domain"
+	smerr "github.com/autarquico/supermgmt/internal/errors"
 )
 
 // maxResolvePages bounds the pages read to resolve one name; past it the
@@ -17,16 +19,26 @@ const maxResolvePages = 50
 // view copies, so sanitation can never retarget a write. The result is
 // always an id.
 
-// resolveNode accepts a node id or an exact node name.
+// resolveNode accepts a node id or an exact node name. A retired node gives
+// its name up: the name means the live node, and a retired one only when no
+// live node has it.
 func resolveNode(ctx context.Context, api API, ref string) (domain.ID, error) {
 	if id, err := domain.ParseID(ref); err == nil {
 		return id, nil
 	}
-	node, err := findUnique(ctx, "node", ref,
-		func(cursor string) (wire.Page[wire.Node], error) {
-			return api.ListNodes(ctx, wire.NodeQuery{PageQuery: resolvePage(cursor)})
-		},
-		func(n wire.Node) bool { return n.Name == ref })
+	named := func(liveOnly bool) (wire.Node, error) {
+		return findUnique(ctx, "node", ref,
+			func(cursor string) (wire.Page[wire.Node], error) {
+				return api.ListNodes(ctx, wire.NodeQuery{PageQuery: resolvePage(cursor)})
+			},
+			func(n wire.Node) bool {
+				return n.Name == ref && (!liveOnly || n.ManagementState != domain.ManagementRetired)
+			})
+	}
+	node, err := named(true)
+	if missing := (*toolError)(nil); errors.As(err, &missing) && missing.Code == smerr.CodeNotFound {
+		node, err = named(false)
+	}
 	return node.ID, err
 }
 

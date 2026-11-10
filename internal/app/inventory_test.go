@@ -533,6 +533,9 @@ func TestRemoveNodeRetiresItAfterApproval(t *testing.T) {
 	if len(n.events("node.remove")) != 1 {
 		t.Error("the removal was not audited")
 	}
+	if again := n.addApplied("web-2", "staging"); again.ID == node.ID {
+		t.Errorf("re-adding web-2 returned the retired node %s", node.ID)
+	}
 }
 
 func TestRegisterLocalCreatesTheLocalProviderAndItsNodeAfterApproval(t *testing.T) {
