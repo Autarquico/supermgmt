@@ -91,6 +91,9 @@ func (h setupHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	if err != nil {
 		return err
 	}
+	if node.ManagementState == domain.ManagementRetired { // retired after the plan was approved
+		return errRetiredNode()
+	}
 	actor, err := loadActor(ctx, h.cfg.DB.Reader(), job.ActorID, credentialOf(job))
 	if err != nil {
 		return err

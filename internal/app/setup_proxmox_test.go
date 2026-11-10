@@ -560,3 +560,41 @@ func TestProxmoxSetupJournalsRolesWithoutShowingThemAsCapabilities(t *testing.T)
 		}
 	}
 }
+
+func TestSetupOfARetiredNodeIsRefusedSoItsTokenSlotStaysEmpty(t *testing.T) {
+	ps := newProxmoxSetting(t, []string{"localhost"})
+	ctx := context.Background()
+	retire := func() {
+		ps.inTx(func(ctx context.Context, tx *database.Tx) error {
+			_, err := ps.inv.applyNodeRemove(ctx, tx, systemActor, ps.node)
+			return err
+		})
+	}
+
+	retire()
+
+	_, err := ps.plans.Create(ctx, ps.caller(ps.admin), PlanRequest{
+		Action: "node.setup", Target: nodeRef(ps.node.ID), Parameters: proxmoxSetupParams(),
+	})
+
+	if smerr.CodeOf(err) != smerr.CodeConflict {
+		t.Errorf("Create = %v; want CONFLICT: the node is retired", err)
+	}
+}
+
+func TestSetupApprovedBeforeTheNodeWasRetiredIsNeverClaimed(t *testing.T) {
+	ps := newProxmoxSetting(t, []string{"localhost"})
+	ctx := context.Background()
+	ps.setupPlan(proxmoxSetupParams())
+	ps.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := ps.inv.applyNodeRemove(ctx, tx, systemActor, ps.node)
+		return err
+	})
+
+	if _, ok := ps.claim(); ok {
+		t.Error("a setup approved before the node was retired was claimed: its plan is stale")
+	}
+	if _, err := ps.secrets.Get(ctx, secrets.Ref{Name: "proxmox/web-1"}); err == nil {
+		t.Error("the setup of a retired node stored a Proxmox token")
+	}
+}
