@@ -510,6 +510,13 @@ func TestRemoveNodeIsGatedByTheDestructiveRule(t *testing.T) {
 func TestRemoveNodeRetiresItAfterApproval(t *testing.T) {
 	n := newNodeFixture(t, destructiveAdmins)
 	node := n.addApplied("web-2", n.withStaging())
+	n.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := database.PutSecretVersion(ctx, tx, database.SecretRecord{
+			ID: n.ids.NewID(), Name: "proxmox/web-2", EnvelopeVersion: 1, KEKID: n.ids.NewID(),
+			WrappedDEK: []byte{1}, Ciphertext: []byte{2}, CreatedAt: n.clock.Now(),
+		})
+		return err
+	})
 
 	res, err := n.inv.RemoveNode(context.Background(), n.caller(n.admin), node.ID, node.SpecRevision)
 	if err != nil || res.Pending == nil {
@@ -532,6 +539,9 @@ func TestRemoveNodeRetiresItAfterApproval(t *testing.T) {
 	}
 	if len(n.events("node.remove")) != 1 {
 		t.Error("the removal was not audited")
+	}
+	if _, err := database.GetSecret(context.Background(), n.db.Reader(), "proxmox/web-2", 0); smerr.CodeOf(err) != smerr.CodeNotFound {
+		t.Errorf("proxmox/web-2 after retirement: %v; a node under the name would inherit the retired node's token", err)
 	}
 	if again := n.addApplied("web-2", "staging"); again.ID == node.ID {
 		t.Errorf("re-adding web-2 returned the retired node %s", node.ID)
