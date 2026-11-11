@@ -32,11 +32,15 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 Issue a one-time code for the first administrator and print it
 
-Issues a new one-time bootstrap code and prints only the code on stdout. Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold.
+Issues a new one-time bootstrap code and prints only the code on stdout. Any unconsumed code is invalidated. It works while the server has no administrator, and during a restore hold. With --recover it also works while an administrator exists, to regain access when their API token is lost: the exchange creates one more administrator and leaves the others untouched. --recover works only on a server without OIDC.
 
 ```text
-sm admin bootstrap-code
+sm admin bootstrap-code [flags]
 ```
+
+Flags:
+
+- `--recover` (bool): issue a recovery code although an administrator exists (server without OIDC)
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -136,7 +137,17 @@ func (a *AdminServer) dispatch(w http.ResponseWriter, r *http.Request, rt AdminR
 	}
 	switch rt.Pattern {
 	case wire.AdminPathBootstrapCode:
-		issued, err := a.opts.Auth.IssueBootstrapCode(ctx, uid)
+		in, err := readInput(r)
+		if err != nil {
+			return err
+		}
+		var req wire.BootstrapCodeRequest
+		if len(bytes.TrimSpace(in.body)) != 0 {
+			if req, err = decode[wire.BootstrapCodeRequest](in); err != nil {
+				return err
+			}
+		}
+		issued, err := a.opts.Auth.IssueBootstrapCode(ctx, uid, req.Recover)
 		return a.answer(w, r, http.StatusOK, issued, err)
 	case wire.AdminPathGrant:
 		in, err := readInput(r)

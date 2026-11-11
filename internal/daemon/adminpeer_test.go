@@ -16,7 +16,7 @@ import (
 // countingAdmin counts the requests that reach the admin services.
 type countingAdmin struct{ served atomic.Int64 }
 
-func (c *countingAdmin) IssueBootstrapCode(context.Context, int) (wire.BootstrapCodeIssued, error) {
+func (c *countingAdmin) IssueBootstrapCode(context.Context, int, bool) (wire.BootstrapCodeIssued, error) {
 	c.served.Add(1)
 	return wire.BootstrapCodeIssued{}, nil
 }
