@@ -157,3 +157,21 @@ func TestLoginBootstrapIgnoresAStoredCredentialTheServerNoLongerAccepts(t *testi
 		t.Errorf("stored %.4q; want the new API token in place of the refused credential", stored)
 	}
 }
+
+func TestLogoutRevokesTheAPITokenOnTheServerNotOnlyHere(t *testing.T) {
+	b := newRealServerBox(t)
+	if r := b.runLogin(loginDeps{sleep: sleepContext}, b.bootstrapCode()+"\n", "--bootstrap", "--display-name", "Root"); r.code != 0 {
+		t.Fatalf("login: exit %d, stderr %q", r.code, r.stderr)
+	}
+	token := b.storedToken()
+
+	r := b.run("", "logout")
+
+	if r.code != 0 || strings.Contains(r.stderr, "warning") {
+		t.Fatalf("logout: exit %d, stderr %q; want a clean revocation", r.code, r.stderr)
+	}
+	b.signIn(token) // the copy someone kept elsewhere
+	if again := b.run("", "nodes", "list"); again.code == 0 || !strings.Contains(again.stderr, "credential") {
+		t.Errorf("the logged-out token still works: exit %d, stderr %q", again.code, again.stderr)
+	}
+}

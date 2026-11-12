@@ -769,7 +769,9 @@ func TestPowerOutcomeDoesNotDependOnTheSyncThatFollowsIt(t *testing.T) {
 func TestPowerSettlesTheJobWithoutWaitingForTheSyncThatFollowsIt(t *testing.T) {
 	r := newPowerRig(t, pvefake.WithManualTasks())
 	stop := r.serve()
+	var reads int
 	r.onSleep = func() { // the task ends while it is followed, and from then on the cluster never answers
+		reads = r.fake.Count("GET", "/cluster/resources")
 		r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/cluster/resources", Times: 100, Fault: pvefake.Hang()})
 		r.fake.FinishTask(r.fake.Tasks()[0].UPID, "OK")
 	}
@@ -785,6 +787,7 @@ func TestPowerSettlesTheJobWithoutWaitingForTheSyncThatFollowsIt(t *testing.T) {
 	case <-time.After(pveHTTPTimeout / 2): // a sync in the job's path would wait for the HTTP timeout
 		t.Fatal("the job is still running while the follow-up sync hangs")
 	}
+	waitFor(t, "the follow-up sync hanging on the cluster", func() bool { return r.fake.Count("GET", "/cluster/resources") > reads })
 	stopped := make(chan struct{})
 	go func() { stop(); close(stopped) }()
 	select {
@@ -805,4 +808,26 @@ func TestNoSyncStartsOnceTheSyncLoopHasStopped(t *testing.T) {
 	if after := r.fake.Count("GET", "/cluster/resources"); after != before {
 		t.Errorf("cluster reads went from %d to %d after the loop stopped; want none", before, after)
 	}
+}
+
+func TestPowerReadsTheClusterAgainAfterASyncThatStartedBeforeTheTaskEnded(t *testing.T) {
+	r := newPowerRig(t, pvefake.WithManualTasks())
+	r.serve()
+	guest := r.guest("lxc/200").ID
+	r.onSleep = func() { // a sync starts reading while the task runs, then the task ends
+		reads := r.fake.Count("GET", "/cluster/resources")
+		r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/cluster/resources", Fault: pvefake.Hang()})
+		go func() { _ = r.handler.sync.Sync(context.Background(), r.pve.ID) }()
+		waitFor(t, "the earlier sync reading the cluster", func() bool { return r.fake.Count("GET", "/cluster/resources") > reads })
+		r.fake.FinishTask(r.fake.Tasks()[0].UPID, "OK")
+	}
+
+	job, err := r.run("lxc/200", "start")
+
+	if err != nil || job.State != domain.JobSucceeded {
+		t.Fatalf("job = %s, err %v; want succeeded", job.State, err)
+	}
+	waitFor(t, "a sync that read the cluster after the task ended", func() bool {
+		return r.handler.statusOf(context.Background(), guest) == "running"
+	})
 }

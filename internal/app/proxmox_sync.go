@@ -312,7 +312,9 @@ func configuredSyncInterval(p domain.Provider) (time.Duration, bool) {
 }
 
 // SyncSoon starts a sync of the provider in the background and returns at
-// once; nothing starts when the caller's ctx is already done. The sync belongs
+// once; nothing starts when the caller's ctx is already done. A sync already in
+// flight read the cluster before the call, so SyncSoon lets it end and then
+// reads again instead of sharing its outcome. The sync belongs
 // to Run, not to the caller: it runs only while Run serves and is cancelled
 // when Run's context ends.
 func (s *ProxmoxSync) SyncSoon(ctx context.Context, id domain.ID) { //nolint:contextcheck // the sync runs on Run's context, which outlives the caller's
@@ -321,8 +323,17 @@ func (s *ProxmoxSync) SyncSoon(ctx context.Context, id domain.ID) { //nolint:con
 	if ctx.Err() != nil || s.life == nil || s.life.Err() != nil {
 		return
 	}
-	life := s.life
-	s.running.Go(func() { s.syncAndReport(life, id) })
+	life, earlier := s.life, s.inflight[id]
+	s.running.Go(func() {
+		if earlier != nil {
+			select {
+			case <-earlier.done:
+			case <-life.Done():
+				return
+			}
+		}
+		s.syncAndReport(life, id)
+	})
 }
 
 func (s *ProxmoxSync) syncAndReport(ctx context.Context, id domain.ID) {
