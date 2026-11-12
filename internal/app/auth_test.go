@@ -408,14 +408,15 @@ func TestOIDCEndpointsAreUnavailableWithoutOIDC(t *testing.T) {
 	wantError(t, err, smerr.CodeNotFound, "")
 }
 
-func TestLogoutRevokesTheSessionOnly(t *testing.T) {
+func TestLogoutRevokesTheSessionItWasMadeWith(t *testing.T) {
 	f := newFixture(t)
 	a := newAuth(t, f, &scriptedLogin{claims: ada})
 	ctx := context.Background()
 	session, _ := a.OIDCExchange(ctx, wire.OIDCExchangeRequest{Code: "c", State: "s", CodeVerifier: "v"})
 	by := Caller{ID: session.IdentityID, Credential: domain.CredentialContext{Kind: domain.CredentialSession, ID: session.SessionID.String()}}
+	mcp := Caller{ID: f.admin, Credential: domain.CredentialContext{Kind: domain.CredentialMCPToken, ID: "mcp-1"}}
 
-	wantError(t, a.Logout(ctx, f.caller(f.admin)), smerr.CodeInvalidArgument, "")
+	wantError(t, a.Logout(ctx, mcp), smerr.CodeInvalidArgument, "")
 	if err := a.Logout(ctx, by); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
@@ -426,6 +427,27 @@ func TestLogoutRevokesTheSessionOnly(t *testing.T) {
 	}
 	if n := len(f.events("session.revoked")); n != 1 {
 		t.Errorf("session.revoked events = %d, want 1", n)
+	}
+}
+
+func TestLogoutRevokesTheAPITokenItWasMadeWith(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	ctx := context.Background()
+	issued, err := a.CreateToken(ctx, f.caller(f.admin), f.tokenRequest())
+	mustf(t, err, "CreateToken")
+	by := Caller{ID: f.admin, Credential: domain.CredentialContext{Kind: domain.CredentialAPIToken, ID: issued.Token.ID.String()}}
+
+	if err := a.Logout(ctx, by); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+
+	row, _ := database.GetAPIToken(ctx, f.db.Reader(), issued.Token.ID)
+	if row.RevokedAt == nil {
+		t.Error("the API token the profile signed in with is still valid after logout")
+	}
+	if n := len(f.events("token.revoked")); n != 1 {
+		t.Errorf("token.revoked events = %d, want 1", n)
 	}
 }
 

@@ -23,7 +23,7 @@ Available Commands:
   jobs        List and govern jobs (default: list)
   join        Enroll this node with a SuperMgmt server, or prepare it for a Cloudflare Tunnel enrollment (run as root)
   login       Sign in to a remote server
-  logout      Sign out: revoke the session on the server and forget the stored credential
+  logout      Sign out: revoke the stored session or API token on the server and forget it
   mcp         Serve MCP over stdio as a registered MCP client
   nodes       List, add, inspect and probe nodes
   profile     Manage the servers sm talks to

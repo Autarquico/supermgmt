@@ -97,7 +97,9 @@ func (h *proxmoxPowerHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	upid, outcome, postErr := t.client.Power(ctx, t.guest, t.verb)
 	switch outcome {
 	case proxmox.PowerAccepted:
-		return h.await(ctx, lease, t, intent, upid)
+		err := h.await(ctx, lease, t, intent, upid)
+		h.sync.SyncSoon(ctx, t.node.ProviderID) // show the state the task left without waiting for the interval
+		return err
 	case proxmox.PowerRejected:
 		return h.refused(ctx, lease, t, intent.ID, pre, postErr)
 	case proxmox.PowerUncertain:

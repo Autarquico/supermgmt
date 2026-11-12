@@ -721,7 +721,7 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 ### sm logout
 
-Sign out: revoke the session on the server and forget the stored credential
+Sign out: revoke the stored session or API token on the server and forget it
 
 ```text
 sm logout [flags]

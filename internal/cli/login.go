@@ -431,10 +431,21 @@ func deviceWaitError(ctx context.Context, err error) error {
 // is the identity that becomes the administrator.
 func bootstrapLogin(cmd *cobra.Command, env []string, store client.CredentialStore, name string, profile client.Profile, displayName string) (string, *time.Time, error) {
 	ctx := cmd.Context()
+	remote := func(token string) (*client.Client, error) {
+		return client.NewRemote(client.Remote{URL: profile.URL, CAFile: profile.CAFile, Token: token}, client.Options{})
+	}
 	held, _ := store.Get(ctx, name)
-	api, err := client.NewRemote(client.Remote{URL: profile.URL, CAFile: profile.CAFile, Token: held}, client.Options{})
+	api, err := remote(held)
 	if err != nil {
 		return "", nil, err
+	}
+	if held != "" { // an expired or revoked credential would be refused before the code is looked at
+		if _, probe := api.Me(ctx); smerr.CodeOf(probe) == smerr.CodeUnauthenticated {
+			held = ""
+			if api, err = remote(""); err != nil {
+				return "", nil, err
+			}
+		}
 	}
 	if held == "" && displayName == "" { // no session: the server has no OIDC and must be told who the admin is
 		if displayName, err = askDisplayName(cmd, envMap(env)["USER"]); err != nil {
@@ -449,10 +460,10 @@ func bootstrapLogin(cmd *cobra.Command, env []string, store client.CredentialSto
 	switch {
 	case err != nil:
 		return "", nil, err
+	case issued.APIToken != nil: // outlives the session; without OIDC nothing else can sign in again
+		return issued.APIToken.Value, &issued.APIToken.Token.ExpiresAt, nil
 	case issued.Session != nil:
 		return issued.Session.Token, &issued.Session.ExpiresAt, nil
-	case issued.APIToken != nil:
-		return issued.APIToken.Value, &issued.APIToken.Token.ExpiresAt, nil
 	}
 	if held != "" {
 		return held, nil, nil // the held session is now the administrator's
@@ -490,7 +501,7 @@ func newLogoutCmd(env []string) *cobra.Command {
 	var profileFlag string
 	cmd := &cobra.Command{
 		Use:   "logout",
-		Short: "Sign out: revoke the session on the server and forget the stored credential",
+		Short: "Sign out: revoke the stored session or API token on the server and forget it",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			name, profile, err := loginProfile(cmd, env, profileFlag)
@@ -509,13 +520,13 @@ func newLogoutCmd(env []string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			revoked := revokeSession(ctx, profile, token)
+			revoked := revokeCredential(ctx, profile, token)
 			if err := store.Delete(ctx, name); err != nil {
 				return fmt.Errorf("forget the stored credential: %w", err)
 			}
 			return emit(cmd, map[string]any{"profile": name, "signed_out": true, "revoked_on_server": revoked == nil}, func(w io.Writer) error {
 				if revoked != nil {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: the server could not revoke the session (%v); it expires on its own\n", revoked)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: the server could not revoke the credential (%v); it stays valid until it expires\n", revoked)
 				}
 				_, err := fmt.Fprintf(w, "signed out of %s\n", name)
 				return err
@@ -526,9 +537,9 @@ func newLogoutCmd(env []string) *cobra.Command {
 	return cmd
 }
 
-// revokeSession asks the server to end the session. The credential is
+// revokeCredential asks the server to revoke the stored session or API token. It is
 // forgotten locally either way.
-func revokeSession(ctx context.Context, profile client.Profile, token string) error {
+func revokeCredential(ctx context.Context, profile client.Profile, token string) error {
 	api, err := client.NewRemote(client.Remote{URL: profile.URL, CAFile: profile.CAFile, Token: token}, client.Options{})
 	if err != nil {
 		return err

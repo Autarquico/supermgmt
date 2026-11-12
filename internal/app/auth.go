@@ -273,10 +273,19 @@ func (a *AuthService) createSession(ctx context.Context, tx *database.Tx, actor 
 	return wire.LoginSession{SessionID: row.ID, IdentityID: actor.ID, Token: secret.Reveal(), ExpiresAt: row.ExpiresAt}, nil
 }
 
-// Logout revokes the session the request presented.
+var errLogoutRefused = smerr.New(smerr.CodeInvalidArgument, "", "only a session or an API token can log out")
+
+// Logout revokes the credential the request presented: a session, or the API
+// token a profile signed in with (`sm login --bootstrap` without OIDC keeps one).
 func (a *AuthService) Logout(ctx context.Context, by Caller) error {
-	if by.Credential.Kind != domain.CredentialSession {
-		return smerr.New(smerr.CodeInvalidArgument, "", "only a session can log out")
+	switch by.Credential.Kind {
+	case domain.CredentialSession:
+	case domain.CredentialAPIToken:
+		return a.RevokeToken(ctx, by, domain.ID(by.Credential.ID))
+	case domain.CredentialLocalSocket, domain.CredentialMCPToken, domain.CredentialOAuthAccessToken, domain.CredentialGitHubOIDC:
+		return errLogoutRefused
+	default:
+		return errLogoutRefused
 	}
 	_, err := commit(ctx, a.core, by, func(ctx context.Context, tx *database.Tx) (struct{}, error) {
 		actor, err := a.beginRequest(ctx, tx, by)

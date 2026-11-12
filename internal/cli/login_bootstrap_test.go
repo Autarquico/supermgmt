@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -120,5 +121,39 @@ func TestWithAnAdminOnlyARecoveryCodeIsIssuedAndItLogsIn(t *testing.T) {
 	}
 	if r := b.runLogin(loginDeps{sleep: sleepContext}, code+"\n", "--bootstrap", "--display-name", "Recovered"); r.code != 0 {
 		t.Errorf("login with the recovery code: exit %d, stderr %q", r.code, r.stderr)
+	}
+}
+
+func TestLoginBootstrapWithoutOIDCKeepsTheAPITokenNotTheShortSession(t *testing.T) {
+	b := newRealServerBox(t)
+
+	r := b.runLogin(loginDeps{sleep: sleepContext}, b.bootstrapCode()+"\n", "--bootstrap", "--display-name", "Root", "--json")
+
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+	if stored := b.storedToken(); !strings.HasPrefix(stored, "smt_") {
+		t.Errorf("stored a %.4q credential; want the API token (smt_), which outlives the session", stored)
+	}
+	var out loginOutcome
+	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil || out.ExpiresAt == nil {
+		t.Fatalf("login output %q: %v", r.stdout, err)
+	}
+	if left := time.Until(*out.ExpiresAt); left < 30*24*time.Hour {
+		t.Errorf("the stored credential expires in %s; want the API token's lifetime", left)
+	}
+}
+
+func TestLoginBootstrapIgnoresAStoredCredentialTheServerNoLongerAccepts(t *testing.T) {
+	b := newRealServerBox(t)
+	b.signIn("sms_" + strings.Repeat("A", 43))
+
+	r := b.runLogin(loginDeps{sleep: sleepContext}, b.bootstrapCode()+"\n", "--bootstrap", "--display-name", "Root")
+
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+	if stored := b.storedToken(); !strings.HasPrefix(stored, "smt_") {
+		t.Errorf("stored %.4q; want the new API token in place of the refused credential", stored)
 	}
 }
