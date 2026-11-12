@@ -320,6 +320,53 @@ func TestUpgrade_LocalInstallReplacesTheBinaryWithoutAService(t *testing.T) {
 	}
 }
 
+// localUpgradeHost is a local install whose on-demand daemon is running.
+func localUpgradeHost(t *testing.T) (*uhost, layout) {
+	h := newUHost(t)
+	h.uid, h.home = 1000, "/home/alex"
+	ul := Options{}.userLayout(h.deps().Host)
+	h.dirs[ul.BinDir], h.dirs[ul.DataDir], h.dirs[ul.ConfigDir] = true, true, true
+	h.put(ul.Binary, binV1)
+	_ = h.RemoveAll(applianceLayout().Binary)
+	_ = h.RemoveAll(applianceLayout().UnitPath)
+	h.violations = nil
+	h.oldContent = binV1
+	h.put(ul.ConfigFile, "version: 1\ninstance:\n  name: t\n  mode: local\n  data_dir: "+ul.DataDir+"\n")
+	h.put(ul.DataDir+"/supermgmt.db", "db")
+	h.put(ul.DataDir+"/supermgmt.db.lock", "")
+	h.running, h.lockHeld = false, true // no service runs it; the on-demand daemon holds the database
+	return h, ul
+}
+
+func TestUpgrade_LocalInstallStopsItsRunningDaemonWithTheNewBinary(t *testing.T) {
+	h, ul := localUpgradeHost(t)
+
+	err := New(h.deps()).upgrade(context.Background(), h.upgradeOpts(), defaultHooks())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if h.index("run "+ul.Binary+".new daemon restart --config "+ul.ConfigFile) == -1 {
+		t.Errorf("the local daemon was not stopped by the staged binary: %v", h.events)
+	}
+	if h.content(ul.Binary) != binV2 {
+		t.Errorf("live binary %q, want the new one", h.content(ul.Binary))
+	}
+}
+
+func TestUpgrade_LocalInstallWithBusyDaemonKeepsThePreviousBinaryAndSaysHowToGoOn(t *testing.T) {
+	h, ul := localUpgradeHost(t)
+	h.daemonBusy = true
+
+	err := New(h.deps()).upgrade(context.Background(), h.upgradeOpts(), defaultHooks())
+
+	if err == nil || !strings.Contains(err.Error(), "sm daemon restart --force") || !strings.Contains(err.Error(), "interrupt 1 job") {
+		t.Fatalf("err = %v; want the refusal and the way on", err)
+	}
+	if h.content(ul.Binary) != binV1 {
+		t.Errorf("live binary %q, want the previous one kept", h.content(ul.Binary))
+	}
+}
+
 func TestUpgrade_ServerUsesTheReadinessEndpointOfItsConfiguration(t *testing.T) {
 	h := newUHost(t)
 	if err := h.upgrade(defaultHooks()); err != nil {

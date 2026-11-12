@@ -82,3 +82,29 @@ func dirNames(t *testing.T, dir string) []string {
 	}
 	return names
 }
+
+func TestSecretsListNamesEachSecretByItsLatestVersionWithoutValues(t *testing.T) {
+	stored := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	f := newFakeAPI(t, router(map[string]http.HandlerFunc{
+		"GET " + wire.PathSecrets: func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Page[wire.Secret]{Items: []wire.Secret{
+				{Name: "db-password", Version: 3, Source: "import", CreatedAt: stored},
+				{Name: "cloudflare/access", Version: 1, Purpose: "cloudflare access service token", CreatedAt: stored},
+			}})
+		},
+	}))
+
+	r := f.run("secrets", "list")
+
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s", r.code, r.stderr)
+	}
+	for _, want := range []string{"NAME", "VERSION", "db-password", "3", "import", "cloudflare access service token", "2026-11-09T10:00:00Z"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("output lacks %q:\n%s", want, r.stdout)
+		}
+	}
+	if m := f.Mutations(); len(m) != 0 {
+		t.Errorf("listing sent mutations: %+v", m)
+	}
+}

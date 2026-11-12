@@ -66,3 +66,26 @@ func TestDeletingAStagedSecretLeavesCurrentOnesAndIsIdempotent(t *testing.T) {
 		wantError(t, err, smerr.CodeNotFound, "")
 	})
 }
+
+func TestSecretSummariesDescribeTheLatestVersionAndSkipStagedOnes(t *testing.T) {
+	f := newFixture(t)
+	f.tx(func(ctx context.Context, q Querier) {
+		kek := f.ids.NewID()
+		must(PutSecretVersion(ctx, q, secret(f, "zeta", kek, "v1")))
+		latest := secret(f, "zeta", kek, "v2")
+		latest.Metadata = map[string]any{"source": "import"}
+		must(PutSecretVersion(ctx, q, latest))
+		must(PutSecretVersion(ctx, q, secret(f, "alpha", kek, "v1")))
+		must(StageSecret(ctx, q, secret(f, "alpha", kek, "staged")))
+		must(StageSecret(ctx, q, secret(f, "only-staged", kek, "staged")))
+
+		got := must(ListSecretSummaries(ctx, q))
+
+		if len(got) != 2 || got[0].Name != "alpha" || got[0].Version != 1 || got[1].Name != "zeta" || got[1].Version != 2 {
+			t.Fatalf("summaries = %+v; want alpha v1 and zeta v2, sorted", got)
+		}
+		if got[1].Metadata["source"] != "import" {
+			t.Errorf("zeta metadata = %v; want the latest version's", got[1].Metadata)
+		}
+	})
+}

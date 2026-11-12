@@ -319,6 +319,18 @@ func TestNodeNamesSharedByAnSSHNodeAndItsDiscoveredProxmoxNodeResolveToTheSSHNod
 	}
 }
 
+func TestARetiredNodeGivesItsNameToTheLiveOne(t *testing.T) {
+	retired := wire.Node{ID: newTestID(), Name: "web", Kind: "ssh", ManagementState: domain.ManagementRetired}
+	live := wire.Node{ID: newTestID(), Name: "web", Kind: "ssh", ManagementState: domain.ManagementManaged}
+
+	if got, err := pickByName([]wire.Node{retired, live}, "web", false); err != nil || got != live.ID {
+		t.Errorf("pickByName = %v, %v; want the live node", got, err)
+	}
+	if got, err := pickByName([]wire.Node{retired}, "web", false); err != nil || got != retired.ID {
+		t.Errorf("pickByName = %v, %v; a retired node alone keeps its name", got, err)
+	}
+}
+
 func TestPowerPrefersTheGuestWhenAnSSHNodeSharesItsNameAndAGuestIsNotAmbiguousForOtherCommands(t *testing.T) {
 	ssh := wire.Node{ID: newTestID(), Name: "web", Kind: "ssh", Provider: "lab"}
 	guest := proxmoxNode("web", "pve1", wire.ProxmoxGuest{VMID: 100, Type: "qemu", Status: "running"})

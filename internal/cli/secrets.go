@@ -43,7 +43,7 @@ func newSecretsCmd(env []string) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newSecretsImportCmd(env), newRotateMasterKeyCmd(env), newRetireKeyCmd(env),
-		newExportKeyCmd(env), newImportKeyCmd(env), newKeysListCmd(env),
+		newExportKeyCmd(env), newImportKeyCmd(env), newKeysListCmd(env), newSecretsListCmd(env),
 	)
 	return cmd
 }
@@ -306,6 +306,35 @@ func (r offlineSecrets) Put(ctx context.Context, rec secrets.Record) error {
 		})
 		return err
 	})
+}
+
+// ---- secrets list ----------------------------------------------------------------
+
+func newSecretsListCmd(env []string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List the named secrets and their latest version (never the values)",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			api, err := newClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			page, err := api.ListSecrets(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return emit(cmd, page, func(w io.Writer) error { return writeSecrets(w, page.Items) })
+		},
+	}
+}
+
+func writeSecrets(w io.Writer, secrets []wire.Secret) error {
+	rows := make([][]string, len(secrets))
+	for i, s := range secrets {
+		rows[i] = []string{s.Name, fmt.Sprint(s.Version), orDash(s.Source), orDash(s.Purpose), formatTime(s.CreatedAt)}
+	}
+	return table(w, []string{"NAME", "VERSION", "SOURCE", "PURPOSE", "STORED"}, rows)
 }
 
 // ---- keys -------------------------------------------------------------------------------

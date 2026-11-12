@@ -19,6 +19,7 @@ type resolved struct {
 	target   policy.Target
 	revision int64
 	inputs   []plan.Input
+	retired  bool // a retired node: setting it up again would refill what it gave up
 }
 
 // resolve supports nodes, services and the instance. The
@@ -38,6 +39,10 @@ func resolve(ctx context.Context, q database.Querier, ref domain.ResourceRef) (r
 	return resolved{}, smerr.New(smerr.CodeInvalidArgument, "", fmt.Sprintf("resource type %q is not supported yet", ref.Type))
 }
 
+// errRetiredNode refuses to set up a retired node: it gave up its name and its
+// Proxmox token slot, which a setup would fill again for the next node so named.
+func errRetiredNode() error { return smerr.New(smerr.CodeConflict, "", "the node is retired") }
+
 func resolveNode(ctx context.Context, q database.Querier, id domain.ID) (resolved, error) {
 	node, err := database.GetNode(ctx, q, id)
 	if err != nil {
@@ -46,6 +51,7 @@ func resolveNode(ctx context.Context, q database.Querier, id domain.ID) (resolve
 	out := resolved{
 		target:   policy.Target{Ref: domain.ResourceRef{Type: domain.ResourceNode, ID: id}},
 		revision: node.SpecRevision,
+		retired:  node.ManagementState == domain.ManagementRetired,
 	}
 	out.target.Attrs = policy.Attributes{Tags: node.Tags, Node: node.Name}
 
@@ -160,6 +166,9 @@ func build(ctx context.Context, q database.Querier, action string, actorID domai
 	target, err := resolve(ctx, q, ref)
 	if err != nil {
 		return built{}, err
+	}
+	if target.retired && action == policy.ActionNodeSetup {
+		return built{}, errRetiredNode()
 	}
 	revision := target.revision
 	subs, planned := compositeOf(action, params, target.target)

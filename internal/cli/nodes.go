@@ -390,10 +390,14 @@ func resolveNamed(ctx context.Context, api *client.Client, ref string, guest boo
 	return pickByName(all, ref, guest)
 }
 
-// dropsFor reports whether n is ruled out when a name is shared. For a node
-// command the Proxmox node discovered on the host gives way to the SSH node;
-// for power only a guest (qemu or lxc) is a target.
+// dropsFor reports whether n is ruled out when a name is shared. A retired
+// node gives way to the live one. For a node command the Proxmox node
+// discovered on the host gives way to the SSH node; for power only a guest
+// (qemu or lxc) is a target.
 func dropsFor(n wire.Node, guest bool) bool {
+	if n.ManagementState == domain.ManagementRetired {
+		return true
+	}
 	if guest {
 		return n.Proxmox == nil || n.Kind == proxmox.KindNode
 	}

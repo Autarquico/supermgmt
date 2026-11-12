@@ -61,3 +61,11 @@ func SetNodeMetadata(ctx context.Context, q Querier, id domain.ID, metadata map[
 	}
 	return updateOne(ctx, q, "node", `UPDATE nodes SET metadata_json = ? WHERE id = ?`, encoded, id)
 }
+
+// RenameProvider changes a provider's name and bumps spec_revision. It frees
+// the name of a retired node's provider for a new node.
+func RenameProvider(ctx context.Context, q Querier, id domain.ID, name string, at time.Time) error {
+	return updateOne(ctx, q, "provider", `
+		UPDATE providers SET name = ?, updated_at = ?, spec_revision = spec_revision + 1 WHERE id = ?`,
+		name, millis(at), id)
+}

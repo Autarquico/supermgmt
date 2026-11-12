@@ -507,11 +507,28 @@ func (u *upgrader) quiesce(ctx context.Context) error {
 		}
 	}
 	release, err := u.lockDatabase()
+	if err != nil && u.t.unit == nil {
+		release, err = u.stopLocalDaemon(ctx)
+	}
 	if err != nil {
 		return err
 	}
 	release()
 	return nil
+}
+
+// stopLocalDaemon stops the on-demand daemon of a local installation, which no service
+// manager runs, with the new binary's `sm daemon restart`: it refuses while jobs run or
+// queue, and stops nothing but the local daemon. The next sm command starts the new version.
+func (u *upgrader) stopLocalDaemon(ctx context.Context) (release func(), err error) {
+	_, err = u.d.Runner.Run(ctx, Command{
+		Name: u.t.staged(), Args: []string{"daemon", "restart", "--config", u.t.l.ConfigFile}, User: u.t.runAs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stop the local daemon (once its jobs end, or after `sm daemon restart --force`, rerun the upgrade): %w", err)
+	}
+	u.say("stopped the local daemon")
+	return u.lockDatabase()
 }
 
 // holdService keeps the service from starting while the upgrade is unfinished. The hold is

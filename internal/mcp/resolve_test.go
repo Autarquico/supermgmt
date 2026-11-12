@@ -32,6 +32,9 @@ func TestResolveNode(t *testing.T) {
 		{ID: resolveNodeIDOf(2), Name: "web-2"},
 		{ID: resolveNodeIDOf(3), Name: "dup"},
 		{ID: resolveNodeIDOf(4), Name: "dup"},
+		{ID: resolveNodeIDOf(5), Name: "reused", ManagementState: domain.ManagementRetired},
+		{ID: resolveNodeIDOf(6), Name: "reused", ManagementState: domain.ManagementManaged},
+		{ID: resolveNodeIDOf(7), Name: "gone", ManagementState: domain.ManagementRetired},
 	}}
 	tests := []struct {
 		name       string
@@ -44,6 +47,8 @@ func TestResolveNode(t *testing.T) {
 		{name: "unknown name", ref: "web-9", wantCode: smerr.CodeNotFound},
 		{name: "name is not a prefix match", ref: "web", wantCode: smerr.CodeNotFound},
 		{name: "ambiguous", ref: "dup", wantCode: smerr.CodeInvalidArgument, wantReason: smerr.ReasonAmbiguousTarget},
+		{name: "a retired node gives its name to the live one", ref: "reused", want: resolveNodeIDOf(6)},
+		{name: "a retired node alone keeps its name", ref: "gone", want: resolveNodeIDOf(7)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

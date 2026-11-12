@@ -965,6 +965,18 @@ paths:
         '200': {$ref: '#/components/responses/Empty'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/secrets:
+    get:
+      operationId: listSecrets
+      summary: The named secrets by their latest version, never their values.
+      tags: [keys]
+      x-supermgmt-route: action:config.read
+      responses:
+        '200':
+          description: The secrets, sorted by name.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfSecret'}}}]}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: importSecret
       summary: Store a new version of a named secret.
@@ -2131,6 +2143,16 @@ components:
       properties:
         name: {type: string}
         version: {type: integer}
+    Secret:
+      type: object
+      description: A named secret described by its latest version; never its value.
+      required: [name, version, purpose, source, created_at]
+      properties:
+        name: {type: string}
+        version: {type: integer}
+        purpose: {type: string, description: From the version's metadata; may be empty.}
+        source: {type: string, description: From the version's metadata; may be empty.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
     Backup:
       type: object
       required: [name, size_bytes, created_at, schema_version, sm_version, kek_ids]
@@ -2238,6 +2260,12 @@ components:
       required: [items, next_cursor]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/MasterKey'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    PageOfSecret:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Secret'}}
         next_cursor: {type: string, description: Opaque; empty on the last page.}
     DirectOfProvider:
       type: object

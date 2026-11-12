@@ -164,8 +164,36 @@ func (i *Inventory) applyNodeRemove(ctx context.Context, q database.Querier, act
 	if err != nil {
 		return domain.Node{}, err
 	}
+	if err := releaseNodeName(ctx, q, node); err != nil {
+		return domain.Node{}, err
+	}
 	return stored, i.emit(ctx, q, actor, actionNodeRemove, nodeRef(node.ID), domain.ResultSucceeded,
 		map[string]any{"name": node.Name, "spec_revision": stored.SpecRevision})
+}
+
+// releaseNodeName gives up what a retired node holds by its name, so a new
+// node can be added under it without inheriting anything: the name of its own
+// ssh provider, and the Proxmox token slot secret://proxmox/<name>. The node
+// keeps its name for the audit trail; migration 000016 does the same for nodes
+// retired before.
+func releaseNodeName(ctx context.Context, q database.Querier, node domain.Node) error {
+	provider, err := database.GetProvider(ctx, q, node.ProviderID)
+	if err != nil {
+		return err
+	}
+	if provider.Type != sshnode.ProviderType || provider.Origin != domain.ProviderAPI {
+		return nil
+	}
+	if slot, err := proxmoxSecretName(node.Name); err == nil {
+		if err := database.DeleteSecretsByName(ctx, q, slot); err != nil {
+			return err
+		}
+	}
+	return database.RenameProvider(ctx, q, provider.ID, retiredProviderName(provider), node.UpdatedAt)
+}
+
+func retiredProviderName(p domain.Provider) string {
+	return p.Name + "~retired-" + string(p.ID)
 }
 
 func (i *Inventory) applyRegisterLocal(ctx context.Context, q database.Querier, actor domain.Actor, p localParams) (domain.Provider, error) {

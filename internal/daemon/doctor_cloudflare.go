@@ -60,26 +60,39 @@ func (d CloudflareDoctor) Run(ctx context.Context) []wire.DoctorCheck {
 		locate = ssh.LocateCloudflared
 	}
 	checks := []wire.DoctorCheck{cloudflaredCheck(locate)}
-	online := d.Secrets != nil && d.NewProber != nil
+	if d.Secrets != nil && d.NewProber != nil {
+		checks = append(checks, d.OnlineChecks(ctx)...)
+	}
+	if d.DB == nil {
+		return checks
+	}
+	return append(checks, CloudflareOperationsCheck(ctx, d.DB))
+}
+
+// OnlineChecks are the checks that call Cloudflare: the API token, what it
+// can read and edit, and, with the database, the Access service token. They
+// need Secrets and NewProber.
+func (d CloudflareDoctor) OnlineChecks(ctx context.Context) []wire.DoctorCheck {
 	var nodes []domain.Node
 	var nodesErr error
 	if d.DB != nil {
 		nodes, nodesErr = database.ListNodes(ctx, d.DB)
 	}
-	if online {
-		checks = append(checks, d.apiChecks(ctx, d.provisioned(ctx, nodes, nodesErr))...)
-	}
-	if d.DB == nil {
+	checks := d.apiChecks(ctx, d.provisioned(ctx, nodes, nodesErr))
+	switch {
+	case d.DB == nil:
 		return checks
+	case nodesErr != nil:
+		return append(checks, wire.DoctorCheck{Name: checkCFServiceToken, Status: checkFail, Detail: nodesErr.Error()})
 	}
-	if online {
-		if nodesErr != nil {
-			checks = append(checks, wire.DoctorCheck{Name: checkCFServiceToken, Status: checkFail, Detail: nodesErr.Error()})
-		} else {
-			checks = append(checks, d.serviceTokenCheck(ctx, nodes))
-		}
+	return append(checks, d.serviceTokenCheck(ctx, nodes))
+}
+
+// NewCloudflareProber is the NewProber of a real Cloudflare account.
+func NewCloudflareProber(accountID string) func(token audit.Secret) (CloudflareProber, error) {
+	return func(token audit.Secret) (CloudflareProber, error) {
+		return cloudflare.New("", accountID, token)
 	}
-	return append(checks, CloudflareOperationsCheck(ctx, d.DB))
 }
 
 // provisioned reports whether the API token is not needed for now: a node
@@ -260,10 +273,7 @@ func (b *builder) cloudflareChecks(ctx context.Context) []wire.DoctorCheck {
 		return nil
 	}
 	return CloudflareDoctor{
-		Config: *cf, Now: b.o.Clock.Now(), DB: b.db.Reader(), Secrets: b.kit.store,
-		NewProber: func(token audit.Secret) (CloudflareProber, error) {
-			return cloudflare.New("", cf.AccountID, token)
-		},
+		Config: *cf, Now: b.o.Clock.Now(), DB: b.db.Reader(), Secrets: b.kit.store, NewProber: NewCloudflareProber(cf.AccountID),
 	}.Run(ctx)
 }
 

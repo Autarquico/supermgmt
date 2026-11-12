@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -48,6 +49,10 @@ func newDaemonRestartCmd(env []string) *cobra.Command {
 			}
 			if !force {
 				if err := refuseWhileJobsRun(cmd, env, configFlag); err != nil {
+					if now, _ := localDaemonPID(dbPath, socketPath(cfg, env)); now == 0 {
+						_, err = fmt.Fprintln(cmd.OutOrStdout(), "the daemon exited by itself; the next command starts a fresh one")
+						return err
+					}
 					return err
 				}
 			}
@@ -62,9 +67,10 @@ func newDaemonRestartCmd(env []string) *cobra.Command {
 	return cmd
 }
 
-// refuseWhileJobsRun lists the jobs a restart would interrupt, through the local daemon.
+// refuseWhileJobsRun lists the jobs a restart would interrupt, through the local daemon. It
+// never autostarts one: a daemon that exited meanwhile must not be replaced by this binary's.
 func refuseWhileJobsRun(cmd *cobra.Command, env []string, configFlag string) error {
-	api, err := newLocalClient(env, configFlag)
+	api, err := newLocalClient(append(slices.Clone(env), envNoAutostart+"=1"), configFlag)
 	if err != nil {
 		return err
 	}

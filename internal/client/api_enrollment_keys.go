@@ -18,3 +18,9 @@ func (c *Client) CreateEnrollment(ctx context.Context, r wire.EnrollmentRequest)
 func (c *Client) ListMasterKeys(ctx context.Context) (wire.Page[wire.MasterKey], error) {
 	return call[wire.Page[wire.MasterKey]](ctx, c, get(wire.PathMasterKeys, nil))
 }
+
+// ListSecrets describes the named secrets by their latest version, without
+// any value.
+func (c *Client) ListSecrets(ctx context.Context) (wire.Page[wire.Secret], error) {
+	return call[wire.Page[wire.Secret]](ctx, c, get(wire.PathSecrets, nil))
+}

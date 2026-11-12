@@ -54,3 +54,35 @@ func TestOfflineDoctorShowsTheCloudflareChecksOnlyWithTheBlock(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalDoctorChecksTheCloudflareAPITokenWithoutAnAdminSocket(t *testing.T) {
+	s, _ := keyedSandbox(t)
+	config, err := os.ReadFile(s.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, s.configFile, string(config)+cloudflareBlock)
+
+	r := s.run("doctor", "--json")
+
+	c, found := doctorCheckNamed(t, r, "cloudflare_api_token")
+	if !found || c.Status != statusWarn || !strings.Contains(c.Detail, "not in the secret store") {
+		t.Errorf("cloudflare_api_token = %+v (found %v); want the local store read and the missing token reported", c, found)
+	}
+}
+
+func TestLocalDoctorBeforeAnyKeyWarnsThatNoTokenIsStored(t *testing.T) {
+	s := newSandbox(t)
+	s.migratedDatabase(t)
+	config, err := os.ReadFile(s.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, s.configFile, string(config)+cloudflareBlock)
+
+	r := s.run("doctor", "--json")
+
+	if c, _ := doctorCheckNamed(t, r, "cloudflare_api_token"); c.Status != statusWarn || !strings.Contains(c.Detail, "no secret store yet") {
+		t.Errorf("cloudflare_api_token = %+v; a fresh install has no store, which is not a failure", c)
+	}
+}

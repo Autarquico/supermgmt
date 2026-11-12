@@ -975,6 +975,20 @@
    }
   },
   {
+   "route": "GET /api/v1/secrets",
+   "class": "query",
+   "path": "/api/v1/secrets",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 200
+   },
+   "on": {
+    "status": 200
+   }
+  },
+  {
    "route": "GET /api/v1/secrets/master-keys",
    "class": "query",
    "path": "/api/v1/secrets/master-keys",

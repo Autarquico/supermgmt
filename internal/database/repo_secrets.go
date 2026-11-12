@@ -192,3 +192,35 @@ func kekIDOfSetting(s Setting) (domain.ID, bool, error) {
 	}
 	return "", false, nil
 }
+
+// SecretSummary describes the latest stored version of a named secret:
+// never its value, its wrapped key or its ciphertext.
+type SecretSummary struct {
+	Name      string
+	Version   int
+	Metadata  map[string]any
+	CreatedAt time.Time
+}
+
+// ListSecretSummaries describes every named secret by its latest stored
+// version, sorted by name. Staged versions are not listed.
+func ListSecretSummaries(ctx context.Context, q Querier) ([]SecretSummary, error) {
+	return list(ctx, q, "secrets", `
+		SELECT name, version, metadata_json, created_at FROM secrets AS s
+		WHERE version = (SELECT max(version) FROM secrets AS o WHERE o.name = s.name) AND version >= 1
+		ORDER BY name`,
+		func(row scanner) (SecretSummary, error) {
+			var (
+				s         SecretSummary
+				metadata  string
+				createdMs int64
+			)
+			if err := row.Scan(&s.Name, &s.Version, &metadata, &createdMs); err != nil {
+				return SecretSummary{}, err
+			}
+			var err error
+			s.Metadata, err = decodeMap(metadata)
+			s.CreatedAt = domain.FromUnixMillis(createdMs)
+			return s, err
+		})
+}

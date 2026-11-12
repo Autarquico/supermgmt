@@ -47,6 +47,17 @@ type SecretVersion struct {
 	Version int    `json:"version"`
 }
 
+// Secret is an entry of GET /secrets: a named secret described by its latest
+// version. It never carries the value. Purpose and Source come from the
+// metadata recorded with that version; either may be empty.
+type Secret struct {
+	Name      string    `json:"name"`
+	Version   int       `json:"version"`
+	Purpose   string    `json:"purpose"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ---- backups (spec §29.1, ADR-0020) -----------------------------------------
 
 type Backup struct {
