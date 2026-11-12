@@ -86,7 +86,11 @@ func (f *Fake) getResources(w http.ResponseWriter, c *call) {
 			if !f.allowed(c.tokenID, "/vms/"+strconv.Itoa(vmid), "VM.Audit") {
 				continue
 			}
-			rows = append(rows, guestRow(g))
+			row := guestRow(g)
+			if status, ok := f.lagged[vmid]; ok {
+				row["status"] = status
+			}
+			rows = append(rows, row)
 		}
 	}
 	if want == "" || want == "storage" {
@@ -260,6 +264,32 @@ func (f *Fake) taskStatus(w http.ResponseWriter, c *call) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "no such task", nil)
+}
+
+// guestStatus is GET /nodes/{node}/{type}/{vmid}/status/current: the live
+// state, needing VM.Audit on the guest.
+func (f *Fake) guestStatus(w http.ResponseWriter, c *call) {
+	node, typ := c.r.PathValue("node"), c.r.PathValue("type")
+	vmid, err := strconv.Atoi(c.r.PathValue("vmid"))
+	if err != nil || vmid <= 0 || (typ != "qemu" && typ != "lxc") {
+		writeError(w, http.StatusNotImplemented, fmt.Sprintf("Method 'GET %s' not implemented", strings.TrimPrefix(c.r.URL.Path, apiPrefix)), nil)
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.allowed(c.tokenID, "/vms/"+strconv.Itoa(vmid), "VM.Audit") {
+		writeError(w, http.StatusForbidden, fmt.Sprintf("Permission check failed (/vms/%d, VM.Audit)", vmid), nil)
+		return
+	}
+	if !f.knownNode(w, node) {
+		return
+	}
+	g := f.guests[vmid]
+	if g == nil || g.Node != node || g.Type != typ {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Configuration file 'nodes/%s/%s/%d.conf' does not exist", node, typ, vmid), nil)
+		return
+	}
+	writeData(w, map[string]any{"vmid": g.VMID, "name": g.Name, "status": g.Status})
 }
 
 func (f *Fake) power(w http.ResponseWriter, c *call) {

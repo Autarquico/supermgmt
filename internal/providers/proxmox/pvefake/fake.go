@@ -122,6 +122,9 @@ type Fake struct {
 	requests []Request
 	nextPID  int
 	done     chan struct{}
+	// lagged holds the guest states /cluster/resources keeps reporting while
+	// LagResources is on, as pvestatd's cache does between its updates.
+	lagged map[int]string
 }
 
 // privileges the fake knows; Administrator holds all of them.
@@ -244,6 +247,26 @@ func (f *Fake) SetLock(vmid int, lock string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.guests[vmid].Lock = lock
+}
+
+// LagResources makes /cluster/resources keep reporting every guest's current
+// state, while status/current and power follow the real one, until
+// CatchUpResources. Real PVE serves those rows from pvestatd's cache, refreshed
+// every 10 seconds.
+func (f *Fake) LagResources() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lagged = map[int]string{}
+	for vmid, g := range f.guests {
+		f.lagged[vmid] = g.Status
+	}
+}
+
+// CatchUpResources ends LagResources.
+func (f *Fake) CatchUpResources() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lagged = nil
 }
 
 // GuestStatus is the guest's current power state, "" if it does not exist.

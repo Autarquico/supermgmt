@@ -3,6 +3,7 @@ package proxmox
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -124,6 +125,20 @@ type taskWire struct {
 	UPID       string `json:"upid"`
 	Status     string `json:"status"`
 	ExitStatus string `json:"exitstatus"`
+}
+
+// decodeGuestStatus reads the power state from a status/current answer.
+func decodeGuestStatus(data []byte) (string, error) {
+	var w struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return "", fmt.Errorf("proxmox: decode guest status: %w", err)
+	}
+	if w.Status == "" {
+		return "", errors.New("proxmox: guest status without a status")
+	}
+	return w.Status, nil
 }
 
 // decodeTaskStatus reads GET /nodes/{node}/tasks/{upid}/status.

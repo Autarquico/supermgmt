@@ -76,6 +76,7 @@ func (f *Fake) handler() http.Handler {
 	mux.HandleFunc("GET "+apiPrefix+"/access/permissions", f.authed(f.getPermissions))
 	mux.HandleFunc("GET "+apiPrefix+"/nodes/{node}/tasks", f.authed(f.listTasks))
 	mux.HandleFunc("GET "+apiPrefix+"/nodes/{node}/tasks/{upid}/status", f.authed(f.taskStatus))
+	mux.HandleFunc("GET "+apiPrefix+"/nodes/{node}/{type}/{vmid}/status/current", f.authed(f.guestStatus))
 	mux.HandleFunc("POST "+apiPrefix+"/nodes/{node}/{type}/{vmid}/status/{verb}", f.authed(f.power))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, fmt.Sprintf("Method '%s %s' not implemented", r.Method, r.URL.Path), nil)

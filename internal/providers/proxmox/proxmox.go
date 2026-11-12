@@ -200,6 +200,9 @@ type Client interface {
 	// exactly path (pool membership and inheritance included).
 	PathPermissions(ctx context.Context, path string) (Privileges, error)
 	Power(ctx context.Context, g GuestRef, verb string) (UPID, PowerOutcome, error)
+	// GuestStatus is the guest's live power state (status/current), not the
+	// copy /cluster/resources serves from pvestatd's cache.
+	GuestStatus(ctx context.Context, g GuestRef) (string, error)
 	Task(ctx context.Context, u UPID) (TaskStatus, error)
 	Tasks(ctx context.Context, node string, f TaskFilter) ([]TaskStatus, error)
 }

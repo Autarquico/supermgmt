@@ -238,6 +238,18 @@ func (c *client) PathPermissions(ctx context.Context, path string) (Privileges, 
 	return decodePathPrivileges(path, data)
 }
 
+func (c *client) GuestStatus(ctx context.Context, g GuestRef) (string, error) {
+	if g.VMID <= 0 || !nodeNamePattern.MatchString(g.Node) || (g.Type != GuestQEMU && g.Type != GuestLXC) {
+		return "", fmt.Errorf("proxmox: invalid guest %+v", g)
+	}
+	data, err := c.get(ctx, fmt.Sprintf("/nodes/%s/%s/%d/status/current", g.Node, g.Type, g.VMID), nil)
+	if err != nil {
+		return "", err
+	}
+	status, err := decodeGuestStatus(data)
+	return c.sanitize(status), err
+}
+
 func (c *client) Task(ctx context.Context, u UPID) (TaskStatus, error) {
 	parsed, err := ParseUPID(u.Raw)
 	if err != nil {

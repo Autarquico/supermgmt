@@ -559,3 +559,43 @@ func selfSignedFor(t *testing.T, ip string) tls.Certificate {
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
+
+func TestGuestStatusIsLiveWhileTheResourcesRowLags(t *testing.T) {
+	e := newEnv(t)
+	e.fake.LagResources()
+	web := proxmox.GuestRef{Node: "pve1", Type: proxmox.GuestQEMU, VMID: 100}
+	if _, outcome, err := e.client.Power(context.Background(), web, "stop"); outcome != proxmox.PowerAccepted || err != nil {
+		t.Fatal(outcome, err)
+	}
+
+	live, err := e.client.GuestStatus(context.Background(), web)
+
+	if err != nil || live != "stopped" {
+		t.Errorf("GuestStatus = %q, %v; want the live state, stopped", live, err)
+	}
+	inv, err := e.client.Resources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range inv.Guests {
+		if g.Ref.VMID == 100 && g.Status != "running" {
+			t.Errorf("resources row = %q; the lagging cache still says running", g.Status)
+		}
+	}
+}
+
+func TestGuestStatusRefusesAMalformedGuestBeforeAnyRequest(t *testing.T) {
+	e := newEnv(t)
+	for _, g := range []proxmox.GuestRef{
+		{Node: "pve1", Type: proxmox.GuestQEMU, VMID: 0},
+		{Node: "../pve1", Type: proxmox.GuestQEMU, VMID: 100},
+		{Node: "pve1", Type: "openvz", VMID: 100},
+	} {
+		if _, err := e.client.GuestStatus(context.Background(), g); err == nil {
+			t.Errorf("GuestStatus(%+v) accepted", g)
+		}
+	}
+	if n := e.fake.Count("GET", "/status/current"); n != 0 {
+		t.Errorf("%d requests sent for malformed guests", n)
+	}
+}

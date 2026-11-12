@@ -248,6 +248,7 @@ github.com/autarquico/supermgmt/internal/providers/cloudflare/cffake.call.decode
 github.com/autarquico/supermgmt/internal/providers/proxmox.ParseUPID  FuzzParseUPID
 github.com/autarquico/supermgmt/internal/providers/proxmox.client.Version  exempt: typed Proxmox call; the envelope is decoded by getEnvelope
 github.com/autarquico/supermgmt/internal/providers/proxmox.client.getEnvelope  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/providers/proxmox.decodeGuestStatus  FuzzDecodeGuestStatus
 github.com/autarquico/supermgmt/internal/providers/proxmox.decodeInventory  FuzzDecodeInventory
 github.com/autarquico/supermgmt/internal/providers/proxmox.decodePathPrivileges  FuzzDecodePathPrivileges
 github.com/autarquico/supermgmt/internal/providers/proxmox.decodeTaskList  FuzzDecodeTaskList
