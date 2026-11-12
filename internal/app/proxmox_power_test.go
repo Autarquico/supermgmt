@@ -761,3 +761,25 @@ func TestPowerOutcomeDoesNotDependOnTheLiveRead(t *testing.T) {
 		t.Errorf("status = %q; with no live read the last discovery stands until the next sync", got)
 	}
 }
+
+func TestASyncDoesNotUndoALiveStateReadWhileItCheckedPermissions(t *testing.T) {
+	r := newPowerRig(t)
+	guest := r.guest("lxc/200").ID
+	// The sync has read the inventory (stopped); while it reads the token's
+	// permissions a power job records the live state, and the reads take long.
+	r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/access/permissions", Fault: pvefake.Before(func() {
+		r.inTx(func(ctx context.Context, tx *database.Tx) error {
+			return database.RecordObservation(ctx, tx, database.Observation{
+				ID: r.ids.NewID(), ResourceType: domain.ResourceNode, ResourceID: guest, Kind: proxmox.ObservationStatus,
+				Value: ProxmoxStatus{Status: "running", Presence: PresencePresent, Source: StatusFromPower}, ObservedAt: r.clock.Now(),
+			})
+		})
+		r.clock.Advance(powerStatusGrace + time.Second)
+	})})
+
+	mustf(t, r.handler.sync.Sync(context.Background(), r.pve.ID), "sync")
+
+	if got := r.handler.statusOf(context.Background(), guest); got != "running" {
+		t.Errorf("status = %q; an inventory read before the live state must not replace it", got)
+	}
+}

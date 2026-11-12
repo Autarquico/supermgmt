@@ -410,6 +410,8 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the cluster: %w", err)
 	}
+	readAt := s.cfg.Clock.Now() // what the inventory says was true then, not after the permission reads
+
 	known, err := database.ListNodes(ctx, s.cfg.DB.Reader())
 	if err != nil {
 		return clusterRead{}, err
@@ -421,7 +423,7 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if noRights(inventory, access) {
 		return clusterRead{}, errNoRights
 	}
-	return clusterRead{inventory: inventory, access: access, readAt: s.cfg.Clock.Now(), clockSkew: skew, clockSkewKnown: skewKnown}, nil
+	return clusterRead{inventory: inventory, access: access, readAt: readAt, clockSkew: skew, clockSkewKnown: skewKnown}, nil
 }
 
 // aclPathsToJudge are the paths whose privileges the sync acts on: the
@@ -838,10 +840,13 @@ func (t *treeSync) present(o objectSpec) error {
 
 // outrankedByPower reports whether a power job read the guest's state live
 // less than powerStatusGrace before this read, and it differs: the cached row
-// may not have caught up yet, so the live state stays.
+// may not have caught up yet, so the live state stays. A read from before the
+// live one needs no guard: it is recorded with its older time, and the latest
+// observation stays the live one. Only reads after it are held, so a wall
+// clock set back cannot stretch the grace.
 func (t *treeSync) outrankedByPower(node domain.ID, status string, at time.Time) bool {
 	o, ok := t.statuses[node]
-	if !ok || at.Sub(o.ObservedAt) >= powerStatusGrace {
+	if since := at.Sub(o.ObservedAt); !ok || since < 0 || since >= powerStatusGrace {
 		return false
 	}
 	var live ProxmoxStatus
