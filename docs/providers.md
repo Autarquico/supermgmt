@@ -255,6 +255,8 @@ Outcomes:
 - Proxmox refuses the request with an error document before any task exists (no privilege, bad parameter, the guest does not exist on that node): the job fails, nothing was accepted.
 - Anything else without a task id (timeout, connection reset, 5xx without a body, unreadable answer), or the deadline passing while the task still runs: the job becomes **`interrupted`**. The task may exist. It is not retried.
 
+After a task that stops with `OK`, the job reads the guest's live state (`GET /nodes/{node}/{type}/{vmid}/status/current`, `VM.Audit`) and records it, so `sm nodes list` shows it at once. `/cluster/resources` is served from `pvestatd`'s cache, refreshed every 10 seconds on PVE 9.1 (`$updatetime` in `PVE/Service/pvestatd.pm`), so for 20 seconds a sync that reads a different state there does not replace the live one (`TestPowerShowsTheLiveStateWhileTheClusterViewLags`, `TestTheClusterViewWinsAgainOnceTheGraceHasPassed`). That read is best effort: when it fails the job still succeeds and the next sync shows the state.
+
 ### Interrupted power jobs and task correlation
 
 For an interrupted power job the reconciler looks for the task instead of guessing. Without a stored UPID it lists the tasks of **every** cluster node (all pages) and keeps those that started within the dispatch window (120 s before the dispatch to the request timeout plus 120 s after) whose decoded UPID matches exactly: type for the verb and guest kind (`qmstart`, `vzshutdown`, ...), guest id, and the token user. Exactly one match is used; none or several **hold the job** for a person. A Proxmox call carries no marker SuperMgmt could find again on the node, so the task is the only proof, and missing evidence never makes a retry safe.

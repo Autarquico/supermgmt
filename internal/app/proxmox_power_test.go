@@ -96,23 +96,6 @@ func newPowerRig(t *testing.T, fakeOpts ...pvefake.Option) *powerRig {
 	return r
 }
 
-// serve runs the sync's loop for the rest of the test, the way the daemon
-// does, so the syncs a power job asks for have a lifetime to run in.
-func (r *powerRig) serve() (stop func()) {
-	r.t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { _ = r.handler.sync.Run(ctx); close(done) }()
-	waitFor(r.t, "the sync loop", func() bool {
-		r.handler.sync.mu.Lock()
-		defer r.handler.sync.mu.Unlock()
-		return r.handler.sync.life != nil
-	})
-	stop = func() { cancel(); <-done }
-	r.t.Cleanup(stop)
-	return stop
-}
-
 func mustCore(t *testing.T, cfg Config) core {
 	t.Helper()
 	c, err := newCore(cfg)
@@ -730,9 +713,9 @@ func TestTaskEvidenceEncoding(t *testing.T) {
 	}
 }
 
-func TestPowerLeavesTheGuestObservedInTheStateItReached(t *testing.T) {
+func TestPowerShowsTheLiveStateWhileTheClusterViewLags(t *testing.T) {
 	r := newPowerRig(t)
-	r.serve()
+	r.fake.LagResources() // /cluster/resources keeps saying stopped, as pvestatd's cache does
 	guest := r.guest("lxc/200").ID
 
 	job, err := r.run("lxc/200", "start")
@@ -740,94 +723,63 @@ func TestPowerLeavesTheGuestObservedInTheStateItReached(t *testing.T) {
 	if err != nil || job.State != domain.JobSucceeded {
 		t.Fatalf("job = %s, err %v; want succeeded", job.State, err)
 	}
-	waitFor(t, "the guest observed running without waiting for the sync interval", func() bool {
-		return r.handler.statusOf(context.Background(), guest) == "running"
-	})
-}
-
-func TestPowerOutcomeDoesNotDependOnTheSyncThatFollowsIt(t *testing.T) {
-	r := newPowerRig(t, pvefake.WithManualTasks())
-	r.serve()
-	r.onSleep = func() { // the task ends while it is followed, and from then on the cluster cannot be read
-		r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/cluster/resources", Times: 100, Fault: pvefake.Respond(500, "down")})
-		r.fake.FinishTask(r.fake.Tasks()[0].UPID, "OK")
+	if got := r.handler.statusOf(context.Background(), guest); got != "running" {
+		t.Errorf("status right after the job = %q, want running as status/current reported it", got)
 	}
-
-	job, err := r.run("lxc/200", "start")
-
-	if r.slept == 0 {
-		t.Fatal("the task was never polled, so the fault was never armed")
-	}
-	if err != nil || job.State != domain.JobSucceeded {
-		t.Errorf("job = %s, err %v; want succeeded although the follow-up sync failed", job.State, err)
-	}
-	waitFor(t, "the failed follow-up sync recorded on the provider", func() bool {
-		return r.providerRow().Status == ProviderStatusError
-	})
-}
-
-func TestPowerSettlesTheJobWithoutWaitingForTheSyncThatFollowsIt(t *testing.T) {
-	r := newPowerRig(t, pvefake.WithManualTasks())
-	stop := r.serve()
-	var reads int
-	r.onSleep = func() { // the task ends while it is followed, and from then on the cluster never answers
-		reads = r.fake.Count("GET", "/cluster/resources")
-		r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/cluster/resources", Times: 100, Fault: pvefake.Hang()})
-		r.fake.FinishTask(r.fake.Tasks()[0].UPID, "OK")
-	}
-	settled := make(chan error, 1)
-
-	go func() { _, err := r.run("lxc/200", "start"); settled <- err }()
-
-	select {
-	case err := <-settled:
-		if err != nil {
-			t.Errorf("job error = %v; want succeeded", err)
-		}
-	case <-time.After(pveHTTPTimeout / 2): // a sync in the job's path would wait for the HTTP timeout
-		t.Fatal("the job is still running while the follow-up sync hangs")
-	}
-	waitFor(t, "the follow-up sync hanging on the cluster", func() bool { return r.fake.Count("GET", "/cluster/resources") > reads })
-	stopped := make(chan struct{})
-	go func() { stop(); close(stopped) }()
-	select {
-	case <-stopped:
-	case <-time.After(pveHTTPTimeout / 2):
-		t.Error("shutting the sync down waited for the hanging follow-up sync instead of cancelling it")
+	mustf(t, r.handler.sync.Sync(context.Background(), r.pve.ID), "sync while the cluster view lags")
+	if got := r.handler.statusOf(context.Background(), guest); got != "running" {
+		t.Errorf("status after a lagging sync = %q; the cached row must not undo the live read", got)
 	}
 }
 
-func TestNoSyncStartsOnceTheSyncLoopHasStopped(t *testing.T) {
+func TestTheClusterViewWinsAgainOnceTheGraceHasPassed(t *testing.T) {
 	r := newPowerRig(t)
-	r.serve()()
-	before := r.fake.Count("GET", "/cluster/resources")
+	r.fake.LagResources()
+	guest := r.guest("lxc/200").ID
+	if _, err := r.run("lxc/200", "start"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
 
-	r.handler.sync.SyncSoon(context.Background(), r.pve.ID)
-	r.handler.sync.Wait()
+	r.clock.Advance(powerStatusGrace)
+	mustf(t, r.handler.sync.Sync(context.Background(), r.pve.ID), "sync after the grace")
 
-	if after := r.fake.Count("GET", "/cluster/resources"); after != before {
-		t.Errorf("cluster reads went from %d to %d after the loop stopped; want none", before, after)
+	if got := r.handler.statusOf(context.Background(), guest); got != "stopped" {
+		t.Errorf("status = %q; after the grace /cluster/resources is the truth again (stopped here)", got)
 	}
 }
 
-func TestPowerReadsTheClusterAgainAfterASyncThatStartedBeforeTheTaskEnded(t *testing.T) {
-	r := newPowerRig(t, pvefake.WithManualTasks())
-	r.serve()
-	guest := r.guest("lxc/200").ID
-	r.onSleep = func() { // a sync starts reading while the task runs, then the task ends
-		reads := r.fake.Count("GET", "/cluster/resources")
-		r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/cluster/resources", Fault: pvefake.Hang()})
-		go func() { _ = r.handler.sync.Sync(context.Background(), r.pve.ID) }()
-		waitFor(t, "the earlier sync reading the cluster", func() bool { return r.fake.Count("GET", "/cluster/resources") > reads })
-		r.fake.FinishTask(r.fake.Tasks()[0].UPID, "OK")
-	}
+func TestPowerOutcomeDoesNotDependOnTheLiveRead(t *testing.T) {
+	r := newPowerRig(t)
+	r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/status/current", Fault: pvefake.Respond(500, "down")})
 
 	job, err := r.run("lxc/200", "start")
 
 	if err != nil || job.State != domain.JobSucceeded {
-		t.Fatalf("job = %s, err %v; want succeeded", job.State, err)
+		t.Errorf("job = %s, err %v; want succeeded although the live read failed", job.State, err)
 	}
-	waitFor(t, "a sync that read the cluster after the task ended", func() bool {
-		return r.handler.statusOf(context.Background(), guest) == "running"
-	})
+	if got := r.handler.statusOf(context.Background(), r.guest("lxc/200").ID); got != "stopped" {
+		t.Errorf("status = %q; with no live read the last discovery stands until the next sync", got)
+	}
+}
+
+func TestASyncDoesNotUndoALiveStateReadWhileItCheckedPermissions(t *testing.T) {
+	r := newPowerRig(t)
+	guest := r.guest("lxc/200").ID
+	// The sync has read the inventory (stopped); while it reads the token's
+	// permissions a power job records the live state, and the reads take long.
+	r.fake.Inject(pvefake.Rule{Method: "GET", PathSuffix: "/access/permissions", Fault: pvefake.Before(func() {
+		r.inTx(func(ctx context.Context, tx *database.Tx) error {
+			return database.RecordObservation(ctx, tx, database.Observation{
+				ID: r.ids.NewID(), ResourceType: domain.ResourceNode, ResourceID: guest, Kind: proxmox.ObservationStatus,
+				Value: ProxmoxStatus{Status: "running", Presence: PresencePresent, Source: StatusFromPower}, ObservedAt: r.clock.Now(),
+			})
+		})
+		r.clock.Advance(powerStatusGrace + time.Second)
+	})})
+
+	mustf(t, r.handler.sync.Sync(context.Background(), r.pve.ID), "sync")
+
+	if got := r.handler.statusOf(context.Background(), guest); got != "running" {
+		t.Errorf("status = %q; an inventory read before the live state must not replace it", got)
+	}
 }

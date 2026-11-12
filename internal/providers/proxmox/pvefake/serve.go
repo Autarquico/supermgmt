@@ -18,13 +18,15 @@ const (
 	faultDropBefore
 	faultDropAfter
 	faultHang
+	faultBefore
 )
 
 // Fault is a failure injected by Inject.
 type Fault struct {
-	kind faultKind
-	code int
-	body string
+	kind   faultKind
+	code   int
+	body   string
+	before func()
 }
 
 // Respond answers with the given status and body without running the
@@ -40,6 +42,10 @@ func DropAfter() Fault { return Fault{kind: faultDropAfter} }
 
 // Hang never answers until the client gives up.
 func Hang() Fault { return Fault{kind: faultHang} }
+
+// Before runs fn, then serves the request normally: something happens while
+// the client waits for this answer.
+func Before(fn func()) Fault { return Fault{kind: faultBefore, before: fn} }
 
 // Rule applies a Fault to the next Times (default 1) requests with Method
 // whose path ends in PathSuffix.
@@ -76,6 +82,7 @@ func (f *Fake) handler() http.Handler {
 	mux.HandleFunc("GET "+apiPrefix+"/access/permissions", f.authed(f.getPermissions))
 	mux.HandleFunc("GET "+apiPrefix+"/nodes/{node}/tasks", f.authed(f.listTasks))
 	mux.HandleFunc("GET "+apiPrefix+"/nodes/{node}/tasks/{upid}/status", f.authed(f.taskStatus))
+	mux.HandleFunc("GET "+apiPrefix+"/nodes/{node}/{type}/{vmid}/status/current", f.authed(f.guestStatus))
 	mux.HandleFunc("POST "+apiPrefix+"/nodes/{node}/{type}/{vmid}/status/{verb}", f.authed(f.power))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, fmt.Sprintf("Method '%s %s' not implemented", r.Method, r.URL.Path), nil)
@@ -101,6 +108,9 @@ func (f *Fake) handler() http.Handler {
 			case <-r.Context().Done():
 			case <-f.done:
 			}
+		case faultBefore:
+			fault.before()
+			mux.ServeHTTP(w, r)
 		}
 	})
 }

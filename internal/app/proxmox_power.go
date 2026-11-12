@@ -98,7 +98,9 @@ func (h *proxmoxPowerHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	switch outcome {
 	case proxmox.PowerAccepted:
 		err := h.await(ctx, lease, t, intent, upid)
-		h.sync.SyncSoon(ctx, t.node.ProviderID) // show the state the task left without waiting for the interval
+		if err == nil {
+			h.observeLive(ctx, t)
+		}
 		return err
 	case proxmox.PowerRejected:
 		return h.refused(ctx, lease, t, intent.ID, pre, postErr)
@@ -172,6 +174,20 @@ func verbOf(payload json.RawMessage) (string, error) {
 		return "", smerr.Wrap(err, smerr.CodeInternal, "", "proxmox.vm.power job has an unreadable payload")
 	}
 	return params.Verb, nil
+}
+
+// observeLive records the guest's state as PVE reports it right after the
+// task, so a read does not wait for /cluster/resources to catch up (see
+// powerStatusGrace). It is best effort: the task's outcome is already settled.
+func (h *proxmoxPowerHandler) observeLive(ctx context.Context, t powerTarget) {
+	status, err := t.client.GuestStatus(ctx, t.guest)
+	if err != nil || status == "" {
+		return
+	}
+	_ = h.sync.write(ctx, func(ctx context.Context, tx *database.Tx) error {
+		return h.sync.observe(ctx, tx, nodeRef(t.node.ID), proxmox.ObservationStatus,
+			ProxmoxStatus{Status: status, Presence: PresencePresent, Source: StatusFromPower}, h.cfg.Clock.Now())
+	})
 }
 
 // statusOf is the last power state discovery observed, empty if none.

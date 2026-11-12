@@ -127,3 +127,15 @@ func FuzzParsePVEError(f *testing.F) {
 		}
 	})
 }
+
+func FuzzDecodeGuestStatus(f *testing.F) {
+	f.Add([]byte(`{"vmid":100,"name":"web","status":"running","qmpstatus":"running"}`))
+	f.Add([]byte(`{"status":""}`))
+	f.Add([]byte(`[]`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		status, err := decodeGuestStatus(data)
+		if err == nil && status == "" {
+			t.Fatal("an empty status was accepted")
+		}
+	})
+}

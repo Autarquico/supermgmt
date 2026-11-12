@@ -74,7 +74,18 @@ const (
 type ProxmoxStatus struct {
 	Status   string `json:"status"`
 	Presence string `json:"presence"`
+	// Source is StatusFromPower when a power job read the state live at the
+	// end of its task; empty when a sync read it from /cluster/resources.
+	Source string `json:"source,omitempty"`
 }
+
+// StatusFromPower marks a status a power job read from status/current.
+const StatusFromPower = "power"
+
+// powerStatusGrace is how long a status read live by a power job outranks a
+// different one from /cluster/resources, which PVE serves from pvestatd's
+// cache, refreshed every 10 seconds: two of its cycles.
+const powerStatusGrace = 20 * time.Second
 
 // SyncReport is the value of the provider's proxmox.sync observation.
 type SyncReport struct {
@@ -171,9 +182,6 @@ type ProxmoxSync struct {
 	started  map[domain.ID]time.Time
 	clients  map[domain.ID]cachedClient
 	running  sync.WaitGroup
-	// life is Run's context while Run serves, nil before and after; SyncSoon
-	// starts only inside it, so shutdown cancels and waits for it like a pass.
-	life context.Context
 }
 
 type flight struct {
@@ -224,14 +232,10 @@ func orDefaultDuration(d, fallback time.Duration) time.Duration {
 }
 
 // Run starts the syncs that are due every tick until ctx ends, then waits for
-// the ones in flight, its own and SyncSoon's (they are cancelled with ctx).
+// the ones in flight (they are cancelled with ctx).
 func (s *ProxmoxSync) Run(ctx context.Context) error {
 	defer s.closeClients()
-	s.serve(ctx)
-	defer func() {
-		s.retire()
-		s.Wait()
-	}()
+	defer s.Wait()
 	ticker := time.NewTicker(s.opts.Tick)
 	defer ticker.Stop()
 	for {
@@ -246,19 +250,7 @@ func (s *ProxmoxSync) Run(ctx context.Context) error {
 	}
 }
 
-func (s *ProxmoxSync) serve(ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.life = ctx
-}
-
-func (s *ProxmoxSync) retire() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.life = nil
-}
-
-// Wait blocks until every sync Run or SyncSoon started has finished.
+// Wait blocks until every sync Run started has finished.
 func (s *ProxmoxSync) Wait() { s.running.Wait() }
 
 func (s *ProxmoxSync) pass(ctx context.Context) error {
@@ -309,31 +301,6 @@ func configuredSyncInterval(p domain.Provider) (time.Duration, bool) {
 	text, _ := p.Config[providerConfigSyncInterval].(string)
 	d, err := time.ParseDuration(text)
 	return d, err == nil && d > 0
-}
-
-// SyncSoon starts a sync of the provider in the background and returns at
-// once; nothing starts when the caller's ctx is already done. A sync already in
-// flight read the cluster before the call, so SyncSoon lets it end and then
-// reads again instead of sharing its outcome. The sync belongs
-// to Run, not to the caller: it runs only while Run serves and is cancelled
-// when Run's context ends.
-func (s *ProxmoxSync) SyncSoon(ctx context.Context, id domain.ID) { //nolint:contextcheck // the sync runs on Run's context, which outlives the caller's
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if ctx.Err() != nil || s.life == nil || s.life.Err() != nil {
-		return
-	}
-	life, earlier := s.life, s.inflight[id]
-	s.running.Go(func() {
-		if earlier != nil {
-			select {
-			case <-earlier.done:
-			case <-life.Done():
-				return
-			}
-		}
-		s.syncAndReport(life, id)
-	})
 }
 
 func (s *ProxmoxSync) syncAndReport(ctx context.Context, id domain.ID) {
@@ -443,6 +410,8 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if err != nil {
 		return clusterRead{}, fmt.Errorf("read the cluster: %w", err)
 	}
+	readAt := s.cfg.Clock.Now() // what the inventory says was true then, not after the permission reads
+
 	known, err := database.ListNodes(ctx, s.cfg.DB.Reader())
 	if err != nil {
 		return clusterRead{}, err
@@ -454,7 +423,7 @@ func (s *ProxmoxSync) read(ctx context.Context, p domain.Provider) (clusterRead,
 	if noRights(inventory, access) {
 		return clusterRead{}, errNoRights
 	}
-	return clusterRead{inventory: inventory, access: access, readAt: s.cfg.Clock.Now(), clockSkew: skew, clockSkewKnown: skewKnown}, nil
+	return clusterRead{inventory: inventory, access: access, readAt: readAt, clockSkew: skew, clockSkewKnown: skewKnown}, nil
 }
 
 // aclPathsToJudge are the paths whose privileges the sync acts on: the
@@ -861,10 +830,27 @@ func (t *treeSync) present(o objectSpec) error {
 			return err
 		}
 	}
-	if err := t.observe(t.ctx, t.q, nodeRef(node.ID), proxmox.ObservationStatus, ProxmoxStatus{Status: o.status, Presence: PresencePresent}, at); err != nil {
-		return err
+	if !t.outrankedByPower(node.ID, o.status, at) {
+		if err := t.observe(t.ctx, t.q, nodeRef(node.ID), proxmox.ObservationStatus, ProxmoxStatus{Status: o.status, Presence: PresencePresent}, at); err != nil {
+			return err
+		}
 	}
 	return t.advertisePower(node.ID, o)
+}
+
+// outrankedByPower reports whether a power job read the guest's state live
+// less than powerStatusGrace before this read, and it differs: the cached row
+// may not have caught up yet, so the live state stays. A read from before the
+// live one needs no guard: it is recorded with its older time, and the latest
+// observation stays the live one, so only reads after it are held. A wall
+// clock set back leaves the live state latest until the clock passes it again.
+func (t *treeSync) outrankedByPower(node domain.ID, status string, at time.Time) bool {
+	o, ok := t.statuses[node]
+	if since := at.Sub(o.ObservedAt); !ok || since < 0 || since >= powerStatusGrace {
+		return false
+	}
+	var live ProxmoxStatus
+	return decodeObservation(o, &live) == nil && live.Source == StatusFromPower && live.Status != status
 }
 
 // advertisePower keeps proxmox.vm.power in step with the token's privilege.
