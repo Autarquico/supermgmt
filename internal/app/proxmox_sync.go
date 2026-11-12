@@ -842,8 +842,8 @@ func (t *treeSync) present(o objectSpec) error {
 // less than powerStatusGrace before this read, and it differs: the cached row
 // may not have caught up yet, so the live state stays. A read from before the
 // live one needs no guard: it is recorded with its older time, and the latest
-// observation stays the live one. Only reads after it are held, so a wall
-// clock set back cannot stretch the grace.
+// observation stays the live one, so only reads after it are held. A wall
+// clock set back leaves the live state latest until the clock passes it again.
 func (t *treeSync) outrankedByPower(node domain.ID, status string, at time.Time) bool {
 	o, ok := t.statuses[node]
 	if since := at.Sub(o.ObservedAt); !ok || since < 0 || since >= powerStatusGrace {
