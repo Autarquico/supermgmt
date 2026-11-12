@@ -171,6 +171,9 @@ type ProxmoxSync struct {
 	started  map[domain.ID]time.Time
 	clients  map[domain.ID]cachedClient
 	running  sync.WaitGroup
+	// life is Run's context while Run serves, nil before and after; SyncSoon
+	// starts only inside it, so shutdown cancels and waits for it like a pass.
+	life context.Context
 }
 
 type flight struct {
@@ -221,10 +224,14 @@ func orDefaultDuration(d, fallback time.Duration) time.Duration {
 }
 
 // Run starts the syncs that are due every tick until ctx ends, then waits for
-// the ones in flight (they are cancelled with ctx).
+// the ones in flight, its own and SyncSoon's (they are cancelled with ctx).
 func (s *ProxmoxSync) Run(ctx context.Context) error {
 	defer s.closeClients()
-	defer s.Wait()
+	s.serve(ctx)
+	defer func() {
+		s.retire()
+		s.Wait()
+	}()
 	ticker := time.NewTicker(s.opts.Tick)
 	defer ticker.Stop()
 	for {
@@ -239,7 +246,19 @@ func (s *ProxmoxSync) Run(ctx context.Context) error {
 	}
 }
 
-// Wait blocks until every sync Run started has finished.
+func (s *ProxmoxSync) serve(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.life = ctx
+}
+
+func (s *ProxmoxSync) retire() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.life = nil
+}
+
+// Wait blocks until every sync Run or SyncSoon started has finished.
 func (s *ProxmoxSync) Wait() { s.running.Wait() }
 
 func (s *ProxmoxSync) pass(ctx context.Context) error {
@@ -250,11 +269,7 @@ func (s *ProxmoxSync) pass(ctx context.Context) error {
 	now := s.cfg.Clock.Now()
 	for _, p := range providers {
 		if s.syncs(p) && s.due(p, now) {
-			s.running.Go(func() {
-				if err := s.Sync(ctx, p.ID); err != nil && ctx.Err() == nil {
-					s.opts.OnError(p.ID, err)
-				}
-			})
+			s.running.Go(func() { s.syncAndReport(ctx, p.ID) })
 		}
 	}
 	return nil
@@ -294,6 +309,37 @@ func configuredSyncInterval(p domain.Provider) (time.Duration, bool) {
 	text, _ := p.Config[providerConfigSyncInterval].(string)
 	d, err := time.ParseDuration(text)
 	return d, err == nil && d > 0
+}
+
+// SyncSoon starts a sync of the provider in the background and returns at
+// once; nothing starts when the caller's ctx is already done. A sync already in
+// flight read the cluster before the call, so SyncSoon lets it end and then
+// reads again instead of sharing its outcome. The sync belongs
+// to Run, not to the caller: it runs only while Run serves and is cancelled
+// when Run's context ends.
+func (s *ProxmoxSync) SyncSoon(ctx context.Context, id domain.ID) { //nolint:contextcheck // the sync runs on Run's context, which outlives the caller's
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ctx.Err() != nil || s.life == nil || s.life.Err() != nil {
+		return
+	}
+	life, earlier := s.life, s.inflight[id]
+	s.running.Go(func() {
+		if earlier != nil {
+			select {
+			case <-earlier.done:
+			case <-life.Done():
+				return
+			}
+		}
+		s.syncAndReport(life, id)
+	})
+}
+
+func (s *ProxmoxSync) syncAndReport(ctx context.Context, id domain.ID) {
+	if err := s.Sync(ctx, id); err != nil && ctx.Err() == nil {
+		s.opts.OnError(id, err)
+	}
 }
 
 // Sync runs one discovery of the provider, or joins the one already running
