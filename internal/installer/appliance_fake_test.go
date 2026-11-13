@@ -234,6 +234,15 @@ func (w *aw) Lstat(p string) (EntryInfo, error) {
 	return EntryInfo{}, fs.ErrNotExist
 }
 
+func (w *aw) ReadFileOwned(p string) ([]byte, EntryInfo, error) {
+	data, err := w.ReadFile(p)
+	if err != nil {
+		return nil, EntryInfo{}, err
+	}
+	info, err := w.Lstat(p)
+	return data, info, err
+}
+
 func (w *aw) ReadFile(p string) ([]byte, error) {
 	if err := w.read("host.read " + p); err != nil {
 		return nil, err

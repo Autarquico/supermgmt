@@ -45,9 +45,13 @@ type upgradeState struct {
 	Archive        string       `json:"archive,omitempty"`
 	Superseded     []string     `json:"superseded,omitempty"` // replaced archives not yet removed
 	AllowDowngrade bool         `json:"allow_downgrade,omitempty"`
+	TLSSANs        []string     `json:"tls_sans,omitempty"` // names to add to the self-signed leaf before the start
 	StartedAt      time.Time    `json:"started_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`
 }
+
+// sameBuild: the upgrade only re-signs the certificate, the binary stays.
+func (s upgradeState) sameBuild() bool { return s.OldSHA256 == s.NewSHA256 }
 
 // beforeSwap says the live binary is still the old one (or just became the new one).
 func (s upgradeState) beforeSwap() bool {
@@ -66,8 +70,14 @@ type upgradeTarget struct {
 	services   ServiceManager // manages unit
 	runAs      string         // account for offline sm commands ("" = the caller)
 	server     bool           // a system service with an HTTP readiness endpoint
+	tlsCert    string         // the certificate file the configuration serves directly ("": none)
 	dbPath     string         // "" when there is no database
 	backupsDir string
+}
+
+// selfSigned: the service serves the leaf the installer generates (ADR-0026).
+func (t upgradeTarget) selfSigned() bool {
+	return t.server && t.tlsCert == selfSignedFiles(t.l).Cert
 }
 
 func (t upgradeTarget) staged() string   { return t.l.Binary + ".new" }
@@ -135,6 +145,9 @@ func (in *Installer) withStorage(t upgradeTarget) (upgradeTarget, error) {
 		return t, failWrap(ExitConfiguration, "load configuration", err)
 	}
 	t.dbPath, t.backupsDir = res.Config.Storage.SQLite.Path, res.Config.Backup.Directory
+	if res.Config.Server.TLS.Mode == config.TLSDirect {
+		t.tlsCert = res.Config.Server.TLS.CertFile
+	}
 	return t, nil
 }
 
@@ -144,22 +157,24 @@ func (in *Installer) hasData(t upgradeTarget) bool {
 
 // ---- state file ----
 
-func (u *upgrader) loadState() (upgradeState, bool, error) {
-	raw, err := u.d.Files.ReadFile(u.t.statePath())
+// loadState also returns what the file system said about the very file it read: upgrade.json
+// sits in a service-owned directory, so its owner must come from the same descriptor as its bytes.
+func (u *upgrader) loadState() (upgradeState, EntryInfo, bool, error) {
+	raw, info, err := u.d.Files.ReadFileOwned(u.t.statePath())
 	if errors.Is(err, fs.ErrNotExist) {
-		return upgradeState{}, false, nil
+		return upgradeState{}, EntryInfo{}, false, nil
 	}
 	if err != nil {
-		return upgradeState{}, false, failWrap(ExitConfiguration, "read the upgrade state", err)
+		return upgradeState{}, EntryInfo{}, false, failWrap(ExitConfiguration, "read the upgrade state", err)
 	}
 	var st upgradeState
 	if err := json.Unmarshal(raw, &st); err != nil {
-		return st, false, failWrap(ExitConfiguration, "the upgrade state "+u.t.statePath()+" is unreadable; inspect it before upgrading", err)
+		return st, info, false, failWrap(ExitConfiguration, "the upgrade state "+u.t.statePath()+" is unreadable; inspect it before upgrading", err)
 	}
 	if st.StartedAt.IsZero() {
 		st.StartedAt = st.UpdatedAt // a state written before StartedAt existed
 	}
-	return st, true, nil
+	return st, info, true, nil
 }
 
 // record makes phase durable (temp file, fsync, rename, directory fsync).

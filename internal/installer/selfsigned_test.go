@@ -34,13 +34,18 @@ func installSelfSigned(t *testing.T, o Options) (*world, string) {
 // a client that trusts only the CA file, verifying serverName.
 func handshake(t *testing.T, w *world, serverName string) error {
 	t.Helper()
+	return handshakePEM(t, w.files[tlsDir+"ca.pem"], w.files[tlsDir+"server.pem"], w.files[tlsDir+"server.key"], serverName)
+}
+
+func handshakePEM(t *testing.T, caPEM, certPEM, keyPEM []byte, serverName string) error {
+	t.Helper()
 	ctx := context.Background()
-	pair, err := tls.X509KeyPair(w.files[tlsDir+"server.pem"], w.files[tlsDir+"server.key"])
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(w.files[tlsDir+"ca.pem"]) {
+	if !roots.AppendCertsFromPEM(caPEM) {
 		t.Fatal("CA file holds no certificate")
 	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
