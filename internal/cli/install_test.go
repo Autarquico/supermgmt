@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"io/fs"
 	"strings"
 	"testing"
@@ -123,6 +125,9 @@ func TestInstallExitCodesFollowThePlatformContract(t *testing.T) {
 		{"http public url", 0, []string{"server", "--public-url", "http://m.example.com"}, installer.ExitInvalid},
 		{"direct without certificate", 0, []string{"server", "--public-url", "https://m.example.com", "--tls", "direct"}, installer.ExitInvalid},
 		{"missing public url", 0, []string{"server"}, installer.ExitInvalid},
+		{"tls-san without self-signed", 0, []string{"server", "--public-url", "https://m.example.com", "--tls-san", "100.84.213.96"}, installer.ExitInvalid},
+		{"tls-san that is a url", 0, []string{"server", "--public-url", "https://m.example.com", "--tls", "self-signed", "--tls-san", "https://100.84.213.96"}, installer.ExitInvalid},
+		{"tls-san on upgrade without an installation", 0, []string{"upgrade", "--tls-san", "100.84.213.96"}, installer.ExitPrerequisite},
 		{"upgrade without an installation", 0, []string{"upgrade"}, installer.ExitPrerequisite},
 		{"proxmox mode off a Proxmox host", 0, []string{"proxmox-lxc"}, installer.ExitUnsupported},
 		{"unknown mode", 0, []string{"bogus"}, exitUsage},
@@ -139,6 +144,35 @@ func TestInstallExitCodesFollowThePlatformContract(t *testing.T) {
 				t.Error("a failure must be reported")
 			}
 		})
+	}
+}
+
+func TestInstallServerTLSSANReachesTheGeneratedCertificate(t *testing.T) {
+	host := &stubHost{files: map[string][]byte{}}
+	code, _, errOut := runInstall(t, host, 0, "server", "--public-url", "https://mgmt.example.com", "--tls", "self-signed",
+		"--tls-san", "100.84.213.96", "--tls-san", "mgmt.tailnet.example", "--non-interactive")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	block, _ := pem.Decode(host.files["/etc/supermgmt/tls/server.pem"])
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := leaf.VerifyHostname("100.84.213.96"); err != nil {
+		t.Error(err)
+	}
+	if err := leaf.VerifyHostname("mgmt.tailnet.example"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestInstallTLSSANIsOnServerAndUpgradeOnly(t *testing.T) {
+	for _, mode := range newInstallCmd(nil).Commands() {
+		want := mode.Name() == "server" || mode.Name() == "upgrade"
+		if got := mode.Flags().Lookup("tls-san") != nil; got != want {
+			t.Errorf("sm install %s has --tls-san = %t, want %t", mode.Name(), got, want)
+		}
 	}
 }
 

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 // runUpgrade replaces the installed binary (spec §29.3, ADR-0027).
@@ -16,6 +18,11 @@ func (in *Installer) runUpgrade(ctx context.Context, o Options) error {
 }
 
 func (in *Installer) upgrade(ctx context.Context, o Options, h provisionHooks) error {
+	sans, err := normalizeSANs(o.TLSSANs)
+	if err != nil {
+		return err
+	}
+	o.TLSSANs = sans
 	in.reportHost()
 	release, held, err := in.lockForAppliances()
 	if err != nil {
@@ -32,6 +39,9 @@ func (in *Installer) upgrade(ctx context.Context, o Options, h provisionHooks) e
 	t, err := in.installedTarget(o, true)
 	if err != nil {
 		return err
+	}
+	if len(sans) > 0 && !t.selfSigned() {
+		return fail(ExitInvalid, "--tls-san applies only to an installation served with --tls self-signed")
 	}
 	if t.server && !held {
 		release, err := in.lockInstaller()
@@ -118,7 +128,7 @@ func (u *upgrader) fresh(ctx context.Context) error {
 	if err != nil {
 		return failWrap(ExitInvalid, "read the new sm binary", err)
 	}
-	if oldSHA == newSHA {
+	if oldSHA == newSHA && len(u.o.TLSSANs) == 0 {
 		u.say("%s already is this build; nothing to upgrade", t.l.Binary)
 		return nil
 	}
@@ -128,7 +138,7 @@ func (u *upgrader) fresh(ctx context.Context) error {
 	if err := u.stage(newBin, newSHA); err != nil {
 		return err
 	}
-	u.st = upgradeState{OldSHA256: oldSHA, NewSHA256: newSHA}
+	u.st = upgradeState{OldSHA256: oldSHA, NewSHA256: newSHA, TLSSANs: u.o.TLSSANs}
 	if err := u.checkVersions(ctx); err != nil {
 		_ = files.RemoveAll(t.staged())
 		return err
@@ -137,11 +147,13 @@ func (u *upgrader) fresh(ctx context.Context) error {
 		_ = files.RemoveAll(t.staged())
 		return err
 	}
-	if err := u.linkPrevious(oldSHA); err != nil {
-		return err
-	}
-	if err := u.hit("U:prev-linked"); err != nil {
-		return err
+	if !u.st.sameBuild() { // the running binary is not replaced, so sm.prev keeps what it holds
+		if err := u.linkPrevious(oldSHA); err != nil {
+			return err
+		}
+		if err := u.hit("U:prev-linked"); err != nil {
+			return err
+		}
 	}
 	if err := u.record(upPrepared); err != nil {
 		return err
@@ -235,6 +247,10 @@ func (u *upgrader) checkVersions(ctx context.Context) error {
 			return fail(ExitInvalid, "cannot order version %q against %q, so a downgrade cannot be ruled out; pass --allow-downgrade to proceed", to, from)
 		}
 	}
+	if u.st.sameBuild() {
+		u.say("plan: the service stops, a read-only backup is taken, then the certificate is re-signed to cover %s and the service starts again", strings.Join(u.st.TLSSANs, ", "))
+		return nil
+	}
 	u.say("upgrade plan: %s -> %s; the service stops, a read-only backup is taken, then the binary is replaced", from, to)
 	return nil
 }
@@ -286,6 +302,9 @@ func (u *upgrader) linkPrevious(oldSHA string) error {
 // ---- resume ----
 
 func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
+	if err := u.checkResumeSANs(st); err != nil {
+		return err
+	}
 	u.st = st
 	u.say("an unfinished upgrade %s -> %s is at phase %s", st.FromVersion, st.ToVersion, st.Phase)
 	if !st.beforeSwap() {
@@ -309,6 +328,17 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 		return u.abortBeforeSwap(ctx, err)
 	}
 	return u.advance(ctx)
+}
+
+// checkResumeSANs: names asked for now must be the ones the unfinished upgrade carries. A resume
+// without --tls-san just finishes it with its own.
+func (u *upgrader) checkResumeSANs(st upgradeState) error {
+	asked := slices.Sorted(slices.Values(u.o.TLSSANs))
+	if len(asked) > 0 && !slices.Equal(asked, slices.Sorted(slices.Values(st.TLSSANs))) {
+		return fail(ExitInvalid, "an unfinished upgrade %s -> %s carries --tls-san %q, not %q; rerun without --tls-san (or with the same names) to finish it first",
+			st.FromVersion, st.ToVersion, strings.Join(st.TLSSANs, ","), strings.Join(asked, ","))
+	}
+	return nil
 }
 
 // ensurePrepared restores sm.new and sm.prev when a crash left them damaged.
@@ -440,7 +470,7 @@ func (u *upgrader) advance(ctx context.Context) error {
 		phase := u.st.Phase
 		switch phase {
 		case upDone:
-			u.say("upgraded sm %s -> %s; the previous binary is kept at %s", u.st.FromVersion, u.st.ToVersion, u.t.previous())
+			u.reportDone()
 			return nil
 		case upReverting:
 			return u.revert(ctx)
@@ -459,6 +489,14 @@ func (u *upgrader) advance(ctx context.Context) error {
 			return u.healthFailed(ctx, err)
 		}
 	}
+}
+
+func (u *upgrader) reportDone() {
+	if u.st.sameBuild() {
+		u.say("the certificate now covers %s; sm %s is unchanged", strings.Join(u.st.TLSSANs, ", "), u.st.ToVersion)
+		return
+	}
+	u.say("upgraded sm %s -> %s; the previous binary is kept at %s", u.st.FromVersion, u.st.ToVersion, u.t.previous())
 }
 
 func (u *upgrader) step(ctx context.Context, phase upgradePhase) error {
@@ -682,7 +720,8 @@ func (u *upgrader) swap(ctx context.Context) error {
 		return fmt.Errorf("hash %s: %w", t.l.Binary, err)
 	}
 	switch live {
-	case u.st.NewSHA256: // renamed before a crash
+	case u.st.NewSHA256: // renamed before a crash, or the same build (nothing to rename)
+		_ = files.RemoveAll(t.staged())
 	case u.st.OldSHA256:
 		release, err := u.lockDatabase() // held until the rename is durable
 		if err != nil {
@@ -714,6 +753,9 @@ func (u *upgrader) swap(ctx context.Context) error {
 }
 
 func (u *upgrader) startNew(ctx context.Context) error {
+	if err := u.resignLeaf(); err != nil {
+		return err
+	}
 	if err := u.startService(ctx, "start the new version"); err != nil {
 		return err
 	}
@@ -721,6 +763,19 @@ func (u *upgrader) startNew(ctx context.Context) error {
 		return err
 	}
 	return u.record(upStarted)
+}
+
+// resignLeaf adds the requested names to the self-signed leaf while the service is stopped, so it
+// starts with the new certificate. It is a no-op once the names are covered, which makes the
+// step safe to repeat after a crash on either side of the write.
+func (u *upgrader) resignLeaf() error {
+	if len(u.st.TLSSANs) == 0 {
+		return nil
+	}
+	if err := u.in.resignLeaf(u.t.l, u.st.TLSSANs); err != nil {
+		return err
+	}
+	return u.hit("U:tls:resigned")
 }
 
 func (u *upgrader) startService(ctx context.Context, what string) error {

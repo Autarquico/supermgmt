@@ -117,6 +117,7 @@ Server and restore flags:
 | `--tls proxy` (default), `--tls direct` or `--tls self-signed` | Who terminates TLS, see below. |
 | `--tls-cert FILE`, `--tls-key FILE` | With `--tls direct` only. |
 | `--trusted-proxy IP/CIDR` (repeatable) | With `--tls proxy` only. Default `127.0.0.1/32`. |
+| `--tls-san NAME` (repeatable) | With `--tls self-signed` only (`server`, not `restore`): an extra IP address or DNS name the generated certificate must cover, see [below](#adding-names-to-a-self-signed-certificate). |
 | `--listen ADDR` | Default `127.0.0.1:8787` for proxy, `0.0.0.0:8443` for direct and self-signed. |
 | `--no-start` | Server only: write and load the unit without enabling or starting it. The appliance installer uses it; the unit is enabled later, after the credential is in place. |
 | `--name NAME` | Instance name, default `supermgmt`. |
@@ -135,6 +136,16 @@ There is **no ACME**. You bring the certificate, or a reverse proxy that has one
 - `--tls direct`: the daemon terminates TLS 1.2 or newer with the pair you give it. The installer checks that the pair matches, has not expired and covers the host of `--public-url`. The pair is re-read on `SIGHUP` (a failed reload keeps the old pair).
 
 - `--tls self-signed`: direct TLS with a certificate authority generated on the host (`internal/installer/selfsigned.go`): a CA valid 10 years and a server certificate valid 5 years, valid for the host of `--public-url` (a DNS name or an IP) plus the loopback names, so `--public-url` must be the address clients really use. The CA certificate and its SHA-256 fingerprint are printed; copy the CA to each client and run `sm profile add <name> --url <public URL> --ca-file <ca.pem> --use`. There is no renewal flow: after the leaf expires you reinstall or supply your own pair with `--tls direct`. The proxmox-lxc mode uses this arrangement.
+
+#### Adding names to a self-signed certificate
+
+A controller that is also reachable by another address (a Tailscale IP, a second DNS name) needs that name in the leaf. Pass `--tls-san NAME` (repeatable) to `install server`, or to `install upgrade` on an installation that is already self-signed:
+
+```bash
+sudo ./sm install upgrade --tls-san 100.84.213.96 --tls-san mgmt.tailnet.example
+```
+
+Each value is a bare IP address or DNS name: a URL, a port, whitespace, a wildcard or a malformed IP is refused (exit 2). The existing CA and the server key are reused and only `server.pem` is replaced, so profiles that already trust the CA keep working. The names the leaf has (the `--public-url` host, loopback, earlier `--tls-san`) are kept and the new ones added; the new leaf never outlives the CA, and an expired CA is refused. On anything but a self-signed install (proxy, or `--tls direct` with your own pair) the flag is an error. On a rerun of `install server` over an existing certificate the leaf is re-signed the same way, but that run does not restart a running service: use `install upgrade --tls-san` to have the new leaf loaded. Covered by `TestUpgrade_TLSSANReSignsTheLeafWithTheSameCAWhileTheServiceIsStopped` and the `ReSigning` tests in `internal/installer`.
 
 Cloudflare Access/Tunnel is a proxy arrangement: see [cloudflare.md](cloudflare.md).
 
@@ -249,16 +260,17 @@ sudo ./sm install upgrade                     # replace the installed sm with th
 sudo ./sm install upgrade --binary /path/sm   # replace it with another binary
 install.sh upgrade                            # download, verify and install the release
 sudo ./sm install upgrade --allow-downgrade   # deliberately install an older version
+sudo ./sm install upgrade --tls-san 100.84.213.96   # also cover another name (self-signed installs only)
 ```
 
 `install.sh upgrade` verifies the release exactly like a fresh install and then runs the new `sm install upgrade`, so the binary doing the upgrade is the one being installed. The policy (`internal/installer/upgrade.go`):
 
-1. Refuse a lower version (exit 2) unless `--allow-downgrade`; a version that cannot be ordered is treated the same way. An unchanged binary ends with "nothing to upgrade".
+1. Refuse a lower version (exit 2) unless `--allow-downgrade`; a version that cannot be ordered is treated the same way. An unchanged binary ends with "nothing to upgrade", unless `--tls-san` is given: then the run does everything below except replace the binary (see [Adding names](#adding-names-to-a-self-signed-certificate)).
 2. Check free disk for the staged binary and the backup (exit 4).
 3. Stage `sm.new`, hard-link the live binary as `sm.prev`, and record the phase in `/var/lib/supermgmt/upgrade.json`.
 4. **Hold the service**, then stop it and **verify it terminated and the database lock is free**. The hold (systemd: a drop-in `50-upgrade-hold.conf` that refuses manual start, plus `disable`; launchd: `launchctl disable`) is applied *before* the stop, so nothing, including a reboot or a dependency, can start the old service while the upgrade is unfinished. Starting the service again lifts it.
 5. Take a **read-only offline backup with the new binary** (`sm backup create --offline`): it opens the database read-only, never migrates and never activates, and the archive's schema version must equal the database's. The archive goes to the configured backups directory. If the installer is killed after the backup and rerun before the swap, it **takes the archive again** under the database lock and removes the superseded one, so the archive always matches the database that is about to be migrated.
-6. Replace `sm` by rename (the live path is never missing), start the service and wait up to 60 s for `/health/ready`. The new daemon migrates the database forward.
+6. Replace `sm` by rename (the live path is never missing), start the service and wait up to 60 s for `/health/ready`. The new daemon migrates the database forward. With `--tls-san`, the leaf is re-signed after the swap and before the start, while the service is stopped; the names are recorded in `upgrade.json`, so a rerun after a crash finishes with them even without the flag (and refuses different ones).
 
 Each phase (`prepared`, `stopped`, `backed_up`, `swapped`, `started`, `done`) is recorded durably. A rerun after a crash resumes from the recorded phase, or abandons an upgrade whose binary is no longer the one at hand, and never overwrites the known-good binary. `sm.prev` stays after a successful upgrade.
 

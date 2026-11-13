@@ -45,9 +45,13 @@ type upgradeState struct {
 	Archive        string       `json:"archive,omitempty"`
 	Superseded     []string     `json:"superseded,omitempty"` // replaced archives not yet removed
 	AllowDowngrade bool         `json:"allow_downgrade,omitempty"`
+	TLSSANs        []string     `json:"tls_sans,omitempty"` // names to add to the self-signed leaf before the start
 	StartedAt      time.Time    `json:"started_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`
 }
+
+// sameBuild: the upgrade only re-signs the certificate, the binary stays.
+func (s upgradeState) sameBuild() bool { return s.OldSHA256 == s.NewSHA256 }
 
 // beforeSwap says the live binary is still the old one (or just became the new one).
 func (s upgradeState) beforeSwap() bool {
@@ -66,8 +70,14 @@ type upgradeTarget struct {
 	services   ServiceManager // manages unit
 	runAs      string         // account for offline sm commands ("" = the caller)
 	server     bool           // a system service with an HTTP readiness endpoint
+	tlsCert    string         // the certificate file the configuration serves directly ("": none)
 	dbPath     string         // "" when there is no database
 	backupsDir string
+}
+
+// selfSigned: the service serves the leaf the installer generates (ADR-0026).
+func (t upgradeTarget) selfSigned() bool {
+	return t.server && t.tlsCert == selfSignedFiles(t.l).Cert
 }
 
 func (t upgradeTarget) staged() string   { return t.l.Binary + ".new" }
@@ -135,6 +145,9 @@ func (in *Installer) withStorage(t upgradeTarget) (upgradeTarget, error) {
 		return t, failWrap(ExitConfiguration, "load configuration", err)
 	}
 	t.dbPath, t.backupsDir = res.Config.Storage.SQLite.Path, res.Config.Backup.Directory
+	if res.Config.Server.TLS.Mode == config.TLSDirect {
+		t.tlsCert = res.Config.Server.TLS.CertFile
+	}
 	return t, nil
 }
 

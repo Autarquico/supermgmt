@@ -509,6 +509,7 @@ Flags:
 - `--tls` (string, default `proxy`): TLS arrangement: proxy (behind a reverse proxy), direct, or self-signed (direct with a generated CA)
 - `--tls-cert` (string): certificate file for --tls direct
 - `--tls-key` (string): private key file for --tls direct
+- `--tls-san` (stringSlice): extra IP or DNS name the self-signed certificate must cover (repeatable); on upgrade it is re-signed with the existing CA
 - `--trusted-proxy` (stringSlice): trusted proxy IP or CIDR for --tls proxy (default 127.0.0.1/32)
 - `--yes` (bool): do not ask for confirmation of the plan (SUPERMGMT_YES)
 
@@ -544,6 +545,7 @@ Flags:
 - `--allow-downgrade` (bool): allow installing a lower version (audited)
 - `--binary` (string): verified sm binary to install (default: the running sm)
 - `--non-interactive` (bool): never prompt; fail instead of guessing (SUPERMGMT_NONINTERACTIVE)
+- `--tls-san` (stringSlice): extra IP or DNS name the self-signed certificate must cover (repeatable); on upgrade it is re-signed with the existing CA
 - `--vmid` (int): on a Proxmox host: the appliance to upgrade (required when there are several)
 - `--yes` (bool): do not ask for confirmation of the plan (SUPERMGMT_YES)
 
