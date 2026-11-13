@@ -68,6 +68,9 @@ func TestUpgrade_TLSSANReSignsTheLeafWithTheSameCAWhileTheServiceIsStopped(t *te
 	if stopped < 0 || resigned < stopped || started < resigned {
 		t.Errorf("the leaf must be re-signed after the stop and before the start: %v", h.events)
 	}
+	if synced := h.index("syncdir " + f.Dir); synced < resigned || synced > started {
+		t.Errorf("the TLS directory must be synced after the leaf is written and before the service starts: %v", h.events)
+	}
 	if h.live() != binV2 || !h.running || h.startedAs != binV2 {
 		t.Errorf("live %q running %t as %q", h.live(), h.running, h.startedAs)
 	}

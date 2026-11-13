@@ -56,3 +56,24 @@ func TestUpgrade_TLSSANResumesWithoutTheFlagFromBothSidesOfTheReplacement(t *tes
 		})
 	}
 }
+
+func TestUpgrade_SameBuildResumeAfterTheStagedBinaryWasDeletedStillAppliesTheNames(t *testing.T) {
+	h := newUHost(t)
+	h.selfSigned(t)
+	h.put("/usr/local/src/sm-new", binV1)
+	l := applianceLayout()
+	if err := h.crashUpgradeAt("U:backed_up:recorded", tailscaleIP); !errors.Is(err, errCrashed) {
+		t.Fatalf("crash err = %v", err)
+	}
+	h.RemoveAll(l.Binary + ".new") // swap deletes it just before it records swapped
+	if err := h.upgradeWith(); err != nil {
+		t.Fatalf("rerun: %v\n%s", err, h.out.String())
+	}
+	if !h.covers(t, tailscaleIP) || !h.covers(t, "sm.example.com") {
+		t.Error("the names recorded by the crashed run were lost")
+	}
+	if st, ok := h.state(); !ok || st.Phase != upDone || !h.running {
+		t.Errorf("state %+v running %t", st, h.running)
+	}
+	h.noViolations(t)
+}

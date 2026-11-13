@@ -384,10 +384,10 @@ func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 	if err != nil {
 		return failWrap(ExitConfiguration, "hash the installed sm", err)
 	}
-	switch live {
-	case u.st.NewSHA256:
+	switch {
+	case live == u.st.NewSHA256 && !u.st.sameBuild():
 		return nil // renamed into place just before the crash
-	case u.st.OldSHA256:
+	case live == u.st.OldSHA256: // also the same build: swap deletes sm.new before swapped is recorded
 	default:
 		return fail(ExitConfiguration, "%s matches neither the old nor the new binary of the unfinished upgrade; inspect %s", t.l.Binary, t.statePath())
 	}
@@ -396,10 +396,10 @@ func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 			return err
 		}
 	}
-	if err := u.linkPrevious(u.st.OldSHA256); err != nil {
-		return err
+	if u.st.sameBuild() { // the running binary is not replaced, so sm.prev keeps what it holds
+		return nil
 	}
-	return nil
+	return u.linkPrevious(u.st.OldSHA256)
 }
 
 // retakeArchive: an archive recorded before a crash is only as good as the guarantee that
@@ -810,6 +810,12 @@ func (u *upgrader) resignLeaf() error {
 	}
 	if _, err := u.in.resignLeaf(u.t.l, u.st.TLSSANs); err != nil {
 		return err
+	}
+	// the phase is recorded durably next; the certificate it relies on must be too, also when a
+	// crashed run already wrote it
+	dir := filepath.Dir(selfSignedFiles(u.t.l).Cert)
+	if err := u.d.Files.SyncDir(dir); err != nil {
+		return fmt.Errorf("sync %s: %w", dir, err)
 	}
 	return u.hit("U:tls:resigned")
 }

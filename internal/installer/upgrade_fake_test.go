@@ -226,7 +226,10 @@ func (h *uhost) AppendSync(p string, line []byte) error {
 	return nil
 }
 
-func (h *uhost) SyncDir(string) error { return nil }
+func (h *uhost) SyncDir(dir string) error {
+	h.record("syncdir %s", dir)
+	return nil
+}
 
 func (h *uhost) Rename(oldPath, newPath string) error {
 	n, ok := h.inodes[oldPath]
