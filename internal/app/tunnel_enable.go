@@ -240,6 +240,13 @@ func (r *tunnelRun) insertOperation(ctx context.Context, kind database.TunnelOpe
 				return err
 			}
 		}
+		// A route is admitted without the jobs' locks: the check and the record share the transaction, so a
+		// route admitted before it is seen and one admitted after finds the node's tunnel closing.
+		if kind == database.TunnelDisable {
+			if err := requireNoLiveRoutes(ctx, tx, r.node.ID); err != nil {
+				return err
+			}
+		}
 		var err error
 		created, err = database.CreateTunnelOperation(ctx, tx, database.TunnelOperation{
 			ID: r.cfg.IDs.NewID(), NodeID: r.node.ID, Kind: kind, AccountID: r.opts.Config.AccountID,

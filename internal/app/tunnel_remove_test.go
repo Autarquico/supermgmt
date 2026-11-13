@@ -240,6 +240,30 @@ func TestARouteAdmittedWhileTheRemovalWaitedStopsItBeforeAnythingChanges(t *test
 	rs.wantUntouched(base, ops)
 }
 
+func TestARouteExposedWhileTheRemovalLooksUpTheZoneIsNeverStrandedByTheRemoval(t *testing.T) {
+	rs := newRouteSettingOn(newRemovableTunnel(t))
+	rs.exec(`UPDATE environments SET risk_level = 'development'`) // an owners expose needs no approval there
+	rs.requestRemoval()
+	var exposed error
+	rs.chaos.onZone = func() {
+		rs.chaos.onZone = nil
+		_, exposed = rs.expose(webRequest(shop))
+	}
+
+	err := rs.attempt()
+
+	if exposed != nil {
+		t.Fatalf("Expose between the check and the takedown record = %v, want it admitted", exposed)
+	}
+	wantError(t, err, smerr.CodeConflict, "")
+	if state := rs.currentNode().ManagementState; state != domain.ManagementManaged {
+		t.Errorf("node is %s, want it still managed with its route", state)
+	}
+	if got := rs.operations()[0].Kind; got == database.TunnelDisable {
+		t.Errorf("a disable record was opened over a live route")
+	}
+}
+
 func TestRemovingANodeWithATunnelIsRefusedWhenCloudflareCannotBeReached(t *testing.T) {
 	t.Run("without a cloudflare block the request is refused", func(t *testing.T) {
 		ts := newRemovableTunnel(t)

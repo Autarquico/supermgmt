@@ -93,6 +93,8 @@ type chaosAPI struct {
 	// onToken runs when the tunnel token is read, the last Cloudflare call
 	// before the node install.
 	onToken func()
+	// onZone runs when the zone is looked up, the first Cloudflare call of a run.
+	onZone func()
 }
 
 var errCrash = errors.New("the worker died")
@@ -115,6 +117,14 @@ func (c *chaosAPI) after(err error) error {
 		c.clock(time.Minute)
 	}
 	return err
+}
+
+func (c *chaosAPI) ZoneByName(ctx context.Context, name string) (cloudflare.Zone, error) {
+	zone, err := c.CloudflareAPI.ZoneByName(ctx, name)
+	if c.onZone != nil {
+		c.onZone()
+	}
+	return zone, err
 }
 
 func (c *chaosAPI) TunnelToken(ctx context.Context, id string) (audit.Secret, error) {
