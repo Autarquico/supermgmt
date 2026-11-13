@@ -16,6 +16,7 @@ import (
 	"github.com/autarquico/supermgmt/internal/jobs"
 	"github.com/autarquico/supermgmt/internal/providers/cloudflare/cffake"
 	"github.com/autarquico/supermgmt/internal/secrets"
+	"github.com/autarquico/supermgmt/internal/transport/ssh/templates"
 )
 
 // newRemovableTunnel is a node that completed `setup --tunnel`, with admins allowed to remove nodes.
@@ -443,6 +444,43 @@ func TestRemovingANodeTakesOverAnUnfinishedEnableAndItsUnrecordedObjects(t *test
 	}
 	if got := len(ts.events("node.tunnel.enable_abandoned")); got != 1 {
 		t.Errorf("%d enable_abandoned events, want 1", got)
+	}
+}
+
+// A node set up before whose new enable installed cloudflared but failed its verification stays direct with
+// the service on it. A removal takes that enable over and fails at the Access delete; the disable that
+// follows resumes the record the removal left and must still take the service off the node.
+func TestADisableAfterAFailedRemovalOfAnInstalledEnableStillRemovesTheNodeService(t *testing.T) {
+	ts := newRemovableTunnel(t)
+	ts.planDisable()
+	mustf(t, ts.attempt(), "first disable")
+	ts.current = nil
+	ts.breakTunnelVerification()
+	ts.plan()
+	if err := ts.attempt(); err == nil {
+		t.Fatal("the re-enable should fail at verification")
+	}
+	ts.abandonQueuedJob()
+	ts.repairTunnelVerification()
+	if _, installed := ts.files[templates.CloudflaredUnitPath]; !installed {
+		t.Fatal("the failed enable should have left the service on the node")
+	}
+
+	ts.requestRemoval()
+	ts.arm("refused before", 3)
+	failure := ts.attempt()
+	if failure == nil {
+		t.Fatal("the removal should have failed")
+	}
+	mustf(t, ts.store.FailTerminal(context.Background(), ts.lease, failure), "the removal gives up")
+
+	ts.planDisable()
+	mustf(t, ts.attempt(), "the disable")
+	if ops := ts.operations(); ops[0].Phase != database.PhaseDone {
+		t.Errorf("newest operation is %s, want done", ops[0].Phase)
+	}
+	if _, left := ts.files[templates.CloudflaredUnitPath]; left {
+		t.Error("the disable reported done with the cloudflared unit still on the node")
 	}
 }
 

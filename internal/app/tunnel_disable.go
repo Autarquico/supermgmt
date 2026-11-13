@@ -333,11 +333,12 @@ func (r *disableRun) switchToDirect(ctx context.Context) error {
 }
 
 // removeService stops and removes the connector from the node, as the admin
-// account over the direct path. It removes only what setup installed.
+// account over the direct path. It removes only what setup installed. It runs
+// whatever phase the record is at, because a node removal that took over an
+// enable which had installed the connector leaves a record past this phase
+// that never touched the node; the removal is idempotent, so a resume after
+// a crash repeats it at no harm.
 func (r *disableRun) removeService(ctx context.Context, c core) error {
-	if phaseIndex(r.op.Phase) >= phaseIndex(database.PhaseServiceRemoved) {
-		return nil
-	}
 	if err := r.mayMutate(ctx); err != nil {
 		return err
 	}
