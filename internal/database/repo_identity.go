@@ -121,13 +121,14 @@ func RoleNamesByIdentity(ctx context.Context, q Querier) (map[domain.ID][]string
 	return out, rows.Err()
 }
 
-// CountEnabledAdmins counts the enabled identities bound to the role named admin.
+// CountEnabledAdmins counts the enabled identities bound to the role named
+// admin that can administer: an MCP identity never can, whatever it is bound to.
 func CountEnabledAdmins(ctx context.Context, q Querier, adminRole string) (int, error) {
 	var n int
 	err := q.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT i.id) FROM identities i
 		JOIN role_bindings b ON b.identity_id = i.id JOIN roles r ON r.id = b.role_id
-		WHERE r.name = ? AND i.disabled_at IS NULL`, adminRole).Scan(&n)
+		WHERE r.name = ? AND i.disabled_at IS NULL AND i.actor_type <> 'mcp'`, adminRole).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count enabled admins: %w", err)
 	}

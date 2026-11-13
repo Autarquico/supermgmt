@@ -1004,7 +1004,7 @@ paths:
       operationId: disableIdentity
       summary: Disable an identity. Admin only.
       description: >-
-        Revokes its sessions, API tokens, MCP tokens and OAuth access tokens, removes its role bindings and audits
+        Revokes its sessions and API tokens, removes its role bindings and audits
         `identity.disabled`, in one transaction. It also deletes the MCP clients the identity requested (their tokens and
         OAuth access tokens are revoked) and invalidates the unused join tokens it created. A job it already runs
         finishes; one it queued fails at claim. Refuses the system identity, an MCP identity and the last enabled admin.

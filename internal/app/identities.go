@@ -135,9 +135,6 @@ func (a *AuthService) DisableIdentity(ctx context.Context, by Caller, id domain.
 		if target.DisabledAt != nil {
 			return identityView(target, roleNames(roles)), nil
 		}
-		if err := keepOneAdmin(ctx, tx, roles); err != nil {
-			return wire.Identity{}, err
-		}
 		now := a.cfg.Clock.Now()
 		if err := database.SetIdentityDisabled(ctx, tx, id, &now); err != nil {
 			return wire.Identity{}, err
@@ -155,6 +152,9 @@ func (a *AuthService) DisableIdentity(ctx context.Context, by Caller, id domain.
 		}
 		joins, err := database.InvalidateJoinTokensCreatedBy(ctx, tx, id, now)
 		if err != nil {
+			return wire.Identity{}, err
+		}
+		if err := keepOneAdmin(ctx, tx, roles); err != nil {
 			return wire.Identity{}, err
 		}
 		target.DisabledAt = &now
@@ -228,8 +228,10 @@ func manageableIdentity(ctx context.Context, q database.Querier, id domain.ID) (
 	return target, nil
 }
 
-// keepOneAdmin refuses when roles include admin and no other enabled admin
-// would be left. The count is taken in the same write transaction as the change.
+// keepOneAdmin refuses when roles, the ones the identity held, include admin
+// and no enabled admin is left. It runs after the identity is disabled and its
+// MCP clients are retired, in the same write transaction, so the count is of
+// what the disable leaves; the refusal rolls it all back.
 func keepOneAdmin(ctx context.Context, q database.Querier, roles []database.Role) error {
 	if !slices.Contains(roleNames(roles), adminRoleName) {
 		return nil
@@ -238,7 +240,7 @@ func keepOneAdmin(ctx context.Context, q database.Querier, roles []database.Role
 	if err != nil {
 		return err
 	}
-	if admins <= 1 {
+	if admins == 0 {
 		return smerr.New(smerr.CodeConflict, "", messageLastAdmin)
 	}
 	return nil

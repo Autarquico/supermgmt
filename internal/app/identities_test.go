@@ -285,6 +285,45 @@ func TestTheLastEnabledAdminCannotBeDisabledNotEvenByItself(t *testing.T) {
 	}
 }
 
+func TestAnMCPIdentityBoundToAdminDoesNotCountAsTheAdminThatRemains(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		f.identity(ctx, tx, "agent", domain.ActorMCP, f.role(ctx, tx, "admin"))
+		return nil
+	})
+
+	_, err := a.DisableIdentity(context.Background(), f.caller(f.admin), f.admin)
+
+	wantError(t, err, smerr.CodeConflict, "")
+	if got := f.rolesOf(f.admin); !slices.Equal(got, []string{"admin"}) {
+		t.Errorf("admin roles = %v, want them kept", got)
+	}
+}
+
+func TestTheLastAdminIsNotDisabledByRetiringTheMCPClientThatWasTheOtherOne(t *testing.T) {
+	m := newMCPClientsFixture(t)
+	a := newAuth(t, m.fixture, nil)
+	client := m.register(mcpcLocal("laptop"))
+	m.inTx(func(ctx context.Context, tx *database.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM role_bindings WHERE identity_id = ?`, m.admin2)
+		mustf(m.t, err, "unbind admin2")
+		return database.CreateRoleBinding(ctx, tx, database.RoleBinding{
+			ID: m.ids.NewID(), IdentityID: client.IdentityID, RoleID: m.role(ctx, tx, "admin"), CreatedAt: m.clock.Now(),
+		})
+	})
+
+	_, err := a.DisableIdentity(context.Background(), m.caller(m.admin), m.admin)
+
+	wantError(t, err, smerr.CodeConflict, "")
+	if got := m.client(client.ID); got.State == database.MCPClientDeleted {
+		t.Error("a refused disable retired the MCP client")
+	}
+	if m.identityRow(m.admin).DisabledAt != nil {
+		t.Error("a refused disable left the admin disabled")
+	}
+}
+
 func TestAnAdminMayDisableAnotherAdminWhileOneRemains(t *testing.T) {
 	f := newFixture(t)
 	a := newAuth(t, f, nil)

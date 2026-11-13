@@ -425,7 +425,8 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 Enable a disabled identity (no roles, no credentials)
 
 Enable a disabled identity. Its roles and credentials are not restored: grant the roles again with
-sm admin grant <identity-id> <role> (on the server), and it signs in again for new credentials.
+sm admin grant <identity-id> <role> (on the server). An OIDC identity gets credentials again by signing in; an
+identity created by bootstrap or recovery cannot sign in again, so use sm admin bootstrap-code --recover.
 
 ```text
 sm identities enable <identity-id>

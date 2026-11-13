@@ -97,7 +97,8 @@ func newIdentitiesEnableCmd(env []string) *cobra.Command {
 		Use:   "enable <identity-id>",
 		Short: "Enable a disabled identity (no roles, no credentials)",
 		Long: "Enable a disabled identity. Its roles and credentials are not restored: grant the roles again with\n" +
-			"sm admin grant <identity-id> <role> (on the server), and it signs in again for new credentials.",
+			"sm admin grant <identity-id> <role> (on the server). An OIDC identity gets credentials again by signing in; an\n" +
+			"identity created by bootstrap or recovery cannot sign in again, so use sm admin bootstrap-code --recover.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := parseID(args[0])
