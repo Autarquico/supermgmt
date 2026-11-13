@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 // runUpgrade replaces the installed binary (spec §29.3, ADR-0027).
@@ -16,6 +18,11 @@ func (in *Installer) runUpgrade(ctx context.Context, o Options) error {
 }
 
 func (in *Installer) upgrade(ctx context.Context, o Options, h provisionHooks) error {
+	sans, err := normalizeSANs(o.TLSSANs)
+	if err != nil {
+		return err
+	}
+	o.TLSSANs = sans
 	in.reportHost()
 	release, held, err := in.lockForAppliances()
 	if err != nil {
@@ -32,6 +39,9 @@ func (in *Installer) upgrade(ctx context.Context, o Options, h provisionHooks) e
 	t, err := in.installedTarget(o, true)
 	if err != nil {
 		return err
+	}
+	if len(sans) > 0 && !t.selfSigned() {
+		return fail(ExitInvalid, "--tls-san applies only to an installation served with --tls self-signed")
 	}
 	if t.server && !held {
 		release, err := in.lockInstaller()
@@ -85,7 +95,7 @@ func (u *upgrader) say(format string, args ...any) { u.in.say(format, args...) }
 func (u *upgrader) newBinary() string { return firstNonEmpty(u.o.UpgradeBinary, u.o.Binary) }
 
 func (u *upgrader) run(ctx context.Context) error {
-	st, found, err := u.loadState()
+	st, info, found, err := u.loadState()
 	if err != nil {
 		return err
 	}
@@ -96,7 +106,7 @@ func (u *upgrader) run(ctx context.Context) error {
 		u.st = st
 		return u.holdFailed(ctx)
 	}
-	return u.resume(ctx, st)
+	return u.resume(ctx, st, info)
 }
 
 // ---- fresh upgrade ----
@@ -118,9 +128,14 @@ func (u *upgrader) fresh(ctx context.Context) error {
 	if err != nil {
 		return failWrap(ExitInvalid, "read the new sm binary", err)
 	}
-	if oldSHA == newSHA {
+	if oldSHA == newSHA && len(u.o.TLSSANs) == 0 {
 		u.say("%s already is this build; nothing to upgrade", t.l.Binary)
 		return nil
+	}
+	if len(u.o.TLSSANs) > 0 { // a bad CA must not cost a stop and a rollback
+		if err := u.in.checkResignable(t.l); err != nil {
+			return err
+		}
 	}
 	if err := u.checkDisk(newBin); err != nil {
 		return err
@@ -128,7 +143,7 @@ func (u *upgrader) fresh(ctx context.Context) error {
 	if err := u.stage(newBin, newSHA); err != nil {
 		return err
 	}
-	u.st = upgradeState{OldSHA256: oldSHA, NewSHA256: newSHA}
+	u.st = upgradeState{OldSHA256: oldSHA, NewSHA256: newSHA, TLSSANs: u.o.TLSSANs}
 	if err := u.checkVersions(ctx); err != nil {
 		_ = files.RemoveAll(t.staged())
 		return err
@@ -137,11 +152,13 @@ func (u *upgrader) fresh(ctx context.Context) error {
 		_ = files.RemoveAll(t.staged())
 		return err
 	}
-	if err := u.linkPrevious(oldSHA); err != nil {
-		return err
-	}
-	if err := u.hit("U:prev-linked"); err != nil {
-		return err
+	if !u.st.sameBuild() { // the running binary is not replaced, so sm.prev keeps what it holds
+		if err := u.linkPrevious(oldSHA); err != nil {
+			return err
+		}
+		if err := u.hit("U:prev-linked"); err != nil {
+			return err
+		}
 	}
 	if err := u.record(upPrepared); err != nil {
 		return err
@@ -235,6 +252,10 @@ func (u *upgrader) checkVersions(ctx context.Context) error {
 			return fail(ExitInvalid, "cannot order version %q against %q, so a downgrade cannot be ruled out; pass --allow-downgrade to proceed", to, from)
 		}
 	}
+	if u.st.sameBuild() {
+		u.say("plan: the service stops, a read-only backup is taken, then the certificate is re-signed to cover %s and the service starts again", strings.Join(u.st.TLSSANs, ", "))
+		return nil
+	}
 	u.say("upgrade plan: %s -> %s; the service stops, a read-only backup is taken, then the binary is replaced", from, to)
 	return nil
 }
@@ -285,7 +306,20 @@ func (u *upgrader) linkPrevious(oldSHA string) error {
 
 // ---- resume ----
 
-func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
+func (u *upgrader) resume(ctx context.Context, st upgradeState, info EntryInfo) error {
+	sans, err := u.trustedSANs(st, info)
+	if err != nil {
+		return err
+	}
+	st.TLSSANs = sans
+	if err := u.checkResumeSANs(st); err != nil {
+		return err
+	}
+	if len(sans) > 0 && st.beforeSwap() {
+		if err := u.in.checkResignable(u.t.l); err != nil {
+			return err
+		}
+	}
 	u.st = st
 	u.say("an unfinished upgrade %s -> %s is at phase %s", st.FromVersion, st.ToVersion, st.Phase)
 	if !st.beforeSwap() {
@@ -294,6 +328,9 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 	newBin := u.newBinary()
 	if sha, err := u.d.Files.Hash(newBin); newBin == "" || err != nil || sha != st.NewSHA256 {
 		u.say("this run does not carry that upgrade's binary; abandoning the unfinished upgrade")
+		if len(u.o.TLSSANs) == 0 {
+			u.o.TLSSANs = st.TLSSANs // the names were asked for; abandoning the binary does not withdraw them
+		}
 		if err := u.abandon(ctx); err != nil {
 			return err
 		}
@@ -311,6 +348,35 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 	return u.advance(ctx)
 }
 
+// trustedSANs are the names an unfinished upgrade asks the CA to sign. upgrade.json sits in the
+// service-owned data directory, so the service account could replace it; the names count only
+// from a file root owns (as reported by the descriptor loadState read), and are validated again as if they had just been typed.
+func (u *upgrader) trustedSANs(st upgradeState, info EntryInfo) ([]string, error) {
+	if len(st.TLSSANs) == 0 {
+		return nil, nil
+	}
+	path := u.t.statePath()
+	if !info.Regular || info.UID != 0 {
+		return nil, fail(ExitConfiguration, "%s carries --tls-san names but is not a regular file owned by root; inspect it, remove it and rerun the upgrade with --tls-san", path)
+	}
+	sans, err := normalizeSANs(st.TLSSANs)
+	if err != nil {
+		return nil, fail(ExitConfiguration, "the --tls-san names recorded in %s are invalid; inspect it before upgrading (%v)", path, err)
+	}
+	return sans, nil
+}
+
+// checkResumeSANs: names asked for now must be the ones the unfinished upgrade carries. A resume
+// without --tls-san just finishes it with its own.
+func (u *upgrader) checkResumeSANs(st upgradeState) error {
+	asked := slices.Sorted(slices.Values(u.o.TLSSANs))
+	if len(asked) > 0 && !slices.Equal(asked, slices.Sorted(slices.Values(st.TLSSANs))) {
+		return fail(ExitInvalid, "an unfinished upgrade %s -> %s carries --tls-san %q, not %q; rerun without --tls-san (or with the same names) to finish it first",
+			st.FromVersion, st.ToVersion, strings.Join(st.TLSSANs, ","), strings.Join(asked, ","))
+	}
+	return nil
+}
+
 // ensurePrepared restores sm.new and sm.prev when a crash left them damaged.
 func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 	files, t := u.d.Files, u.t
@@ -318,10 +384,10 @@ func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 	if err != nil {
 		return failWrap(ExitConfiguration, "hash the installed sm", err)
 	}
-	switch live {
-	case u.st.NewSHA256:
+	switch {
+	case live == u.st.NewSHA256 && !u.st.sameBuild():
 		return nil // renamed into place just before the crash
-	case u.st.OldSHA256:
+	case live == u.st.OldSHA256: // also the same build: swap deletes sm.new before swapped is recorded
 	default:
 		return fail(ExitConfiguration, "%s matches neither the old nor the new binary of the unfinished upgrade; inspect %s", t.l.Binary, t.statePath())
 	}
@@ -330,10 +396,10 @@ func (u *upgrader) ensurePrepared(ctx context.Context, newBin string) error {
 			return err
 		}
 	}
-	if err := u.linkPrevious(u.st.OldSHA256); err != nil {
-		return err
+	if u.st.sameBuild() { // the running binary is not replaced, so sm.prev keeps what it holds
+		return nil
 	}
-	return nil
+	return u.linkPrevious(u.st.OldSHA256)
 }
 
 // retakeArchive: an archive recorded before a crash is only as good as the guarantee that
@@ -440,7 +506,7 @@ func (u *upgrader) advance(ctx context.Context) error {
 		phase := u.st.Phase
 		switch phase {
 		case upDone:
-			u.say("upgraded sm %s -> %s; the previous binary is kept at %s", u.st.FromVersion, u.st.ToVersion, u.t.previous())
+			u.reportDone()
 			return nil
 		case upReverting:
 			return u.revert(ctx)
@@ -459,6 +525,14 @@ func (u *upgrader) advance(ctx context.Context) error {
 			return u.healthFailed(ctx, err)
 		}
 	}
+}
+
+func (u *upgrader) reportDone() {
+	if u.st.sameBuild() {
+		u.say("the certificate now covers %s; sm %s is unchanged", strings.Join(u.st.TLSSANs, ", "), u.st.ToVersion)
+		return
+	}
+	u.say("upgraded sm %s -> %s; the previous binary is kept at %s", u.st.FromVersion, u.st.ToVersion, u.t.previous())
 }
 
 func (u *upgrader) step(ctx context.Context, phase upgradePhase) error {
@@ -682,7 +756,8 @@ func (u *upgrader) swap(ctx context.Context) error {
 		return fmt.Errorf("hash %s: %w", t.l.Binary, err)
 	}
 	switch live {
-	case u.st.NewSHA256: // renamed before a crash
+	case u.st.NewSHA256: // renamed before a crash, or the same build (nothing to rename)
+		_ = files.RemoveAll(t.staged())
 	case u.st.OldSHA256:
 		release, err := u.lockDatabase() // held until the rename is durable
 		if err != nil {
@@ -714,6 +789,9 @@ func (u *upgrader) swap(ctx context.Context) error {
 }
 
 func (u *upgrader) startNew(ctx context.Context) error {
+	if err := u.resignLeaf(); err != nil {
+		return err
+	}
 	if err := u.startService(ctx, "start the new version"); err != nil {
 		return err
 	}
@@ -721,6 +799,25 @@ func (u *upgrader) startNew(ctx context.Context) error {
 		return err
 	}
 	return u.record(upStarted)
+}
+
+// resignLeaf adds the requested names to the self-signed leaf while the service is stopped, so it
+// starts with the new certificate. It is a no-op once the names are covered, which makes the
+// step safe to repeat after a crash on either side of the write.
+func (u *upgrader) resignLeaf() error {
+	if len(u.st.TLSSANs) == 0 {
+		return nil
+	}
+	if _, err := u.in.resignLeaf(u.t.l, u.st.TLSSANs); err != nil {
+		return err
+	}
+	// the phase is recorded durably next; the certificate it relies on must be too, also when a
+	// crashed run already wrote it
+	dir := filepath.Dir(selfSignedFiles(u.t.l).Cert)
+	if err := u.d.Files.SyncDir(dir); err != nil {
+		return fmt.Errorf("sync %s: %w", dir, err)
+	}
+	return u.hit("U:tls:resigned")
 }
 
 func (u *upgrader) startService(ctx context.Context, what string) error {

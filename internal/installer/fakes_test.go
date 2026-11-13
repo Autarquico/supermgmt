@@ -208,6 +208,15 @@ func (w *world) ListDir(dir string) ([]string, error) {
 	return names, nil
 }
 
+func (w *world) ReadFileOwned(p string) ([]byte, EntryInfo, error) {
+	data, err := w.ReadFile(p)
+	if err != nil {
+		return nil, EntryInfo{}, err
+	}
+	info, err := w.Lstat(p)
+	return data, info, err
+}
+
 func (w *world) Lstat(p string) (EntryInfo, error) {
 	if _, ok := w.files[p]; !ok {
 		return EntryInfo{}, fs.ErrNotExist

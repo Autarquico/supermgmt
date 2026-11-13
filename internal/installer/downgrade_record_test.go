@@ -307,7 +307,7 @@ func TestLoadState_AStateWithoutStartedAtFallsBackToUpdatedAt(t *testing.T) {
 	u := &upgrader{d: w.deps(false), t: upgradeTarget{l: applianceLayout()}}
 	w.files[u.t.statePath()] = []byte(`{"phase":"backed_up","old_sha256":"a","new_sha256":"b","updated_at":"2026-01-02T03:04:05Z"}`)
 
-	st, found, err := u.loadState()
+	st, _, found, err := u.loadState()
 
 	if err != nil || !found {
 		t.Fatalf("loadState = %v, %v", found, err)

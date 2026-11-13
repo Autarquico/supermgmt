@@ -55,8 +55,10 @@ type uhost struct {
 	noDisk       bool
 	symlinks     map[string]string // directory -> where it really is, for Canonical
 	linkedFiles  map[string]bool   // files that are symlinks for Lstat
+	owners       map[string]int    // uid Lstat reports for a path; root when absent
 	holdErr      error
-	dbLocks      int // database locks held right now
+	afterRead    func(path string) // runs after ReadFileOwned took a file's bytes and owner
+	dbLocks      int               // database locks held right now
 	// renamedUnderDBLock: the new binary was renamed into place while the database lock was held.
 	renamedUnderDBLock bool
 
@@ -159,6 +161,23 @@ func (h *uhost) ReadFile(p string) ([]byte, error) {
 	return nil, fs.ErrNotExist
 }
 
+// ReadFileOwned answers from one inode lookup; afterRead runs once the bytes and owner are taken,
+// which is where a concurrent writer would swap the path.
+func (h *uhost) ReadFileOwned(p string) ([]byte, EntryInfo, error) {
+	if h.linkedFiles[p] {
+		return nil, EntryInfo{}, ErrUnsafeFile
+	}
+	n, ok := h.inodes[p]
+	if !ok {
+		return nil, EntryInfo{}, fs.ErrNotExist
+	}
+	data, info := append([]byte(nil), n.data...), EntryInfo{Regular: true, UID: h.owners[p], Mode: 0o600}
+	if h.afterRead != nil {
+		h.afterRead(p)
+	}
+	return data, info, nil
+}
+
 func (h *uhost) MkdirAll(p string, _ fs.FileMode, _ Owner) error { h.dirs[p] = true; return nil }
 
 func (h *uhost) WriteFile(p string, data []byte, _ fs.FileMode, _ Owner) error {
@@ -207,7 +226,10 @@ func (h *uhost) AppendSync(p string, line []byte) error {
 	return nil
 }
 
-func (h *uhost) SyncDir(string) error { return nil }
+func (h *uhost) SyncDir(dir string) error {
+	h.record("syncdir %s", dir)
+	return nil
+}
 
 func (h *uhost) Rename(oldPath, newPath string) error {
 	n, ok := h.inodes[oldPath]
@@ -289,7 +311,7 @@ func (h *uhost) Lstat(p string) (EntryInfo, error) {
 	case h.dirs[p]:
 		return EntryInfo{Dir: true, Mode: 0o700}, nil
 	case isFile:
-		return EntryInfo{Regular: true, Mode: 0o600}, nil
+		return EntryInfo{Regular: true, UID: h.owners[p], Mode: 0o600}, nil
 	}
 	return EntryInfo{}, fs.ErrNotExist
 }

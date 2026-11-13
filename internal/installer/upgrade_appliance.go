@@ -153,6 +153,9 @@ func (in *Installer) delegateUpgrade(ctx context.Context, o Options, rec applian
 	if o.AllowDowngrade {
 		argv = append(argv, "--allow-downgrade")
 	}
+	for _, san := range o.TLSSANs {
+		argv = append(argv, "--tls-san", san)
+	}
 	out, err := d.PVE.Exec(ctx, rec.VMID, "", argv, nil, false)
 	_, _ = d.Out.Write(bytes.TrimRight(out, "\n"))
 	_, _ = d.Out.Write([]byte("\n"))
