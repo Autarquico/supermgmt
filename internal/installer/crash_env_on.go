@@ -18,7 +18,7 @@ var upgradeCrashPoints = []string{
 	"U:hold:applied", "U:stopped:applied", "U:stopped:recorded",
 	"U:backed_up:applied", "U:backup:retaken", "U:backed_up:recorded",
 	"U:swap:before", "U:swap:renamed", "U:swapped:recorded",
-	"U:started:applied", "U:started:recorded", "U:done:recorded",
+	"U:tls:resigned", "U:started:applied", "U:started:recorded", "U:done:recorded",
 	"U:abort:restarted", "U:revert:renamed", "U:revert:started",
 	"U:reverting:recorded", "U:failed:recorded",
 }

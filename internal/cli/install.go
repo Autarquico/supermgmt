@@ -54,6 +54,7 @@ type installFlags struct {
 	tlsCert        string
 	tlsKey         string
 	trustedProxies []string
+	tlsSANs        []string
 	listen         string
 	publicURL      string
 	name           string
@@ -109,6 +110,9 @@ func newInstallModeCmd(mode installer.Mode, env []string, deps depsFactory) *cob
 		fl.BoolVar(&f.purgeData, "purge-data", false, "also delete data (asks for a typed confirmation; non-interactive needs SUPERMGMT_YES=1)")
 	case installer.ModeClient, installer.ModeAuto, installer.ModeProxmoxLXC:
 	}
+	if mode == installer.ModeServer || mode == installer.ModeUpgrade {
+		fl.StringSliceVar(&f.tlsSANs, "tls-san", nil, "extra IP or DNS name the self-signed certificate must cover (repeatable); on upgrade it is re-signed with the existing CA")
+	}
 	if mode == installer.ModeServer {
 		fl.BoolVar(&f.noStart, "no-start", false, "write and load the service unit without enabling or starting it")
 	}
@@ -138,7 +142,7 @@ func (f installFlags) options(mode installer.Mode, env []string, cmd *cobra.Comm
 	}
 	return installer.Options{
 		Mode: mode, Binary: exe,
-		TLS: tls, SelfSigned: selfSigned, CertFile: f.tlsCert, KeyFile: f.tlsKey, TrustedProxies: f.trustedProxies,
+		TLS: tls, SelfSigned: selfSigned, CertFile: f.tlsCert, KeyFile: f.tlsKey, TrustedProxies: f.trustedProxies, TLSSANs: f.tlsSANs,
 		Listen: f.listen, PublicURL: f.publicURL, InstanceName: f.name, Resident: f.resident,
 		Yes:     f.yes || envFlag(env, "SUPERMGMT_YES"),
 		Archive: f.archive, KeyExport: f.keyExport,

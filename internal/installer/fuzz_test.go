@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,7 +117,7 @@ func FuzzDecodeUpgradeState(f *testing.F) {
 		w := newAW(t)
 		u := &upgrader{d: w.deps(false), t: upgradeTarget{l: applianceLayout()}}
 		w.files[u.t.statePath()] = data
-		st, found, err := u.loadState()
+		st, _, found, err := u.loadState()
 		if err != nil && found {
 			t.Fatal("an unreadable state must not be reported as found")
 		}
@@ -155,6 +156,26 @@ func FuzzReadDoctorReport(f *testing.F) {
 		version, err := u.schemaVersion(context.Background(), applianceLayout().Binary)
 		if err == nil && !strings.Contains(strings.ToLower(report), "schema") { // JSON keys match case-insensitively
 			t.Fatalf("schema %d read from a report that never mentions one", version)
+		}
+	})
+}
+
+func FuzzNormalizeSAN(f *testing.F) {
+	for _, seed := range []string{"100.64.0.7", "MGMT.tail1234.ts.net", "*.example.com", "https://x/", "[::1]:8443", "999.1.1.1", "a..b", ""} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		fuzzSkipOversize(t, len(raw))
+		name, err := normalizeSAN(raw)
+		if err != nil {
+			return
+		}
+		again, err := normalizeSAN(name)
+		if err != nil || again != name {
+			t.Fatalf("%q normalized to %q, which does not hold (%q, %v)", raw, name, again, err)
+		}
+		if net.ParseIP(name) == nil && !validDNSName(name) {
+			t.Fatalf("%q accepted as neither an IP nor a DNS name", name)
 		}
 	})
 }

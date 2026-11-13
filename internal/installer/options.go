@@ -66,6 +66,7 @@ type Options struct {
 	// a server certificate instead of taking CertFile/KeyFile.
 	NoStart    bool
 	SelfSigned bool
+	TLSSANs    []string // names the self-signed leaf must also cover (install server, upgrade)
 
 	Appliance Appliance // proxmox-lxc
 
@@ -165,11 +166,15 @@ type serverSettings struct {
 	CertFile       string
 	KeyFile        string
 	TrustedProxies []string
+	SANs           []string // self-signed only: extra names for the leaf, already normalized
 }
 
 // resolveServer applies defaults and validates the TLS arrangement (spec
 // §23.1, ADR-0019). Certificates are read through files; none is generated.
 func resolveServer(o Options, files Files, now time.Time) (serverSettings, error) {
+	if len(o.TLSSANs) > 0 {
+		return serverSettings{}, fail(ExitInvalid, "--tls-san applies only to --tls self-signed")
+	}
 	s := serverSettings{
 		Name:           firstNonEmpty(o.InstanceName, "supermgmt"),
 		Listen:         o.Listen,
