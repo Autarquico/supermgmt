@@ -166,7 +166,7 @@ func TestOnlyAnAdminMayListIdentitiesTheirTokensOrDisableAndEnableThem(t *testin
 	})
 	f.apiToken(f.bob, "bobs", time.Hour)
 	callers := map[string]domain.ID{
-		"a viewer": viewer, "an operator": f.alice, "an identity without roles": f.dave,
+		"a viewer": viewer, "an identity without roles": f.dave,
 		"an operator granted identity.write by a custom rule": f.alice,
 	}
 
@@ -437,5 +437,162 @@ func TestADisabledAdminDoesNotKeepBootstrapClosed(t *testing.T) {
 
 	if _, err := a.Bootstrap(ctx, nil, wire.BootstrapRequest{Code: code.Code, DisplayName: "Fresh"}); err != nil {
 		t.Errorf("Bootstrap with only a disabled admin bound: %v, want it to open", err)
+	}
+}
+
+func (m *mcpcFixture) client(id domain.ID) database.MCPClient {
+	m.t.Helper()
+	c, err := database.GetMCPClient(context.Background(), m.db.Reader(), id)
+	mustf(m.t, err, "GetMCPClient")
+	return c
+}
+
+func TestAJobQueuedByAnIdentityFailsAtClaimOnceItIsDisabled(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	id := approvedReboot(f)
+
+	if _, err := a.DisableIdentity(context.Background(), f.caller(f.admin), f.alice); err != nil {
+		t.Fatalf("DisableIdentity: %v", err)
+	}
+
+	wantFailedAtClaim(f, id, smerr.CodePolicyDenied, smerr.ReasonDefaultDeny)
+}
+
+func TestAJobAlreadyRunningWhenItsIdentityIsDisabledFinishes(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	id := approvedReboot(f)
+	claimed, ok := f.claim()
+	if !ok || claimed.Job.ID != id {
+		t.Fatalf("claim = %v, %v; want job %s", claimed.Job.ID, ok, id)
+	}
+
+	if _, err := a.DisableIdentity(context.Background(), f.caller(f.admin), f.alice); err != nil {
+		t.Fatalf("DisableIdentity: %v", err)
+	}
+
+	if err := f.store.Succeed(context.Background(), claimed.Lease); err != nil {
+		t.Fatalf("Succeed: %v", err)
+	}
+	if got := f.job(id).State; got != domain.JobSucceeded {
+		t.Errorf("job state = %s, want succeeded", got)
+	}
+}
+
+func TestDisablingAnIdentityRetiresTheMCPClientsItRequestedAndTheirTokens(t *testing.T) {
+	m := newMCPClientsFixture(t)
+	a := newAuth(t, m.fixture, nil)
+	ctx := context.Background()
+	local := m.register(mcpcLocal("laptop"))
+	_, err := m.issue(m.admin, local.ID, time.Hour)
+	mustf(t, err, "IssueToken")
+	remote := m.register(mcpcRemote("agent", "agent-1", "client-1"))
+	var oauth database.OAuthAccessToken
+	m.inTx(func(ctx context.Context, tx *database.Tx) error {
+		var err error
+		oauth, err = database.RecordOAuthAccessToken(ctx, tx, database.OAuthAccessToken{
+			ID: m.ids.NewID(), MCPClientID: remote.ID, TokenHash: "oat", Issuer: mcpcIssuer, JTI: "jti",
+			IssuedAt: m.clock.Now(), ExpiresAt: m.clock.Now().Add(time.Hour), FirstSeenAt: m.clock.Now(),
+		})
+		return err
+	})
+
+	if _, err := a.DisableIdentity(ctx, m.caller(m.admin2), m.admin); err != nil {
+		t.Fatalf("DisableIdentity: %v", err)
+	}
+
+	for _, c := range []database.MCPClient{local, remote} {
+		got := m.client(c.ID)
+		if got.State != database.MCPClientDeleted || got.RevokedAt == nil {
+			t.Errorf("client %s = %s revoked %v, want deleted and revoked", c.Name, got.State, got.RevokedAt)
+		}
+		if m.identityRow(c.IdentityID).DisabledAt == nil {
+			t.Errorf("the identity of client %s is still enabled", c.Name)
+		}
+	}
+	if got, _ := database.GetOAuthAccessToken(ctx, m.db.Reader(), oauth.ID); got.RevokedAt == nil {
+		t.Error("the OAuth access token of the remote client was not revoked")
+	}
+	if got := len(m.events("mcp_client.deleted")); got != 2 {
+		t.Errorf("mcp_client.deleted events = %d, want 2", got)
+	}
+	if got := m.events("identity.disabled"); len(got) != 1 || fmt.Sprint(got[0].Data["mcp_clients_retired"]) != "2" {
+		t.Errorf("identity.disabled events = %+v, want one that counts 2 clients retired", got)
+	}
+}
+
+func TestDisablingAnIdentityLeavesTheMCPClientsOfOthersAlone(t *testing.T) {
+	m := newMCPClientsFixture(t)
+	a := newAuth(t, m.fixture, nil)
+	client := m.register(mcpcLocal("laptop"))
+
+	if _, err := a.DisableIdentity(context.Background(), m.caller(m.admin), m.admin2); err != nil {
+		t.Fatalf("DisableIdentity: %v", err)
+	}
+
+	if got := m.client(client.ID); got.State == database.MCPClientDeleted {
+		t.Error("a client requested by another identity was deleted")
+	}
+}
+
+func TestDisablingAnIdentityInvalidatesItsUnusedJoinTokensOnly(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	insert := func(id, by domain.ID, consumed bool) {
+		f.inTx(func(ctx context.Context, tx *database.Tx) error {
+			var consumedAt any
+			if consumed {
+				consumedAt = f.clock.Now().UnixMilli()
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO join_tokens (id, token_hash, created_by, created_at, expires_at, consumed_at)
+				VALUES (?, ?, ?, ?, ?, ?)`, id, "hash-"+id.String(), by, f.clock.Now().UnixMilli(), f.clock.Now().Add(time.Hour).UnixMilli(), consumedAt)
+			return err
+		})
+	}
+	unused, used, others := f.ids.NewID(), f.ids.NewID(), f.ids.NewID()
+	insert(unused, f.alice, false)
+	insert(used, f.alice, true)
+	insert(others, f.bob, false)
+
+	if _, err := a.DisableIdentity(context.Background(), f.caller(f.admin), f.alice); err != nil {
+		t.Fatalf("DisableIdentity: %v", err)
+	}
+
+	invalidated := func(id domain.ID) bool {
+		return f.count(`SELECT COUNT(*) FROM join_tokens WHERE id = ? AND invalidated_at IS NOT NULL`, id) == 1
+	}
+	if !invalidated(unused) {
+		t.Error("an unused join token of alice stays valid")
+	}
+	if invalidated(used) {
+		t.Error("a consumed join token was invalidated")
+	}
+	if invalidated(others) {
+		t.Error("another identity's join token was invalidated")
+	}
+}
+
+func TestDisablingOrEnablingAnIdentityAnswersItsRolesWhateverItsState(t *testing.T) {
+	f := newFixture(t)
+	a := newAuth(t, f, nil)
+	ctx := context.Background()
+
+	enabled, err := a.EnableIdentity(ctx, f.caller(f.admin), f.alice)
+	if err != nil || len(enabled.Roles) == 0 {
+		t.Errorf("enable of an enabled identity = %+v, %v; want its roles", enabled, err)
+	}
+	disabled, err := a.DisableIdentity(ctx, f.caller(f.admin), f.alice)
+	if err != nil {
+		t.Fatalf("DisableIdentity: %v", err)
+	}
+	f.inTx(func(ctx context.Context, tx *database.Tx) error {
+		return database.CreateRoleBinding(ctx, tx, database.RoleBinding{
+			ID: f.ids.NewID(), IdentityID: f.alice, RoleID: f.role(ctx, tx, "viewer"), CreatedAt: f.clock.Now(),
+		})
+	})
+	again, err := a.DisableIdentity(ctx, f.caller(f.admin), f.alice)
+	if err != nil || disabled.DisabledAt == nil || !slices.Equal(again.Roles, []string{"viewer"}) {
+		t.Errorf("disable of a disabled identity = %+v, %v; want the roles it holds", again, err)
 	}
 }

@@ -67,7 +67,7 @@ func newIdentitiesDisableCmd(env []string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "disable <identity-id>",
 		Short: "Disable an identity: revoke its sessions and tokens and remove its roles",
-		Long: "Disable an identity. Its sessions, API tokens and MCP tokens are revoked and its roles removed at once.\n" +
+		Long: "Disable an identity. Its sessions and API tokens are revoked, the MCP clients it requested are removed, its unused join tokens are\ninvalidated and its roles removed at once.\n" +
 			"A job it already runs finishes; a job it queued fails when a worker claims it. The last enabled admin\n" +
 			"cannot be disabled. Undo with sm identities enable, then grant its roles again.",
 		Args: cobra.ExactArgs(1),

@@ -18,7 +18,6 @@ const (
 	messageMCPIdentity    = "an MCP identity is managed with sm mcp clients; remove the client to disable it"
 	messageSystemIdentity = "the system identity cannot be disabled or enabled"
 	messageLastAdmin      = "this is the last enabled admin; make another admin first (sm admin bootstrap-code --recover, or sm admin grant)"
-	messageEnabledNoRoles = "enabled without roles or credentials; grant its roles again (sm admin grant)"
 )
 
 // authorizeIdentityAdmin allows only an enabled admin that policy also lets do
@@ -61,7 +60,7 @@ func (a *AuthService) ListIdentities(ctx context.Context, by Caller, page wire.P
 	if err != nil {
 		return wire.Page[wire.Identity]{}, err
 	}
-	if err := a.requireIdentityAdminRead(actor, identityTarget(by.ID)); err != nil {
+	if err := a.requireIdentityAdminRead(actor, domain.ResourceRef{Type: domain.ResourceIdentity}); err != nil {
 		return wire.Page[wire.Identity]{}, err
 	}
 	rows, err := database.ListIdentities(ctx, q)
@@ -110,8 +109,11 @@ func (a *AuthService) ListIdentityTokens(ctx context.Context, by Caller, identit
 
 // DisableIdentity disables an identity: it revokes every credential it holds,
 // removes its role bindings and audits identity.disabled, in one transaction.
+// It also retires the MCP clients the identity requested, whose token only it
+// holds, and invalidates the join tokens it created and nobody used yet.
 // A job it already runs finishes; one it queued fails at claim, because the
-// credential is revoked. Disabling a disabled identity succeeds and audits once.
+// identity is disabled and its credential revoked. Disabling a disabled
+// identity succeeds and audits once.
 // It refuses the system identity, an MCP identity and the last enabled admin.
 func (a *AuthService) DisableIdentity(ctx context.Context, by Caller, id domain.ID) (wire.Identity, error) {
 	return commit(ctx, a.core, by, func(ctx context.Context, tx *database.Tx) (wire.Identity, error) {
@@ -126,12 +128,12 @@ func (a *AuthService) DisableIdentity(ctx context.Context, by Caller, id domain.
 		if err != nil {
 			return wire.Identity{}, err
 		}
-		if target.DisabledAt != nil {
-			return identityView(target, nil), nil
-		}
 		roles, err := database.ListRolesForIdentity(ctx, tx, id)
 		if err != nil {
 			return wire.Identity{}, err
+		}
+		if target.DisabledAt != nil {
+			return identityView(target, roleNames(roles)), nil
 		}
 		if err := keepOneAdmin(ctx, tx, roles); err != nil {
 			return wire.Identity{}, err
@@ -147,9 +149,17 @@ func (a *AuthService) DisableIdentity(ctx context.Context, by Caller, id domain.
 		if err := clearRoleBindings(ctx, tx, id); err != nil {
 			return wire.Identity{}, err
 		}
+		retired, err := a.retireRequestedMCPClients(ctx, tx, actor, id)
+		if err != nil {
+			return wire.Identity{}, err
+		}
+		joins, err := database.InvalidateJoinTokensCreatedBy(ctx, tx, id, now)
+		if err != nil {
+			return wire.Identity{}, err
+		}
 		target.DisabledAt = &now
 		err = a.emit(ctx, tx, actor, eventIdentityDisabled, identityTarget(id), domain.ResultSucceeded,
-			map[string]any{"revoked": revoked, "roles_removed": roleNames(roles), "self": id == by.ID})
+			map[string]any{"revoked": revoked, "roles_removed": roleNames(roles), "mcp_clients_retired": retired, "join_tokens_invalidated": joins, "self": id == by.ID})
 		return identityView(target, nil), err
 	})
 }
@@ -170,16 +180,35 @@ func (a *AuthService) EnableIdentity(ctx context.Context, by Caller, id domain.I
 		if err != nil {
 			return wire.Identity{}, err
 		}
+		roles, err := database.ListRolesForIdentity(ctx, tx, id)
+		if err != nil {
+			return wire.Identity{}, err
+		}
 		if target.DisabledAt == nil {
-			return identityView(target, nil), nil
+			return identityView(target, roleNames(roles)), nil
 		}
 		if err := database.SetIdentityDisabled(ctx, tx, id, nil); err != nil {
 			return wire.Identity{}, err
 		}
 		target.DisabledAt = nil
-		err = a.emit(ctx, tx, actor, eventIdentityEnabled, identityTarget(id), domain.ResultSucceeded, map[string]any{"note": messageEnabledNoRoles})
-		return identityView(target, nil), err
+		err = a.emit(ctx, tx, actor, eventIdentityEnabled, identityTarget(id), domain.ResultSucceeded, nil)
+		return identityView(target, roleNames(roles)), err
 	})
+}
+
+// retireRequestedMCPClients deletes every live MCP client the identity
+// requested, as sm mcp clients remove does, and returns how many.
+func (a *AuthService) retireRequestedMCPClients(ctx context.Context, tx *database.Tx, actor domain.Actor, id domain.ID) (int, error) {
+	clients, err := database.ListLiveMCPClientIDsRequestedBy(ctx, tx, id)
+	if err != nil {
+		return 0, err
+	}
+	for _, client := range clients {
+		if _, err := a.applyMCPClientDelete(ctx, tx, actor, mcpDeleteParams{ClientID: client}); err != nil {
+			return 0, err
+		}
+	}
+	return len(clients), nil
 }
 
 // manageableIdentity loads the identity and refuses the ones that are not

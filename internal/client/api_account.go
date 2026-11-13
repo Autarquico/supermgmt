@@ -70,12 +70,12 @@ func (c *Client) ListIdentityTokens(ctx context.Context, id domain.ID) (wire.Pag
 
 // DisableIdentity revokes the identity's credentials and removes its roles.
 func (c *Client) DisableIdentity(ctx context.Context, id domain.ID) (wire.Identity, error) {
-	return call[wire.Identity](ctx, c, postUnkeyed(wire.Path(wire.PathIdentityDisable, string(id)), nil))
+	return call[wire.Identity](ctx, c, post(wire.Path(wire.PathIdentityDisable, string(id)), nil))
 }
 
 // EnableIdentity enables an identity again; its roles and credentials are not restored.
 func (c *Client) EnableIdentity(ctx context.Context, id domain.ID) (wire.Identity, error) {
-	return call[wire.Identity](ctx, c, postUnkeyed(wire.Path(wire.PathIdentityEnable, string(id)), nil))
+	return call[wire.Identity](ctx, c, post(wire.Path(wire.PathIdentityEnable, string(id)), nil))
 }
 
 // ---- keys and secrets (spec §10, ADR-0021) -------------------------------------

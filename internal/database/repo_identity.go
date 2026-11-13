@@ -189,3 +189,21 @@ func ListRolesForIdentity(ctx context.Context, q Querier, identityID domain.ID) 
 	}
 	return roles, rows.Err()
 }
+
+// ListLiveMCPClientIDsRequestedBy returns the ids of the clients the identity
+// requested that are not deleted. Their token is revealed to the requester only.
+func ListLiveMCPClientIDsRequestedBy(ctx context.Context, q Querier, identity domain.ID) ([]domain.ID, error) {
+	return list(ctx, q, "mcp clients", `SELECT id FROM mcp_clients WHERE requested_by = ? AND state <> 'deleted' ORDER BY created_at, id`,
+		func(row scanner) (domain.ID, error) {
+			var id domain.ID
+			err := row.Scan(&id)
+			return id, err
+		}, identity)
+}
+
+// InvalidateJoinTokensCreatedBy invalidates the join tokens the identity
+// created that are neither consumed nor invalidated, and returns how many.
+func InvalidateJoinTokensCreatedBy(ctx context.Context, q Querier, identity domain.ID, at time.Time) (int64, error) {
+	return affected(ctx, q, "join_tokens", `UPDATE join_tokens SET invalidated_at = ?
+		WHERE created_by = ? AND consumed_at IS NULL AND invalidated_at IS NULL`, millis(at), identity)
+}

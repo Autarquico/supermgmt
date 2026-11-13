@@ -409,7 +409,8 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 Disable an identity: revoke its sessions and tokens and remove its roles
 
-Disable an identity. Its sessions, API tokens and MCP tokens are revoked and its roles removed at once.
+Disable an identity. Its sessions and API tokens are revoked, the MCP clients it requested are removed, its unused join tokens are
+invalidated and its roles removed at once.
 A job it already runs finishes; a job it queued fails when a worker claims it. The last enabled admin
 cannot be disabled. Undo with sm identities enable, then grant its roles again.
 

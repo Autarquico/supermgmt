@@ -139,6 +139,27 @@ func TestRemovingAnMCPClientRevalidatesOpenStreamsAtOnce(t *testing.T) {
 	}
 }
 
+func TestDisablingAnIdentityRevalidatesOpenStreamsAtOnce(t *testing.T) {
+	r := newRemote(t, func(o *remoteOptions) {
+		o.stream = StreamOptions{Poll: 10 * time.Millisecond, Revalidate: time.Hour, Heartbeat: time.Hour}
+	})
+	identity, watcher := r.admin()
+	_, frames := r.openStream(watcher.Value)
+
+	must(t, r.db.WithWriteTx(context.Background(), func(ctx context.Context, tx *database.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM role_bindings WHERE identity_id = ?`, identity); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO events (event_id, timestamp, actor_type, actor_id, source, action, resource_type, severity, result)
+			VALUES (?, 1, 'system', ?, 'test', 'identity.disabled', 'identity', 'info', 'succeeded')`, r.ids.NewID(), r.ids.NewID())
+		return err
+	}))
+
+	if got := closedReason(t, frames.untilEnd(t, 5*time.Second)); !strings.HasSuffix(got, "/"+string(smerr.CodePolicyDenied)) {
+		t.Errorf("closing frame = %s", got)
+	}
+}
+
 func TestAnIdentityHasAtMostTheConfiguredNumberOfStreams(t *testing.T) {
 	r := newRemote(t, func(o *remoteOptions) {
 		o.stream = StreamOptions{Poll: time.Hour, Revalidate: time.Hour, Heartbeat: time.Hour, MaxPerIdentity: 2}

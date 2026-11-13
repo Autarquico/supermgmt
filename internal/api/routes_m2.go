@@ -177,7 +177,7 @@ func (rs *routeSet) identities() {
 		}),
 	})
 	rs.add(route{
-		method: http.MethodPost, pattern: wire.PathIdentityDisable, action: actionIdentityWrite, credential: true,
+		method: http.MethodPost, pattern: wire.PathIdentityDisable, action: actionIdentityWrite, keyed: true,
 		do: s.publicCall(http.StatusOK, func(ctx context.Context, a app.Auth, in input) (any, error) {
 			id, err := in.id("id")
 			if err != nil {
@@ -187,7 +187,7 @@ func (rs *routeSet) identities() {
 		}),
 	})
 	rs.add(route{
-		method: http.MethodPost, pattern: wire.PathIdentityEnable, action: actionIdentityWrite, credential: true,
+		method: http.MethodPost, pattern: wire.PathIdentityEnable, action: actionIdentityWrite, keyed: true,
 		do: s.publicCall(http.StatusOK, func(ctx context.Context, a app.Auth, in input) (any, error) {
 			id, err := in.id("id")
 			if err != nil {

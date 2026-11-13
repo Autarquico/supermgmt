@@ -1005,13 +1005,15 @@ paths:
       summary: Disable an identity. Admin only.
       description: >-
         Revokes its sessions, API tokens, MCP tokens and OAuth access tokens, removes its role bindings and audits
-        `identity.disabled`, in one transaction. A job it already runs finishes; one it queued fails at claim.
-        Refuses the system identity, an MCP identity and the last enabled admin. Disabling a disabled identity succeeds.
-        Rejects a request carrying `Idempotency-Key`.
+        `identity.disabled`, in one transaction. It also deletes the MCP clients the identity requested (their tokens and
+        OAuth access tokens are revoked) and invalidates the unused join tokens it created. A job it already runs
+        finishes; one it queued fails at claim. Refuses the system identity, an MCP identity and the last enabled admin.
+        Disabling a disabled identity succeeds.
       tags: [identities]
       x-supermgmt-route: action:identity.write
       parameters:
         - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
           description: The identity, disabled.
@@ -1025,14 +1027,14 @@ paths:
       summary: Enable a disabled identity. Admin only.
       description: >-
         Restores neither its roles nor its credentials; grant the roles again (`sm admin grant`).
-        Rejects a request carrying `Idempotency-Key`.
       tags: [identities]
       x-supermgmt-route: action:identity.write
       parameters:
         - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: The identity, enabled and without roles.
+          description: The identity, enabled.
           content:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Identity'}}}]}
