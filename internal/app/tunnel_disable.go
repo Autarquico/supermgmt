@@ -333,12 +333,14 @@ func (r *disableRun) switchToDirect(ctx context.Context) error {
 }
 
 // removeService stops and removes the connector from the node, as the admin
-// account over the direct path. It removes only what setup installed. It runs
-// whatever phase the record is at, because a node removal that took over an
-// enable which had installed the connector leaves a record past this phase
-// that never touched the node; the removal is idempotent, so a resume after
-// a crash repeats it at no harm.
+// account over the direct path. It removes only what setup installed. A record
+// this disable already took past the removal does not touch the node again, so
+// the Cloudflare teardown it resumes needs no SSH.
 func (r *disableRun) removeService(ctx context.Context, c core) error {
+	done, err := r.serviceRemovedByThisDisable(ctx)
+	if err != nil || done {
+		return err
+	}
 	if err := r.mayMutate(ctx); err != nil {
 		return err
 	}
@@ -356,6 +358,15 @@ func (r *disableRun) removeService(ctx context.Context, c core) error {
 	}
 	return r.advance(ctx, database.PhaseServiceRemoved, database.TunnelObjects{}, eventTunnelServiceOff,
 		map[string]any{"hostname": r.hostname})
+}
+
+// serviceRemovedByThisDisable reports whether the node service went off through this record's own walk. A
+// record past the removal phase without that event is a node removal's teardown, which never touched the node.
+func (r *disableRun) serviceRemovedByThisDisable(ctx context.Context) (bool, error) {
+	if phaseIndex(r.op.Phase) < phaseIndex(database.PhaseServiceRemoved) {
+		return false, nil
+	}
+	return database.TunnelOperationHasEvent(ctx, r.cfg.DB.Reader(), r.op.ID, eventTunnelServiceOff)
 }
 
 // finish records the operation as done and drops the tunnel from the node's

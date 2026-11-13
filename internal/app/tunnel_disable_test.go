@@ -430,3 +430,22 @@ func TestADisableHoldsTheNodeExclusively(t *testing.T) {
 		t.Errorf("node lock = %q, want exclusive", got)
 	}
 }
+
+// A disable that removed the node service and was then refused by Cloudflare finishes its teardown on retry
+// without the node: the service is already off it.
+func TestADisableRetriedAfterTheServiceWentOffFinishesTheTeardownWithTheNodeUnreachable(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	ts.planDisable()
+	ts.arm("refused before", 3)
+	if err := ts.attempt(); err == nil {
+		t.Fatal("the first disable should fail at Cloudflare")
+	}
+	ts.dialer.mu.Lock()
+	ts.dialer.nodes["admin"] = failingNode(t, brokenConnector())
+	ts.dialer.mu.Unlock()
+	interruptAndRequeue(t, ts.fixture, ts.queued.ID)
+	mustf(t, ts.attempt(), "the retry with the node unreachable")
+	if phase := ts.operations()[0].Phase; phase != database.PhaseDone {
+		t.Errorf("newest operation is %s, want done", phase)
+	}
+}

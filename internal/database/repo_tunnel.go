@@ -374,3 +374,13 @@ func SaveCloudflareState(ctx context.Context, q Querier, s CloudflareState, expe
 	}
 	return GetCloudflareState(ctx, q)
 }
+
+// TunnelOperationHasEvent reports whether an event with the action was recorded for the operation: the
+// events of a tunnel operation carry its ID as data.operation_id.
+func TunnelOperationHasEvent(ctx context.Context, q Querier, operationID domain.ID, action string) (bool, error) {
+	var found bool
+	err := q.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM events WHERE action = ? AND json_extract(data_json, '$.operation_id') = ?)`,
+		action, operationID.String()).Scan(&found)
+	return found, err
+}
