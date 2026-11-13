@@ -600,7 +600,7 @@ func TestRecoveryIsMarkedInTheAuditTrail(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	for _, action := range []string{eventBootstrapIssued, eventBootstrapUsed} {
+	for _, action := range []string{eventBootstrapIssued, eventBootstrapUsed, eventIdentityCreated, eventRoleBindingAdded} {
 		events := f.events(action)
 		if len(events) != 1 || events[0].Data["recovery"] != true {
 			t.Errorf("%s events = %+v, want one with recovery=true", action, events)
@@ -618,7 +618,7 @@ func TestAPlainBootstrapIsNotMarkedAsRecovery(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	for _, e := range f.events(eventBootstrapIssued, eventBootstrapUsed) {
+	for _, e := range f.events(eventBootstrapIssued, eventBootstrapUsed, eventIdentityCreated, eventRoleBindingAdded) {
 		if _, marked := e.Data["recovery"]; marked {
 			t.Errorf("%s carries recovery: %+v", e.Action, e.Data)
 		}

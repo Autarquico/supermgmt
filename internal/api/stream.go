@@ -178,7 +178,7 @@ func (f *feed) deliver(ctx context.Context) error {
 }
 
 func changesAccess(action string) bool {
-	return action == "token.revoked" || action == "session.revoked" || action == "mcp_client.deleted" || strings.HasPrefix(action, "role_binding.")
+	return action == "token.revoked" || action == "session.revoked" || action == "mcp_client.deleted" || action == "identity.disabled" || strings.HasPrefix(action, "role_binding.")
 }
 
 func (f *feed) sendEvent(e wire.Event) error {

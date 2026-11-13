@@ -77,6 +77,11 @@ const (
 	PathTokens         = Prefix + "/tokens"
 	PathToken          = Prefix + "/tokens/{id}"
 
+	PathIdentities      = Prefix + "/identities"
+	PathIdentityTokens  = Prefix + "/identities/{id}/tokens"
+	PathIdentityDisable = Prefix + "/identities/{id}/disable"
+	PathIdentityEnable  = Prefix + "/identities/{id}/enable"
+
 	// Keys and secrets (ADR-0021). Export is served on the local-mode socket only.
 	PathSecrets         = Prefix + "/secrets"
 	PathMasterKeyRotate = Prefix + "/secrets/master-key/rotate"

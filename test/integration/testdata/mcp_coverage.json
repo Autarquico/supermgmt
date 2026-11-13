@@ -75,6 +75,18 @@
   "events": {
    "tool": "infra_list_events"
   },
+  "identities": {
+   "reason": "help-only group: its subcommands are mapped on their own"
+  },
+  "identities disable": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "identities enable": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "identities list": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (lists every identity)"
+  },
   "install": {
    "reason": "local-only: runs on this machine, not through the control plane (invoked by install.sh)"
   },
@@ -341,6 +353,12 @@
   "GET /api/v1/events/stream": {
    "reason": "long-lived stream; the model polls infra_list_events with after_seq"
   },
+  "GET /api/v1/identities": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (lists people and their tokens)"
+  },
+  "GET /api/v1/identities/{id}/tokens": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these (lists people and their tokens)"
+  },
   "GET /api/v1/jobs": {
    "tool": "infra_list_jobs"
   },
@@ -453,6 +471,12 @@
    "reason": "credential or identity administration: an MCP identity may never issue or revoke these (a machine joining with a join token)"
   },
   "POST /api/v1/enrollments": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "POST /api/v1/identities/{id}/disable": {
+   "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
+  },
+  "POST /api/v1/identities/{id}/enable": {
    "reason": "credential or identity administration: an MCP identity may never issue or revoke these"
   },
   "POST /api/v1/jobs/{id}/approve": {

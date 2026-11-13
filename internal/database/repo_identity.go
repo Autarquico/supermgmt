@@ -77,6 +77,64 @@ func GetIdentity(ctx context.Context, q Querier, id domain.ID) (Identity, error)
 	return i, nil
 }
 
+// ListIdentities returns every identity, oldest first.
+func ListIdentities(ctx context.Context, q Querier) ([]Identity, error) {
+	return list(ctx, q, "identities", `
+		SELECT id, actor_type, issuer, subject, client_id, display_name, email, created_at, last_seen_at, disabled_at
+		FROM identities ORDER BY created_at, id`, func(s scanner) (Identity, error) {
+		var (
+			i                  Identity
+			created            int64
+			lastSeen, disabled sql.NullInt64
+		)
+		err := s.Scan(&i.ID, &i.ActorType, &i.Issuer, &i.Subject, &i.ClientID, &i.DisplayName, &i.Email,
+			&created, &lastSeen, &disabled)
+		i.CreatedAt = domain.FromUnixMillis(created)
+		i.LastSeenAt, i.DisabledAt = timeOf(lastSeen), timeOf(disabled)
+		return i, err
+	})
+}
+
+// SetIdentityDisabled disables the identity at at, or enables it with nil. It
+// reports NOT_FOUND for an unknown id.
+func SetIdentityDisabled(ctx context.Context, q Querier, id domain.ID, at *time.Time) error {
+	return updateOne(ctx, q, "identity", `UPDATE identities SET disabled_at = ? WHERE id = ?`, nullMillis(at), id)
+}
+
+// RoleNamesByIdentity returns the names of the roles bound to each identity, ordered by name.
+func RoleNamesByIdentity(ctx context.Context, q Querier) (map[domain.ID][]string, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT b.identity_id, r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id ORDER BY r.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list role names: %w", err)
+	}
+	defer rows.Close()
+	out := map[domain.ID][]string{}
+	for rows.Next() {
+		var id domain.ID
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("scan role name: %w", err)
+		}
+		out[id] = append(out[id], name)
+	}
+	return out, rows.Err()
+}
+
+// CountEnabledAdmins counts the enabled identities bound to the role named
+// admin that can administer: an MCP identity never can, whatever it is bound to.
+func CountEnabledAdmins(ctx context.Context, q Querier, adminRole string) (int, error) {
+	var n int
+	err := q.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT i.id) FROM identities i
+		JOIN role_bindings b ON b.identity_id = i.id JOIN roles r ON r.id = b.role_id
+		WHERE r.name = ? AND i.disabled_at IS NULL AND i.actor_type <> 'mcp'`, adminRole).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count enabled admins: %w", err)
+	}
+	return n, nil
+}
+
 // CreateRole stores r; role names are unique.
 func CreateRole(ctx context.Context, q Querier, r Role) error {
 	_, err := q.ExecContext(ctx, `INSERT INTO roles (id, name, description) VALUES (?, ?, ?)`,
@@ -131,4 +189,22 @@ func ListRolesForIdentity(ctx context.Context, q Querier, identityID domain.ID) 
 		roles = append(roles, r)
 	}
 	return roles, rows.Err()
+}
+
+// ListLiveMCPClientIDsRequestedBy returns the ids of the clients the identity
+// requested that are not deleted. Their token is revealed to the requester only.
+func ListLiveMCPClientIDsRequestedBy(ctx context.Context, q Querier, identity domain.ID) ([]domain.ID, error) {
+	return list(ctx, q, "mcp clients", `SELECT id FROM mcp_clients WHERE requested_by = ? AND state <> 'deleted' ORDER BY created_at, id`,
+		func(row scanner) (domain.ID, error) {
+			var id domain.ID
+			err := row.Scan(&id)
+			return id, err
+		}, identity)
+}
+
+// InvalidateJoinTokensCreatedBy invalidates the join tokens the identity
+// created that are neither consumed nor invalidated, and returns how many.
+func InvalidateJoinTokensCreatedBy(ctx context.Context, q Querier, identity domain.ID, at time.Time) (int64, error) {
+	return affected(ctx, q, "join_tokens", `UPDATE join_tokens SET invalidated_at = ?
+		WHERE created_by = ? AND consumed_at IS NULL AND invalidated_at IS NULL`, millis(at), identity)
 }

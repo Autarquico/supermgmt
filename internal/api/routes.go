@@ -101,6 +101,7 @@ func (s *Server) buildRoutes() []route {
 	r.services()
 	r.login()
 	r.tokens()
+	r.identities()
 	r.keys()
 	r.backups()
 	r.enrollment()

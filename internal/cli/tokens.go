@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autarquico/supermgmt/internal/api/wire"
+	"github.com/autarquico/supermgmt/internal/client"
 	"github.com/autarquico/supermgmt/internal/domain"
 )
 
@@ -31,22 +33,44 @@ func newTokensCmd(env []string) *cobra.Command {
 }
 
 func newTokensListCmd(env []string) *cobra.Command {
-	return &cobra.Command{
+	var identity string
+	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List your API tokens (their values are never shown again)",
+		Short: "List your API tokens, or another identity's with --identity (values are never shown again)",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			other, err := optionalID(identity)
+			if err != nil {
+				return err
+			}
 			api, err := newClient(cmd, env)
 			if err != nil {
 				return err
 			}
-			page, err := api.ListTokens(cmd.Context())
+			page, err := listTokens(cmd.Context(), api, other)
 			if err != nil {
 				return err
 			}
 			return emit(cmd, page, func(w io.Writer) error { return writeTokens(w, page.Items) })
 		},
 	}
+	cmd.Flags().StringVar(&identity, "identity", "", "list this identity's tokens instead of yours (admin)")
+	return cmd
+}
+
+// listTokens lists the caller's tokens, or those of other when it is set.
+func listTokens(ctx context.Context, api *client.Client, other domain.ID) (wire.Page[wire.Token], error) {
+	if other == "" {
+		return api.ListTokens(ctx)
+	}
+	return api.ListIdentityTokens(ctx, other)
+}
+
+func optionalID(arg string) (domain.ID, error) {
+	if arg == "" {
+		return "", nil
+	}
+	return parseID(arg)
 }
 
 func writeTokens(w io.Writer, tokens []wire.Token) error {

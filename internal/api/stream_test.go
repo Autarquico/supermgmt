@@ -139,6 +139,25 @@ func TestRemovingAnMCPClientRevalidatesOpenStreamsAtOnce(t *testing.T) {
 	}
 }
 
+func TestTheStreamEndsWhenItsIdentityIsDisabled(t *testing.T) {
+	r := newRemote(t, func(o *remoteOptions) {
+		o.stream = StreamOptions{Poll: 10 * time.Millisecond, Revalidate: time.Hour, Heartbeat: time.Hour}
+	})
+	identity, watcher := r.admin()
+	_, other := r.admin()
+	_, frames := r.openStream(watcher.Value)
+
+	disabled := r.request(http.MethodPost, wire.Path(wire.PathIdentityDisable, identity.String()), other.Value, "",
+		wire.HeaderIdempotencyKey, r.ids.NewID().String())
+	if disabled.Status != http.StatusOK {
+		t.Fatalf("disable: %d %s", disabled.Status, disabled.Body)
+	}
+
+	if got := closedReason(t, frames.untilEnd(t, 5*time.Second)); !strings.HasSuffix(got, "/"+string(smerr.CodePolicyDenied)) {
+		t.Errorf("closing frame = %s, want POLICY_DENIED", got)
+	}
+}
+
 func TestAnIdentityHasAtMostTheConfiguredNumberOfStreams(t *testing.T) {
 	r := newRemote(t, func(o *remoteOptions) {
 		o.stream = StreamOptions{Poll: time.Hour, Revalidate: time.Hour, Heartbeat: time.Hour, MaxPerIdentity: 2}

@@ -395,6 +395,60 @@ Flags:
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 
+### sm identities
+
+List, disable and enable identities (admin)
+
+```text
+sm identities
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm identities disable
+
+Disable an identity: revoke its sessions and tokens and remove its roles
+
+Disable an identity. Its sessions and API tokens are revoked, the MCP clients it requested are removed, its unused join tokens are
+invalidated and its roles removed at once.
+A job it already runs finishes; a job it queued fails when a worker claims it. The last enabled admin
+cannot be disabled. Undo with sm identities enable, then grant its roles again.
+
+```text
+sm identities disable <identity-id>
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm identities enable
+
+Enable a disabled identity (no roles, no credentials)
+
+Enable a disabled identity. Its roles and credentials are not restored: grant the roles again with
+sm admin grant <identity-id> <role> (on the server). An OIDC identity gets credentials again by signing in; an
+identity created by bootstrap or recovery cannot sign in again, so use sm admin bootstrap-code --recover.
+
+```text
+sm identities enable <identity-id>
+```
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
+#### sm identities list
+
+List every identity, disabled ones included
+
+```text
+sm identities list [flags]
+```
+
+Flags:
+
+- `--cursor` (string): continue after this cursor
+- `--limit` (int): maximum items per page (default 50, max 500)
+
+Also accepts the global flags `--config`, `--json`, `--log-level`.
+
 ### sm install
 
 Install SuperMgmt (invoked by install.sh)
@@ -1575,11 +1629,15 @@ Also accepts the global flags `--config`, `--json`, `--log-level`.
 
 #### sm tokens list
 
-List your API tokens (their values are never shown again)
+List your API tokens, or another identity's with --identity (values are never shown again)
 
 ```text
-sm tokens list
+sm tokens list [flags]
 ```
+
+Flags:
+
+- `--identity` (string): list this identity's tokens instead of yours (admin)
 
 Also accepts the global flags `--config`, `--json`, `--log-level`.
 

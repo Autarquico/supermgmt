@@ -26,6 +26,13 @@ type Auth interface {
 	ListTokens(ctx context.Context, by Caller) ([]wire.Token, error)
 	CreateToken(ctx context.Context, by Caller, r wire.CreateTokenRequest) (wire.TokenIssued, error)
 	RevokeToken(ctx context.Context, by Caller, id domain.ID) error
+	// The identity methods are admin only (identity.write, and the admin role).
+	ListIdentities(ctx context.Context, by Caller, page wire.PageQuery) (wire.Page[wire.Identity], error)
+	ListIdentityTokens(ctx context.Context, by Caller, identity domain.ID) ([]wire.Token, error)
+	// DisableIdentity revokes the identity's credentials and removes its roles.
+	DisableIdentity(ctx context.Context, by Caller, id domain.ID) (wire.Identity, error)
+	// EnableIdentity restores neither roles nor credentials.
+	EnableIdentity(ctx context.Context, by Caller, id domain.ID) (wire.Identity, error)
 }
 
 // AdminSocket is what the server-mode admin socket serves besides doctor and

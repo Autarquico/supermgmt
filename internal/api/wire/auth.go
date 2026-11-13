@@ -94,12 +94,28 @@ type Bootstrapped struct {
 
 type Token struct {
 	ID         domain.ID  `json:"id"`
+	IdentityID domain.ID  `json:"identity_id"`
 	Name       string     `json:"name"`
 	Scopes     []string   `json:"scopes"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
+}
+
+// ---- identities (admin only) ------------------------------------------------
+
+// Identity is one principal as an administrator sees it. Disabled identities
+// are listed too; DisabledAt says when.
+type Identity struct {
+	ID          domain.ID        `json:"id"`
+	ActorType   domain.ActorType `json:"actor_type"`
+	DisplayName string           `json:"display_name"`
+	Email       string           `json:"email"`
+	Roles       []string         `json:"roles"`
+	CreatedAt   time.Time        `json:"created_at"`
+	LastSeenAt  *time.Time       `json:"last_seen_at"`
+	DisabledAt  *time.Time       `json:"disabled_at"`
 }
 
 // CreateTokenRequest is POST /tokens. ExpiresAt is mandatory and at most 365

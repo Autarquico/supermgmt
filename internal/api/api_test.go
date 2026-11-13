@@ -78,6 +78,7 @@ func TestTheLocalSocketServesTheContract(t *testing.T) {
 		"POST " + wire.PathOIDCStart, "POST " + wire.PathOIDCExchange, "POST " + wire.PathOIDCDevice,
 		"POST " + wire.PathOIDCDevicePoll, "POST " + wire.PathBootstrap, "POST " + wire.PathLogout,
 		"GET " + wire.PathTokens, "POST " + wire.PathTokens, "DELETE " + wire.PathToken,
+		"GET " + wire.PathIdentities, "GET " + wire.PathIdentityTokens, "POST " + wire.PathIdentityDisable, "POST " + wire.PathIdentityEnable,
 		"POST " + wire.PathSecrets, "POST " + wire.PathMasterKeyRotate, "POST " + wire.PathMasterKeyRetire,
 		"POST " + wire.PathMasterKeyExport, "POST " + wire.PathSSHKeyRotate, "GET " + wire.PathMasterKeys, "GET " + wire.PathSecrets,
 		"GET " + wire.PathBackups, "POST " + wire.PathBackups, "POST " + wire.PathEnrollments, "POST " + wire.PathEnroll,
