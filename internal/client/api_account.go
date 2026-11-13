@@ -57,6 +57,27 @@ func (c *Client) RevokeToken(ctx context.Context, id domain.ID) error {
 	return err
 }
 
+// ---- identities (admin only) ---------------------------------------------------
+
+func (c *Client) ListIdentities(ctx context.Context, q wire.PageQuery) (wire.Page[wire.Identity], error) {
+	return call[wire.Page[wire.Identity]](ctx, c, get(wire.PathIdentities, q.Values()))
+}
+
+// ListIdentityTokens lists another identity's API tokens.
+func (c *Client) ListIdentityTokens(ctx context.Context, id domain.ID) (wire.Page[wire.Token], error) {
+	return call[wire.Page[wire.Token]](ctx, c, get(wire.Path(wire.PathIdentityTokens, string(id)), nil))
+}
+
+// DisableIdentity revokes the identity's credentials and removes its roles.
+func (c *Client) DisableIdentity(ctx context.Context, id domain.ID) (wire.Identity, error) {
+	return call[wire.Identity](ctx, c, postUnkeyed(wire.Path(wire.PathIdentityDisable, string(id)), nil))
+}
+
+// EnableIdentity enables an identity again; its roles and credentials are not restored.
+func (c *Client) EnableIdentity(ctx context.Context, id domain.ID) (wire.Identity, error) {
+	return call[wire.Identity](ctx, c, postUnkeyed(wire.Path(wire.PathIdentityEnable, string(id)), nil))
+}
+
 // ---- keys and secrets (spec §10, ADR-0021) -------------------------------------
 
 func (c *Client) ImportSecret(ctx context.Context, r wire.ImportSecretRequest) (wire.Direct[wire.SecretVersion], error) {

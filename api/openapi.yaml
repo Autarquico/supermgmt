@@ -36,6 +36,8 @@ tags:
     description: Login and bootstrap. Not catalog actions.
   - name: tokens
     description: API tokens.
+  - name: identities
+    description: Identities, admin only.
   - name: plans
     description: Plans and their submission.
   - name: jobs
@@ -963,6 +965,77 @@ paths:
         - $ref: '#/components/parameters/Id'
       responses:
         '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/identities:
+    get:
+      operationId: listIdentities
+      summary: Every identity, disabled ones included. Admin only.
+      description: Needs `identity.write` and the `admin` role.
+      tags: [identities]
+      x-supermgmt-route: action:identity.write
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: One page of identities, oldest first.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfIdentity'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/identities/{id}/tokens:
+    get:
+      operationId: listIdentityTokens
+      summary: The API tokens of another identity. Admin only.
+      description: Needs `identity.write` and the `admin` role. Values are never returned.
+      tags: [identities]
+      x-supermgmt-route: action:identity.write
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The tokens, revoked ones included.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/PageOfToken'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/identities/{id}/disable:
+    post:
+      operationId: disableIdentity
+      summary: Disable an identity. Admin only.
+      description: >-
+        Revokes its sessions, API tokens, MCP tokens and OAuth access tokens, removes its role bindings and audits
+        `identity.disabled`, in one transaction. A job it already runs finishes; one it queued fails at claim.
+        Refuses the system identity, an MCP identity and the last enabled admin. Disabling a disabled identity succeeds.
+        Rejects a request carrying `Idempotency-Key`.
+      tags: [identities]
+      x-supermgmt-route: action:identity.write
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The identity, disabled.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Identity'}}}]}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/identities/{id}/enable:
+    post:
+      operationId: enableIdentity
+      summary: Enable a disabled identity. Admin only.
+      description: >-
+        Restores neither its roles nor its credentials; grant the roles again (`sm admin grant`).
+        Rejects a request carrying `Idempotency-Key`.
+      tags: [identities]
+      x-supermgmt-route: action:identity.write
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The identity, enabled and without roles.
+          content:
+            application/json:
+              schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/Identity'}}}]}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/secrets:
     get:
@@ -2082,11 +2155,30 @@ components:
         api_token:
           description: Set only when the exchange created the identity (no OIDC).
           $ref: '#/components/schemas/TokenIssued'
-    Token:
+    Identity:
       type: object
-      required: [id, name, scopes, created_at, expires_at, revoked_at, last_used_at]
+      required: [id, actor_type, display_name, email, roles, created_at, last_seen_at, disabled_at]
       properties:
         id: {$ref: '#/components/schemas/ID'}
+        actor_type: {type: string, enum: [human, automation, mcp, system]}
+        display_name: {type: string}
+        email: {type: string}
+        roles: {type: array, items: {type: string}}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        last_seen_at: {type: [string, 'null'], format: date-time}
+        disabled_at: {type: [string, 'null'], format: date-time}
+    PageOfIdentity:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Identity'}}
+        next_cursor: {type: string, description: Opaque; empty on the last page.}
+    Token:
+      type: object
+      required: [id, identity_id, name, scopes, created_at, expires_at, revoked_at, last_used_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        identity_id: {$ref: '#/components/schemas/ID'}
         name: {type: string}
         scopes: {type: array, items: {type: string}}
         created_at: {$ref: '#/components/schemas/Timestamp'}

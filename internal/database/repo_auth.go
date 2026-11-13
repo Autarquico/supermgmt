@@ -340,6 +340,18 @@ func setCredentialsNotBefore(ctx context.Context, q Querier, at time.Time) error
 	return PutSetting(ctx, q, Setting{Key: credentialsNotBeforeKey, Value: json.RawMessage(strconv.FormatInt(at.UnixMilli(), 10)), UpdatedAt: at})
 }
 
+// credentialTargets are the tables that hold a credential, with the condition
+// that makes a row active and the condition that ties a row to one identity
+// (its argument is the identity id). A remote MCP client holds no token of its
+// own, so its row is not a target there; its access tokens are, through the
+// client. The condition does not look at expiry: an expired row is revoked too.
+var credentialTargets = []struct{ table, active, ofIdentity string }{
+	{"sessions", `revoked_at IS NULL`, `identity_id = ?`},
+	{"api_tokens", `revoked_at IS NULL`, `identity_id = ?`},
+	{"mcp_clients", `revoked_at IS NULL AND token_hash IS NOT NULL`, `identity_id = ?`},
+	{"oauth_access_tokens", `revoked_at IS NULL`, `mcp_client_id IN (SELECT id FROM mcp_clients WHERE identity_id = ?)`},
+}
+
 // RevokeAllCredentials revokes every session, API token, MCP token and OAuth
 // access token that is still active, as a restore does (spec §29.2, ADR-0020),
 // and returns how many. A remote MCP client holds no token of its own, so its
@@ -351,13 +363,24 @@ func RevokeAllCredentials(ctx context.Context, q Querier, at time.Time) (int64, 
 		return 0, err
 	}
 	var total int64
-	for _, target := range []struct{ table, active string }{
-		{"sessions", `revoked_at IS NULL`},
-		{"api_tokens", `revoked_at IS NULL`},
-		{"mcp_clients", `revoked_at IS NULL AND token_hash IS NOT NULL`},
-		{"oauth_access_tokens", `revoked_at IS NULL`},
-	} {
+	for _, target := range credentialTargets {
 		n, err := affected(ctx, q, target.table, `UPDATE `+target.table+` SET revoked_at = ? WHERE `+target.active, millis(at))
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+// RevokeIdentityCredentials revokes every active session, API token, MCP token
+// and OAuth access token of one identity, expired ones included, and returns
+// how many. The credentials-not-before floor is left alone: it is global.
+func RevokeIdentityCredentials(ctx context.Context, q Querier, identity domain.ID, at time.Time) (int64, error) {
+	var total int64
+	for _, target := range credentialTargets {
+		n, err := affected(ctx, q, target.table,
+			`UPDATE `+target.table+` SET revoked_at = ? WHERE `+target.active+` AND `+target.ofIdentity, millis(at), identity)
 		if err != nil {
 			return 0, err
 		}

@@ -897,6 +897,70 @@
    "note": "Revoking another identity's token is token.revoke, a non-query action: refused while writes are off, allowed by the `*` grant once they are on."
   },
   {
+   "route": "GET /api/v1/identities",
+   "class": "forbidden",
+   "path": "/api/v1/identities",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "GET /api/v1/identities/{id}/tokens",
+   "class": "forbidden",
+   "path": "/api/v1/identities/{mcp_client}/tokens",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "POST /api/v1/identities/{id}/disable",
+   "class": "forbidden",
+   "path": "/api/v1/identities/{mcp_client}/disable",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
+   "route": "POST /api/v1/identities/{id}/enable",
+   "class": "forbidden",
+   "path": "/api/v1/identities/{mcp_client}/enable",
+   "body": "",
+   "headers": null,
+   "stream": false,
+   "off": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   },
+   "on": {
+    "status": 403,
+    "reason": "MCP_ACTION_FORBIDDEN"
+   }
+  },
+  {
    "route": "POST /api/v1/secrets",
    "class": "write",
    "path": "/api/v1/secrets",

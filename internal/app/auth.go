@@ -310,7 +310,8 @@ func (a *AuthService) Logout(ctx context.Context, by Caller) error {
 // admin binding exists, or during restore hold (spec §29.2).
 func (a *AuthService) bootstrapOpen(ctx context.Context, q database.Querier) (bool, error) {
 	var exists bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM role_bindings b JOIN roles r ON r.id = b.role_id WHERE r.name = ?)`,
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM role_bindings b JOIN roles r ON r.id = b.role_id
+		JOIN identities i ON i.id = b.identity_id WHERE r.name = ? AND i.disabled_at IS NULL)`,
 		adminRoleName).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("look for an admin binding: %w", err)
@@ -433,13 +434,13 @@ func (a *AuthService) createAdmin(ctx context.Context, tx *database.Tx, name, co
 	}
 	actor := domain.Actor{ID: id, Type: domain.ActorHuman}
 	ref := domain.ResourceRef{Type: domain.ResourceIdentity, ID: id}
-	if err := a.emit(ctx, tx, actor, eventIdentityCreated, ref, domain.ResultSucceeded, map[string]any{"origin": bootstrapIssuer}); err != nil {
+	if err := a.emit(ctx, tx, actor, eventIdentityCreated, ref, domain.ResultSucceeded, withRecovery(map[string]any{"origin": bootstrapIssuer}, recovery)); err != nil {
 		return wire.Bootstrapped{}, err
 	}
 	if err := a.consumeCode(ctx, tx, actor, codeHash, recovery); err != nil {
 		return wire.Bootstrapped{}, err
 	}
-	if err := a.bindAdmin(ctx, tx, actor, id, map[string]any{"via": "bootstrap"}); err != nil {
+	if err := a.bindAdmin(ctx, tx, actor, id, withRecovery(map[string]any{"via": "bootstrap"}, recovery)); err != nil {
 		return wire.Bootstrapped{}, err
 	}
 	session, err := a.createSession(ctx, tx, actor, database.OriginBootstrap, "bootstrap")
@@ -453,6 +454,18 @@ func (a *AuthService) createAdmin(ctx context.Context, tx *database.Tx, name, co
 	return wire.Bootstrapped{IdentityID: id, Session: &session, APIToken: &token}, nil
 }
 
+// withRecovery marks an audit event as part of a recovery.
+func withRecovery(data map[string]any, recovery bool) map[string]any {
+	if !recovery {
+		return data
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["recovery"] = true
+	return data
+}
+
 func (a *AuthService) consumeCode(ctx context.Context, tx *database.Tx, actor domain.Actor, codeHash string, recovery bool) error {
 	code, err := database.ConsumeBootstrapCode(ctx, tx, codeHash, actor.ID, a.cfg.Clock.Now())
 	if smerr.CodeOf(err) == smerr.CodeNotFound {
@@ -462,11 +475,7 @@ func (a *AuthService) consumeCode(ctx context.Context, tx *database.Tx, actor do
 		return err
 	}
 	ref := domain.ResourceRef{Type: domain.ResourceInstance, ID: code.ID}
-	var data map[string]any
-	if recovery {
-		data = map[string]any{"recovery": true}
-	}
-	return a.emit(ctx, tx, actor, eventBootstrapUsed, ref, domain.ResultSucceeded, data)
+	return a.emit(ctx, tx, actor, eventBootstrapUsed, ref, domain.ResultSucceeded, withRecovery(nil, recovery))
 }
 
 // bindAdmin gives identity the admin role. A binding that already exists

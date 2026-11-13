@@ -19,6 +19,7 @@ Available Commands:
   enrollments Issue join tokens for nodes that enroll themselves
   events      List audit events
   help        Help about any command
+  identities  List, disable and enable identities (admin)
   install     Install SuperMgmt (invoked by install.sh)
   jobs        List and govern jobs (default: list)
   join        Enroll this node with a SuperMgmt server, or prepare it for a Cloudflare Tunnel enrollment (run as root)

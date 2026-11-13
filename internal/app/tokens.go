@@ -139,7 +139,7 @@ func tokenView(t database.APIToken) wire.Token {
 		scopes = []string{}
 	}
 	return wire.Token{
-		ID: t.ID, Name: t.Name, Scopes: scopes, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt,
+		ID: t.ID, IdentityID: t.IdentityID, Name: t.Name, Scopes: scopes, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt,
 		RevokedAt: t.RevokedAt, LastUsedAt: t.LastUsedAt,
 	}
 }

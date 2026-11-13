@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	actionIdentityWrite    = "identity.write"
 	actionTokenCreate      = "token.create"
 	actionSecretWrite      = "secret.write"
 	actionBackupRead       = "backup.read"
@@ -143,6 +144,56 @@ func (rs *routeSet) tokens() {
 				return nil, err
 			}
 			return struct{}{}, a.RevokeToken(ctx, scopeOf(ctx).caller, id)
+		}),
+	})
+}
+
+// ---- identities (admin only) -------------------------------------------------
+
+func (rs *routeSet) identities() {
+	s := rs.s
+	rs.add(route{
+		method: http.MethodGet, pattern: wire.PathIdentities, action: actionIdentityWrite,
+		do: s.publicCall(http.StatusOK, func(ctx context.Context, a app.Auth, in input) (any, error) {
+			page, err := wire.ParsePageQuery(in.r.URL.Query())
+			if err != nil {
+				return nil, err
+			}
+			return a.ListIdentities(ctx, scopeOf(ctx).caller, page)
+		}),
+	})
+	rs.add(route{
+		method: http.MethodGet, pattern: wire.PathIdentityTokens, action: actionIdentityWrite,
+		do: s.publicCall(http.StatusOK, func(ctx context.Context, a app.Auth, in input) (any, error) {
+			id, err := in.id("id")
+			if err != nil {
+				return nil, err
+			}
+			tokens, err := a.ListIdentityTokens(ctx, scopeOf(ctx).caller, id)
+			if tokens == nil {
+				tokens = []wire.Token{}
+			}
+			return wire.Page[wire.Token]{Items: tokens}, err
+		}),
+	})
+	rs.add(route{
+		method: http.MethodPost, pattern: wire.PathIdentityDisable, action: actionIdentityWrite, credential: true,
+		do: s.publicCall(http.StatusOK, func(ctx context.Context, a app.Auth, in input) (any, error) {
+			id, err := in.id("id")
+			if err != nil {
+				return nil, err
+			}
+			return a.DisableIdentity(ctx, scopeOf(ctx).caller, id)
+		}),
+	})
+	rs.add(route{
+		method: http.MethodPost, pattern: wire.PathIdentityEnable, action: actionIdentityWrite, credential: true,
+		do: s.publicCall(http.StatusOK, func(ctx context.Context, a app.Auth, in input) (any, error) {
+			id, err := in.id("id")
+			if err != nil {
+				return nil, err
+			}
+			return a.EnableIdentity(ctx, scopeOf(ctx).caller, id)
 		}),
 	})
 }

@@ -1210,6 +1210,8 @@ Every DENY and CAPABILITY_UNAVAILABLE emits an audit event. The algorithm is tab
   - The code has ≥128 bits of entropy, is stored only as a hash in `bootstrap_codes`, and has TTL `auth.bootstrap.code_ttl`. Issuing a new code invalidates any unconsumed previous one.
   - It works only while no `admin` binding exists. Afterwards, `sm admin bootstrap-code` refuses, and recovery is `sm admin grant <identity-id> admin` (admin socket, audited).
   - Exchange: `POST /api/v1/auth/bootstrap` with the code, together with a completed OIDC login (§23.1), binds that identity to `admin`. If OIDC is not configured, the exchange creates an `admin` human identity named by the caller and returns a session token plus a first API token (shown once). The code is consumed atomically.
+  - A recovery code (`--recover`, servers without OIDC) creates one more admin while one exists. Its `identity.created`, `role_binding.created`, `bootstrap_code.issued` and `bootstrap_code.consumed` events carry `recovery: true`.
+  - An administrator disables another identity with `POST /api/v1/identities/{id}/disable` (`identity.write`, and the caller must hold the `admin` role): in one transaction it sets `disabled_at`, revokes the identity's sessions, API tokens, MCP tokens and OAuth access tokens, removes its role bindings and emits `identity.disabled`. It refuses the system identity, `mcp` identities and the last enabled admin. `POST /api/v1/identities/{id}/enable` clears `disabled_at` without restoring roles or credentials and emits `identity.enabled`. A job already running finishes; a queued job fails at claim (§11.1).
   - The installer (§3.5) runs `sm admin bootstrap-code` at the end and prints the code with the access instructions.
 
 ## 11.6 Example user policy
@@ -1685,6 +1687,10 @@ POST   /api/v1/auth/logout
 GET    /api/v1/tokens
 POST   /api/v1/tokens                # not idempotent-replayable (§23)
 DELETE /api/v1/tokens/{id}           # revocation; rows are kept for audit
+GET    /api/v1/identities            # identity.write + admin role; paged; disabled identities included
+GET    /api/v1/identities/{id}/tokens  # identity.write + admin role; another identity's tokens, never their values
+POST   /api/v1/identities/{id}/disable # identity.write + admin role; revokes credentials, removes roles (§11.5)
+POST   /api/v1/identities/{id}/enable  # identity.write + admin role; restores neither roles nor credentials
 GET    /api/v1/mcp/clients           # identity.read; never returns tokens or hashes
 POST   /api/v1/mcp/clients           # register (mcp_client.register; may return a pending job)
 POST   /api/v1/mcp/clients/{id}/token  # one-time token issuance (mcp_client.issue_token)
