@@ -207,17 +207,13 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 			return policy.Target{}, nil, nil, err
 		}
 		return newNodeTarget(ctx, q, ref, p)
-	case actionNodeUpdate, actionNodeRemove:
-		if spec.Name == actionNodeRemove { // closed schema; a node.update carries its patch as parameters
-			if _, err := policy.RiskFor(spec.Name, params); err != nil {
-				return policy.Target{}, nil, nil, err
-			}
-		}
-		r, err := resolveNode(ctx, q, ref.ID)
-		if err != nil {
+	case actionNodeUpdate:
+		return nodeTarget(ctx, q, ref)
+	case actionNodeRemove:
+		if _, err := policy.RiskFor(spec.Name, params); err != nil {
 			return policy.Target{}, nil, nil, err
 		}
-		return r.target, &r.revision, r.inputs, nil
+		return nodeTarget(ctx, q, ref)
 	case actionProviderWite:
 		return providerWriteTarget(ref, params)
 	case nodeRouteExposeAction, nodeRouteUnexposeAction:
@@ -234,6 +230,14 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 		return policy.Target{Ref: ref}, nil, nil, p.validate()
 	}
 	return policy.Target{}, nil, nil, smerr.New(smerr.CodeInvalidArgument, "", "unsupported direct action "+spec.Name)
+}
+
+func nodeTarget(ctx context.Context, q database.Querier, ref domain.ResourceRef) (policy.Target, *int64, []plan.Input, error) {
+	r, err := resolveNode(ctx, q, ref.ID)
+	if err != nil {
+		return policy.Target{}, nil, nil, err
+	}
+	return r.target, &r.revision, r.inputs, nil
 }
 
 // newNodeTarget is the policy view of a node that does not exist yet, from

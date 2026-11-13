@@ -132,6 +132,10 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 	if err != nil {
 		return nil, err
 	}
+	if found && run.leftByRemoval() {
+		return nil, smerr.New(smerr.CodeConflict, "", "an unfinished removal of this node took its tunnel down; "+
+			"`sm nodes remove` finishes it, a disable would report a direct node that still uses the deleted tunnel")
+	}
 	if !found {
 		if err := run.requireEnabledNode(ctx); err != nil {
 			return nil, err
@@ -150,6 +154,12 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 		}
 	}
 	return run, run.findLastEnabled(ctx)
+}
+
+// leftByRemoval reports whether the resumed record is a removal's teardown, not a disable's: past the switch
+// a disable's node is direct, and only a removal leaves the node on the tunnel transport there.
+func (r *disableRun) leftByRemoval() bool {
+	return phaseIndex(r.op.Phase) >= phaseIndex(database.PhaseSwitched) && r.node.Endpoint.Transport == domain.TransportCloudflare
 }
 
 // unfinishedEnable is the node's enable that has not finished (running, halted

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -388,6 +389,37 @@ func TestAFailedTeardownLeavesTheNodeManagedAndANewRemovalResumesIt(t *testing.T
 	if ops := ts.operations(); len(ops) != 2 {
 		t.Errorf("%d tunnel operations, want the enable and one disable that both removals worked on: %+v", len(ops), ops)
 	}
+}
+
+func TestADisableDoesNotResumeTheTeardownARefusedRemovalLeftBehind(t *testing.T) {
+	ts := newRemovableTunnel(t)
+	before := ts.instanceObjects()
+	ts.requestRemoval()
+	ts.arm("refused before", 3)
+	failure := ts.attempt()
+	if failure == nil {
+		t.Fatal("the removal should have failed")
+	}
+	mustf(t, ts.store.FailTerminal(context.Background(), ts.lease, failure), "the job gives up")
+	opsBefore, nodeBefore := ts.operations(), ts.currentNode()
+
+	ts.planDisable()
+	err := ts.attempt()
+	if smerr.CodeOf(err) != smerr.CodeConflict || !strings.Contains(err.Error(), "sm nodes remove") {
+		t.Fatalf("disable err = %v, want a conflict that names `sm nodes remove`", err)
+	}
+	mustf(t, ts.store.FailTerminal(context.Background(), ts.lease, err), "the refused disable gives up")
+	if got := ts.currentNode(); got.Endpoint != nodeBefore.Endpoint || got.ManagementState != nodeBefore.ManagementState {
+		t.Errorf("the refused disable changed the node: %+v -> %+v", nodeBefore, got)
+	}
+	if got := ts.operations(); !reflect.DeepEqual(got, opsBefore) {
+		t.Errorf("the refused disable changed the records: %+v -> %+v", opsBefore, got)
+	}
+
+	ts.current = nil
+	ts.requestRemoval()
+	mustf(t, ts.attempt(), "the removal finishes")
+	ts.wantRemovedWithItsTunnel(before)
 }
 
 func TestRemovingANodeTakesOverAnUnfinishedEnableAndItsUnrecordedObjects(t *testing.T) {
