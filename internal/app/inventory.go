@@ -405,19 +405,59 @@ func (i *Inventory) applyRepin(ctx context.Context, q database.Querier, actor do
 }
 
 // RemoveNode retires a node (action node.remove): it stays in the database
-// for audit but is no longer managed (plan Q9).
+// for audit but is no longer managed (plan Q9). A node that records a Cloudflare tunnel is retired by a job
+// that takes the tunnel down first (tunnel_remove.go), whether or not policy asks for approval; a node
+// defined in the configuration file is accepted only for that cleanup, once the file no longer has it.
 func (i *Inventory) RemoveNode(ctx context.Context, by Caller, id domain.ID, ifMatch int64) (DirectResult[wire.Node], error) {
 	return commit(ctx, i.core, by, func(ctx context.Context, tx *database.Tx) (DirectResult[wire.Node], error) {
-		actor, node, err := i.beginMutation(ctx, tx, by, id, ifMatch)
+		actor, err := i.beginRequest(ctx, tx, by)
 		if err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
-		b, err := build(ctx, tx, actionNodeRemove, by.ID, domain.ResourceRef{Type: domain.ResourceNode, ID: node.ID}, map[string]any{})
+		node, err := database.GetNode(ctx, tx, id)
 		if err != nil {
 			return DirectResult[wire.Node]{}, err
 		}
-		return i.applyOrWrap(ctx, tx, by, actor, b, func() (domain.Node, error) { return i.applyNodeRemove(ctx, tx, actor, node) })
+		ops, err := database.ListTunnelOperations(ctx, tx, node.ID)
+		if err != nil {
+			return DirectResult[wire.Node]{}, err
+		}
+		takesTunnelDown := recordsTunnel(ops)
+		if err := i.requireRemovable(ctx, tx, node, ifMatch, takesTunnelDown); err != nil {
+			return DirectResult[wire.Node]{}, err
+		}
+		params := map[string]any{}
+		if takesTunnelDown {
+			params[policy.ParamTunnel] = "true"
+		}
+		b, err := build(ctx, tx, actionNodeRemove, by.ID, domain.ResourceRef{Type: domain.ResourceNode, ID: node.ID}, params)
+		if err != nil {
+			return DirectResult[wire.Node]{}, err
+		}
+		if !takesTunnelDown {
+			return i.applyOrWrap(ctx, tx, by, actor, b, func() (domain.Node, error) { return i.applyNodeRemove(ctx, tx, actor, node) })
+		}
+		res, err := i.evaluate(ctx, tx, actor, b)
+		if err != nil {
+			return DirectResult[wire.Node]{}, err
+		}
+		if err := requireTunnelTakedownPossible(ctx, tx, i.cfg.Cloudflare, node, ops); err != nil {
+			return DirectResult[wire.Node]{}, err
+		}
+		submission, err := i.plans.planAndSubmit(ctx, tx, by, actor, b, res)
+		return DirectResult[wire.Node]{Pending: &submission}, err
 	})
+}
+
+// requireRemovable is beginMutation's checks for a removal. The origin check yields for a retired node of the
+// configuration file that still records a tunnel: there is nothing left to change but its Cloudflare objects.
+func (i *Inventory) requireRemovable(ctx context.Context, tx *database.Tx, node domain.Node, ifMatch int64, takesTunnelDown bool) error {
+	if !takesTunnelDown || node.ManagementState != domain.ManagementRetired {
+		if err := i.requireAPIOrigin(ctx, tx, node); err != nil {
+			return err
+		}
+	}
+	return i.requireUnchangedAndUnlocked(ctx, tx, node, ifMatch)
 }
 
 // beginMutation identifies the caller and loads the node an update or removal
@@ -436,15 +476,23 @@ func (i *Inventory) beginMutation(ctx context.Context, tx *database.Tx, by Calle
 	if err := i.requireAPIOrigin(ctx, tx, node); err != nil {
 		return domain.Actor{}, domain.Node{}, err
 	}
-	if node.SpecRevision != ifMatch {
-		return domain.Actor{}, domain.Node{}, staleRevision("node", ifMatch, node.SpecRevision)
-	}
-	if locked, err := database.ResourceLocked(ctx, tx, domain.ResourceRef{Type: domain.ResourceNode, ID: id}); err != nil {
+	if err := i.requireUnchangedAndUnlocked(ctx, tx, node, ifMatch); err != nil {
 		return domain.Actor{}, domain.Node{}, err
-	} else if locked {
-		return domain.Actor{}, domain.Node{}, smerr.FromReason(smerr.ReasonResourceLocked, "a job holds a lock on this node")
 	}
 	return actor, node, nil
+}
+
+// requireUnchangedAndUnlocked refuses a node whose revision is not the one the caller saw or that a job holds.
+func (i *Inventory) requireUnchangedAndUnlocked(ctx context.Context, tx *database.Tx, node domain.Node, ifMatch int64) error {
+	if node.SpecRevision != ifMatch {
+		return staleRevision("node", ifMatch, node.SpecRevision)
+	}
+	if locked, err := database.ResourceLocked(ctx, tx, domain.ResourceRef{Type: domain.ResourceNode, ID: node.ID}); err != nil {
+		return err
+	} else if locked {
+		return smerr.FromReason(smerr.ReasonResourceLocked, "a job holds a lock on this node")
+	}
+	return nil
 }
 
 func staleRevision(what string, expected, current int64) error {

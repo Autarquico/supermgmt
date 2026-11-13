@@ -313,7 +313,15 @@ func newNodesRemoveCmd(env []string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove <node>",
 		Short: "Retire a node (its history is kept)",
-		Args:  cobra.ExactArgs(1),
+		Long: "Retire a node: it stays in the database for audit but is no longer managed, and its name is free again.\n" +
+			"A node that has a Cloudflare tunnel is retired by a job (it may wait for approval) that first deletes the\n" +
+			"DNS record, the Access application and the tunnel SuperMgmt created for it, then retires the node. It\n" +
+			"needs the cloudflare: block and refuses while the node still has routes (`sm nodes unexpose`). It does\n" +
+			"not connect to the node, so cloudflared keeps running there until you stop it. If the job fails the node\n" +
+			"stays managed; run the command again. Follow the job with `sm jobs get <job-id>`.\n" +
+			"A node dropped from the configuration file with a tunnel is retired already: pass its id to take the\n" +
+			"tunnel down.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, err := newClient(cmd, env)
 			if err != nil {

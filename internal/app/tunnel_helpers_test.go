@@ -209,11 +209,22 @@ const (
 
 func newTunnelSetting(t *testing.T, cfOptions ...cffake.Option) *tunnelSetting {
 	t.Helper()
+	return newTunnelSettingWith(t, nil, cfOptions...)
+}
+
+// newTunnelSettingWith is newTunnelSetting over a configuration that tweak has changed.
+func newTunnelSettingWith(t *testing.T, tweak func(*Config), cfOptions ...cffake.Option) *tunnelSetting {
+	t.Helper()
 	cfg := config.Cloudflare{
 		AccountID: cffake.DefaultAccountID, Zone: cffake.DefaultZone, APITokenRef: testAPIToken, AccessTokenRef: testAccessToken,
 		OwnerEmails: []string{"owner@example.test"}, AccessIdentityProviders: []string{"11111111-1111-4111-8111-111111111111"},
 	}
-	s := newSetting(t, func(c *Config) { c.Cloudflare = &cfg })
+	s := newSetting(t, func(c *Config) {
+		c.Cloudflare = &cfg
+		if tweak != nil {
+			tweak(c)
+		}
+	})
 	ts := &tunnelSetting{setting: s, cfg: cfg, secrets: newMemSecrets(), files: map[string]string{}}
 	ts.cf = cffake.New(t, append([]cffake.Option{cffake.WithClock(s.clock.Now)}, cfOptions...)...)
 	_, _ = ts.secrets.Put(context.Background(), "cloudflare/api-token", audit.Secret(ts.cf.Token()), nil)

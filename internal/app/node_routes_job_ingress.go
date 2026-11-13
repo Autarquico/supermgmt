@@ -61,7 +61,7 @@ func requireNoLiveRoutes(ctx context.Context, q database.Querier, nodeID domain.
 	}
 	slices.Sort(hostnames)
 	return smerr.New(smerr.CodeConflict, "", fmt.Sprintf(
-		"the node still has routes (%s); remove them with `sm nodes unexpose` before disabling the tunnel", strings.Join(hostnames, ", ")))
+		"the node still has routes (%s); remove them with `sm nodes unexpose` before closing the tunnel", strings.Join(hostnames, ", ")))
 }
 
 // routeTunnelCarries reports whether the node's tunnel is still the one the route froze at admission. ops

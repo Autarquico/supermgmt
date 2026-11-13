@@ -179,12 +179,27 @@ func (h tunnelDisableHandler) hostnameOf(node domain.Node, unfinished database.T
 // endpoint stays as it is), closes the enable and starts the disable, which
 // takes down whatever the enable recorded.
 func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelOperation) error {
-	if enable.AccountID != r.opts.Config.AccountID || enable.Zone != r.opts.Config.Zone {
-		return smerr.New(smerr.CodeConflict, "", "the unfinished tunnel enable of this node belongs to another Cloudflare account or zone than the configured one")
+	if err := r.requireSameCloudflare(enable); err != nil {
+		return err
 	}
 	if err := r.verifyDirect(ctx); err != nil {
 		return err
 	}
+	return r.closeEnableForTakedown(ctx, enable)
+}
+
+// requireSameCloudflare refuses an unfinished enable that belongs to another account or zone than the
+// configured one.
+func (r *tunnelRun) requireSameCloudflare(enable database.TunnelOperation) error {
+	if enable.AccountID != r.opts.Config.AccountID || enable.Zone != r.opts.Config.Zone {
+		return smerr.New(smerr.CodeConflict, "", "the unfinished tunnel enable of this node belongs to another Cloudflare account or zone than the configured one")
+	}
+	return nil
+}
+
+// closeEnableForTakedown ends the unfinished enable and starts the disable that takes down what it recorded,
+// after settling its create-to-record window (recordUnrecordedCreate).
+func (r *tunnelRun) closeEnableForTakedown(ctx context.Context, enable database.TunnelOperation) error {
 	enable, err := r.recordUnrecordedCreate(ctx, enable)
 	if err != nil {
 		return err
@@ -199,7 +214,7 @@ func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelO
 // enable before anything is deleted (reconcileUnrecorded), while the enable
 // still carries the phase and phase start that say which attempt could have
 // created an object.
-func (r *disableRun) recordUnrecordedCreate(ctx context.Context, enable database.TunnelOperation) (database.TunnelOperation, error) {
+func (r *tunnelRun) recordUnrecordedCreate(ctx context.Context, enable database.TunnelOperation) (database.TunnelOperation, error) {
 	phase := cmp.Or(enable.HaltedPhase, enable.Phase)
 	if phase != database.PhaseTokenReady && phase != database.PhaseIngressSet {
 		return enable, nil
@@ -218,7 +233,7 @@ func (r *disableRun) recordUnrecordedCreate(ctx context.Context, enable database
 // is not a committed enable in the configured account and zone: there is
 // nothing of ours to take down, or it lives somewhere this instance does not
 // manage.
-func (r *disableRun) requireEnabledNode(ctx context.Context) error {
+func (r *tunnelRun) requireEnabledNode(ctx context.Context) error {
 	if err := r.findLastEnabled(ctx); err != nil {
 		return err
 	}

@@ -222,6 +222,27 @@ func TestNodesRemoveSendsTheRevisionItReadAndAsksFirst(t *testing.T) {
 	}
 }
 
+func TestNodesRemoveOfANodeWithATunnelReportsTheJobThatTakesItDown(t *testing.T) {
+	id := newTestID()
+	f := newFakeAPI(t, router(map[string]http.HandlerFunc{
+		"GET " + wire.Path(wire.PathNode, string(id)): func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 200, wire.Node{ID: id, Name: "web-1", SpecRevision: 9})
+		},
+		"DELETE " + wire.Path(wire.PathNode, string(id)): func(w http.ResponseWriter, _ *http.Request) {
+			reply(w, 202, wire.Direct[wire.Node]{Pending: &wire.Submission{
+				Job:    wire.Job{ID: newTestID(), Type: "control_plane.apply", State: domain.JobAwaitingApproval},
+				Policy: wire.Policy{ApprovalRequired: true, Quorum: 1},
+			}})
+		},
+	}))
+
+	r := f.run("nodes", "remove", string(id), "--yes")
+
+	if r.code != 0 || !strings.Contains(r.stdout, "(control_plane.apply) is awaiting_approval; approval required") {
+		t.Errorf("code=%d out=%q err=%q", r.code, r.stdout, r.stderr)
+	}
+}
+
 func TestServiceRestartSubmitsAJobAndSaysWhenApprovalIsNeeded(t *testing.T) {
 	id := newTestID()
 	f := newFakeAPI(t, router(map[string]http.HandlerFunc{

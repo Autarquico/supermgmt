@@ -253,6 +253,11 @@ func buildCatalog() []ActionSpec {
 	nodeAdd := direct("node.add", domain.ResourceNode, op)
 	nodeAdd.Params = []ParamSpec{{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}}}
 
+	// node.remove is direct, and a job when the node has a Cloudflare tunnel recorded: tunnel=true says the job
+	// takes the tunnel, the Access application and the DNS record down before it retires the node.
+	nodeRemove := direct("node.remove", domain.ResourceNode, destr)
+	nodeRemove.Params = []ParamSpec{{Name: ParamTunnel, Type: ParamString, Values: []string{"true", "false"}}}
+
 	nodeRouteExpose := direct(ActionNodeRouteExpose, domain.ResourceNode, op)
 	nodeRouteExpose.Params = []ParamSpec{
 		{Name: ParamHostname, Type: ParamString, Required: true},
@@ -302,7 +307,7 @@ func buildCatalog() []ActionSpec {
 
 		nodeAdd,
 		direct("node.update", domain.ResourceNode, op),
-		direct("node.remove", domain.ResourceNode, destr),
+		nodeRemove,
 		direct("provider.write", domain.ResourceProvider, high),
 		direct("provider.delete", domain.ResourceProvider, destr),
 		direct("environment.write", domain.ResourceEnvironment, high),
