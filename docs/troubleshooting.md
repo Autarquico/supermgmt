@@ -211,6 +211,14 @@ The daemon sent the service token to the node's tunnel hostname and Access answe
 
 Run `sm nodes tunnel disable <node>`. It takes over a setup that is running, halted, failed or interrupted, checks the direct path first, and removes the route, Access application and tunnel recorded for the node, even when the node never completed setup (`TestDisableAbandonsAnEnableThatIsUnfinishedHaltedOrFailing`). The node stays on direct SSH. To try again instead, run `sm nodes setup <node> --tunnel`. A tunnel or Access application that setup created but never recorded is found by the setup's ownership rule and removed too; a foreign object of that name is never touched (it is audited as `cloudflare.object.left_untouched` and the abandon finishes), and the abandon refuses only when one of ours sits next to a foreign one of the same name. Details: [Cloudflare](cloudflare.md#when-a-setup-does-not-finish).
 
+### `sm nodes remove` of a tunnel node is refused or fails
+
+The removal of a node with a Cloudflare tunnel deletes its DNS record, Access application and tunnel first, and retires the node only after that. It is refused, before approval, with `CONFLICT` naming the routes when the node still has some (run `sm nodes unexpose <node> --hostname <hostname>` for each), with `CAPABILITY_UNAVAILABLE` when there is no `cloudflare:` block (put back the block of the account and zone that created the tunnel), and with `CONFLICT` when the tunnel belongs to another account or zone than the configured one. A job that fails leaves the node managed; fix the cause (for example, store the API token at `cloudflare.api_token_ref`) and run `sm nodes remove <node>` again, which continues where it stopped. It does not stop `cloudflared` on the host. Details: [Cloudflare](cloudflare.md#remove-a-node-that-has-a-tunnel).
+
+### A node dropped from the configuration file left its tunnel in Cloudflare
+
+The retirement is audited with `node.tunnel.left_in_cloudflare` and the objects stay, because nobody approved a teardown. Run `sm nodes remove <node-id>` with the id of the retired node (it is in the audit event); it only takes the objects down.
+
 ### The node name cannot be used with a tunnel
 
 `ssh-<node-name>.<zone>` must be a valid DNS name. The plan is refused before approval when the node name has dots, underscores or other characters outside letters, digits and hyphens, ends in a hyphen, or makes `ssh-<node-name>` longer than 63 characters (`TestATunnelPlanForANodeWhoseNameIsNoDNSLabelIsRefusedBeforeApproval`). No command renames a node: remove it (`sm nodes remove <node>`) and add it again under a DNS-safe name (`sm nodes add --name <new-name> ...`), then plan again.

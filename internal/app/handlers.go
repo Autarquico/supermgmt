@@ -80,7 +80,7 @@ func NewHandlers(cfg Config, o HandlersOptions) (*Handlers, error) {
 		probe:  probeHandler{prober: o.Prober, store: o.Store},
 		setup:  setupHandler{core: c, store: o.Store, conn: o.Connector, identity: o.Identity, prober: o.Prober, tunnel: tunnel, secrets: o.Secrets},
 		action: actionHandler{core: c, store: o.Store, conn: o.Connector, adapters: o.Adapters, settle: o.Settle.withDefaults()},
-		apply:  applyHandler{inv: o.Inventory, enrollments: o.Enrollments},
+		apply:  applyHandler{inv: o.Inventory, enrollments: o.Enrollments, tunnel: tunnel},
 	}
 	if tunnel != nil {
 		h.disable = &tunnelDisableHandler{core: c, store: o.Store, conn: o.Connector, prober: o.Prober, tunnel: tunnel}

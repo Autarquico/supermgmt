@@ -182,7 +182,7 @@ sm nodes add --name vps1 --tunnel
 A node added this way:
 - has only the dedicated account: setup steps that need root wait until you add an admin user;
 - cannot return to direct SSH, because it has no direct path, so `sm nodes tunnel disable` is refused;
-- if its tunnel breaks, is recovered with `sm nodes remove` and a new enrollment.
+- if its tunnel breaks, is recovered with `sm nodes remove` (which takes its Cloudflare objects down, [below](#remove-a-node-that-has-a-tunnel)) and a new enrollment.
 
 ### Using a tunnel node
 
@@ -215,6 +215,22 @@ The node must be reachable directly again, because it is dialled directly from t
 4. It removes the DNS record and ingress (the route closes first), then the Access application, then the tunnel. The application and the tunnel are deleted by their recorded ID only.
 
 **Stays after disable:** the instance's service token, its two policies and the stored service-token secret. A node with no tunnel and no unfinished setup is refused before anything changes (`TestDisableOfANodeWithoutATunnelIsRefusedBeforeAnythingChanges`, `TestADisableOfANodeWithoutAnyEnableStillSaysThereIsNothingToDisable`).
+
+### Remove a node that has a tunnel
+
+```bash
+sm nodes remove web1
+```
+
+Retiring a node frees its name, so what the node holds in Cloudflare goes first. For a node with a tunnel recorded (an enabled one, or a setup that is unfinished, halted or failed after creating objects), `sm nodes remove` is always a job, approval-gated like any removal. The job takes the Cloudflare objects down in the order of a disable (the DNS record and ingress, then the Access application, then the tunnel) and only then retires the node. It is resumable: if a step fails the node stays managed and running the command again continues the same record (`TestEveryFaultAfterEveryMutationOfATunnelNodeRemovalConverges`, `TestAFailedTeardownLeavesTheNodeManagedAndANewRemovalResumesIt`). An unfinished setup is taken over as `tunnel disable` does it (`TestRemovingANodeTakesOverAnUnfinishedEnableAndItsUnrecordedObjects`).
+
+It never connects to the node: it does not stop the `cloudflared` that still runs there, which stops serving once its tunnel is deleted. Stop it yourself if the host stays in use. The instance's service token and policies stay, as after a disable.
+
+The request is refused, before approval, when the node still has routes (run `sm nodes unexpose` first), when there is no `cloudflare:` block, or when the tunnel was provisioned in another account or zone than the configured one (`TestRemovingANodeThatStillHasRoutesIsRefusedBeforeAnythingChanges`, `TestRemovingANodeWithATunnelIsRefusedWhenCloudflareCannotBeReached`). A missing or unusable API token fails the job before it changes anything, with the secret to store. The job checks the routes again once it holds the node and the Cloudflare locks, so a route admitted while it waited stops it (`TestARouteAdmittedWhileTheRemovalWaitedStopsItBeforeAnythingChanges`). A node without a tunnel is removed as before, with no Cloudflare call.
+
+The name is free afterwards: a node added under it, with or without `--tunnel`, meets no leftover DNS record (`TestANodeRemovedWithItsTunnelCanBeSetUpAgainWithATunnelUnderTheSameName`).
+
+**A node dropped from the configuration file.** A node removed from the file is retired when the server starts, with nobody to approve a teardown, so its Cloudflare objects stay. The retirement is audited with a warning, `node.tunnel.left_in_cloudflare`, that names the command to run. Pass the node's id, since a name that a live node shares means the live one: `sm nodes remove <node-id>` then runs only the cleanup (`TestARetiredNodeOfTheConfigurationFileCanBeRemovedAgainToTakeItsTunnelDown`, `TestANodeThatLeftTheConfigurationFileWithATunnelIsRetiredWithAWarningThatPointsAtItsRemoval`). A node of the file that is not retired is still refused: change the file.
 
 ### Publish a node port
 
@@ -252,7 +268,7 @@ Not covered: moving a route to another node, checking whether the port answers, 
 
 ### Stop using Cloudflare
 
-1. Run `sm nodes tunnel disable <node>` for every tunnel node while the `cloudflare:` block is still configured; without the block, disable is refused as not configured.
+1. Run `sm nodes tunnel disable <node>` for every tunnel node while the `cloudflare:` block is still configured; without the block, disable is refused as not configured. For a node that has no direct path (added with `sm nodes add --tunnel`), use `sm nodes remove <node>`, which takes its objects down too.
 2. In the Cloudflare dashboard, delete what disable keeps: the Access policies `supermgmt service <instance>` and `supermgmt owners <instance>`, and the service token `supermgmt-<instance>` (it expires after a year anyway). Revoke the API token if you have not.
 3. Remove the `cloudflare:` block. Nothing then calls Cloudflare, and `cloudflared` is not needed on the daemon host; uninstall it yourself if nothing else uses it.
 4. The sealed secrets at `cloudflare/api-token` and `cloudflare/access-service-token` stay in the store, which is append-only and has no delete command. They are useless once revoked.

@@ -132,6 +132,10 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 	if err != nil {
 		return nil, err
 	}
+	if found && run.leftByRemoval() {
+		return nil, smerr.New(smerr.CodeConflict, "", "an unfinished removal of this node took its tunnel down; "+
+			"`sm nodes remove` finishes it, a disable would report a direct node that still uses the deleted tunnel")
+	}
 	if !found {
 		if err := run.requireEnabledNode(ctx); err != nil {
 			return nil, err
@@ -150,6 +154,12 @@ func (h tunnelDisableHandler) begin(ctx context.Context, lease jobs.Lease, job j
 		}
 	}
 	return run, run.findLastEnabled(ctx)
+}
+
+// leftByRemoval reports whether the resumed record is a removal's teardown, not a disable's: past the switch
+// a disable's node is direct, and only a removal leaves the node on the tunnel transport there.
+func (r *disableRun) leftByRemoval() bool {
+	return phaseIndex(r.op.Phase) >= phaseIndex(database.PhaseSwitched) && r.node.Endpoint.Transport == domain.TransportCloudflare
 }
 
 // unfinishedEnable is the node's enable that has not finished (running, halted
@@ -179,12 +189,27 @@ func (h tunnelDisableHandler) hostnameOf(node domain.Node, unfinished database.T
 // endpoint stays as it is), closes the enable and starts the disable, which
 // takes down whatever the enable recorded.
 func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelOperation) error {
-	if enable.AccountID != r.opts.Config.AccountID || enable.Zone != r.opts.Config.Zone {
-		return smerr.New(smerr.CodeConflict, "", "the unfinished tunnel enable of this node belongs to another Cloudflare account or zone than the configured one")
+	if err := r.requireSameCloudflare(enable); err != nil {
+		return err
 	}
 	if err := r.verifyDirect(ctx); err != nil {
 		return err
 	}
+	return r.closeEnableForTakedown(ctx, enable)
+}
+
+// requireSameCloudflare refuses an unfinished enable that belongs to another account or zone than the
+// configured one.
+func (r *tunnelRun) requireSameCloudflare(enable database.TunnelOperation) error {
+	if enable.AccountID != r.opts.Config.AccountID || enable.Zone != r.opts.Config.Zone {
+		return smerr.New(smerr.CodeConflict, "", "the unfinished tunnel enable of this node belongs to another Cloudflare account or zone than the configured one")
+	}
+	return nil
+}
+
+// closeEnableForTakedown ends the unfinished enable and starts the disable that takes down what it recorded,
+// after settling its create-to-record window (recordUnrecordedCreate).
+func (r *tunnelRun) closeEnableForTakedown(ctx context.Context, enable database.TunnelOperation) error {
 	enable, err := r.recordUnrecordedCreate(ctx, enable)
 	if err != nil {
 		return err
@@ -199,7 +224,7 @@ func (r *disableRun) takeOverEnable(ctx context.Context, enable database.TunnelO
 // enable before anything is deleted (reconcileUnrecorded), while the enable
 // still carries the phase and phase start that say which attempt could have
 // created an object.
-func (r *disableRun) recordUnrecordedCreate(ctx context.Context, enable database.TunnelOperation) (database.TunnelOperation, error) {
+func (r *tunnelRun) recordUnrecordedCreate(ctx context.Context, enable database.TunnelOperation) (database.TunnelOperation, error) {
 	phase := cmp.Or(enable.HaltedPhase, enable.Phase)
 	if phase != database.PhaseTokenReady && phase != database.PhaseIngressSet {
 		return enable, nil
@@ -218,7 +243,7 @@ func (r *disableRun) recordUnrecordedCreate(ctx context.Context, enable database
 // is not a committed enable in the configured account and zone: there is
 // nothing of ours to take down, or it lives somewhere this instance does not
 // manage.
-func (r *disableRun) requireEnabledNode(ctx context.Context) error {
+func (r *tunnelRun) requireEnabledNode(ctx context.Context) error {
 	if err := r.findLastEnabled(ctx); err != nil {
 		return err
 	}
@@ -308,10 +333,13 @@ func (r *disableRun) switchToDirect(ctx context.Context) error {
 }
 
 // removeService stops and removes the connector from the node, as the admin
-// account over the direct path. It removes only what setup installed.
+// account over the direct path. It removes only what setup installed. A record
+// this disable already took past the removal does not touch the node again, so
+// the Cloudflare teardown it resumes needs no SSH.
 func (r *disableRun) removeService(ctx context.Context, c core) error {
-	if phaseIndex(r.op.Phase) >= phaseIndex(database.PhaseServiceRemoved) {
-		return nil
+	done, err := r.serviceRemovedByThisDisable(ctx)
+	if err != nil || done {
+		return err
 	}
 	if err := r.mayMutate(ctx); err != nil {
 		return err
@@ -330,6 +358,15 @@ func (r *disableRun) removeService(ctx context.Context, c core) error {
 	}
 	return r.advance(ctx, database.PhaseServiceRemoved, database.TunnelObjects{}, eventTunnelServiceOff,
 		map[string]any{"hostname": r.hostname})
+}
+
+// serviceRemovedByThisDisable reports whether the node service went off through this record's own walk. A
+// record past the removal phase without that event is a node removal's teardown, which never touched the node.
+func (r *disableRun) serviceRemovedByThisDisable(ctx context.Context) (bool, error) {
+	if phaseIndex(r.op.Phase) < phaseIndex(database.PhaseServiceRemoved) {
+		return false, nil
+	}
+	return database.TunnelOperationHasEvent(ctx, r.cfg.DB.Reader(), r.op.ID, eventTunnelServiceOff)
 }
 
 // finish records the operation as done and drops the tunnel from the node's

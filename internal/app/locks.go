@@ -138,7 +138,8 @@ func (LockPlanner) PlanLocks(ctx context.Context, q database.Querier, job jobs.J
 	}
 	specs := []domain.LockSpec{own}
 	tunnelSetup := job.Type == policy.ActionNodeSetup && stored.Parameters[policy.ParamTunnel] == "true"
-	if tunnelSetup || routeJob ||
+	tunnelRemoval := job.Type == JobControlPlaneApply && stored.Action == actionNodeRemove && stored.Parameters[policy.ParamTunnel] == "true"
+	if tunnelSetup || tunnelRemoval || routeJob ||
 		job.Type == policy.ActionCloudflareRotate || job.Type == policy.ActionNodeTunnelDisable {
 		specs = append(specs, cloudflareInstanceLock)
 	}

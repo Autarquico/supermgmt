@@ -645,6 +645,15 @@ paths:
     delete:
       operationId: removeNode
       summary: Remove a node from management.
+      description: >-
+        A node with no Cloudflare tunnel recorded is retired at once, or by a control_plane.apply job when policy asks
+        for approval. A node that has a tunnel recorded (an enabled one, or an unfinished or halted setup that created
+        objects) is always retired by a control_plane.apply job: the job deletes its DNS record, its Access
+        application and its tunnel, then retires the node, and never connects to the node. The request is refused
+        with a CONFLICT while the node has routes or when the tunnel belongs to another Cloudflare account or zone than
+        the configured one, and with CAPABILITY_UNAVAILABLE without a cloudflare: block. A node defined in the
+        configuration file is refused, except one the file already dropped that still has a tunnel recorded: the job
+        then only takes the tunnel down.
       tags: [nodes]
       x-supermgmt-route: action:node.remove
       parameters:
@@ -658,7 +667,7 @@ paths:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}
         '202':
-          description: Awaiting approval; a control_plane.apply job was created.
+          description: A control_plane.apply job was created, awaiting approval when policy asks for it; always so for a node with a Cloudflare tunnel.
           content:
             application/json:
               schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {properties: {data: {$ref: '#/components/schemas/DirectOfNode'}}}]}

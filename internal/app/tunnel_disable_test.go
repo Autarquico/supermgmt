@@ -102,6 +102,16 @@ func (ts *tunnelSetting) instanceObjects() instanceObjects {
 	return instanceObjects{policies: snap.Policies, tokens: snap.ServiceTokens, secrets: ts.secrets.versions("cloudflare/access-service-token")}
 }
 
+// wantInstanceObjectsKept fails when the instance's policies, service token or secret differ from before.
+func (ts *tunnelSetting) wantInstanceObjectsKept(before instanceObjects) {
+	ts.t.Helper()
+	if after := ts.instanceObjects(); !slices.EqualFunc(after.policies, before.policies, func(a, b cffake.Policy) bool {
+		return a.ID == b.ID && slices.Equal(a.ServiceTokenIDs, b.ServiceTokenIDs) && slices.Equal(a.Emails, b.Emails)
+	}) || !slices.EqualFunc(after.tokens, before.tokens, func(a, b cffake.ServiceToken) bool { return a.ID == b.ID }) || after.secrets != before.secrets {
+		ts.t.Errorf("the instance's policies, service token or secret changed: %+v -> %+v", before, after)
+	}
+}
+
 // wantDisabled fails unless the node is direct again, only the node's own
 // Cloudflare objects are gone, the instance's stay and the hostname was never
 // routable without Access.
@@ -111,11 +121,7 @@ func (ts *tunnelSetting) wantDisabled(before instanceObjects) {
 	if len(snap.Tunnels) != 0 || len(snap.Apps) != 0 || len(snap.DNSRecords) != 0 {
 		ts.t.Errorf("left in Cloudflare: %d tunnels, %d apps, %d dns records", len(snap.Tunnels), len(snap.Apps), len(snap.DNSRecords))
 	}
-	if after := ts.instanceObjects(); !slices.EqualFunc(after.policies, before.policies, func(a, b cffake.Policy) bool {
-		return a.ID == b.ID && slices.Equal(a.ServiceTokenIDs, b.ServiceTokenIDs) && slices.Equal(a.Emails, b.Emails)
-	}) || !slices.EqualFunc(after.tokens, before.tokens, func(a, b cffake.ServiceToken) bool { return a.ID == b.ID }) || after.secrets != before.secrets {
-		ts.t.Errorf("the instance's policies, service token or secret changed: %+v -> %+v", before, after)
-	}
+	ts.wantInstanceObjectsKept(before)
 	if routable := ts.cf.EverRoutableWithoutAccess(); len(routable) != 0 {
 		ts.t.Errorf("routable without Access at some point: %v", routable)
 	}
@@ -422,5 +428,24 @@ func TestADisableHoldsTheNodeExclusively(t *testing.T) {
 
 	if got := ts.locks()["node:"+ts.node.ID.String()]; got != domain.LockExclusive {
 		t.Errorf("node lock = %q, want exclusive", got)
+	}
+}
+
+// A disable that removed the node service and was then refused by Cloudflare finishes its teardown on retry
+// without the node: the service is already off it.
+func TestADisableRetriedAfterTheServiceWentOffFinishesTheTeardownWithTheNodeUnreachable(t *testing.T) {
+	ts := newEnabledTunnel(t)
+	ts.planDisable()
+	ts.arm("refused before", 3)
+	if err := ts.attempt(); err == nil {
+		t.Fatal("the first disable should fail at Cloudflare")
+	}
+	ts.dialer.mu.Lock()
+	ts.dialer.nodes["admin"] = failingNode(t, brokenConnector())
+	ts.dialer.mu.Unlock()
+	interruptAndRequeue(t, ts.fixture, ts.queued.ID)
+	mustf(t, ts.attempt(), "the retry with the node unreachable")
+	if phase := ts.operations()[0].Phase; phase != database.PhaseDone {
+		t.Errorf("newest operation is %s, want done", phase)
 	}
 }

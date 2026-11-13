@@ -156,9 +156,13 @@ func buildDirect(ctx context.Context, q database.Querier, spec policy.ActionSpec
 }
 
 // directSteps are the human lines of a direct action's plan, computed from its parameters alone so that
-// building the plan again at approval gives the same hash. Only node.add has them: the approver sees whom
-// the control plane will trust and with which credentials.
+// building the plan again at approval gives the same hash. Only node.add and a node.remove that takes a tunnel
+// down have them: the approver sees whom the control plane will trust and with which credentials, or what
+// disappears from Cloudflare.
 func directSteps(action string, params map[string]any) ([]string, error) {
+	if action == actionNodeRemove && params[policy.ParamTunnel] == "true" {
+		return nodeRemoveTunnelSteps, nil
+	}
 	if action != actionNodeAdd {
 		return nil, nil
 	}
@@ -203,12 +207,13 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 			return policy.Target{}, nil, nil, err
 		}
 		return newNodeTarget(ctx, q, ref, p)
-	case actionNodeUpdate, actionNodeRemove:
-		r, err := resolveNode(ctx, q, ref.ID)
-		if err != nil {
+	case actionNodeUpdate:
+		return nodeTarget(ctx, q, ref)
+	case actionNodeRemove:
+		if _, err := policy.RiskFor(spec.Name, params); err != nil {
 			return policy.Target{}, nil, nil, err
 		}
-		return r.target, &r.revision, r.inputs, nil
+		return nodeTarget(ctx, q, ref)
 	case actionProviderWite:
 		return providerWriteTarget(ref, params)
 	case nodeRouteExposeAction, nodeRouteUnexposeAction:
@@ -225,6 +230,14 @@ func directTarget(ctx context.Context, q database.Querier, spec policy.ActionSpe
 		return policy.Target{Ref: ref}, nil, nil, p.validate()
 	}
 	return policy.Target{}, nil, nil, smerr.New(smerr.CodeInvalidArgument, "", "unsupported direct action "+spec.Name)
+}
+
+func nodeTarget(ctx context.Context, q database.Querier, ref domain.ResourceRef) (policy.Target, *int64, []plan.Input, error) {
+	r, err := resolveNode(ctx, q, ref.ID)
+	if err != nil {
+		return policy.Target{}, nil, nil, err
+	}
+	return r.target, &r.revision, r.inputs, nil
 }
 
 // newNodeTarget is the policy view of a node that does not exist yet, from
@@ -437,6 +450,9 @@ type applyHandler struct {
 	// routes moves the node route of a node_route.expose or node_route.unexpose plan once the apply step
 	// admitted it (ADR-0040); nil without a cloudflare: block.
 	routes *nodeRouteHandler
+	// tunnel takes the Cloudflare objects of a node down before a node.remove retires it; nil without a
+	// cloudflare: block.
+	tunnel *tunnelEngine
 }
 
 func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
@@ -450,6 +466,11 @@ func (h applyHandler) Run(ctx context.Context, lease jobs.Lease) error {
 	action, err := jobAction(ctx, h.inv.cfg.DB.Reader(), job)
 	if err != nil {
 		return err
+	}
+	if action == actionNodeRemove {
+		if err := (nodeRemoval{core: h.inv.core, tunnel: h.tunnel}).run(ctx, lease, job); err != nil {
+			return err
+		}
 	}
 	if !isNodeRouteAction(action) {
 		return h.inv.runApproved(ctx, lease, action)

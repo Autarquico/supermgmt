@@ -295,9 +295,28 @@ func (s *StaticReconciler) retireRemoved(ctx context.Context, q database.Querier
 				map[string]any{"name": stored.Name, "reason": "removed from the configuration file"}); err != nil {
 				return err
 			}
+			if err := s.warnTunnelLeft(ctx, q, stored); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// eventTunnelLeft audits a node retired because the configuration file dropped it while it still has
+// objects in Cloudflare: nobody is there to approve their removal, so they stay until an operator runs
+// `sm nodes remove <node id>` on the retired node, which only takes them down.
+const eventTunnelLeft = "node.tunnel.left_in_cloudflare"
+
+func (s *StaticReconciler) warnTunnelLeft(ctx context.Context, q database.Querier, node domain.Node) error {
+	ops, err := database.ListTunnelOperations(ctx, q, node.ID)
+	if err != nil || !recordsTunnel(ops) {
+		return err
+	}
+	return s.emit(ctx, q, systemActor, eventTunnelLeft, nodeRef(node.ID), domain.ResultSucceeded, map[string]any{
+		"name": node.Name, "hostname": ops[0].Hostname,
+		"hint": "its tunnel, Access application and DNS record remain in Cloudflare; run `sm nodes remove " + node.ID.String() + "` to take them down",
+	})
 }
 
 // Events the Proxmox branch of the reconciler records.
