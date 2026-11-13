@@ -132,6 +132,11 @@ func (u *upgrader) fresh(ctx context.Context) error {
 		u.say("%s already is this build; nothing to upgrade", t.l.Binary)
 		return nil
 	}
+	if len(u.o.TLSSANs) > 0 { // a bad CA must not cost a stop and a rollback
+		if err := u.in.checkResignable(t.l); err != nil {
+			return err
+		}
+	}
 	if err := u.checkDisk(newBin); err != nil {
 		return err
 	}
@@ -302,8 +307,18 @@ func (u *upgrader) linkPrevious(oldSHA string) error {
 // ---- resume ----
 
 func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
+	sans, err := u.trustedSANs(st)
+	if err != nil {
+		return err
+	}
+	st.TLSSANs = sans
 	if err := u.checkResumeSANs(st); err != nil {
 		return err
+	}
+	if len(sans) > 0 && st.beforeSwap() {
+		if err := u.in.checkResignable(u.t.l); err != nil {
+			return err
+		}
 	}
 	u.st = st
 	u.say("an unfinished upgrade %s -> %s is at phase %s", st.FromVersion, st.ToVersion, st.Phase)
@@ -313,6 +328,9 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 	newBin := u.newBinary()
 	if sha, err := u.d.Files.Hash(newBin); newBin == "" || err != nil || sha != st.NewSHA256 {
 		u.say("this run does not carry that upgrade's binary; abandoning the unfinished upgrade")
+		if len(u.o.TLSSANs) == 0 {
+			u.o.TLSSANs = st.TLSSANs // the names were asked for; abandoning the binary does not withdraw them
+		}
 		if err := u.abandon(ctx); err != nil {
 			return err
 		}
@@ -328,6 +346,28 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 		return u.abortBeforeSwap(ctx, err)
 	}
 	return u.advance(ctx)
+}
+
+// trustedSANs are the names an unfinished upgrade asks the CA to sign. upgrade.json sits in the
+// service-owned data directory, so the service account could replace it; the names count only
+// from a file root owns, and are validated again as if they had just been typed.
+func (u *upgrader) trustedSANs(st upgradeState) ([]string, error) {
+	if len(st.TLSSANs) == 0 {
+		return nil, nil
+	}
+	path := u.t.statePath()
+	info, err := u.d.Files.Lstat(path)
+	if err != nil {
+		return nil, failWrap(ExitConfiguration, "inspect the upgrade state", err)
+	}
+	if !info.Regular || info.UID != 0 {
+		return nil, fail(ExitConfiguration, "%s carries --tls-san names but is not a regular file owned by root; inspect it, remove it and rerun the upgrade with --tls-san", path)
+	}
+	sans, err := normalizeSANs(st.TLSSANs)
+	if err != nil {
+		return nil, fail(ExitConfiguration, "the --tls-san names recorded in %s are invalid; inspect it before upgrading (%v)", path, err)
+	}
+	return sans, nil
 }
 
 // checkResumeSANs: names asked for now must be the ones the unfinished upgrade carries. A resume

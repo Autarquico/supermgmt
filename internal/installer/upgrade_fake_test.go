@@ -55,6 +55,7 @@ type uhost struct {
 	noDisk       bool
 	symlinks     map[string]string // directory -> where it really is, for Canonical
 	linkedFiles  map[string]bool   // files that are symlinks for Lstat
+	owners       map[string]int    // uid Lstat reports for a path; root when absent
 	holdErr      error
 	dbLocks      int // database locks held right now
 	// renamedUnderDBLock: the new binary was renamed into place while the database lock was held.
@@ -289,7 +290,7 @@ func (h *uhost) Lstat(p string) (EntryInfo, error) {
 	case h.dirs[p]:
 		return EntryInfo{Dir: true, Mode: 0o700}, nil
 	case isFile:
-		return EntryInfo{Regular: true, Mode: 0o600}, nil
+		return EntryInfo{Regular: true, UID: h.owners[p], Mode: 0o600}, nil
 	}
 	return EntryInfo{}, fs.ErrNotExist
 }

@@ -245,3 +245,66 @@ func TestUpgradeAppliance_AMalformedTLSSANNeverReachesTheContainer(t *testing.T)
 		t.Errorf("the container was asked to upgrade: %v", p.upgrades)
 	}
 }
+
+func TestUpgrade_ABrokenCAIsRefusedBeforeTheServiceIsStopped(t *testing.T) {
+	h := newUHost(t)
+	h.selfSigned(t)
+	f := selfSignedFiles(applianceLayout())
+	foreign, err := generateSelfSigned("other.example.com", nil, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.put(f.CAKey, string(foreign.CAKey))
+	if got := exitCodeOf(t, h.upgradeWith(tailscaleIP)); got != ExitConfiguration {
+		t.Errorf("exit = %d, want %d", got, ExitConfiguration)
+	}
+	if h.index("stop ") >= 0 {
+		t.Errorf("a certificate problem must not stop the service: %v", h.events)
+	}
+	if _, ok := h.state(); ok {
+		t.Error("nothing must be recorded")
+	}
+	if h.content(applianceLayout().Binary) != binV1 {
+		t.Error("the installed binary must be untouched")
+	}
+}
+
+func TestUpgrade_AResumeRevalidatesTheNamesItCarries(t *testing.T) {
+	h := newUHost(t)
+	h.selfSigned(t)
+	h.seedUpgrade(t, upgradeState{Phase: upSwapped, TLSSANs: []string{"*.evil.example"}}, binV2)
+	h.put(applianceLayout().Binary, binV2)
+	if got := exitCodeOf(t, h.upgradeWith()); got != ExitConfiguration {
+		t.Errorf("exit = %d, want %d", got, ExitConfiguration)
+	}
+	if h.covers(t, "x.evil.example") {
+		t.Error("a name that fails validation must never be signed")
+	}
+}
+
+func TestUpgrade_AResumeTrustsNamesOnlyFromARootOwnedState(t *testing.T) {
+	h := newUHost(t)
+	h.selfSigned(t)
+	h.seedUpgrade(t, upgradeState{Phase: upSwapped, TLSSANs: []string{"evil.example"}}, binV2)
+	h.put(applianceLayout().Binary, binV2)
+	h.owners = map[string]int{applianceLayout().DataDir + "/" + upgradeStateFile: 999}
+	if got := exitCodeOf(t, h.upgradeWith()); got != ExitConfiguration {
+		t.Errorf("exit = %d, want %d", got, ExitConfiguration)
+	}
+	if h.covers(t, "evil.example") {
+		t.Error("a state the service account could have written must not reach the CA")
+	}
+}
+
+func TestUpgrade_AbandoningAnUpgradeKeepsItsNames(t *testing.T) {
+	h := newUHost(t)
+	h.selfSigned(t)
+	h.seedUpgrade(t, upgradeState{Phase: upPrepared, TLSSANs: []string{tailscaleIP}}, binV2)
+	h.put("/usr/local/src/sm-new", binV2+";another build")
+	if err := h.upgradeWith(); err != nil {
+		t.Fatalf("upgrade: %v\n%s", err, h.out.String())
+	}
+	if !h.covers(t, tailscaleIP) {
+		t.Error("the names of the abandoned upgrade must still be applied")
+	}
+}

@@ -185,14 +185,17 @@ github.com/autarquico/supermgmt/internal/domain/plan.decodeObject  FuzzCanonical
 github.com/autarquico/supermgmt/internal/domain/plan.decodeTree  FuzzCanonicalizeJSON
 github.com/autarquico/supermgmt/internal/domain/plan.parseTree  FuzzCanonicalizeJSON
 github.com/autarquico/supermgmt/internal/installer.Installer.readRecord  exempt: gap: untrusted bytes with no fuzz target yet; follow-up fuzz task
+github.com/autarquico/supermgmt/internal/installer.Installer.readSelfSigned  exempt: reads the key material the installer generated itself (root-owned tls/) and delegates to the fuzzed parseCertificates
 github.com/autarquico/supermgmt/internal/installer.execPVE.AddToken  exempt: runs a pveum/pvesh command and delegates to the fuzzed decoders or reads the installer's own journal
 github.com/autarquico/supermgmt/internal/installer.execPVE.json  exempt: runs a pveum/pvesh command and delegates to the fuzzed decoders or reads the installer's own journal
 github.com/autarquico/supermgmt/internal/installer.launchd.Load  exempt: OS file read or service-manager call; no grammar
+github.com/autarquico/supermgmt/internal/installer.normalizeSAN  FuzzNormalizeSAN
 github.com/autarquico/supermgmt/internal/installer.openJournal  FuzzOpenInstallerJournal
 github.com/autarquico/supermgmt/internal/installer.osFiles.ReadFile  exempt: OS file read or service-manager call; no grammar
 github.com/autarquico/supermgmt/internal/installer.parseACLName  FuzzParseACLName
 github.com/autarquico/supermgmt/internal/installer.parseCertificates  FuzzParseCertificates
 github.com/autarquico/supermgmt/internal/installer.parseGuestConfig  FuzzParseGuestConfig
+github.com/autarquico/supermgmt/internal/installer.parsePrivateKey  exempt: reads the key material the installer generated itself (root-owned tls/)
 github.com/autarquico/supermgmt/internal/installer.parseSemver  FuzzParseSemver
 github.com/autarquico/supermgmt/internal/installer.provision.commitStateOf  exempt: runs a pveum/pvesh command and delegates to the fuzzed decoders or reads the installer's own journal
 github.com/autarquico/supermgmt/internal/installer.provision.providersHealthy  exempt: runs a pveum/pvesh command and delegates to the fuzzed decoders or reads the installer's own journal

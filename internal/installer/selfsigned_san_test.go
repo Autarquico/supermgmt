@@ -15,12 +15,19 @@ const (
 // reinstall is `sm install server` run again on a host that already has its certificates.
 func reinstall(t *testing.T, from *world, o Options) (*world, error) {
 	t.Helper()
+	w, _, err := reinstallWithOutput(t, from, o)
+	return w, err
+}
+
+func reinstallWithOutput(t *testing.T, from *world, o Options) (*world, string, error) {
+	t.Helper()
 	w := newWorld()
 	for _, name := range []string{"ca.pem", "ca.key", "server.pem", "server.key"} {
 		w.files[tlsDir+name] = from.files[tlsDir+name]
 	}
-	d, _ := w.deps("linux", 0, false)
-	return w, New(d).Run(context.Background(), o)
+	d, out := w.deps("linux", 0, false)
+	err := New(d).Run(context.Background(), o)
+	return w, out.String(), err
 }
 
 func resign(w *world, sans ...string) error {
@@ -104,9 +111,12 @@ func TestReinstallWithANewTLSSANReSignsTheLeafWithTheSameCAAndKey(t *testing.T) 
 	first, _ := installSelfSigned(t, selfSignedOpts("https://mgmt.example.com", true))
 	o := selfSignedOpts("https://mgmt.example.com", true)
 	o.TLSSANs = []string{tailscaleIP}
-	w, err := reinstall(t, first, o)
+	w, out, err := reinstallWithOutput(t, first, o)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(out, "keeps the previous certificate until it is restarted") {
+		t.Errorf("the output must say the running service still serves the old leaf:\n%s", out)
 	}
 	for _, name := range []string{"ca.pem", "ca.key", "server.key"} {
 		if string(w.files[tlsDir+name]) != string(first.files[tlsDir+name]) {
@@ -214,14 +224,15 @@ func TestAReSignedLeafNeverOutlivesItsCA(t *testing.T) {
 	if err := resign(w, tailscaleIP); err != nil {
 		t.Fatal(err)
 	}
-	ca, err := certFromPEM(w.files[tlsDir+"ca.pem"])
+	cas, err := parseCertificates(w.files[tlsDir+"ca.pem"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf, err := certFromPEM(w.files[tlsDir+"server.pem"])
+	leaves, err := parseCertificates(w.files[tlsDir+"server.pem"])
 	if err != nil {
 		t.Fatal(err)
 	}
+	ca, leaf := cas[0], leaves[0]
 	if leaf.NotAfter.After(ca.NotAfter) || !leaf.NotAfter.After(testNow) {
 		t.Errorf("leaf expires %s, CA %s, now %s", leaf.NotAfter, ca.NotAfter, testNow)
 	}

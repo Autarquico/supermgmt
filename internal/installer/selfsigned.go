@@ -299,12 +299,9 @@ func (in *Installer) ensureSelfSigned(l layout, s serverSettings) error {
 func (in *Installer) resignLeaf(l layout, sans []string) error {
 	f := selfSignedFiles(l)
 	now := in.d.Clock.Now()
-	ca, caKey, leaf, err := in.verifiedSelfSigned(f)
+	ca, caKey, leaf, err := in.resignable(f)
 	if err != nil {
 		return err
-	}
-	if now.After(ca.NotAfter) {
-		return fail(ExitConfiguration, "the CA %s expired on %s; the certificates cannot be extended", f.CACert, ca.NotAfter.UTC().Format(time.DateOnly))
 	}
 	have := leafNames(leaf)
 	dns, ips := splitNames(append(slices.Clone(have), sans...))
@@ -325,13 +322,33 @@ func (in *Installer) resignLeaf(l layout, sans []string) error {
 		return failWrap(ExitConfiguration, "write "+f.Cert, err)
 	}
 	in.say("re-signed %s with the existing CA; it now covers %s", f.Cert, strings.Join(append(slices.Clone(dns), ipStrings(ips)...), ", "))
+	in.say("a running service keeps the previous certificate until it is restarted or sent SIGHUP; `sm install upgrade --tls-san` restarts it")
 	return nil
 }
 
-// verifiedSelfSigned loads the generated material and proves it is one set: the CA
+// resignable is the precondition of resignLeaf, cheap enough to check before anything is
+// stopped: the generated material is one consistent set and its CA can still sign.
+func (in *Installer) resignable(f tlsFiles) (*x509.Certificate, crypto.Signer, *x509.Certificate, error) {
+	ca, caKey, leaf, err := in.readSelfSigned(f)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if in.d.Clock.Now().After(ca.NotAfter) {
+		return nil, nil, nil, fail(ExitConfiguration, "the CA %s expired on %s; the certificates cannot be extended", f.CACert, ca.NotAfter.UTC().Format(time.DateOnly))
+	}
+	return ca, caKey, leaf, nil
+}
+
+// checkResignable reports why the installed self-signed certificates could not be re-signed.
+func (in *Installer) checkResignable(l layout) error {
+	_, _, _, err := in.resignable(selfSignedFiles(l))
+	return err
+}
+
+// readSelfSigned loads the generated material and proves it is one set: the CA
 // key belongs to the CA, the leaf was issued by that CA, and the leaf key is the
 // leaf's.
-func (in *Installer) verifiedSelfSigned(f tlsFiles) (*x509.Certificate, crypto.Signer, *x509.Certificate, error) {
+func (in *Installer) readSelfSigned(f tlsFiles) (*x509.Certificate, crypto.Signer, *x509.Certificate, error) {
 	var pems [4][]byte
 	for i, path := range []string{f.CACert, f.CAKey, f.Cert, f.Key} {
 		data, err := in.d.Files.ReadFile(path)
@@ -341,21 +358,23 @@ func (in *Installer) verifiedSelfSigned(f tlsFiles) (*x509.Certificate, crypto.S
 		pems[i] = data
 	}
 	caPEM, caKeyPEM, leafPEM, leafKeyPEM := pems[0], pems[1], pems[2], pems[3]
-	ca, err := certFromPEM(caPEM)
+	cas, err := parseCertificates(caPEM)
 	if err != nil {
 		return nil, nil, nil, failWrap(ExitConfiguration, "parse "+f.CACert, err)
 	}
-	caKey, err := signerFromPEM(caKeyPEM)
+	ca := cas[0]
+	caKey, err := parsePrivateKey(caKeyPEM)
 	if err != nil {
 		return nil, nil, nil, failWrap(ExitConfiguration, "parse "+f.CAKey, err)
 	}
 	if pub, ok := caKey.Public().(interface{ Equal(crypto.PublicKey) bool }); !ok || !pub.Equal(ca.PublicKey) {
 		return nil, nil, nil, fail(ExitConfiguration, "%s is not the key of %s", f.CAKey, f.CACert)
 	}
-	leaf, err := certFromPEM(leafPEM)
+	leaves, err := parseCertificates(leafPEM)
 	if err != nil {
 		return nil, nil, nil, failWrap(ExitConfiguration, "parse "+f.Cert, err)
 	}
+	leaf := leaves[0]
 	if err := leaf.CheckSignatureFrom(ca); err != nil {
 		return nil, nil, nil, failWrap(ExitConfiguration, f.Cert+" was not issued by "+f.CACert, err)
 	}
@@ -365,15 +384,7 @@ func (in *Installer) verifiedSelfSigned(f tlsFiles) (*x509.Certificate, crypto.S
 	return ca, caKey, leaf, nil
 }
 
-func certFromPEM(certPEM []byte) (*x509.Certificate, error) {
-	block, _ := pem.Decode(certPEM)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, errors.New("no certificate in PEM data")
-	}
-	return x509.ParseCertificate(block.Bytes)
-}
-
-func signerFromPEM(keyPEM []byte) (crypto.Signer, error) {
+func parsePrivateKey(keyPEM []byte) (crypto.Signer, error) {
 	block, _ := pem.Decode(keyPEM)
 	if block == nil || block.Type != "PRIVATE KEY" {
 		return nil, errors.New("no private key in PEM data")
