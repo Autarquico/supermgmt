@@ -57,7 +57,8 @@ type uhost struct {
 	linkedFiles  map[string]bool   // files that are symlinks for Lstat
 	owners       map[string]int    // uid Lstat reports for a path; root when absent
 	holdErr      error
-	dbLocks      int // database locks held right now
+	afterRead    func(path string) // runs after ReadFileOwned took a file's bytes and owner
+	dbLocks      int               // database locks held right now
 	// renamedUnderDBLock: the new binary was renamed into place while the database lock was held.
 	renamedUnderDBLock bool
 
@@ -158,6 +159,23 @@ func (h *uhost) ReadFile(p string) ([]byte, error) {
 		return append([]byte(nil), n.data...), nil
 	}
 	return nil, fs.ErrNotExist
+}
+
+// ReadFileOwned answers from one inode lookup; afterRead runs once the bytes and owner are taken,
+// which is where a concurrent writer would swap the path.
+func (h *uhost) ReadFileOwned(p string) ([]byte, EntryInfo, error) {
+	if h.linkedFiles[p] {
+		return nil, EntryInfo{}, ErrUnsafeFile
+	}
+	n, ok := h.inodes[p]
+	if !ok {
+		return nil, EntryInfo{}, fs.ErrNotExist
+	}
+	data, info := append([]byte(nil), n.data...), EntryInfo{Regular: true, UID: h.owners[p], Mode: 0o600}
+	if h.afterRead != nil {
+		h.afterRead(p)
+	}
+	return data, info, nil
 }
 
 func (h *uhost) MkdirAll(p string, _ fs.FileMode, _ Owner) error { h.dirs[p] = true; return nil }

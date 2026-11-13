@@ -95,7 +95,7 @@ func (u *upgrader) say(format string, args ...any) { u.in.say(format, args...) }
 func (u *upgrader) newBinary() string { return firstNonEmpty(u.o.UpgradeBinary, u.o.Binary) }
 
 func (u *upgrader) run(ctx context.Context) error {
-	st, found, err := u.loadState()
+	st, info, found, err := u.loadState()
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (u *upgrader) run(ctx context.Context) error {
 		u.st = st
 		return u.holdFailed(ctx)
 	}
-	return u.resume(ctx, st)
+	return u.resume(ctx, st, info)
 }
 
 // ---- fresh upgrade ----
@@ -306,8 +306,8 @@ func (u *upgrader) linkPrevious(oldSHA string) error {
 
 // ---- resume ----
 
-func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
-	sans, err := u.trustedSANs(st)
+func (u *upgrader) resume(ctx context.Context, st upgradeState, info EntryInfo) error {
+	sans, err := u.trustedSANs(st, info)
 	if err != nil {
 		return err
 	}
@@ -350,16 +350,12 @@ func (u *upgrader) resume(ctx context.Context, st upgradeState) error {
 
 // trustedSANs are the names an unfinished upgrade asks the CA to sign. upgrade.json sits in the
 // service-owned data directory, so the service account could replace it; the names count only
-// from a file root owns, and are validated again as if they had just been typed.
-func (u *upgrader) trustedSANs(st upgradeState) ([]string, error) {
+// from a file root owns (as reported by the descriptor loadState read), and are validated again as if they had just been typed.
+func (u *upgrader) trustedSANs(st upgradeState, info EntryInfo) ([]string, error) {
 	if len(st.TLSSANs) == 0 {
 		return nil, nil
 	}
 	path := u.t.statePath()
-	info, err := u.d.Files.Lstat(path)
-	if err != nil {
-		return nil, failWrap(ExitConfiguration, "inspect the upgrade state", err)
-	}
 	if !info.Regular || info.UID != 0 {
 		return nil, fail(ExitConfiguration, "%s carries --tls-san names but is not a regular file owned by root; inspect it, remove it and rerun the upgrade with --tls-san", path)
 	}
@@ -812,7 +808,7 @@ func (u *upgrader) resignLeaf() error {
 	if len(u.st.TLSSANs) == 0 {
 		return nil
 	}
-	if err := u.in.resignLeaf(u.t.l, u.st.TLSSANs); err != nil {
+	if _, err := u.in.resignLeaf(u.t.l, u.st.TLSSANs); err != nil {
 		return err
 	}
 	return u.hit("U:tls:resigned")

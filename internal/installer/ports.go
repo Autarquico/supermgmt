@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"strconv"
@@ -14,10 +15,17 @@ import (
 // Owner names the account that owns a file; the zero value leaves ownership alone.
 type Owner struct{ User, Group string }
 
+// ErrUnsafeFile: a path that is a symlink, not a regular file, or has more than one hard link.
+var ErrUnsafeFile = errors.New("not a regular file with a single link")
+
 // Files is the file system seam. Writes are atomic (temp file and rename).
 type Files interface {
 	Exists(path string) bool
 	ReadFile(path string) ([]byte, error)
+	// ReadFileOwned reads path through one descriptor opened without following a symlink and
+	// describes that same descriptor, so what it says about the owner is about the bytes returned.
+	// A path that is not a regular file with a single link is ErrUnsafeFile.
+	ReadFileOwned(path string) ([]byte, EntryInfo, error)
 	MkdirAll(path string, mode fs.FileMode, owner Owner) error
 	WriteFile(path string, data []byte, mode fs.FileMode, owner Owner) error
 	CopyFile(src, dst string, mode fs.FileMode, owner Owner) error

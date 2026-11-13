@@ -27,6 +27,11 @@ func (h *stubHost) ReadFile(p string) ([]byte, error) {
 	}
 	return nil, fs.ErrNotExist
 }
+
+func (h *stubHost) ReadFileOwned(p string) ([]byte, installer.EntryInfo, error) {
+	b, err := h.ReadFile(p)
+	return b, installer.EntryInfo{Regular: true}, err
+}
 func (h *stubHost) MkdirAll(string, fs.FileMode, installer.Owner) error { return nil }
 func (h *stubHost) WriteFile(p string, d []byte, _ fs.FileMode, _ installer.Owner) error {
 	h.files[p] = d

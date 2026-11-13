@@ -157,22 +157,24 @@ func (in *Installer) hasData(t upgradeTarget) bool {
 
 // ---- state file ----
 
-func (u *upgrader) loadState() (upgradeState, bool, error) {
-	raw, err := u.d.Files.ReadFile(u.t.statePath())
+// loadState also returns what the file system said about the very file it read: upgrade.json
+// sits in a service-owned directory, so its owner must come from the same descriptor as its bytes.
+func (u *upgrader) loadState() (upgradeState, EntryInfo, bool, error) {
+	raw, info, err := u.d.Files.ReadFileOwned(u.t.statePath())
 	if errors.Is(err, fs.ErrNotExist) {
-		return upgradeState{}, false, nil
+		return upgradeState{}, EntryInfo{}, false, nil
 	}
 	if err != nil {
-		return upgradeState{}, false, failWrap(ExitConfiguration, "read the upgrade state", err)
+		return upgradeState{}, EntryInfo{}, false, failWrap(ExitConfiguration, "read the upgrade state", err)
 	}
 	var st upgradeState
 	if err := json.Unmarshal(raw, &st); err != nil {
-		return st, false, failWrap(ExitConfiguration, "the upgrade state "+u.t.statePath()+" is unreadable; inspect it before upgrading", err)
+		return st, info, false, failWrap(ExitConfiguration, "the upgrade state "+u.t.statePath()+" is unreadable; inspect it before upgrading", err)
 	}
 	if st.StartedAt.IsZero() {
 		st.StartedAt = st.UpdatedAt // a state written before StartedAt existed
 	}
-	return st, true, nil
+	return st, info, true, nil
 }
 
 // record makes phase durable (temp file, fsync, rename, directory fsync).

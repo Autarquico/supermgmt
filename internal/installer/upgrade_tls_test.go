@@ -58,6 +58,9 @@ func TestUpgrade_TLSSANReSignsTheLeafWithTheSameCAWhileTheServiceIsStopped(t *te
 			t.Errorf("the leaf does not cover %s", name)
 		}
 	}
+	if strings.Contains(h.out.String(), "keeps the previous certificate") {
+		t.Error("the install-server hint printed during an upgrade, which restarts the service itself")
+	}
 	if h.content(f.CACert) != string(before.CACert) || h.content(f.CAKey) != string(before.CAKey) || h.content(f.Key) != string(before.Key) {
 		t.Error("the CA, its key or the server key changed")
 	}
@@ -293,6 +296,22 @@ func TestUpgrade_AResumeTrustsNamesOnlyFromARootOwnedState(t *testing.T) {
 	}
 	if h.covers(t, "evil.example") {
 		t.Error("a state the service account could have written must not reach the CA")
+	}
+}
+
+func TestUpgrade_AStateSwappedAfterItWasReadStillCountsAsTheServiceAccountsFile(t *testing.T) {
+	h := newUHost(t)
+	h.selfSigned(t)
+	statePath := applianceLayout().DataDir + "/" + upgradeStateFile
+	h.seedUpgrade(t, upgradeState{Phase: upSwapped, TLSSANs: []string{"evil.example"}}, binV2)
+	h.put(applianceLayout().Binary, binV2)
+	h.owners = map[string]int{statePath: 999}
+	h.afterRead = func(p string) { h.owners[p] = 0 } // the service account swaps in a root-owned file
+	if got := exitCodeOf(t, h.upgradeWith()); got != ExitConfiguration {
+		t.Errorf("exit = %d, want %d", got, ExitConfiguration)
+	}
+	if h.covers(t, "evil.example") {
+		t.Error("the owner must come from the file that was read, not from a later look at the path")
 	}
 }
 

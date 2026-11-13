@@ -117,7 +117,7 @@ func FuzzDecodeUpgradeState(f *testing.F) {
 		w := newAW(t)
 		u := &upgrader{d: w.deps(false), t: upgradeTarget{l: applianceLayout()}}
 		w.files[u.t.statePath()] = data
-		st, found, err := u.loadState()
+		st, _, found, err := u.loadState()
 		if err != nil && found {
 			t.Fatal("an unreadable state must not be reported as found")
 		}

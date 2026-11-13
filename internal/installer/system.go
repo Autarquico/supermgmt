@@ -97,6 +97,32 @@ func (osFiles) Lstat(path string) (EntryInfo, error) {
 	return EntryInfo{Dir: info.IsDir(), Regular: info.Mode().IsRegular(), UID: uid, Mode: info.Mode().Perm()}, nil
 }
 
+// ReadFileOwned opens, describes and reads one descriptor, so the file cannot be swapped between
+// the owner check and the read.
+func (osFiles) ReadFileOwned(path string) ([]byte, EntryInfo, error) {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		return nil, EntryInfo{}, ErrUnsafeFile
+	}
+	if err != nil {
+		return nil, EntryInfo{}, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, EntryInfo{}, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.Mode().IsRegular() || st.Nlink != 1 {
+		return nil, EntryInfo{}, ErrUnsafeFile
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, EntryInfo{}, err
+	}
+	return data, EntryInfo{Regular: true, UID: int(st.Uid), Mode: info.Mode().Perm()}, nil
+}
+
 func (osFiles) ReadFile(path string) ([]byte, error) { return os.ReadFile(filepath.Clean(path)) }
 
 func (osFiles) RemoveAll(path string) error { return os.RemoveAll(path) }

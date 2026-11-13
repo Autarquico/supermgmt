@@ -32,7 +32,8 @@ func reinstallWithOutput(t *testing.T, from *world, o Options) (*world, string, 
 
 func resign(w *world, sans ...string) error {
 	d, _ := w.deps("linux", 0, false)
-	return New(d).resignLeaf(Options{Mode: ModeServer}.serverLayout(), sans)
+	_, err := New(d).resignLeaf(Options{Mode: ModeServer}.serverLayout(), sans)
+	return err
 }
 
 func putMaterial(w *world, m certMaterial) {

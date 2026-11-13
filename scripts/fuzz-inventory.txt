@@ -192,6 +192,7 @@ github.com/autarquico/supermgmt/internal/installer.launchd.Load  exempt: OS file
 github.com/autarquico/supermgmt/internal/installer.normalizeSAN  FuzzNormalizeSAN
 github.com/autarquico/supermgmt/internal/installer.openJournal  FuzzOpenInstallerJournal
 github.com/autarquico/supermgmt/internal/installer.osFiles.ReadFile  exempt: OS file read or service-manager call; no grammar
+github.com/autarquico/supermgmt/internal/installer.osFiles.ReadFileOwned  exempt: OS file read or service-manager call; no grammar
 github.com/autarquico/supermgmt/internal/installer.parseACLName  FuzzParseACLName
 github.com/autarquico/supermgmt/internal/installer.parseCertificates  FuzzParseCertificates
 github.com/autarquico/supermgmt/internal/installer.parseGuestConfig  FuzzParseGuestConfig

@@ -276,7 +276,11 @@ func (in *Installer) ensureSelfSigned(l layout, s serverSettings) error {
 			in.say("keeping existing certificate %s", f.Cert)
 			return nil
 		}
-		return in.resignLeaf(l, s.SANs)
+		changed, err := in.resignLeaf(l, s.SANs)
+		if changed {
+			in.say("a running service keeps the previous certificate until it is restarted or sent SIGHUP; `sm install upgrade --tls-san` restarts it")
+		}
+		return err
 	}
 	host, err := publicHost(s.PublicURL)
 	if err != nil {
@@ -296,34 +300,33 @@ func (in *Installer) ensureSelfSigned(l layout, s serverSettings) error {
 // set is refused rather than papered over. server.pem is replaced atomically
 // (Files.WriteFile) and signing again with the same names is harmless, so a
 // run repeated after a crash converges.
-func (in *Installer) resignLeaf(l layout, sans []string) error {
+func (in *Installer) resignLeaf(l layout, sans []string) (changed bool, err error) {
 	f := selfSignedFiles(l)
 	now := in.d.Clock.Now()
 	ca, caKey, leaf, err := in.resignable(f)
 	if err != nil {
-		return err
+		return false, err
 	}
 	have := leafNames(leaf)
 	dns, ips := splitNames(append(slices.Clone(have), sans...))
 	if len(dns)+len(ips) == len(have) {
 		in.say("the certificate %s already covers %s", f.Cert, strings.Join(sans, ", "))
-		return nil
+		return false, nil
 	}
 	tpl, err := leafTemplate(leaf.Subject.CommonName, dns, ips, now)
 	if err != nil {
-		return err
+		return false, err
 	}
 	tpl.NotAfter = minTime(tpl.NotAfter, ca.NotAfter) // a leaf never outlives its CA
 	der, err := x509.CreateCertificate(rand.Reader, tpl, ca, leaf.PublicKey, caKey)
 	if err != nil {
-		return failWrap(ExitConfiguration, "sign the server certificate", err)
+		return false, failWrap(ExitConfiguration, "sign the server certificate", err)
 	}
 	if err := in.d.Files.WriteFile(f.Cert, encodeCert(der), 0o644, Owner{User: "root", Group: "root"}); err != nil {
-		return failWrap(ExitConfiguration, "write "+f.Cert, err)
+		return false, failWrap(ExitConfiguration, "write "+f.Cert, err)
 	}
 	in.say("re-signed %s with the existing CA; it now covers %s", f.Cert, strings.Join(append(slices.Clone(dns), ipStrings(ips)...), ", "))
-	in.say("a running service keeps the previous certificate until it is restarted or sent SIGHUP; `sm install upgrade --tls-san` restarts it")
-	return nil
+	return true, nil
 }
 
 // resignable is the precondition of resignLeaf, cheap enough to check before anything is
