@@ -15,12 +15,12 @@ Licence families below were read from the licence file of each module in the mod
 
 | Module | Version | Used for | Licence |
 |---|---|---|---|
-| `charm.land/bubbletea/v2`, `bubbles/v2`, `lipgloss/v2` | 2.0.10, 2.2.1, 2.0.6 | Terminal UI | MIT |
+| `charm.land/bubbletea/v2`, `bubbles/v2`, `lipgloss/v2` | 2.1.1, 2.2.1, 2.0.6 | Terminal UI | MIT |
 | `github.com/spf13/cobra` | 1.10.2 | Command line | Apache-2.0 |
-| `modernc.org/sqlite` | 1.60.1 | Database driver (no CGO) | BSD-style |
+| `modernc.org/sqlite` | 1.62.0 | Database driver (no CGO) | BSD-style |
 | `github.com/klauspost/compress` | 1.20.2 | zstd in backup archives | BSD-style |
 | `go.yaml.in/yaml/v3` | 3.0.5 | Configuration and manifests | MIT |
-| `golang.org/x/crypto`, `x/oauth2`, `x/sys` | 0.57.0, 0.37.0, 0.48.0 | Key derivation, OAuth, system calls | BSD-style |
+| `golang.org/x/crypto`, `x/oauth2`, `x/sys` | 0.57.0, 0.37.0, 0.50.0 | Key derivation, OAuth, system calls | BSD-style |
 | `github.com/google/uuid` | 1.6.0 | Identifiers | BSD-style |
 | `github.com/coreos/go-oidc/v3` | 3.21.0 | OIDC login | Apache-2.0 |
 | `github.com/modelcontextprotocol/go-sdk` | 1.8.0 | MCP server | MIT and Apache-2.0 notices in one file |
@@ -76,13 +76,13 @@ The documentation website is built from `docs/*.md` with [Astro](https://astro.b
 
 | Package | Version | Used for | Licence |
 |---|---|---|---|
-| `astro` | 7.3.8 | Static site generator | MIT |
-| `@astrojs/starlight` | 0.42.6 | Documentation theme, sidebar, search (Pagefind) | MIT |
+| `astro` | 7.4.12 | Static site generator | MIT |
+| `@astrojs/starlight` | 0.42.10 | Documentation theme, sidebar, search (Pagefind) | MIT |
 | `@fontsource-variable/geist` | 5.3.0 | Body font, self-hosted | OFL-1.1 |
 | `@fontsource-variable/geist-mono` | 5.3.0 | Code font, self-hosted | OFL-1.1 |
 | `@fontsource/instrument-serif` | 5.3.0 | Heading font, self-hosted | OFL-1.1 |
 
-- **Pinned.** Versions are exact in `site/package.json`, and `site/package-lock.json` pins the whole tree (353 packages, all from `registry.npmjs.org`). Node is pinned in `site/.nvmrc`. Installs run `npm ci --ignore-scripts`, so no package runs an install script.
+- **Pinned.** Versions are exact in `site/package.json`, and `site/package-lock.json` pins the whole tree (380 packages, all from `registry.npmjs.org`). Node is pinned in `site/.nvmrc`. Installs run `npm ci --ignore-scripts`, so no package runs an install script.
 - **Fonts.** The three fonts are under the SIL Open Font License 1.1, which allows embedding and redistribution. The build copies each font's licence text into the site, under `licenses/fonts/` (`site/scripts/font-licenses.mjs`). OFL-1.1 is not in the general allow-list of the dependency-review workflow; the font packages are exempted by name, with the reason written in `.github/workflows/dependency-review.yml`.
 - **The rest of the tree.** The lockfile records mostly MIT, plus Apache-2.0, ISC, BSD, MPL-2.0 and a few others. Platform-specific optional packages of the image library `sharp` carry LGPL-3.0-or-later for the bundled libvips. They run at build time only. Which of them end up installed depends on the build machine; no licence review of these build-time packages was done beyond reading the lockfile.
 - **Checked in CI.** The `site` job builds the site and runs `make site-audit`: `npm audit signatures` and `npm audit --omit=dev --audit-level=high`. Dependabot proposes npm updates for `/site`.
