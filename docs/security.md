@@ -65,7 +65,7 @@ When a worker claims the job, `internal/app` recomputes the plan from current st
 
 The `events` table is protected by database triggers that reject `UPDATE` and `DELETE` (migration `000001_initial.up.sql`). The emitter assigns the event ID and timestamp itself, so callers cannot backdate the trail, and every event carries actor, resource and correlation ID.
 
-Denied actions and unavailable capabilities are audited as well as accepted ones: `internal/app` writes a `policy.<decision>` event with result `denied` for every DENY and CAPABILITY_UNAVAILABLE outcome on plan creation, submission and approval decisions. A refusal when a job is revalidated before it starts is recorded as that job's `job.failed` event, with the error code and reason in its data.
+Denied actions and unavailable capabilities are audited as well as accepted ones: `internal/app` writes a `policy.<decision>` event with result `denied` for every DENY and CAPABILITY_UNAVAILABLE outcome on plan creation, submission and approval decisions. A DENY or CAPABILITY_UNAVAILABLE when a job is revalidated before it starts is recorded as that job's `job.failed` event, with the error code and reason in its data; a lapsed approval returns the job to `awaiting_approval` instead.
 
 ### Redaction
 

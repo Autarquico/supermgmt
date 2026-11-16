@@ -13,7 +13,7 @@ You, if you look after a handful of servers, a home lab or a small team's infras
 - **Manages Linux machines without an agent.** Nothing of SuperMgmt runs on a machine you manage. It connects with the system's own `sshd`, pins the host key the first time, and after a one-off setup works through a dedicated unprivileged account with a narrow sudoers file.
 - **Shows what runs there.** systemd units, Docker containers and their logs, gathered by read-only probes. Output from the machine is bounded and stripped of terminal control sequences before you see it.
 - **Changes things only through plans.** Every change (restart a service, set up a machine, publish a port) becomes a plan with a hash. Policy decides whether it may run; in a production environment it waits until someone approves that exact plan. Change any input and the approval no longer applies.
-- **Records everything.** Every request, decision and job lands in an append-only audit trail, with secrets redacted.
+- **Records changes.** Decisions and jobs land in an append-only audit trail, with known secret patterns redacted; whether every mutating route writes an event is checked by hand, not by a test.
 - **Treats AI agents as clients, not operators.** An MCP client gets its own identity, no roles by default and no way to approve anything. Write tools are off unless you turn them on.
 - **Leaves deploying to your CI/CD.** Your pipelines deploy your apps as they are; SuperMgmt operates what they put on the machine.
 - **Optionally runs as a server.** The same daemon can serve an HTTPS API with tokens and OIDC login, so several clients share one control plane; it can also be installed as an unprivileged container on Proxmox VE.

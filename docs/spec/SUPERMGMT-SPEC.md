@@ -3226,6 +3226,14 @@ Decisions (M6 W0, user-approved option (a) for every question): Ubuntu 24.04 sup
 §31 M4  retired. §38 deployment reasons removed. Appendix C example is a node.setup plan.
 ```
 
+## F.14 Changes after 1.4.8-draft: layout read (release checklist H19)
+
+```
+§5      lists internal/errors, netguard, yamlstrict, textsafe, pveid, join, assistant;
+        site/; test/{install,stress,docs,specexamples,fuzzinv}; .gitleaks.toml.
+        Maintainer tooling (.claude/, .pm/, AGENT.md, pm-policy.yml) is outside the layout.
+```
+
 ---
 
 **End of master specification.**

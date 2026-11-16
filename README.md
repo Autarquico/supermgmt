@@ -36,7 +36,7 @@ The terminal UI has screens for the dashboard, resources, nodes, services, logs,
 
 ## Install
 
-**Status:** `install.sh` is verified only for `local`, on one clean Intel Mac (`v0.1.0-rc.1`). The `server` command has not been run from a published release, and the `proxmox-lxc` appliance from `v0.1.0-rc.4` installed on one real host only after a workaround for a defect since fixed. Build from source until [Project status](docs/project-status.md) says otherwise.
+**Status:** `install.sh` is verified only for `local` without `--resident`, on one clean Intel Mac (`v0.1.0-rc.1`); the resident daemon is not verified. The `server` command has not been run from a published release, and the `proxmox-lxc` appliance from `v0.1.0-rc.4` installed on one real host only after a workaround for a defect since fixed. Build from source until [Project status](docs/project-status.md) says otherwise.
 
 Pre-releases only, from the `beta` channel. The script verifies the release signature before it runs anything; the other ways in are in [Installation](docs/installation.md).
 

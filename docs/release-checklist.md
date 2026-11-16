@@ -22,7 +22,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 
 | # | Appendix E row | State | Evidence |
 |---|---|---|---|
-| 1 | Repository matches §5 | human | No test compares the tree to spec section 5. Known differences, patched in the spec (1.4.8): no `packaging/nfpm.yaml`; `internal/providers/cloudflare` is listed again since the deployment retirement. Row H19. |
+| 1 | Repository matches §5 | human | No test compares the tree to spec section 5. Known differences, patched in the spec (1.4.8): no `packaging/nfpm.yaml`; `internal/providers/cloudflare` is listed again since the deployment retirement; the §5 additions of F.14. Row H19. |
 | 2 | README accurately distinguishes implemented/planned | human | No test. README and ROADMAP were rewritten in M6; the MCP examples are checked by `TestMCPExamples_StdioHostsLaunchSmMcpWithRealFlags`. Row H20. |
 | 3 | Universal curl bootstrap works | automated + human | `TestM2_CurlBashInstallsServer`, jobs `e2e-install` and `install-sh`, against a test key. With the real key and a real release: rows H1, H2. |
 | 4 | Release verification works | automated + human | `TestM2_TamperedReleaseFailsWithExit5` (job `e2e-install`); `check.sh` over a snapshot (job `release-snapshot`); byte-identical rebuild (job `reproducible`). Real key, provenance and the first tag: rows H1, H2. |
