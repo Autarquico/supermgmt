@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "22.23.3",
+    "node": "22.23.5",
     "npm": "11.21.0"
   },
   "scripts": {
@@ -15,15 +15,15 @@
     "test:a11y": "playwright test"
   },
   "dependencies": {
-    "@astrojs/starlight": "0.42.6",
+    "@astrojs/starlight": "0.42.10",
     "@fontsource-variable/geist": "5.3.0",
     "@fontsource-variable/geist-mono": "5.3.0",
     "@fontsource/instrument-serif": "5.3.0",
-    "astro": "7.3.8"
+    "astro": "7.4.12"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@playwright/test": "1.64.1"
+    "@playwright/test": "1.65.0"
   },
   "overrides": {
     "postcss-selector-parser": "7.1.6"

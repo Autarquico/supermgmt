@@ -260,7 +260,7 @@ Two modes, chosen by which keys are set (both may be).
 **JWT access tokens (`mcp.oauth.jwks_url`)**, the RFC 9068 profile, strict. Each rule is a row of `TestOAuthJWT_ClaimAndHeaderRules`:
 
 - header `typ` must be `at+jwt` or `application/at+jwt` (case-insensitive). A token with no `typ`, with `JWT`, or shaped like an ID token is refused, **even if every claim matches**. An authorization server that can only emit `typ: JWT` access tokens must be used through introspection;
-- signature through the JWKS (refreshed once on an unknown `kid`, so key rotation works); algorithms RS256, RS384, RS512, PS256, ES256, ES384, EdDSA are allowed; `none` and HMAC are refused. The fake signs with RS256 only, so the other allowed algorithms are not exercised by any test;
+- signature through the JWKS (refreshed once on an unknown `kid`, so key rotation works); algorithms RS256, RS384, RS512, PS256, ES256, ES384, EdDSA are allowed; `none` and HMAC are refused; an RSA key larger than 4096 bits in the JWKS is refused by `go-jose`. The fake signs with RS256 only, so the other allowed algorithms are not exercised by any test;
 - `iss` equals `mcp.oauth.issuer`; `aud` contains `mcp.oauth.resource`; `exp`, `iat` and `sub` required; `nbf` honoured; 60 seconds of clock skew;
 - `client_id` required; if `azp` is present it must equal it; a token carrying `nonce` is refused;
 - every `required_scopes` entry present in `scope` (string) or `scp` (string or array);
@@ -332,6 +332,7 @@ Every MCP client can read service logs by default, through `infra_get_service_lo
 - Redaction cannot find unknown secrets in remote text.
 - Root-path metadata discovery is a known RFC 9728 deviation; use the challenge.
 - JWT access tokens must be `at+jwt`; issuers that cannot emit it need introspection.
+- RSA keys in the JWKS are limited to 4096 bits (`go-jose` 4.1.6 and later); a larger key is refused.
 - Prefix-mounted reverse proxies are not supported for remote MCP.
 - No MCP resources or prompts; no interactive exec (`mcp.allow_interactive_exec: true` fails validation).
 - A token lost after issuance can only be replaced by remove and add.
