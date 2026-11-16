@@ -270,7 +270,7 @@ func (c *Client) sendError(method, path string, err error) error {
 
 // scrub returns err with the token removed from its text.
 func (c *Client) scrub(err error) error {
-	if !strings.Contains(err.Error(), c.token) {
+	if !strings.Contains(visible(err.Error()), c.token) {
 		return err
 	}
 	return errors.New(c.sanitize(err.Error()))
@@ -306,21 +306,26 @@ func (c *Client) failure(status int, env envelope, success2xx bool) *APIError {
 	return e
 }
 
-// sanitize makes a server message safe to show: control characters dropped,
+// sanitize makes a server message safe to show: invisible characters dropped,
 // the token removed, length bounded. Dropping comes first, so a token split by
-// a control character is still found.
+// an invisible character is still found.
 func (c *Client) sanitize(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s)
-	s = strings.ReplaceAll(s, c.token, "[redacted]")
+	s = strings.ReplaceAll(visible(s), c.token, "[redacted]")
 	if r := []rune(s); len(r) > maxMessageLen {
 		s = string(r[:maxMessageLen])
 	}
 	return strings.TrimSpace(s)
+}
+
+// visible drops control and format characters: what a terminal would not
+// show, and what could hide a token from a plain substring search.
+func visible(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func invalid(format string, args ...any) error {

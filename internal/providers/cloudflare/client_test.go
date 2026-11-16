@@ -509,14 +509,19 @@ func TestErrors_NeverCarryTheTokenOrControlCharacters(t *testing.T) {
 	}
 }
 
-func TestErrors_ATokenSplitByAControlCharacterIsStillRedacted(t *testing.T) {
+func TestErrors_ATokenSplitByAnInvisibleCharacterIsStillRedacted(t *testing.T) {
 	c := &Client{token: "tok-secret"}
-	env, err := decodeEnvelope([]byte(`{"success":false,"errors":[{"message":"tok\b-secret is not valid"}]}`))
-	if err != nil {
-		t.Fatal(err)
+	for _, split := range []string{`\b`, `\u200b`, `\u00ad`, `\u2060`} {
+		env, err := decodeEnvelope([]byte(`{"success":false,"errors":[{"message":"tok` + split + `-secret is not valid"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.failure(400, env, false).Message; got != "[redacted] is not valid" {
+			t.Errorf("split by %s: message = %q, want the token redacted", split, got)
+		}
 	}
-	if got := c.failure(400, env, false).Message; got != "[redacted] is not valid" {
-		t.Fatalf("message = %q, want the token redacted", got)
+	if got := c.scrub(errors.New("dial tok\u200b-secret: refused")).Error(); strings.Contains(visible(got), "tok-secret") {
+		t.Errorf("transport error = %q, want the token redacted", got)
 	}
 }
 
