@@ -3,9 +3,13 @@ package cloudflare
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -505,6 +509,88 @@ func TestErrors_NeverCarryTheTokenOrControlCharacters(t *testing.T) {
 			if !strings.Contains(e.Error(), "[redacted]") && token != f.Token() {
 				t.Errorf("error does not show the redaction: %q", e.Error())
 			}
+		}
+	}
+}
+
+func TestErrors_ATokenSplitByAnyNonASCIICharacterIsStillRedacted(t *testing.T) {
+	c := &Client{token: "tok-secret"}
+	splits := []string{`\b`, `\u200b`, `\u00ad`, `\u2060`, `\u034f`, `\ufe0f`, `\udb40\udd00`, `\u3164`, `\u115f`, `\u0301`}
+	for _, split := range splits {
+		env, err := decodeEnvelope([]byte(`{"success":false,"errors":[{"message":"tok` + split + `-secret is not valid"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.failure(400, env, false).Message; got != "[redacted] is not valid" {
+			t.Errorf("server message split by %s = %q, want %q", split, got, "[redacted] is not valid")
+		}
+		var raw string
+		if err := json.Unmarshal([]byte(`"dial tok`+split+`-secret: refused"`), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := c.scrub(errors.New(raw)).Error(), "transport failure; its message echoed the API token and is withheld"; got != want {
+			t.Errorf("transport error split by %s = %q, want %q", split, got, want)
+		}
+	}
+}
+
+func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *testing.T) {
+	const token = "tok-SECRET-0123456789"
+	for _, line := range []string{"HTTP/1.1 tok\x00-SECRET-0123456789\r\n\r\n", "HTTP/1.1 tok\u200b-SECRET-0123456789\r\n\r\n", "HTTP/1.1 200 OK\r\nX: tok-SECRET-0123456789\x00\r\n\r\n"} {
+		var wrote atomic.Bool
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			conn, buf, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				return
+			}
+			_, _ = buf.WriteString(line)
+			wrote.Store(buf.Flush() == nil)
+			_ = conn.Close()
+		}))
+		pool := x509.NewCertPool()
+		pool.AddCert(srv.Certificate())
+		c, err := New("https://example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(testTimeout),
+			WithNetguardOptions(netguard.WithRootCAs(pool), netguard.WithTestDialer(func(network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(context.Background(), network, srv.Listener.Addr().String())
+			})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.CreateTunnel(ctx(t), "sm-"+instanceID)
+		srv.Close()
+		if !wrote.Load() {
+			t.Fatalf("status line %q: the server never answered", line)
+		}
+		if err == nil || strings.Contains(err.Error(), "SECRET-0123456789") || !strings.Contains(err.Error(), "echoed the API token and is withheld") {
+			t.Errorf("status line %q: error = %v, want the token withheld", line, err)
+		}
+	}
+}
+
+func TestErrors_ALiteralTokenAfterABackslashIsStillWithheld(t *testing.T) {
+	c := &Client{token: "tok-SECRET-0123456789"}
+	err := c.scrub(errors.New(`x509: certificate is valid for \tok-SECRET-0123456789, not example.com`))
+	if strings.Contains(err.Error(), "SECRET-0123456789") {
+		t.Fatalf("error = %q, want the token withheld", err)
+	}
+}
+
+func TestErrors_ATokenReturnedAsAnIdentifierIsRedactedFromThePath(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	c, err := New("https://127.0.0.1/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(testTimeout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.DeleteAccessApp(ctx(t), token)
+	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("error = %v, want the path shown with the token redacted", err)
+	}
+}
+
+func TestNew_RefusesATokenThatIsNotPlainPrintableASCII(t *testing.T) {
+	for _, token := range []string{"tok secret", "tok\u00e9", "tok\u200b", `tok\secret`, `tok"secret`} {
+		if _, err := New("https://api.example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token)); err == nil {
+			t.Errorf("New accepted the token %q", token)
 		}
 	}
 }

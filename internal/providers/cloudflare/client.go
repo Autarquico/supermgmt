@@ -15,11 +15,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
@@ -180,7 +180,7 @@ func New(baseURL, accountID string, token audit.Secret, opts ...Option) (*Client
 	if !validID(accountID) {
 		return nil, errors.New("cloudflare: account_id is not a Cloudflare identifier")
 	}
-	if token.Reveal() == "" || strings.ContainsFunc(token.Reveal(), func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+	if token.Reveal() == "" || strings.ContainsFunc(token.Reveal(), func(r rune) bool { return r <= ' ' || r > '~' || r == '\\' || r == '"' }) {
 		return nil, errors.New("cloudflare: the API token is empty or malformed")
 	}
 	s := settings{timeout: defaultTimeout}
@@ -229,6 +229,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, in a
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	path = c.redact(path)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return envelope{}, c.sendError(method, path, err)
@@ -268,12 +269,38 @@ func (c *Client) sendError(method, path string, err error) error {
 	return &outcomeUnknown{msg: fmt.Sprintf("cloudflare: %s %s", method, path), err: err}
 }
 
-// scrub returns err with the token removed from its text.
+// scrub withholds a transport error whose text carries the token in any form.
+// Go's HTTP parser quotes server text (%q) before it reaches here, so the
+// token may come back escaped or split; such an error is replaced, not edited.
 func (c *Client) scrub(err error) error {
-	if !strings.Contains(err.Error(), c.token) {
+	if !c.echoes(err.Error()) {
 		return err
 	}
-	return errors.New(c.sanitize(err.Error()))
+	return errors.New("transport failure; its message echoed the API token and is withheld")
+}
+
+var escapeSequence = regexp.MustCompile(`\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{3}|.)`)
+
+// echoes reports whether s carries the token: as written, split by characters
+// the token does not use, or split by escape sequences. Each form is searched,
+// since removing an escape can also eat a character of a literal token.
+func (c *Client) echoes(s string) bool {
+	for _, form := range []string{s, c.tokenAlphabet(s), c.tokenAlphabet(escapeSequence.ReplaceAllString(s, ""))} {
+		if strings.Contains(form, c.token) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenAlphabet keeps only the characters the token uses.
+func (c *Client) tokenAlphabet(s string) string {
+	return strings.Map(func(r rune) rune {
+		if !strings.ContainsRune(c.token, r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func (c *Client) apiError(resp *http.Response, body []byte) error {
@@ -306,20 +333,32 @@ func (c *Client) failure(status int, env envelope, success2xx bool) *APIError {
 	return e
 }
 
-// sanitize makes a server message safe to show: the token removed, control
-// characters dropped, length bounded.
+// sanitize makes a server message safe to show: only printable ASCII kept,
+// the token removed, length bounded. The token is printable ASCII (New
+// refuses any other), so whatever split it is dropped before the search.
 func (c *Client) sanitize(s string) string {
-	s = strings.ReplaceAll(s, c.token, "[redacted]")
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s)
+	s = c.redact(printable(s))
 	if r := []rune(s); len(r) > maxMessageLen {
 		s = string(r[:maxMessageLen])
 	}
 	return strings.TrimSpace(s)
+}
+
+// redact removes the token from a text shown in an error, such as a request
+// path built from identifiers the server returned.
+func (c *Client) redact(s string) string {
+	return strings.ReplaceAll(s, c.token, "[redacted]")
+}
+
+// printable keeps printable ASCII only: Cloudflare's messages are English, and
+// no invisible or look-alike character survives to hide a token.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < ' ' || r > '~' {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func invalid(format string, args ...any) error {
@@ -332,7 +371,7 @@ func listAll[T any](ctx context.Context, c *Client, path string, q url.Values, d
 	var all []T
 	for page := 1; ; page++ {
 		if page > maxPages {
-			return nil, fmt.Errorf("cloudflare: GET %s exceeds %d pages", path, maxPages)
+			return nil, fmt.Errorf("cloudflare: GET %s exceeds %d pages", c.redact(path), maxPages)
 		}
 		paged := url.Values{}
 		for k, v := range q {
@@ -346,7 +385,7 @@ func listAll[T any](ctx context.Context, c *Client, path string, q url.Values, d
 		}
 		items, err := decode(env.Result)
 		if err != nil {
-			return nil, fmt.Errorf("cloudflare: GET %s: %w", path, err)
+			return nil, fmt.Errorf("cloudflare: GET %s: %w", c.redact(path), err)
 		}
 		all = append(all, items...)
 		if page >= env.Info.TotalPages || len(items) == 0 {
