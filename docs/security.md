@@ -283,7 +283,7 @@ The first admin comes from a one-time bootstrap code: at least 128 bits, stored 
 The server is the OIDC client. It uses Authorization Code with PKCE S256 over a loopback redirect, or the device grant.
 
 - Discovery must return the exact configured issuer and `https` endpoints on the issuer origin or an origin in `auth.oidc.allowed_endpoint_origins`; the userinfo endpoint is never called.
-- ID tokens are verified with `go-oidc` (RS256, ES256 or EdDSA; issuer, audience, `azp`, expiry, nonce, verified email, optional domain list); a `jti` is recorded to refuse replays.
+- ID tokens are verified with `go-oidc` (RS256, ES256 or EdDSA; issuer, audience, `azp`, expiry, nonce, verified email, optional domain list); a `jti` is recorded to refuse replays. An RSA signing key larger than 4096 bits in the provider's JWKS is refused by `go-jose`, so a provider that publishes one cannot be used.
 - Login state is held in memory, so a restart invalidates logins in progress, never sessions. The device code never leaves the server, polls are rate-shaped (`slow_down`), and completion is single use.
 
 Exercised only against Dex, by hand; other providers are untested.
