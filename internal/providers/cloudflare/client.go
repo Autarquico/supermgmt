@@ -273,7 +273,7 @@ func (c *Client) sendError(method, path string, err error) error {
 // Go's HTTP parser quotes server text (%q) before it reaches here, so the
 // token may come back escaped or split; such an error is replaced, not edited.
 func (c *Client) scrub(err error) error {
-	if !strings.Contains(c.skeleton(err.Error()), c.token) {
+	if !c.echoes(err.Error()) {
 		return err
 	}
 	return errors.New("transport failure; its message echoed the API token and is withheld")
@@ -281,15 +281,26 @@ func (c *Client) scrub(err error) error {
 
 var escapeSequence = regexp.MustCompile(`\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{3}|.)`)
 
-// skeleton is s without escape sequences and without any character the token
-// does not use: what is left contains the token if s carried it at all.
-func (c *Client) skeleton(s string) string {
+// echoes reports whether s carries the token: as written, split by characters
+// the token does not use, or split by escape sequences. Each form is searched,
+// since removing an escape can also eat a character of a literal token.
+func (c *Client) echoes(s string) bool {
+	for _, form := range []string{s, c.tokenAlphabet(s), c.tokenAlphabet(escapeSequence.ReplaceAllString(s, ""))} {
+		if strings.Contains(form, c.token) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenAlphabet keeps only the characters the token uses.
+func (c *Client) tokenAlphabet(s string) string {
 	return strings.Map(func(r rune) rune {
 		if !strings.ContainsRune(c.token, r) {
 			return -1
 		}
 		return r
-	}, escapeSequence.ReplaceAllString(s, ""))
+	}, s)
 }
 
 func (c *Client) apiError(resp *http.Response, body []byte) error {

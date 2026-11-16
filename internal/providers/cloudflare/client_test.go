@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -536,13 +537,14 @@ func TestErrors_ATokenSplitByAnyNonASCIICharacterIsStillRedacted(t *testing.T) {
 func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *testing.T) {
 	const token = "tok-SECRET-0123456789"
 	for _, line := range []string{"HTTP/1.1 tok\x00-SECRET-0123456789\r\n\r\n", "HTTP/1.1 tok\u200b-SECRET-0123456789\r\n\r\n", "HTTP/1.1 200 OK\r\nX: tok-SECRET-0123456789\x00\r\n\r\n"} {
+		var wrote atomic.Bool
 		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			conn, buf, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				return
 			}
 			_, _ = buf.WriteString(line)
-			_ = buf.Flush()
+			wrote.Store(buf.Flush() == nil)
 			_ = conn.Close()
 		}))
 		pool := x509.NewCertPool()
@@ -556,12 +558,20 @@ func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *t
 		}
 		_, err = c.CreateTunnel(ctx(t), "sm-"+instanceID)
 		srv.Close()
-		if err == nil {
-			t.Fatalf("status line %q: no error", line)
+		if !wrote.Load() {
+			t.Fatalf("status line %q: the server never answered", line)
 		}
-		if strings.Contains(err.Error(), "SECRET-0123456789") {
-			t.Errorf("status line %q: error = %q, want the token withheld", line, err)
+		if err == nil || strings.Contains(err.Error(), "SECRET-0123456789") || !strings.Contains(err.Error(), "echoed the API token and is withheld") {
+			t.Errorf("status line %q: error = %v, want the token withheld", line, err)
 		}
+	}
+}
+
+func TestErrors_ALiteralTokenAfterABackslashIsStillWithheld(t *testing.T) {
+	c := &Client{token: "tok-SECRET-0123456789"}
+	err := c.scrub(errors.New(`x509: certificate is valid for \tok-SECRET-0123456789, not example.com`))
+	if strings.Contains(err.Error(), "SECRET-0123456789") {
+		t.Fatalf("error = %q, want the token withheld", err)
 	}
 }
 
