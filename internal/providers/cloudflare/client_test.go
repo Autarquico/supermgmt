@@ -8,8 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -537,14 +537,13 @@ func TestErrors_ATokenSplitByAnyNonASCIICharacterIsStillRedacted(t *testing.T) {
 func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *testing.T) {
 	const token = "tok-SECRET-0123456789"
 	for _, line := range []string{"HTTP/1.1 tok\x00-SECRET-0123456789\r\n\r\n", "HTTP/1.1 tok\u200b-SECRET-0123456789\r\n\r\n", "HTTP/1.1 200 OK\r\nX: tok-SECRET-0123456789\x00\r\n\r\n"} {
-		var wrote atomic.Bool
 		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			conn, buf, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				return
 			}
 			_, _ = buf.WriteString(line)
-			wrote.Store(buf.Flush() == nil)
+			_ = buf.Flush()
 			_ = conn.Close()
 		}))
 		pool := x509.NewCertPool()
@@ -552,15 +551,14 @@ func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *t
 		c, err := New("https://example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(testTimeout),
 			WithNetguardOptions(netguard.WithRootCAs(pool), netguard.WithTestDialer(func(network, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(context.Background(), network, srv.Listener.Addr().String())
+			}), netguard.WithTestResolver(func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("104.16.0.1")}, nil
 			})))
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = c.CreateTunnel(ctx(t), "sm-"+instanceID)
 		srv.Close()
-		if !wrote.Load() {
-			t.Fatalf("status line %q: the server never answered", line)
-		}
 		if err == nil || strings.Contains(err.Error(), "SECRET-0123456789") || !strings.Contains(err.Error(), "echoed the API token and is withheld") {
 			t.Errorf("status line %q: error = %v, want the token withheld", line, err)
 		}
