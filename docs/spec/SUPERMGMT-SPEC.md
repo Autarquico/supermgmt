@@ -3228,7 +3228,7 @@ Decisions (M6 W0, user-approved option (a) for every question): Ubuntu 24.04 sup
 
 ## F.14 Changes after 1.4.8-draft: layout read (release checklist H19)
 
-```
+```text
 §5      lists internal/errors, netguard, yamlstrict, textsafe, pveid, join, assistant;
         site/; test/{install,stress,docs,specexamples,fuzzinv}; .gitleaks.toml.
         Maintainer tooling (.claude/, .pm/, AGENT.md, pm-policy.yml) is outside the layout.
