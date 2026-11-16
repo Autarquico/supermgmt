@@ -509,6 +509,17 @@ func TestErrors_NeverCarryTheTokenOrControlCharacters(t *testing.T) {
 	}
 }
 
+func TestErrors_ATokenSplitByAControlCharacterIsStillRedacted(t *testing.T) {
+	c := &Client{token: "tok-secret"}
+	env, err := decodeEnvelope([]byte(`{"success":false,"errors":[{"message":"tok\b-secret is not valid"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.failure(400, env, false).Message; got != "[redacted] is not valid" {
+		t.Fatalf("message = %q, want the token redacted", got)
+	}
+}
+
 func TestTransportErrors_AreAmbiguousOnlyWhenSent(t *testing.T) {
 	f := cffake.New(t)
 	c, err := New("https://127.0.0.1/client/v4", cffake.DefaultAccountID, audit.Secret(f.Token()), WithHTTPTimeout(testTimeout))

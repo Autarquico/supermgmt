@@ -306,16 +306,17 @@ func (c *Client) failure(status int, env envelope, success2xx bool) *APIError {
 	return e
 }
 
-// sanitize makes a server message safe to show: the token removed, control
-// characters dropped, length bounded.
+// sanitize makes a server message safe to show: control characters dropped,
+// the token removed, length bounded. Dropping comes first, so a token split by
+// a control character is still found.
 func (c *Client) sanitize(s string) string {
-	s = strings.ReplaceAll(s, c.token, "[redacted]")
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 		return r
 	}, s)
+	s = strings.ReplaceAll(s, c.token, "[redacted]")
 	if r := []rune(s); len(r) > maxMessageLen {
 		s = string(r[:maxMessageLen])
 	}
