@@ -16,7 +16,7 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0008](0008-secret-versions.md) | Secret versions | Accepted | M4 |
 | [0009](0009-node-provisioning.md) | Node provisioning (`node.setup`) and the dedicated `supermgmt` user | Accepted | M1 |
 | [0010](0010-secret-env-file-encoding.md) | Secret env-file encoding and the node-side resolved check | Accepted | M4 |
-| [0011](0011-provisional-deployment-api.md) | Provisional deployment API | Accepted | M4 |
+| [0011](0011-provisional-deployment-api.md) | Provisional deployment API | Superseded by [ADR-0043](0043-operations-plane-not-a-deployer.md) | M4 |
 | [0012](0012-route-metadata.md) | Route metadata | Accepted | M2 |
 | [0013](0013-generic-job-state-machine.md) | Generic job state machine | Accepted | M0 |
 | [0014](0014-local-api-and-daemon-lifecycle.md) | Local API transport and daemon lifecycle | Accepted | M1 |
@@ -33,8 +33,8 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0025](0025-proxmox-power-jobs-task-correlation.md) | Proxmox power jobs, task correlation and quiescence | Accepted (amended in M6: clock skew, SEC-9 residual) | M3 |
 | [0026](0026-appliance-installer.md) | Appliance installer (`proxmox-lxc`, `auto`) | Accepted (amended in M6: journal location, token marker, SEC-7 residual) | M3 |
 | [0027](0027-upgrade-and-uninstall.md) | Upgrade and uninstall | Accepted (amended in M6: hold before stop, archive retake, doctor JSON; ADR-0035) | M3 |
-| [0028](0028-github-connector.md) | GitHub connector | Accepted | M4 |
-| [0029](0029-deployment-engine.md) | Deployment engine | Accepted | M4 |
+| [0028](0028-github-connector.md) | GitHub connector | Superseded by [ADR-0043](0043-operations-plane-not-a-deployer.md) | M4 |
+| [0029](0029-deployment-engine.md) | Deployment engine | Superseded by [ADR-0043](0043-operations-plane-not-a-deployer.md) | M4 |
 | [0030](0030-node-setup-v2.md) | `node.setup` v2: `deploy_root` and `docker.compose.deploy` (extends 0009) | Accepted | M4 |
 | [0031](0031-mcp-server-sdk-transports-tools.md) | MCP server: SDK, transports and tool contract | Accepted | M5 |
 | [0032](0032-mcp-clients-tokens-identity.md) | MCP clients, tokens and the MCP identity | Accepted | M5 |
@@ -45,8 +45,8 @@ Process: copy the format of an existing ADR, open it as `Proposed` in the PR tha
 | [0037](0037-cloudflare-tunnel-transport.md) | Reaching SSH nodes through Cloudflare Tunnel | Proposed | cloudflare-tunnel-transport |
 | [0038](0038-proxmox-via-node.md) | Reaching the Proxmox API through the host's SSH connection | Proposed | proxmox-via-node |
 | [0039](0039-node-enroll-tunnel.md) | Adding a node that is reachable only through Cloudflare Tunnel | Proposed | node-enroll-tunnel |
-| [0040](0040-app-expose-tunnel.md) | Exposing apps through the node's Cloudflare Tunnel | Proposed | app-expose-tunnel |
-| [0041](0041-app-move.md) | Moving an app target to another node | Proposed | app-move |
-| [0042](0042-app-move-routes.md) | Moving an app target's routes with it | Proposed | app-move-routes |
+| [0040](0040-app-expose-tunnel.md) | Exposing apps through the node's Cloudflare Tunnel | Proposed; amended by [ADR-0043](0043-operations-plane-not-a-deployer.md) | app-expose-tunnel |
+| [0041](0041-app-move.md) | Moving an app target to another node | Superseded by [ADR-0043](0043-operations-plane-not-a-deployer.md) | app-move |
+| [0042](0042-app-move-routes.md) | Moving an app target's routes with it | Superseded by [ADR-0043](0043-operations-plane-not-a-deployer.md) | app-move-routes |
 | [0043](0043-operations-plane-not-a-deployer.md) | SuperMgmt is an operations plane, not a deployer | Accepted | - |
-| [0044](0044-mcp-client-tokens-over-https.md) | MCP client tokens over HTTPS, opt-in and per client | Accepted | Amends 0032 |
+| [0044](0044-mcp-client-tokens-over-https.md) | MCP client tokens over HTTPS, opt-in and per client | Accepted (amends [ADR-0032](0032-mcp-clients-tokens-identity.md)) | - |
