@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -268,12 +269,27 @@ func (c *Client) sendError(method, path string, err error) error {
 	return &outcomeUnknown{msg: fmt.Sprintf("cloudflare: %s %s", method, path), err: err}
 }
 
-// scrub returns err with the token removed from its text.
+// scrub withholds a transport error whose text carries the token in any form.
+// Go's HTTP parser quotes server text (%q) before it reaches here, so the
+// token may come back escaped or split; such an error is replaced, not edited.
 func (c *Client) scrub(err error) error {
-	if !strings.Contains(printable(err.Error()), c.token) {
+	if !strings.Contains(c.skeleton(err.Error()), c.token) {
 		return err
 	}
-	return errors.New(c.sanitize(err.Error()))
+	return errors.New("transport failure; its message echoed the API token and is withheld")
+}
+
+var escapeSequence = regexp.MustCompile(`\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{3}|.)`)
+
+// skeleton is s without escape sequences and without any character the token
+// does not use: what is left contains the token if s carried it at all.
+func (c *Client) skeleton(s string) string {
+	return strings.Map(func(r rune) rune {
+		if !strings.ContainsRune(c.token, r) {
+			return -1
+		}
+		return r
+	}, escapeSequence.ReplaceAllString(s, ""))
 }
 
 func (c *Client) apiError(resp *http.Response, body []byte) error {

@@ -5,7 +5,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -525,8 +527,40 @@ func TestErrors_ATokenSplitByAnyNonASCIICharacterIsStillRedacted(t *testing.T) {
 		if err := json.Unmarshal([]byte(`"dial tok`+split+`-secret: refused"`), &raw); err != nil {
 			t.Fatal(err)
 		}
-		if got := c.scrub(errors.New(raw)).Error(); got != "dial [redacted]: refused" {
-			t.Errorf("transport error split by %s = %q, want %q", split, got, "dial [redacted]: refused")
+		if got, want := c.scrub(errors.New(raw)).Error(), "transport failure; its message echoed the API token and is withheld"; got != want {
+			t.Errorf("transport error split by %s = %q, want %q", split, got, want)
+		}
+	}
+}
+
+func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *testing.T) {
+	const token = "tok-SECRET-0123456789"
+	for _, line := range []string{"HTTP/1.1 tok\x00-SECRET-0123456789\r\n\r\n", "HTTP/1.1 tok\u200b-SECRET-0123456789\r\n\r\n", "HTTP/1.1 200 OK\r\nX: tok-SECRET-0123456789\x00\r\n\r\n"} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			conn, buf, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				return
+			}
+			_, _ = buf.WriteString(line)
+			_ = buf.Flush()
+			_ = conn.Close()
+		}))
+		pool := x509.NewCertPool()
+		pool.AddCert(srv.Certificate())
+		c, err := New("https://example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(testTimeout),
+			WithNetguardOptions(netguard.WithRootCAs(pool), netguard.WithTestDialer(func(network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(context.Background(), network, srv.Listener.Addr().String())
+			})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.CreateTunnel(ctx(t), "sm-"+instanceID)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("status line %q: no error", line)
+		}
+		if strings.Contains(err.Error(), "SECRET-0123456789") {
+			t.Errorf("status line %q: error = %q, want the token withheld", line, err)
 		}
 	}
 }
