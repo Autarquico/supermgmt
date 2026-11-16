@@ -45,7 +45,7 @@ Rows marked "passed at `2ce10c7`" refer to the `ci` workflow run on `main` at co
 
 The rows marked "tested against fakes" also passed in that run. Their level stays lower because the outside system was a fake.
 
-The nightly workflow (fuzzing, race stress, flake loops) passed on the same commit ([run 43578547817](https://github.com/autarquico/supermgmt/actions/runs/43578547817), [run 43699644229](https://github.com/autarquico/supermgmt/actions/runs/43699644229)). An earlier nightly found one fuzz crasher, in the decoding of Cloudflare API errors, fixed by the sanitize-order fix. The release workflow ran on four tags, `v0.1.0-rc.1` to `v0.1.0-rc.4` (latest: [run 41871169728](https://github.com/autarquico/supermgmt/actions/runs/41871169728)); a person has not yet verified a published release from outside (release checklist H2).
+The nightly workflow (fuzzing, race stress, flake loops) passed on the same commit ([run 43578547817](https://github.com/autarquico/supermgmt/actions/runs/43578547817), [run 43699644229](https://github.com/autarquico/supermgmt/actions/runs/43699644229)). An earlier nightly found one fuzz crasher, in the decoding of Cloudflare API errors, fixed in [#116](https://github.com/autarquico/supermgmt/pull/116). The release workflow ran on four tags, `v0.1.0-rc.1` to `v0.1.0-rc.4` (latest: [run 41871169728](https://github.com/autarquico/supermgmt/actions/runs/41871169728)); a person has not yet verified a published release from outside (release checklist H2).
 
 ## Not verified
 
