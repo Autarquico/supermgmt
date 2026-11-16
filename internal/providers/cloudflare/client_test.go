@@ -549,7 +549,7 @@ func TestErrors_AStatusLineEchoingTheTokenIsWithheldThroughTheRealTransport(t *t
 		}))
 		pool := x509.NewCertPool()
 		pool.AddCert(srv.Certificate())
-		c, err := New("https://example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(testTimeout),
+		c, err := New("https://example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(30*time.Second),
 			WithNetguardOptions(netguard.WithRootCAs(pool), netguard.WithTestDialer(func(network, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(context.Background(), network, srv.Listener.Addr().String())
 			})))
