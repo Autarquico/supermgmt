@@ -3,6 +3,7 @@ package cloudflare
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -509,19 +510,44 @@ func TestErrors_NeverCarryTheTokenOrControlCharacters(t *testing.T) {
 	}
 }
 
-func TestErrors_ATokenSplitByAnInvisibleCharacterIsStillRedacted(t *testing.T) {
+func TestErrors_ATokenSplitByAnyNonASCIICharacterIsStillRedacted(t *testing.T) {
 	c := &Client{token: "tok-secret"}
-	for _, split := range []string{`\b`, `\u200b`, `\u00ad`, `\u2060`} {
+	splits := []string{`\b`, `\u200b`, `\u00ad`, `\u2060`, `\u034f`, `\ufe0f`, `\udb40\udd00`, `\u3164`, `\u115f`, `\u0301`}
+	for _, split := range splits {
 		env, err := decodeEnvelope([]byte(`{"success":false,"errors":[{"message":"tok` + split + `-secret is not valid"}]}`))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got := c.failure(400, env, false).Message; got != "[redacted] is not valid" {
-			t.Errorf("split by %s: message = %q, want the token redacted", split, got)
+			t.Errorf("server message split by %s = %q, want %q", split, got, "[redacted] is not valid")
+		}
+		var raw string
+		if err := json.Unmarshal([]byte(`"dial tok`+split+`-secret: refused"`), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.scrub(errors.New(raw)).Error(); got != "dial [redacted]: refused" {
+			t.Errorf("transport error split by %s = %q, want %q", split, got, "dial [redacted]: refused")
 		}
 	}
-	if got := c.scrub(errors.New("dial tok\u200b-secret: refused")).Error(); strings.Contains(visible(got), "tok-secret") {
-		t.Errorf("transport error = %q, want the token redacted", got)
+}
+
+func TestErrors_ATokenReturnedAsAnIdentifierIsRedactedFromThePath(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	c, err := New("https://127.0.0.1/client/v4", cffake.DefaultAccountID, audit.Secret(token), WithHTTPTimeout(testTimeout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.DeleteAccessApp(ctx(t), token)
+	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("error = %v, want the path shown with the token redacted", err)
+	}
+}
+
+func TestNew_RefusesATokenThatIsNotPrintableASCII(t *testing.T) {
+	for _, token := range []string{"tok secret", "tok\u00e9", "tok\u200b"} {
+		if _, err := New("https://api.example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token)); err == nil {
+			t.Errorf("New accepted the token %q", token)
+		}
 	}
 }
 

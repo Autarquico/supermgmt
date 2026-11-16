@@ -49,7 +49,7 @@ func FuzzDecodeEnvelope(f *testing.F) {
 			return
 		}
 		e := c.failure(400, env, false)
-		if strings.Contains(e.Message, "tok-secret") || strings.ContainsFunc(e.Message, unicode.IsControl) || len([]rune(e.Message)) > maxMessageLen {
+		if strings.Contains(e.Message, "tok-secret") || strings.ContainsFunc(e.Message, func(r rune) bool { return r < ' ' || r > '~' }) || len([]rune(e.Message)) > maxMessageLen {
 			t.Fatalf("unsafe message %q", e.Message)
 		}
 	})

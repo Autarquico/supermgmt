@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/autarquico/supermgmt/internal/audit"
 	smerr "github.com/autarquico/supermgmt/internal/errors"
@@ -180,7 +179,7 @@ func New(baseURL, accountID string, token audit.Secret, opts ...Option) (*Client
 	if !validID(accountID) {
 		return nil, errors.New("cloudflare: account_id is not a Cloudflare identifier")
 	}
-	if token.Reveal() == "" || strings.ContainsFunc(token.Reveal(), func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+	if token.Reveal() == "" || strings.ContainsFunc(token.Reveal(), func(r rune) bool { return r <= ' ' || r > '~' }) {
 		return nil, errors.New("cloudflare: the API token is empty or malformed")
 	}
 	s := settings{timeout: defaultTimeout}
@@ -229,6 +228,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, in a
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	path = c.redact(path)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return envelope{}, c.sendError(method, path, err)
@@ -270,7 +270,7 @@ func (c *Client) sendError(method, path string, err error) error {
 
 // scrub returns err with the token removed from its text.
 func (c *Client) scrub(err error) error {
-	if !strings.Contains(visible(err.Error()), c.token) {
+	if !strings.Contains(printable(err.Error()), c.token) {
 		return err
 	}
 	return errors.New(c.sanitize(err.Error()))
@@ -306,22 +306,28 @@ func (c *Client) failure(status int, env envelope, success2xx bool) *APIError {
 	return e
 }
 
-// sanitize makes a server message safe to show: invisible characters dropped,
-// the token removed, length bounded. Dropping comes first, so a token split by
-// an invisible character is still found.
+// sanitize makes a server message safe to show: only printable ASCII kept,
+// the token removed, length bounded. The token is printable ASCII (New
+// refuses any other), so whatever split it is dropped before the search.
 func (c *Client) sanitize(s string) string {
-	s = strings.ReplaceAll(visible(s), c.token, "[redacted]")
+	s = c.redact(printable(s))
 	if r := []rune(s); len(r) > maxMessageLen {
 		s = string(r[:maxMessageLen])
 	}
 	return strings.TrimSpace(s)
 }
 
-// visible drops control and format characters: what a terminal would not
-// show, and what could hide a token from a plain substring search.
-func visible(s string) string {
+// redact removes the token from a text shown in an error, such as a request
+// path built from identifiers the server returned.
+func (c *Client) redact(s string) string {
+	return strings.ReplaceAll(s, c.token, "[redacted]")
+}
+
+// printable keeps printable ASCII only: Cloudflare's messages are English, and
+// no invisible or look-alike character survives to hide a token.
+func printable(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if r < ' ' || r > '~' {
 			return -1
 		}
 		return r
@@ -338,7 +344,7 @@ func listAll[T any](ctx context.Context, c *Client, path string, q url.Values, d
 	var all []T
 	for page := 1; ; page++ {
 		if page > maxPages {
-			return nil, fmt.Errorf("cloudflare: GET %s exceeds %d pages", path, maxPages)
+			return nil, fmt.Errorf("cloudflare: GET %s exceeds %d pages", c.redact(path), maxPages)
 		}
 		paged := url.Values{}
 		for k, v := range q {
@@ -352,7 +358,7 @@ func listAll[T any](ctx context.Context, c *Client, path string, q url.Values, d
 		}
 		items, err := decode(env.Result)
 		if err != nil {
-			return nil, fmt.Errorf("cloudflare: GET %s: %w", path, err)
+			return nil, fmt.Errorf("cloudflare: GET %s: %w", c.redact(path), err)
 		}
 		all = append(all, items...)
 		if page >= env.Info.TotalPages || len(items) == 0 {
