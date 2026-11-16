@@ -124,7 +124,11 @@ type fakeRecord struct {
 func runFakeCloudflared() {
 	home := os.Getenv("HOME")
 	rec, _ := json.Marshal(fakeRecord{PID: os.Getpid(), Argv: os.Args, Env: os.Environ()})
-	_ = os.WriteFile(filepath.Join(home, "record-"+strconv.Itoa(os.Getpid())+".json"), rec, 0o600)
+	// Written under another name and renamed, so records never sees a half-written file.
+	tmp := filepath.Join(home, "partial-"+strconv.Itoa(os.Getpid()))
+	if os.WriteFile(tmp, rec, 0o600) == nil {
+		_ = os.Rename(tmp, filepath.Join(home, "record-"+strconv.Itoa(os.Getpid())+".json"))
+	}
 	var b fakeBehaviour
 	raw, _ := os.ReadFile(filepath.Join(home, "fake.json"))
 	_ = json.Unmarshal(raw, &b)
