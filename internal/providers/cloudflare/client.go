@@ -180,7 +180,7 @@ func New(baseURL, accountID string, token audit.Secret, opts ...Option) (*Client
 	if !validID(accountID) {
 		return nil, errors.New("cloudflare: account_id is not a Cloudflare identifier")
 	}
-	if token.Reveal() == "" || strings.ContainsFunc(token.Reveal(), func(r rune) bool { return r <= ' ' || r > '~' }) {
+	if token.Reveal() == "" || strings.ContainsFunc(token.Reveal(), func(r rune) bool { return r <= ' ' || r > '~' || r == '\\' || r == '"' }) {
 		return nil, errors.New("cloudflare: the API token is empty or malformed")
 	}
 	s := settings{timeout: defaultTimeout}

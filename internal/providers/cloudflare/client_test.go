@@ -587,8 +587,8 @@ func TestErrors_ATokenReturnedAsAnIdentifierIsRedactedFromThePath(t *testing.T) 
 	}
 }
 
-func TestNew_RefusesATokenThatIsNotPrintableASCII(t *testing.T) {
-	for _, token := range []string{"tok secret", "tok\u00e9", "tok\u200b"} {
+func TestNew_RefusesATokenThatIsNotPlainPrintableASCII(t *testing.T) {
+	for _, token := range []string{"tok secret", "tok\u00e9", "tok\u200b", `tok\secret`, `tok"secret`} {
 		if _, err := New("https://api.example.com/client/v4", cffake.DefaultAccountID, audit.Secret(token)); err == nil {
 			t.Errorf("New accepted the token %q", token)
 		}
