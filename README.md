@@ -5,7 +5,7 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](docs/project-status.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-> **Pre-alpha. No stable release yet: build `sm` from source.** Pre-releases may exist, but the installer has not been verified on a clean machine. Proxmox, Cloudflare and MCP clients were tested only against fakes. What is verified, and how: [Project status](docs/project-status.md).
+> **Pre-alpha. No stable release yet: build `sm` from source.** Signed pre-releases exist (latest `v0.1.0-rc.4`); `install.sh` has been verified on one clean Intel Mac only, not on Linux. Proxmox and Cloudflare were checked by hand once, on one real host and one real account, and the fixes for what that found have not been run there; MCP clients were tested only against fakes. What is verified, and how: [Project status](docs/project-status.md).
 
 SuperMgmt is a local-first, terminal-first control plane for the machines and services you run yourself. You add Linux machines over SSH, see their systemd services and Docker containers, read their logs and act on them from a fast terminal UI or the `sm` command line. AI agents can reach the same operations through MCP, under the same policy and approvals as you.
 
@@ -13,7 +13,7 @@ Nothing of SuperMgmt runs on the machines you manage, and your workloads never d
 
 ## Documentation
 
-The website, **https://autarquico.github.io/supermgmt/**, is built from release tags and is not published until the first one. The same pages are here in [`docs/`](docs/):
+The website, **https://autarquico.github.io/supermgmt/**, is built from the latest release tag, currently a pre-release. The same pages are here in [`docs/`](docs/):
 
 - [Overview](docs/overview.md): what it does and what it is not.
 - [Getting started](docs/getting-started.md): build `sm` and manage your first machine from your laptop.
@@ -119,9 +119,9 @@ Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
 ## Platforms
 
-`sm` builds for Linux and macOS, amd64 and arm64. Managed nodes are Linux machines with systemd, reached over SSH; the tests use Debian 13 and Ubuntu 24.04, and other distributions are untested. Proxmox VE support covers 9.x on amd64 only, against a simulator. Per-platform, per-operation evidence: [Compatibility](docs/compatibility.md#platforms-and-operations).
+`sm` builds for Linux and macOS, amd64 and arm64. Managed nodes are Linux machines with systemd, reached over SSH; the tests use Debian 13 and Ubuntu 24.04, and other distributions are untested. Proxmox VE support covers 9.x on amd64 only: tested against a simulator in CI and checked by hand once on a real 9.1.1 host. Per-platform, per-operation evidence: [Compatibility](docs/compatibility.md#platforms-and-operations).
 
-There is no stable release, no Homebrew formula and no Linux packages yet. Installing a server or the Proxmox appliance needs a signed release; pre-releases may exist, but the installer has not been verified on a clean machine until [Project status](docs/project-status.md) says so ([Installation](docs/installation.md)).
+There is no stable release, no Homebrew formula and no Linux packages yet. Installing a server or the Proxmox appliance needs a signed release; signed pre-releases exist, but a Linux server install from one is not verified until [Project status](docs/project-status.md) says so ([Installation](docs/installation.md)).
 
 ## Project
 

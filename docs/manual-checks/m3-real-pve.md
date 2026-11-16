@@ -1,6 +1,6 @@
 # M3 manual checks: a real Proxmox VE 9.x host
 
-**Status: PARTLY RUN** on a real Proxmox VE 9.1.1 host, 2026-11-05 ([results of 2026-11-05](results-2026-11-05-rc4.md)); defects are open, and the rows not listed there are still not run. Every Proxmox interaction in M3 was verified against fakes: a fake HTTP API (`internal/providers/proxmox/pvefake`), fake `pct`/`pveam`/`pvesm`/`pvesh`/`pveum` commands in the installer tests, and a simulated Proxmox host in the end-to-end tests (`TestM3_Appliance*`, CI job `e2e-appliance`, where each container is a Docker container). The fakes were written from the Proxmox documentation, not recorded from a host ([test/fixtures/pve/PROVENANCE.md](../../test/fixtures/pve/PROVENANCE.md)), so every row of [compatibility.md](../compatibility.md) is "not verified" in its real-host column until this list runs. "Proxmox auto-LXC install works" (SPEC Appendix E) stays unchecked until sections 1 to 6 pass.
+**Status: PARTLY RUN** on a real Proxmox VE 9.1.1 host, 2026-11-05 ([results of 2026-11-05](results-2026-11-05-rc4.md)); the defects it found are fixed but not re-run on a real host, and the rows not listed there are still not run. Every Proxmox interaction in M3 was verified against fakes: a fake HTTP API (`internal/providers/proxmox/pvefake`), fake `pct`/`pveam`/`pvesm`/`pvesh`/`pveum` commands in the installer tests, and a simulated Proxmox host in the end-to-end tests (`TestM3_Appliance*`, CI job `e2e-appliance`, where each container is a Docker container). The fakes were written from the Proxmox documentation, not recorded from a host ([test/fixtures/pve/PROVENANCE.md](../../test/fixtures/pve/PROVENANCE.md)), so every row of [compatibility.md](../compatibility.md) is "not verified" in its real-host column until this list runs. "Proxmox auto-LXC install works" (SPEC Appendix E) stays unchecked until sections 1 to 6 pass.
 
 Run it on a **lab** Proxmox VE 9.x host (amd64; a nested VM is fine), not on a production cluster: section 5 creates and destroys containers and Proxmox users. Record the Proxmox version (`pveversion -v`), the `sm version` commit and the date of each check. Fill in the results table at the end; a skipped check stays "not verified" in the README and ROADMAP. Where a check says the **fake needs fixing**, change the fake and the matrix row, not the expectation.
 
@@ -146,12 +146,14 @@ With the appliance from section 5 and a lab guest:
 
 | Check | Result (pass / fail / skipped) | Host (PVE version) | `sm version` | Date | Notes |
 |---|---|---|---|---|---|
-| 1.1 to 1.7 | | | | | |
-| 2.1 to 2.8 | | | | | |
-| 3.1 to 3.7 | | | | | |
-| 4.1 to 4.8 | | | | | |
-| 5.1 to 5.14 | | | | | |
-| 6.1 to 6.12 | | | | | |
-| 7.1 to 7.8 | | | | | |
+| 1.1 to 1.7 | pass: 1.1, 1.3 to 1.7; not run: 1.2 | 9.1.1 | `v0.1.0-rc.4` (`9a1ecd8`) | 2026-11-05 | 1.2: no locked guest available. 1.3: `pvesm status` has no JSON output on PVE 9.1; the code already uses `pvesh get /nodes/<node>/storage` (checklist corrected) |
+| 2.1 to 2.8 | pass: 2.1 to 2.6, 2.8; not applicable: 2.7 | 9.1.1 | `v0.1.0-rc.4` (`9a1ecd8`) | 2026-11-05 | LXC `start`/`stop` reject `timeout` with 400; the code sends it only on `shutdown`/`reboot`. 2.7: one node |
+| 3.1 to 3.7 | pass | 9.1.1 | `v0.1.0-rc.4` (`9a1ecd8`) | 2026-11-05 | A deeper ACL replaces the inherited role (ADR-0023 confirmed); a non-propagating grant reads `{"VM.Audit":0,...}`. 3.7: `/vms` must be revoked too (checklist corrected); with no rights the provider still reports `ok` (D19) |
+| 4.1 to 4.8 | pass | 9.1.1 | `v0.1.0-rc.4` (`9a1ecd8`) | 2026-11-05 | With `nesting=0` systemd in the container is degraded (D2) |
+| 5.1 to 5.14 | pass: 5.2 to 5.5, 5.11; fail, then pass: 5.1; partial: 5.6, 5.7, 5.13; not run: 5.8 to 5.10, 5.12, 5.14 | 9.1.1 | `v0.1.0-rc.4` (`9a1ecd8`) | 2026-11-05 | 5.1: `pveam` is in `/usr/bin` on PVE 9.1, the installer looked in `/usr/sbin` (D1); with a symlink, 8 min 43 s. 5.4 simulated with an unreachable endpoint (D20). 5.13 (SEC-7): the token row carries `comment`; the same-named token without a comment was not recorded. 5.6: the container has no journal (D2). 5.7: the tree shows no CPU, memory, disk or storages (D21) |
+| 6.1 to 6.12 | pass: 6.1, 6.3, 6.6, 6.9, 6.10; partial: 6.4, 6.7, 6.8; blocked: 6.2; not run: 6.5, 6.11, 6.12 | 9.1.1 | `v0.1.0-rc.4` (`9a1ecd8`) | 2026-11-05 | 6.10 (SEC-12): `userfilter` matches without the `!token` suffix, as the code assumes. 6.2: a single administrator cannot approve on a server (D14). 6.7: `sm approvals` still offers the stale plan (D15). 6.8: 1 of 5 parallel refreshes refused. 6.11 (SEC-9) and 6.12 (clock skew) not run |
+| 7.1 to 7.8 | pass: 7.1, 7.2, 7.4 to 7.8; not run: 7.3 | 9.1.1 | `v0.1.0-rc.4` upgraded to builds of `main` at `fd98fb1` | 2026-11-05 | `upgrade.json` is kept with phase `done` (checklist corrected). 7.3 needs an M2 build |
+
+Details and the defects D1 to D27: [results of 2026-11-05](results-2026-11-05-rc4.md). The defects are closed by #63 and #68 to #72; those fixes have not been re-run on a real host.
 
 When a check changes an assumption, update in the same change: the fake, its row in [compatibility.md](../compatibility.md) (fake-verified becomes real-verified, or the row is corrected), [PROVENANCE.md](../../test/fixtures/pve/PROVENANCE.md), and the README and ROADMAP status.

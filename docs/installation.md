@@ -344,7 +344,7 @@ printf '%s' "$TOKEN" | sm join --server https://mgmt.example.com --token-stdin
 printf '%s' "$TOKEN" | sudo ./join.sh --server https://mgmt.example.com --token-stdin
 ```
 
-Options: `--token-file FILE`, `--ca-file FILE` (CA of the server certificate, default system roots), `--hostname NAME`, `--ssh-port N`. The token is never an argument. `join.sh` has the same trust shape as `install.sh` (same placeholder key, same OpenSSH requirement) and ships signed as `join.sh` and `join.sh.sig` next to `install.sh` in a release.
+Options: `--token-file FILE`, `--ca-file FILE` (CA of the server certificate, default system roots), `--hostname NAME`, `--ssh-port N`. The token is never an argument. `join.sh` has the same trust shape as `install.sh` (same embedded release key, same OpenSSH requirement) and ships signed as `join.sh` and `join.sh.sig` next to `install.sh` in a release.
 
 `sm join` is safe to re-run after a lost response. A joined node reads as managed and read-only until `sm nodes setup <node>` runs. Authorizing the instance key on a node always goes through that step.
 
@@ -373,7 +373,7 @@ The production key exists; its fingerprint is published above. How it is held:
 
 - The private key exists only as the secret `SM_RELEASE_SIGNING_KEY` of the GitHub environment **`release`**, whose required reviewer is the repository owner. `release.yml` (on `v*` tags) and `channels.yml` (weekly, re-signs `channels/stable.json` and `channels/beta.json`) both run in that environment, so each run waits for the owner's approval. No other workflow may reference the environment; the `workflow-policy` CI job checks it.
 - CI proves the whole chain with an ephemeral test key rendered into a test copy of `install.sh`. The committed `install.sh` and `scripts/join.sh` embed the production public key.
-- Production signing and build provenance are **not verified** until the first protected tag run. Provenance (`actions/attest-build-provenance`) runs on tag builds only.
+- Production signing and build provenance ran in the protected tag runs of `v0.1.0-rc.1` to `v0.1.0-rc.4`, each checking its own attestation before publishing; nobody has yet verified a published release from outside with `gh attestation verify`. Provenance (`actions/attest-build-provenance`) runs on tag builds only.
 - Rotation: announce the new key in a release signed by the old one and embed both in `install.sh` for the overlap. Revocation: add the key to the embedded `revoked_keys` list. Both scripts embed the trust roots separately, so both must be updated together.
 
 Steps the owner must do are in [manual-checks/m2-handoff.md](manual-checks/m2-handoff.md).

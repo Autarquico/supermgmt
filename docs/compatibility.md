@@ -37,7 +37,7 @@ How to read the rows:
 - **Debian 13** runs in a systemd container on the Ubuntu runners of both architectures. Whether a real Debian 13 VM behaves the same is a human row of the release checklist.
 - **Intel macOS** is compiled (job `cross-build`) and published, and has no lifecycle run. A person checks it by hand.
 - **Proxmox appliance**: the host is a Docker container running `pvesim`, so every `pct`, `pveum` and `pvesh` call is answered by a simulator. See [Proxmox VE](#proxmox-ve) for what the simulator is built from. A real PVE 9.x host is still a manual row.
-- **Upgrade source.** "Upgrade" is N-1 to N, where N-1 is the newest earlier build listed in `test/e2e/milestones_test.go` (today `v0.5.0`, a synthetic version built from its merge commit on `main`), plus one job from the oldest listed build to N: `TestM6_UpgradeChainOldestToLatestInOneJump` (job `e2e-chain`). Migration from the fixture of every listed build: job `migration-test`. The crash matrix over all 20 upgrade crash points: job `e2e-crash`. An upgrade from an authentic signed release has not been run, so it is a human row.
+- **Upgrade source.** "Upgrade" is N-1 to N, where N-1 is the newest earlier build listed in `test/e2e/milestones_test.go` (today `v0.5.0`, a synthetic version built from its merge commit on `main`), plus one job from the oldest listed build to N: `TestM6_UpgradeChainOldestToLatestInOneJump` (job `e2e-chain`). Migration from the fixture of every listed build: job `migration-test`. The crash matrix over all 20 upgrade crash points: job `e2e-crash`. An upgrade from the signed `v0.1.0-rc.4` to a build of `main` ran once on a real Proxmox host ([results of 2026-11-05](manual-checks/results-2026-11-05-rc4.md), m3-real-pve section 7); an upgrade between two signed releases has not run, so it is a human row.
 - **Not claimed anywhere**: 32-bit hosts, Windows, Alpine/musl, RHEL-family, Linux distributions other than Ubuntu 24.04 and Debian 13 for the server, Debian as a local-client host.
 
 ## Nodes and tools
@@ -52,7 +52,7 @@ A fixture node is a container with a real `sshd` and Docker, not a machine.
 
 ## Proxmox VE
 
-Every Proxmox row below was checked against a fake or a simulator, never against a real Proxmox VE host. Fixture origin: [test/fixtures/pve/PROVENANCE.md](../test/fixtures/pve/PROVENANCE.md).
+Every Proxmox row below was checked against a fake or a simulator. A partial run on a real Proxmox VE 9.1.1 host (2026-11-05) is recorded per check, not per row, in the [results of 2026-11-05](manual-checks/results-2026-11-05-rc4.md); the rows here keep `not verified` until a row is checked on its own. Fixture origin: [test/fixtures/pve/PROVENANCE.md](../test/fixtures/pve/PROVENANCE.md).
 
 ### Supported versions
 
