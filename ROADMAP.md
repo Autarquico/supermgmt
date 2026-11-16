@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of 2026-11-16. SuperMgmt is **pre-alpha, with no stable release yet.** Four signed pre-releases are published, the latest [`v0.1.0-rc.4`](https://github.com/autarquico/supermgmt/releases/tag/v0.1.0-rc.4). The installer of `v0.1.0-rc.1` ran on one clean Intel Mac in local mode (2026-10-15), and a second Mac was added as an SSH node from it. On 2026-11-05 `v0.1.0-rc.4` was checked by hand on a real Proxmox VE 9.1.1 host and a real Cloudflare account ([results](docs/manual-checks/results-2026-11-05-rc4.md)); the 27 defects found are fixed, and the fixes have not been run on a real host. A clean Linux install from a published release is still open, so building from source stays the recommended path. The website is live at <https://autarquico.github.io/supermgmt/>. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
+Status as of 2026-11-16. SuperMgmt is **pre-alpha, with no stable release yet.** Four signed pre-releases are published, the latest [`v0.1.0-rc.4`](https://github.com/autarquico/supermgmt/releases/tag/v0.1.0-rc.4). The installer of `v0.1.0-rc.1` ran on one clean Intel Mac in local mode (2026-10-15). On 2026-11-05 `v0.1.0-rc.4` was checked by hand on a real Proxmox VE 9.1.1 host and a real Cloudflare account ([results](docs/manual-checks/results-2026-11-05-rc4.md)); the 27 defects found are fixed, and the fixes have not been run on a real host. A clean Linux install from a published release is still open, so building from source stays the recommended path. The website is live at <https://autarquico.github.io/supermgmt/>. The code for the first version is written and merged, and waits for release-level review. What stands between it and a first release is mostly work that needs a person, a real host or a real account.
 
 What is verified today, claim by claim, is on one page: [Project status](docs/project-status.md). This page says what is built, what is left and what is deliberately not built.
 
@@ -29,7 +29,7 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 |---|---|---|
 | Core | Strict configuration, audit and redaction, SQLite and migrations, domain model, action catalog and policy engine, canonical plans and approvals, durable job engine, offline commands (`version`, `completion`, `config validate`, `doctor --offline`), CI | **Implemented** |
 | Local daemon, SSH nodes and TUI | `sm daemon` with a Unix-socket API and typed client, local provider, agentless SSH nodes with `node.setup`, systemd and Docker discovery and logs, policy-gated service actions, the TUI and the CLI | **Implemented**; the terminal-emulator checklist is open |
-| Server, client, auth and releases | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, signed release pipeline with checksums, SBOM and provenance, `install.sh`, backup and restore, join | **Implemented**; the server-mode checks, the outside verification of a release and the publication of the key fingerprint are open |
+| Server, client, auth and releases | HTTPS API, sessions and tokens, OIDC, client profiles, SSE, secrets store, signed release pipeline with checksums, SBOM and provenance, `install.sh`, backup and restore, join | **Implemented**; the server-mode checks, the outside verification of a release and the fingerprint in the release notes are open |
 | Proxmox and the appliance installer | Proxmox discovery, power actions, restricted credentials, `sm install proxmox-lxc` with a rollback journal, upgrade and uninstall | **Implemented** against a simulated Proxmox host; partly run on a real Proxmox VE 9.1.1 host with `v0.1.0-rc.4`, the fixes since not re-run there |
 | Apps, GitHub and deployments | GitHub connector, app manifest, CI-gated Docker Compose deployments, health checks, rollback | **Retired**: each project's CI/CD deploys it, and SuperMgmt operates what runs on the node ([decision](docs/adr/0043-operations-plane-not-a-deployer.md)) |
 | MCP | MCP client registration, stdio bridge, remote MCP as an OAuth protected resource, read tools, plan submission, optional write tools off by default | **Implemented** against the Go SDK client, raw JSON-RPC goldens and a fake authorization server; the real-client run is open |
@@ -39,6 +39,7 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 | Publish a node port | `sm nodes expose` and its withdrawal: a port of a tunnel node at a hostname in your zone, public or behind Access (#50) | **Implemented**, experimental: tested against fakes only; the [checklist](docs/manual-checks/app-expose-tunnel.md) is not run |
 | App panels | What runs on each node, grouped as apps: a Compose project and its containers (#97) | **Implemented**; the [real-host checklist](docs/manual-checks/app-panels.md) is not run |
 | MCP node tools | An MCP client adds and sets up nodes; a person confirms the host key (#88) | **Implemented**; never tried with a real MCP client |
+| Ask in natural language | `sm assistant`, in the terminal and the TUI: the operator's own `claude` CLI, limited to SuperMgmt's MCP tools, under the same policy and approvals (#90, #92). See [Ask in natural language](docs/assistant.md) | **Implemented**, experimental: tested against a fake `claude` CLI; a run against the real CLI with SuperMgmt's tools is not recorded |
 | Admin recovery and identities | A one-time recovery code for a server without OIDC whose admin lost access; `sm identities list`, `disable` and `enable`, with recovery marked in the audit (#99, #107) | **Implemented** |
 | Extra names in the self-signed certificate | `--tls-san` on `sm install server` and `sm install upgrade`, re-signing the leaf with the existing CA (#106) | **Implemented** |
 | Hardening and release | Fuzz and race tests, security scans, compatibility matrix, migration tests, lifecycle tests across modes, the release gate | **Implemented**; the human rows of the release checklist are open |
@@ -48,7 +49,7 @@ Statuses: **implemented** (merged and tested, pending release-level review), **p
 
 ### What CI has run
 
-- `ci` on `main` at `90a2fc5`: every job passed ([run 38599733425](https://github.com/autarquico/supermgmt/actions/runs/38599733425)), including the lifecycle jobs on Ubuntu 24.04 amd64 and arm64 and macOS 15 arm64, the upgrade crash test and chain, and the deployment, MCP, appliance, fixture and website suites.
+- `ci` on `main` at `90a2fc5`: every job passed ([run 38599733425](https://github.com/autarquico/supermgmt/actions/runs/38599733425)), including the lifecycle jobs on Ubuntu 24.04 amd64 and arm64 and macOS 15 arm64, the upgrade crash test and chain, and the deployment suite ([since retired](docs/adr/0043-operations-plane-not-a-deployer.md)), the MCP, appliance, fixture and website suites.
 - `nightly`, first run, at `90a2fc5`: passed ([run 38604246178](https://github.com/autarquico/supermgmt/actions/runs/38604246178)): fuzzing shards, race stress, the TUI flake loop (90 runs on macOS) and the daemon-restart flake loop (150 runs).
 - `ci` on `main` at `2ce10c7`: all 39 jobs passed on the first attempt ([run 43475546988](https://github.com/autarquico/supermgmt/actions/runs/43475546988)), the lifecycle legs on amd64, arm64 and macOS, `e2e-crash` and `e2e-chain` included.
 - `nightly` on `9a1ecd8`, the `v0.1.0-rc.4` commit, before the tag ([run 41859718893](https://github.com/autarquico/supermgmt/actions/runs/41859718893)), and on `2ce10c7` ([run 43578547817](https://github.com/autarquico/supermgmt/actions/runs/43578547817), [run 43699644229](https://github.com/autarquico/supermgmt/actions/runs/43699644229)): passed. A run in between found one fuzz crasher, in the decoding of Cloudflare API errors ([run 42794868100](https://github.com/autarquico/supermgmt/actions/runs/42794868100)), fixed in [#116](https://github.com/autarquico/supermgmt/pull/116).
@@ -75,7 +76,7 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 
 - **Clean Debian VM acceptance: amended and deferred.** The CI gate is a Debian 13 container with systemd; a real VM run is not done.
 - **Production signing and provenance: unverified by a person.** The release key exists and signed `v0.1.0-rc.1` to `v0.1.0-rc.4` in protected tag builds; nobody has yet verified a release's signatures, SBOM and provenance from outside (release checklist H2).
-- Identity providers: Dex only, exercised by hand. Dex puts the client secret in the device-flow verification URL; a dedicated public device client needs a new configuration key and a spec change.
+- Identity providers: Dex only, in the e2e suites in CI and by hand; no other provider tried. Dex puts the client secret in the device-flow verification URL; a dedicated public device client needs a new configuration key and a spec change.
 - Cloudflare in front of a server: a guide only, never run against a real account. No edge assertion is consumed.
 - Self-signed certificates: `--tls-san` adds names (a Tailscale IP, a second DNS name) at install or upgrade; there is no renewal command.
 - macOS keychain and Linux `secret-tool` credential stores: unit-tested with fakes, manual checks pending.
@@ -107,12 +108,12 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 
 ### Hardening and release
 
-- **No stable version is released;** the signed pre-releases `v0.1.0-rc.1` to `v0.1.0-rc.4` are. The [release checklist](docs/release-checklist.md) maps each of its 52 rows to tests and jobs and lists 22 human-gated rows, all unchecked, each with an owner and a procedure.
+- **No stable version is released;** the signed pre-releases `v0.1.0-rc.1` to `v0.1.0-rc.4` are. The [release checklist](docs/release-checklist.md) maps each of its 44 Appendix E rows (numbered 1 to 52) to tests and jobs and lists 21 human-gated rows (H1 to H22, H15 retired), all unchecked, each with an owner and a procedure.
 - **Platforms.** Supported means CI runs every operation on that platform ([Compatibility](docs/compatibility.md#platforms-and-operations)): Ubuntu 24.04 amd64 and arm64 (server and local client) and macOS 15 arm64 (local client). Debian 13 is container-verified, the Proxmox appliance is fake-verified, Intel macOS is manual, and Debian as a local-client host and everything else are not claimed.
 - A second, unexplained failure mode of the daemon-restart test (`TestM1_DaemonKilledMidRestartReconciles`), seen once.
 - The residual of a TUI handoff that exits instantly; the case seen is fixed.
-- 25 parsers have no fuzz target yet.
-- The migration fixtures of the deployment and MCP stages contain no deployment and no OAuth access-token row.
+- 12 parsers have no fuzz target yet (the `exempt: gap:` rows of `scripts/fuzz-inventory.txt`); `sh scripts/fuzz.sh count` reports 81 targets.
+- The migration fixture of the MCP stage has no OAuth access-token row; restore revocation is covered by `TestRestoreRevokesMCPCredentials`.
 
 ## Next, proposed
 
@@ -133,13 +134,11 @@ Listed rather than hidden. Most are also on the [Project status](docs/project-st
 None of these is scheduled and any may be dropped:
 
 - Hetzner and OVH provider APIs; AWS, GCP and Azure connectors
-- Vercel API deployments and status (API-only resources)
 - Cloudflare DNS management beyond the records node tunnels create (node tunnels are built, see above)
 - Podman; Kubernetes read-only context
 - Optional outbound node agent
 - Headscale, Tailscale and WireGuard onboarding helpers
 - Scheduled maintenance and security-only unattended updates
-- Canary and blue-green strategies
 - Notification integrations
 - External secret managers
 - Multi-user teams and SSO refinements

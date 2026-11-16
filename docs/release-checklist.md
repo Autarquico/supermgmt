@@ -62,7 +62,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 | 46 | OpenAPI validated | automated | `TestOpenAPI_EveryRouteIsDocumentedAndNothingElse` and the others in `internal/api/openapi_test.go` (job `api-check`). |
 | 47 | Config schemas validated | automated | `TestValidateBaseConfigsAreValid`; the loaders also have fuzz targets (job `fuzz-inventory`). |
 | 48 | Unit/integration/E2E/security tests pass | partial | Every job named in `packaging/release/required-checks.txt` must be green on the tag commit; the `gates` job enforces it and this page cannot. Not run by this task. Open: unresolved flake F1 and the unresolved items below. |
-| 49 | Race/vulnerability/static scans pass | partial | Jobs `race` (Ubuntu and macOS), `govulncheck`, `lint` (gosec), `secret-scan`, `licenses`, `fuzz-inventory`. CodeQL runs in its own workflow and is not in the required list. Mutation fuzzing and the stress suite run only in the nightly workflow. 25 parsers are exempt as `gap` rows in `scripts/fuzz-inventory.txt`. |
+| 49 | Race/vulnerability/static scans pass | partial | Jobs `race` (Ubuntu and macOS), `govulncheck`, `lint` (gosec), `secret-scan`, `licenses`, `fuzz-inventory`. CodeQL runs in its own workflow and is not in the required list. Mutation fuzzing and the stress suite run only in the nightly workflow. 12 parsers are exempt as `gap` rows in `scripts/fuzz-inventory.txt`. |
 | 50 | Release artifacts/checksums/signatures/SBOM generated | automated + human | Jobs `release-snapshot`, `reproducible`; `check.sh` and `verify-provenance.sh` in `release.yml`. Verified with a throwaway key only. The first real tag: rows H1, H2. |
 | 51 | License/dependency audit completed | automated + human | Job `licenses` (go-licenses against the allowlist), `dependency-review.yml`, `check.sh` comparing `THIRD_PARTY_LICENSES` with the compiled binary. The legal reading and the licence decision: row H7. |
 | 52 | Name/trademark/repository availability checked | not met | Not checked by anyone. Row H8. A conflict means a rename before any announcement. |
@@ -107,7 +107,7 @@ These are open on purpose. None is hidden by a retry or an exemption, and none i
 
 - **Downgrade audit (F6).** An `--allow-downgrade` upgrade writes a pending audit record before the swap. A target built before M6 cannot import it, so the event appears only once a binary of M6 or later has started. Row H12.
 - **Upgrade hold.** The hold is proven on real systemd by the lifecycle jobs only (`TestLifecycleVM_Server`), not inside an unprivileged Proxmox container.
-- **Fuzzing.** 25 parsers are listed as `gap` rows in `scripts/fuzz-inventory.txt` with no target yet. `sh scripts/fuzz.sh count` reports 56 targets today. The archive-reading target is slow; the nightly shards took at most 43 of their 60 minutes (run 41859718893).
+- **Fuzzing.** 12 parsers are listed as `gap` rows in `scripts/fuzz-inventory.txt` with no target yet. `sh scripts/fuzz.sh count` reports 81 targets today. The archive-reading target is slow; the nightly shards took at most 43 of their 60 minutes (run 41859718893).
 - **Migration fixtures.** The M4 and M5 worlds contain no deployment, and the M5 world has no OAuth access-token row; restore revocation of OAuth tokens is covered by `TestRestoreRevokesMCPCredentials` instead.
 - **Shell tooling.** `shellcheck` was not available when the release scripts were written; `make install-test` runs it where it exists.
 
@@ -127,4 +127,4 @@ These are open on purpose. None is hidden by a retry or an exemption, and none i
 ## Followups
 
 - A test that enumerates mutating routes and asserts an audit event (Appendix E row 16).
-- Fuzz targets for the 25 `gap` rows.
+- Fuzz targets for the 12 `gap` rows.
