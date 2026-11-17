@@ -420,6 +420,10 @@ supermgmt/
 ├── internal/
 │   ├── app/                 # use cases/application services
 │   ├── domain/              # pure domain types/rules
+│   ├── errors/              # error model: stable codes, closed reasons (§38)
+│   ├── netguard/            # outbound request filter (§21.1)
+│   ├── yamlstrict/          # strict YAML decoding with path and line
+│   ├── textsafe/            # sanitizes untrusted text for terminals and logs
 │   ├── policy/              # authorization/risk/approval
 │   ├── audit/               # event creation/redaction
 │   ├── config/              # typed config/loading/validation
@@ -445,6 +449,9 @@ supermgmt/
 │   │   ├── docker/
 │   │   └── systemd/
 │   ├── installer/           # sm install <mode>; PVE CLI behind interfaces
+│   ├── pveid/               # Proxmox identity shared by installer and node setup (ADR-0023, ADR-0026)
+│   ├── join/                # node side of `sm join` (§13, ADR-0022)
+│   ├── assistant/           # operator's claude CLI limited to SuperMgmt MCP tools
 │   ├── backup/
 │   └── version/
 ├── migrations/
@@ -469,15 +476,22 @@ supermgmt/
 │   ├── operations.md
 │   ├── troubleshooting.md
 │   └── adr/
+├── site/                    # public website (Astro): landing and synced docs
 ├── api/
 │   └── openapi.yaml
 ├── test/
 │   ├── integration/
 │   ├── fixtures/
-│   └── e2e/
+│   ├── e2e/
+│   ├── install/             # install.sh and packaging/release script tests
+│   ├── stress/              # race stress (nightly, ADR-0034)
+│   ├── docs/                # docs and public pages against the CLI
+│   ├── specexamples/        # spec examples parse and validate
+│   └── fuzzinv/             # fuzz inventory complete (ADR-0034)
 ├── install.sh               # tiny public bootstrap: verify + exec `sm install`
 ├── .editorconfig
 ├── .gitignore
+├── .gitleaks.toml
 ├── .golangci.yml
 ├── .goreleaser.yaml
 ├── CODE_OF_CONDUCT.md
@@ -492,6 +506,8 @@ supermgmt/
 ├── go.sum
 └── README.md
 ```
+
+Maintainer tooling (.claude/, .pm/, AGENT.md, pm-policy.yml) is outside this layout.
 
 No business logic in `cmd/`, HTTP handlers, Bubble Tea models or MCP handlers. They adapt requests to application services.
 
@@ -3208,6 +3224,14 @@ Decisions (M6 W0, user-approved option (a) for every question): Ubuntu 24.04 sup
 §22-§24 deployment screens, routes and MCP tools removed.
 §29.2   a backup with an open deployment is refused with guidance.
 §31 M4  retired. §38 deployment reasons removed. Appendix C example is a node.setup plan.
+```
+
+## F.14 Changes after 1.4.8-draft: layout read (release checklist H19)
+
+```text
+§5      lists internal/errors, netguard, yamlstrict, textsafe, pveid, join, assistant;
+        site/; test/{install,stress,docs,specexamples,fuzzinv}; .gitleaks.toml.
+        Maintainer tooling (.claude/, .pm/, AGENT.md, pm-policy.yml) is outside the layout.
 ```
 
 ---

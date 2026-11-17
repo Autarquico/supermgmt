@@ -1,6 +1,6 @@
 # Ask in natural language
 
-> **Status: experimental.** The session was tested against the real `claude` CLI on macOS with a stub MCP server; the rest of the path uses a fake `claude`. Linux sign-in is not verified.
+> **Status: experimental.** Tested against a fake `claude` CLI that replays output recorded from the real `claude` on macOS with a stub MCP server; a run against the real CLI with SuperMgmt's own MCP tools is not recorded. Linux sign-in is not verified.
 
 `sm assistant` opens a conversation in your terminal. You ask in natural language ("why is web failing on vps1?"), and a Claude model works with SuperMgmt's own [MCP tools](mcp.md). It has the same tools, policy, audit and approval floor as any MCP client.
 

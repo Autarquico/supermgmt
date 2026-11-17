@@ -9,7 +9,7 @@
 
 SuperMgmt is a local-first, terminal-first control plane for the machines and services you run yourself. You add Linux machines over SSH, see their systemd services and Docker containers, read their logs and act on them from a fast terminal UI or the `sm` command line. AI agents can reach the same operations through MCP, under the same policy and approvals as you.
 
-Nothing of SuperMgmt runs on the machines you manage, and your workloads never depend on it to keep running.
+Nothing of SuperMgmt runs on the machines you manage, and SuperMgmt is designed so that your workloads never depend on it to keep running.
 
 ## Documentation
 
@@ -27,14 +27,16 @@ The website, **https://autarquico.github.io/supermgmt/**, is built from the late
 - **Manages Linux machines without an agent.** It connects with the machine's own `sshd`, pins the host key the first time, and after a one-off setup works through a dedicated unprivileged account with a narrow sudoers file.
 - **Shows what runs there.** systemd units, Docker containers and their logs, gathered by read-only probes.
 - **Changes things only through plans.** Every change becomes a plan with a hash. Policy decides whether it may run; in a production environment it waits until someone approves that exact plan.
-- **Records everything** in an append-only audit trail, with secrets redacted.
+- **Records changes** in an append-only audit trail, with secrets redacted. Audit is tested per feature; that every mutating route writes an event is not yet checked (release checklist H21).
 - **Treats AI agents as clients, not operators.** An MCP client can never approve anything, and write tools are off unless you turn them on.
 - **Leaves deploying to your CI/CD**: your pipelines deploy your apps as they are; SuperMgmt operates what they put on the machine.
-- **Optionally runs as a server** over HTTPS with tokens and OIDC login, or as an unprivileged container on Proxmox VE.
+- **Optionally runs as a server** over HTTPS with tokens and OIDC login, or, not yet verified as a release, as an unprivileged container on Proxmox VE.
 
 The terminal UI has screens for the dashboard, resources, nodes, services, logs, jobs, approvals and events, plus read-only Providers and Settings screens; see [Using the TUI](docs/tui.md).
 
 ## Install
+
+**Status:** `install.sh` is verified only for `local` without `--resident`, on one clean Intel Mac (`v0.1.0-rc.1`); the resident daemon is not verified. The `server` command has not been run from a published release, and the `proxmox-lxc` appliance from `v0.1.0-rc.4` installed on one real host only after a workaround for a defect since fixed. Build from source until [Project status](docs/project-status.md) says otherwise.
 
 Pre-releases only, from the `beta` channel. The script verifies the release signature before it runs anything; the other ways in are in [Installation](docs/installation.md).
 
@@ -108,7 +110,7 @@ Summary only; read [Security](docs/security.md) before you rely on it.
 
 - Default deny: nothing is allowed unless a policy rule grants it, and any matching deny wins.
 - Approvals bind to the hash of the exact plan; changing any input invalidates them. Operational writes in a `production` environment wait for approval.
-- Audit events are append-only; secrets are redacted before they reach logs or events.
+- Audit events are append-only; known secret patterns are redacted before they reach logs or events; an unknown secret in remote output is not detected.
 - Local mode trusts code running as the same OS user: the daemon socket accepts that user only.
 - Nodes: the pinned host key is the only trust anchor, remote output is sanitized, and commands come from a fixed catalog. After setup SuperMgmt holds no standing root on a node.
 - The `journal-group` log mode lets the node credential read the node's entire system journal. Docker access is root-equivalent. Granting restart on a unit trusts everything that unit executes.

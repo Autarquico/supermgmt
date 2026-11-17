@@ -10,10 +10,10 @@ interface Props {
 const { planHash, approvalEvidence } = Astro.props;
 
 const steps = [
-	{ name: 'Plan', text: 'A change (restart a service, set up a machine, deploy an app) becomes a plan: the exact steps, the targets and the risk.' },
+	{ name: 'Plan', text: 'A change (restart a service, set up a machine, publish a port) becomes a plan: the exact steps, the targets and the risk.' },
 	{ name: 'Hash', text: 'The plan is hashed. Change any input and the hash changes.', hash: true },
 	{ name: 'Approval', text: 'Policy is default deny. In production a person approves that exact hash, and an AI agent can never approve.', evidence: approvalEvidence },
-	{ name: 'Job', text: 'Only then does a job run. Every request, decision and job lands in an append-only audit trail.' },
+	{ name: 'Job', text: 'Only then does a job run. Decisions and jobs land in an append-only audit trail.' },
 ];
 ---
 

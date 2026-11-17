@@ -22,7 +22,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 
 | # | Appendix E row | State | Evidence |
 |---|---|---|---|
-| 1 | Repository matches §5 | human | No test compares the tree to spec section 5. Known differences, patched in the spec (1.4.8): no `packaging/nfpm.yaml`; `internal/providers/cloudflare` is listed again since the deployment retirement. Row H19. |
+| 1 | Repository matches §5 | human | No test compares the tree to spec section 5. Known differences, patched in the spec (1.4.8): no `packaging/nfpm.yaml`; `internal/providers/cloudflare` is listed again since the deployment retirement; the §5 additions of F.14. Row H19. |
 | 2 | README accurately distinguishes implemented/planned | human | No test. README and ROADMAP were rewritten in M6; the MCP examples are checked by `TestMCPExamples_StdioHostsLaunchSmMcpWithRealFlags`. Row H20. |
 | 3 | Universal curl bootstrap works | automated + human | `TestM2_CurlBashInstallsServer`, jobs `e2e-install` and `install-sh`, against a test key. With the real key and a real release: rows H1, H2. |
 | 4 | Release verification works | automated + human | `TestM2_TamperedReleaseFailsWithExit5` (job `e2e-install`); `check.sh` over a snapshot (job `release-snapshot`); byte-identical rebuild (job `reproducible`). Real key, provenance and the first tag: rows H1, H2. |
@@ -51,7 +51,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 | 32 | Secret values never appear in plans, API views or control-plane disk | automated | `TestNoKeyMaterialLeaksAnywhere`, `TestM1Secrets_NoPlaintextKeyAfterSetupActionsAndLogs`. The leak scans cover the control plane, not the node or CLI output. |
 | 33 | MCP client registration may need approval; token issuance happens once, afterwards | automated | `TestMCPClientsRegister_WaitsForApprovalAndCreatesNothingBefore`, `TestMCPClientsIssueToken_OnlyTheRequesterOnceAndOnlyPending`. |
 | 37 | Fresh-host restore works with an offline key import | automated | `TestM2_BackupRestoreFreshHost` (job `e2e-server`), `TestOfflineExportThenImportRoundTripsAKeyIntoAFreshHost`. |
-| 38 | ADR-0007..0012 accepted in their milestones | automated | Read in the M6 release task, no test: ADR-0007 to ADR-0012 carry `Status: Accepted` in `docs/adr/`. Row H19 covers the ADR index. |
+| 38 | ADR-0007..0012 accepted in their milestones | automated | Read in the M6 release task, no test: ADR-0007 to ADR-0010 and ADR-0012 carry `Status: Accepted` in `docs/adr/`; ADR-0011 was accepted in its milestone and later superseded by ADR-0043. Row H19 covers the ADR index. |
 | 39 | MCP has no generic privileged shell | automated | `TestReadTools_NoShellExecSecretOrDeleteTools`, `TestConfig_MCPInteractiveExecIsRefused`, `TestMCPRouteMatrix`. |
 | 40 | MCP write tools disabled by default | automated | `TestMCPWritesOff_EveryNonQueryActionIsDenied`, `TestMCPWritesOff_HumansAreUnaffected`. |
 | 41 | Remote auth works | automated + human | `TestM2_RemoteControlOverHTTPS` (job `e2e-server`, Dex). A real identity provider and reverse proxy: row H17. |
@@ -62,7 +62,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 | 46 | OpenAPI validated | automated | `TestOpenAPI_EveryRouteIsDocumentedAndNothingElse` and the others in `internal/api/openapi_test.go` (job `api-check`). |
 | 47 | Config schemas validated | automated | `TestValidateBaseConfigsAreValid`; the loaders also have fuzz targets (job `fuzz-inventory`). |
 | 48 | Unit/integration/E2E/security tests pass | partial | Every job named in `packaging/release/required-checks.txt` must be green on the tag commit; the `gates` job enforces it and this page cannot. Not run by this task. Open: unresolved flake F1 and the unresolved items below. |
-| 49 | Race/vulnerability/static scans pass | partial | Jobs `race` (Ubuntu and macOS), `govulncheck`, `lint` (gosec), `secret-scan`, `licenses`, `fuzz-inventory`. CodeQL runs in its own workflow and is not in the required list. Mutation fuzzing and the stress suite run only in the nightly workflow. 25 parsers are exempt as `gap` rows in `scripts/fuzz-inventory.txt`. |
+| 49 | Race/vulnerability/static scans pass | partial | Jobs `race` (Ubuntu and macOS), `govulncheck`, `lint` (gosec), `secret-scan`, `licenses`, `fuzz-inventory`. CodeQL runs in its own workflow and is not in the required list. Mutation fuzzing and the stress suite run only in the nightly workflow. 12 parsers are exempt as `gap` rows in `scripts/fuzz-inventory.txt`. |
 | 50 | Release artifacts/checksums/signatures/SBOM generated | automated + human | Jobs `release-snapshot`, `reproducible`; `check.sh` and `verify-provenance.sh` in `release.yml`. Verified with a throwaway key only. The first real tag: rows H1, H2. |
 | 51 | License/dependency audit completed | automated + human | Job `licenses` (go-licenses against the allowlist), `dependency-review.yml`, `check.sh` comparing `THIRD_PARTY_LICENSES` with the compiled binary. The legal reading and the licence decision: row H7. |
 | 52 | Name/trademark/repository availability checked | not met | Not checked by anyone. Row H8. A conflict means a rename before any announcement. |
@@ -107,7 +107,7 @@ These are open on purpose. None is hidden by a retry or an exemption, and none i
 
 - **Downgrade audit (F6).** An `--allow-downgrade` upgrade writes a pending audit record before the swap. A target built before M6 cannot import it, so the event appears only once a binary of M6 or later has started. Row H12.
 - **Upgrade hold.** The hold is proven on real systemd by the lifecycle jobs only (`TestLifecycleVM_Server`), not inside an unprivileged Proxmox container.
-- **Fuzzing.** 25 parsers are listed as `gap` rows in `scripts/fuzz-inventory.txt` with no target yet. `sh scripts/fuzz.sh count` reports 56 targets today. The archive-reading target is slow; the nightly shards took at most 43 of their 60 minutes (run 41859718893).
+- **Fuzzing.** 12 parsers are listed as `gap` rows in `scripts/fuzz-inventory.txt` with no target yet. `sh scripts/fuzz.sh count` reports 81 targets today. The archive-reading target is slow; the nightly shards took at most 43 of their 60 minutes (run 41859718893).
 - **Migration fixtures.** The M4 and M5 worlds contain no deployment, and the M5 world has no OAuth access-token row; restore revocation of OAuth tokens is covered by `TestRestoreRevokesMCPCredentials` instead.
 - **Shell tooling.** `shellcheck` was not available when the release scripts were written; `make install-test` runs it where it exists.
 
@@ -120,11 +120,11 @@ These are open on purpose. None is hidden by a retry or an exemption, and none i
 
 **Post-V1 (not required by the spec's definition of done)**
 
-- Proxmox `POST /providers`, promotion of discovered guests, snapshot, backup, console and task-history handlers, the metrics endpoint, and `internal/providers/cloudflare`.
+- Proxmox `POST /providers`, promotion of discovered guests, snapshot, backup, console and task-history handlers, and the metrics endpoint.
 - Linux packages (`.deb`, `.rpm`): a package manager's upgrade would bypass the upgrade protocol ([ADR-0036](adr/0036-distribution-notices-platform-claims.md)).
 - Sharing the database path canonicaliser with the installer: not done, on purpose (a dependency rule keeps the installer from importing the database package).
 
 ## Followups
 
 - A test that enumerates mutating routes and asserts an audit event (Appendix E row 16).
-- Fuzz targets for the 25 `gap` rows.
+- Fuzz targets for the 12 `gap` rows.
