@@ -51,7 +51,7 @@ The tests cited here are checked by `make docs-check` (job `docs-check`): a cite
 | 32 | Secret values never appear in plans, API views or control-plane disk | automated | `TestNoKeyMaterialLeaksAnywhere`, `TestM1Secrets_NoPlaintextKeyAfterSetupActionsAndLogs`. The leak scans cover the control plane, not the node or CLI output. |
 | 33 | MCP client registration may need approval; token issuance happens once, afterwards | automated | `TestMCPClientsRegister_WaitsForApprovalAndCreatesNothingBefore`, `TestMCPClientsIssueToken_OnlyTheRequesterOnceAndOnlyPending`. |
 | 37 | Fresh-host restore works with an offline key import | automated | `TestM2_BackupRestoreFreshHost` (job `e2e-server`), `TestOfflineExportThenImportRoundTripsAKeyIntoAFreshHost`. |
-| 38 | ADR-0007..0012 accepted in their milestones | automated | Read in the M6 release task, no test: ADR-0007 to ADR-0012 carry `Status: Accepted` in `docs/adr/`. Row H19 covers the ADR index. |
+| 38 | ADR-0007..0012 accepted in their milestones | automated | Read in the M6 release task, no test: ADR-0007 to ADR-0010 and ADR-0012 carry `Status: Accepted` in `docs/adr/`; ADR-0011 was accepted in its milestone and later superseded by ADR-0043. Row H19 covers the ADR index. |
 | 39 | MCP has no generic privileged shell | automated | `TestReadTools_NoShellExecSecretOrDeleteTools`, `TestConfig_MCPInteractiveExecIsRefused`, `TestMCPRouteMatrix`. |
 | 40 | MCP write tools disabled by default | automated | `TestMCPWritesOff_EveryNonQueryActionIsDenied`, `TestMCPWritesOff_HumansAreUnaffected`. |
 | 41 | Remote auth works | automated + human | `TestM2_RemoteControlOverHTTPS` (job `e2e-server`, Dex). A real identity provider and reverse proxy: row H17. |
