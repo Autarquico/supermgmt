@@ -120,7 +120,7 @@ These are open on purpose. None is hidden by a retry or an exemption, and none i
 
 **Post-V1 (not required by the spec's definition of done)**
 
-- Proxmox `POST /providers`, promotion of discovered guests, snapshot, backup, console and task-history handlers, the metrics endpoint, and `internal/providers/cloudflare`.
+- Proxmox `POST /providers`, promotion of discovered guests, snapshot, backup, console and task-history handlers, and the metrics endpoint.
 - Linux packages (`.deb`, `.rpm`): a package manager's upgrade would bypass the upgrade protocol ([ADR-0036](adr/0036-distribution-notices-platform-claims.md)).
 - Sharing the database path canonicaliser with the installer: not done, on purpose (a dependency rule keeps the installer from importing the database package).
 

@@ -5,6 +5,8 @@ import { siteVersion } from '../../lib/claims';
 const version = siteVersion();
 const script = 'curl -fsSL https://raw.githubusercontent.com/autarquico/supermgmt/main/install.sh';
 const channel = version?.includes('-') ? 'SUPERMGMT_CHANNEL=beta ' : '';
+// The install commands stay off the landing page until an install from a pre-release passes on a clean host (release checklist H22).
+const showInstall = version !== undefined && !channel;
 
 const platforms = [
 	{ name: 'Your laptop, macOS or Linux', command: `${script} | ${channel}bash -s -- local --resident` },
@@ -21,11 +23,10 @@ sm version`;
 
 <section aria-labelledby="install-title">
 	<h2 id="install-title">Install</h2>
-	{version ? (
+	{showInstall ? (
 		<>
 			<p class="intro">
-				{channel ? <>Pre-release <code>{version}</code>, from the <code>beta</code> channel.</> : <>Release <code>{version}</code>.</>}{' '}
-				The script checks the release signature before it runs anything.
+				Release <code>{version}</code>. The script checks the release signature before it runs anything.
 			</p>
 			{platforms.map(({ name, command }) => (
 				<>
@@ -38,6 +39,11 @@ sm version`;
 			<p class="more"><a href={routeFor('installation')}>Installation: modes, flags and the review-first path</a></p>
 			<h3>Or build from source</h3>
 		</>
+	) : version ? (
+		<p class="intro">
+			Pre-release <code>{version}</code> is published, but its installer is not yet verified on a clean host — build from source.{' '}
+			<a href={routeFor('installation')}>Installation</a> has the <code>beta</code> channel for testers.
+		</p>
 	) : (
 		<p class="intro">No release yet — build from source.</p>
 	)}
